@@ -10,9 +10,11 @@ import {
   loginAction,
   logoutAction,
   checkAction,
+  stripBomFromEnvKeys,
 } from '../src/cli/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
+import { loadConfig } from '../src/core/config.js';
 import { AuthorizationCodeAuth } from '../src/core/authCode.js';
 import { FileTokenStore } from '../src/core/tokenStore.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
@@ -476,5 +478,50 @@ describe('checkAction', () => {
     const encoded = encodeURIComponent(secret);
     expect(out).not.toContain(secret);
     expect(out).not.toContain(encoded);
+  });
+});
+
+describe('stripBomFromEnvKeys', () => {
+  // Windows tools (e.g. PowerShell 5.1's `Set-Content -Encoding utf8`)
+  // commonly write a UTF-8 BOM at the start of a file. `process.loadEnvFile()`
+  // doesn't strip it, so it ends up prefixed onto the *first* env var's key
+  // rather than its value -- this is the exact shape that produces.
+  const BOM = '\uFEFF';
+
+  it('re-keys a BOM-prefixed variable without the BOM', () => {
+    const fixed = stripBomFromEnvKeys({ [`${BOM}OEQ_BASE_URL`]: 'https://example.test', OTHER: 'x' });
+    expect(fixed.OEQ_BASE_URL).toBe('https://example.test');
+    expect(fixed.OTHER).toBe('x');
+    expect(Object.keys(fixed)).not.toContain(`${BOM}OEQ_BASE_URL`);
+  });
+
+  it('returns the same object by reference when there is no BOM-prefixed key', () => {
+    const env = { OEQ_BASE_URL: 'https://example.test' };
+    expect(stripBomFromEnvKeys(env)).toBe(env);
+  });
+
+  it('lets loadConfig succeed against an env object whose first key was BOM-prefixed', () => {
+    // This is the actual bug: loadConfig(), unfixed, reports OEQ_BASE_URL as
+    // "missing" even though the value is right there, because it's really
+    // filed under `\uFEFFOEQ_BASE_URL`.
+    const raw = {
+      [`${BOM}OEQ_BASE_URL`]: 'https://example.test',
+      OEQ_CLIENT_ID: 'id',
+      OEQ_CLIENT_SECRET: 'secret',
+    };
+    expect(() => loadConfig(raw)).toThrow(/OEQ_BASE_URL/);
+
+    const fixed = stripBomFromEnvKeys(raw);
+    const cfg = loadConfig(fixed);
+    expect(cfg.baseUrl).toBe('https://example.test');
+  });
+
+  it('handles a BOM-prefixed key alongside normal ones, leaving the rest untouched', () => {
+    const fixed = stripBomFromEnvKeys({
+      [`${BOM}OEQ_BASE_URL`]: 'https://example.test',
+      OEQ_CLIENT_ID: 'id',
+      OEQ_CLIENT_SECRET: 'secret',
+    });
+    expect(Object.keys(fixed).sort()).toEqual(['OEQ_BASE_URL', 'OEQ_CLIENT_ID', 'OEQ_CLIENT_SECRET']);
   });
 });

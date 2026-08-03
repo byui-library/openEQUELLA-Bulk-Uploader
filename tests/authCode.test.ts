@@ -130,7 +130,7 @@ describe('AuthorizationCodeAuth — exchangeCode', () => {
 });
 
 describe('AuthorizationCodeAuth — getToken without a prior exchange', () => {
-  it('throws an actionable error naming the login flow and makes no network call', async () => {
+  it('throws an actionable error naming the actual login command and makes no network call', async () => {
     const auth = new AuthorizationCodeAuth(
       mock.url,
       'good-id',
@@ -139,9 +139,24 @@ describe('AuthorizationCodeAuth — getToken without a prior exchange', () => {
       new FileTokenStore(tokenPath()),
     );
     await expect(auth.getToken()).rejects.toThrow(OeqError);
-    await expect(auth.getToken()).rejects.toThrow(/getAuthorizeUrl|exchangeCode|log in/i);
+    await expect(auth.getToken()).rejects.toThrow(/oeq-upload login/);
+    // Internal API names are not operator-actionable -- must not appear.
+    await expect(auth.getToken()).rejects.not.toThrow(/getAuthorizeUrl|exchangeCode/);
     // No token was ever issued by the mock -- proves getToken() didn't fetch.
     expect(mock.state.issuedTokens).toHaveLength(0);
+  });
+
+  it('produces exactly the operator-facing message when there is no cached token', async () => {
+    const auth = new AuthorizationCodeAuth(
+      mock.url,
+      'good-id',
+      'secret',
+      mock.url,
+      new FileTokenStore(tokenPath()),
+    );
+    await expect(auth.getToken()).rejects.toThrow(
+      `No cached OAuth token for ${mock.url}.\nRun:  oeq-upload login`,
+    );
   });
 
   it('reports a baseUrl mismatch distinctly, without using the stored token', async () => {
@@ -150,6 +165,7 @@ describe('AuthorizationCodeAuth — getToken without a prior exchange', () => {
     await store.save({ accessToken: 'tok-from-other-instance', baseUrl: 'https://other.test' });
     const auth = new AuthorizationCodeAuth(mock.url, 'good-id', 'secret', mock.url, store);
     await expect(auth.getToken()).rejects.toThrow(/other\.test/);
+    await expect(auth.getToken()).rejects.toThrow(/oeq-upload login/);
   });
 
   it('reports an expired token distinctly, without using it', async () => {
@@ -196,7 +212,7 @@ describe('AuthorizationCodeAuth — invalidate', () => {
     // getToken() throws the login-required error immediately rather than
     // returning the (now-cleared) stale token.
     await expect(auth.getToken()).rejects.toThrow(OeqError);
-    await expect(auth.getToken()).rejects.toThrow(/getAuthorizeUrl|exchangeCode|log in/i);
+    await expect(auth.getToken()).rejects.toThrow(/oeq-upload login/);
     // And crucially: no network call was made trying to refresh it.
     expect(mock.state.issuedTokens).toHaveLength(1);
   });

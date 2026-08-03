@@ -33,6 +33,14 @@ OEQ_SCHEMA_UUID=c93181f3-a443-41bf-9afe-ac9f7daf90b7
 Faculty Content" / `BYUI_MWDL` if left unset; only `OEQ_BASE_URL`,
 `OEQ_CLIENT_ID`, and `OEQ_CLIENT_SECRET` are required.
 
+Save `.env` as **UTF-8 without a BOM**. A BOM (common from PowerShell 5.1's
+`Set-Content -Encoding utf8`, and plenty of Windows editors) lands on the
+*first* variable in the file, not something obviously wrong-looking, so it
+reads like a typo (`OEQ_BASE_URL` reported "missing" when it's plainly
+there) rather than an encoding issue. The tool tolerates one anyway — it
+strips a BOM off the first key it finds — but avoiding it in the first
+place is one less thing to debug.
+
 **An admin must register an API client** in the openEQUELLA admin console,
 bound to a user holding `CREATE_ITEM` on the target collection. That
 binding is not cosmetic: **the bound user owns every item this tool

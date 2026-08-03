@@ -404,11 +404,52 @@ export function buildProgram(env: Env = process.env): Command {
   return program;
 }
 
+/**
+ * A BOM (U+FEFF) at the start of a `.env` file -- e.g. from PowerShell
+ * 5.1's `Set-Content -Encoding utf8`, which plenty of Windows editors and
+ * scripts also default to -- survives `process.loadEnvFile()` as part of
+ * the *first* key's name rather than being stripped, so `OEQ_BASE_URL=...`
+ * lands in the environment as `\uFEFFOEQ_BASE_URL`. `loadConfig()` then
+ * reports `OEQ_BASE_URL` as missing even though the file plainly has it --
+ * which reads like a typo, not an encoding problem, and only the file's
+ * first variable is ever affected, making it an easy trap to walk into
+ * repeatedly on this platform.
+ *
+ * Pure and side-effect-free (takes/returns a plain object, never touches
+ * `process.env` itself) so it can be unit tested directly against a
+ * BOM-prefixed key, without writing a real BOM'd file to disk -- see
+ * `loadDotEnv()` below for where the fix is actually applied to
+ * `process.env`. Returns the same object by reference when there is
+ * nothing to fix, so a caller can cheaply tell whether anything changed.
+ */
+export function stripBomFromEnvKeys(
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const BOM = '\uFEFF';
+  if (!Object.keys(env).some((key) => key.startsWith(BOM))) return env;
+
+  const result: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(env)) {
+    result[key.startsWith(BOM) ? key.slice(BOM.length) : key] = value;
+  }
+  return result;
+}
+
 async function loadDotEnv(): Promise<void> {
   try {
     process.loadEnvFile();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+
+  const fixed = stripBomFromEnvKeys(process.env);
+  if (fixed !== process.env) {
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('\uFEFF')) delete process.env[key];
+    }
+    for (const [key, value] of Object.entries(fixed)) {
+      if (value !== undefined) process.env[key] = value;
+    }
   }
 }
 

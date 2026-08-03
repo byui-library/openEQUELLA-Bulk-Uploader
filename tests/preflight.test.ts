@@ -73,7 +73,7 @@ describe('runPreflight', () => {
     expect(result.ok).toBe(false);
     expect(result.checks).toHaveLength(1);
     expect(result.checks[0]).toMatchObject({ label: 'Token', pass: false });
-    expect(result.checks[0]!.message).toMatch(/log in|getAuthorizeUrl/i);
+    expect(result.checks[0]!.message).toMatch(/oeq-upload login/);
   });
 
   it('reports a failure when the target collection does not exist on this host', async () => {

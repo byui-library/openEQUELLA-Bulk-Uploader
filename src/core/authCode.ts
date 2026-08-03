@@ -149,27 +149,30 @@ export class AuthorizationCodeAuth implements AuthProvider {
     // No usable token. Look at the raw record (if any) purely to explain
     // *why* in the error -- this doesn't change the outcome, which is
     // always "go run the login flow again."
+    //
+    // The message below names the actual CLI command (`oeq-upload login`),
+    // not the internal API (`getAuthorizeUrl()`/`exchangeCode()`) an earlier
+    // version of this message pointed at -- this is the message an operator
+    // reads in `check`/`oeq_check` output or a failed `run`, and neither of
+    // those method names mean anything to them or is something they can act
+    // on directly. Action first, explanation second (and only if it stays
+    // short) -- see the coordinator note that prompted this rewrite.
     const raw = await this.tokenStore.loadRaw();
-    const login =
-      'This provider cannot prompt for login interactively (it may be running in a ' +
-      'detached process). Log in first: open the URL from getAuthorizeUrl() in a browser, ' +
-      'authenticate, then call exchangeCode(code) with the code the redirect returns -- ' +
-      'then re-run this command.';
+    const runLogin = 'Run:  oeq-upload login';
 
     if (raw && raw.baseUrl !== this.baseUrl) {
       throw new OeqError(
-        `Cached OAuth token was issued for ${raw.baseUrl}, not ${this.baseUrl}. Refusing to ` +
-          `reuse it across instances -- the collection UUID is identical in test and ` +
-          `production, so baseUrl is the only thing telling them apart. ${login}`,
+        `Cached OAuth token was issued for ${raw.baseUrl}, not ${this.baseUrl} -- refusing to ` +
+          `reuse it across instances.\n${runLogin}`,
       );
     }
     if (raw && raw.expiresAt !== undefined && raw.expiresAt <= Date.now()) {
       throw new OeqError(
         `Cached OAuth token for ${this.baseUrl} expired at ` +
-          `${new Date(raw.expiresAt).toISOString()}. ${login}`,
+          `${new Date(raw.expiresAt).toISOString()}.\n${runLogin}`,
       );
     }
-    throw new OeqError(`No cached OAuth token found for ${this.baseUrl}. ${login}`);
+    throw new OeqError(`No cached OAuth token for ${this.baseUrl}.\n${runLogin}`);
   }
 
   async authHeader(): Promise<Record<string, string>> {
