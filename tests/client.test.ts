@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { OeqClient } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
-import { ApiError } from '../src/core/errors.js';
+import { ApiError, ValidationError } from '../src/core/errors.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
 
 let mock: MockServer;
@@ -46,6 +46,28 @@ describe('OeqClient', () => {
     });
     const created = mock.state.items.find((i) => i.uuid === result.uuid);
     expect(created?.draft).toBe(false);
+  });
+
+  it('refuses to create an item when draft is not an explicit boolean', async () => {
+    // The mock/assumed server treats anything other than the exact string
+    // 'true' as publish-live -- a missing, undefined, or malformed `draft`
+    // value fails open toward publishing 37 student videos live into a
+    // collection with no moderation workflow. A manifest read back from disk
+    // (Task 10) is JSON, so TypeScript's `draft: boolean` cannot protect this
+    // at compile time; it must be checked at runtime.
+    const err = await client
+      .createItem({
+        collectionUuid: 'c1',
+        metadata: '<xml/>',
+        stagingUuid: await client.createStagingArea(),
+        attachments: [],
+        draft: undefined as unknown as boolean,
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    // Nothing must have been sent to the server -- proving this is a
+    // client-side refusal, not a request that reached /api/item at all.
+    expect(mock.state.items.length).toBe(0);
   });
 
   it('transparently refreshes an expired token', async () => {

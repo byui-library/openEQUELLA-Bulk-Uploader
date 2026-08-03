@@ -21,6 +21,14 @@
  *            Assumed: `draft` query param (not a body field) toggles
  *            draft vs. published; a client-supplied attachment `uuid` is
  *            honoured rather than always server-generated.
+ *            DANGER — assumed FAIL-OPEN TOWARD PUBLISHED: the assumed check
+ *            is `draft === 'true'` (exact string match), so a missing,
+ *            empty, malformed, or otherwise-not-literally-'true' value is
+ *            assumed to mean PUBLISHED, not draft. There is no server-side
+ *            safety net for this collection. `createItem` below therefore
+ *            runtime-checks `req.draft` is a genuine boolean and refuses to
+ *            send the request otherwise — verify this assumption FIRST
+ *            against swagger.json before ever relaxing that guard.
  *   - GET    /api/search?collections=&q=&length= -> 200 { available, results }.
  *            Assumed: `q` performs *some* text match; whether it is an exact
  *            phrase match or a free-text/OR-of-terms match is UNVERIFIED
@@ -35,7 +43,7 @@
  * ===============================================================================
  */
 import type { AuthProvider } from './auth.js';
-import { ApiError } from './errors.js';
+import { ApiError, ValidationError } from './errors.js';
 
 export interface AttachmentSpec {
   filename: string;
@@ -109,11 +117,16 @@ export class OeqClient {
     retriedAfter401 = false,
   ): Promise<Response> {
     const method = init.method ?? 'GET';
+    // Constructed outside the try/catch below: a malformed path/baseUrl is a
+    // programming bug, not a network failure, and must not be reported as a
+    // retryable ApiError(status 0) -- that would tell a caller to retry an
+    // error that will never succeed no matter how many times it's retried.
+    const url = new URL(path, this.baseUrl);
     const headers = { ...(init.headers ?? {}), ...(await this.auth.authHeader()) };
 
     let res: Response;
     try {
-      res = await fetch(new URL(path, this.baseUrl), { ...init, headers });
+      res = await fetch(url, { ...init, headers });
     } catch (cause) {
       // Network-level failure (DNS, connection reset, etc.) never reaches a
       // status code. Model it as ApiError status 0, matching auth.ts's
@@ -183,6 +196,23 @@ export class OeqClient {
   }
 
   async createItem(req: CreateItemRequest): Promise<CreateItemResult> {
+    // Runtime guard, not just the CreateItemRequest['draft']: boolean compile-time
+    // type. Task 10's runner reads itemState back out of a JSON manifest on
+    // disk -- hand-editable, possibly from an older tool version, possibly
+    // partially written -- and TypeScript cannot protect a value that enters
+    // the program as JSON. Given the assumed contract fails open toward
+    // PUBLISHED (see header comment), refuse anything that isn't an
+    // explicit boolean rather than let `String(req.draft)` coerce it into
+    // something that isn't the literal string 'true' and isn't the literal
+    // string 'false' either -- e.g. String(undefined) === 'undefined'.
+    if (typeof req.draft !== 'boolean') {
+      throw new ValidationError(
+        `createItem: 'draft' must be an explicit boolean, got ${typeof req.draft}. ` +
+          `Refusing to send an ambiguous value: the assumed server contract treats ` +
+          `anything other than the exact string 'true' as publish-live, and this ` +
+          `collection has no moderation workflow to catch the mistake.`,
+      );
+    }
     const res = await this.request(`/api/item?draft=${String(req.draft)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
