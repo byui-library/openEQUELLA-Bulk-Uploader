@@ -132,7 +132,16 @@ MWDL/creators/creator = "David Olsen"
   -> <MWDL><creators><creator>David Olsen</creator></creators></MWDL>
 ```
 
-- Repeated headers become sibling elements.
+- Repeated values under one xpath become sibling elements. **In v1 this is not
+  reachable from a spreadsheet:** `sheet.ts` rejects duplicate column headers
+  outright, because `Row.cells` is `Record<string, string>` and two identical
+  headers would otherwise silently discard the first column's data. The XML
+  builder accepts multiple values per path, so supporting genuinely repeated
+  fields (two `MWDL/creators/creator` columns for co-creators, say) means
+  changing only the sheet reader. Deferred until a real batch needs it.
+- Blank values inside a multi-value list are dropped; a lone blank still emits a
+  self-closing tag. An empty slot among real values is a spreadsheet artifact,
+  not a value.
 - **Blank cells emit empty tags** (`<abstract/>`), matching what the openEQUELLA
   wizard produces and what existing items look like. Consistency matters here
   because the OAI Dublin Core transform (`schema/oai_dc_limb.xsl`) runs over this
