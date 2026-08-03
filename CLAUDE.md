@@ -10,10 +10,20 @@ Replaces an older, no-longer-working tool by Jim Kurian.
 
 ## Status
 
+**Read [docs/SESSION-HANDOFF.md](docs/SESSION-HANDOFF.md) first.** It states the
+current blocker and exactly what to do next.
+
 Implemented and verified. CLI (`plan | run | status | retry`) and MCP server
 (six tools) both build clean, 173 tests pass across 14 files, and
 `npm run typecheck` is clean. See [README.md](README.md) for setup, usage,
 and the live-smoke-test procedure that must run before any real batch.
+
+**Blocked on authentication.** `OAuthClientCredentials` cannot be used against
+this instance — the OAuth client has no fixed user, and the owner has
+deliberately declined to set one so that each contributor owns what they
+contribute. The authorization-code flow must be implemented in a new
+`src/core/authCode.ts` behind the existing `AuthProvider` interface. Nothing has
+run against a live instance yet.
 
 One wire-format assumption remains unverified pending that live smoke test:
 whether the `{ type: 'file', filename, ... }` attachment payload shape is
@@ -86,3 +96,13 @@ easy to get wrong from first principles.
   payload shape is correct is still unverified and is exactly what the live
   smoke test in the README exists to confirm. See the header comment in
   `src/core/client.ts` for the full CONFIRMED/UNVERIFIED breakdown.
+- It also **refuted two assumptions the entire test suite agreed with**: the
+  staging area is a `?file=` query parameter (not a body field), and
+  `GET /search` defaults `showall=false`, which made the duplicate pre-flight
+  blind to the drafts this tool creates. Both are fixed.
+- OAuth endpoints are **not** under `basePath: /api`, so swagger.json does not
+  describe them. Verified by probe: `/oauth/authorise` is canonical (British
+  spelling); `/oauth/authorize` 302-redirects to it. The registered
+  `redirectUrl` is the site root, and the server strips its trailing slash.
+- `OEQ_SCHEMA_UUID` is recorded in the manifest but **never sent anywhere**.
+  Schema validation reads the local `schema/_entity.xml`. Don't chase it.
