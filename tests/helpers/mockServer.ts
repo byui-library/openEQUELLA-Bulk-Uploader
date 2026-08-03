@@ -24,6 +24,18 @@
  *
  * Uses a real `node:http` server (not an interception library) so the
  * actual `fetch` code path — DNS/TCP/headers/streaming — is exercised.
+ *
+ * `state.expireNextUpload` is TEST SCAFFOLDING, not part of the modelled
+ * protocol: `expireNext` (above) fires 401 on the next authorised call of
+ * *any* kind, which in practice is almost always consumed by the
+ * lightweight `POST /api/staging` a caller issues just before its `PUT`
+ * upload — so it can never actually land on the upload request itself, the
+ * one whose body is a one-shot stream. `expireNextUpload` is a narrow,
+ * additive targeting knob that rejects only the next `PUT
+ * /api/staging/:uuid/:filename`, so tests can prove a caller reopens a
+ * fresh file body on retry rather than resending a drained one. It adds no
+ * new route, status code, or payload shape — it only changes *when* the
+ * existing 401 response (also used by `expireNext`) is returned.
  */
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -33,6 +45,11 @@ export interface MockState {
   issuedTokens: string[];
   /** Reject the next N authorised calls with 401, to exercise refresh. */
   expireNext: number;
+  /**
+   * Reject the next N `PUT` staging uploads specifically with 401. Test
+   * scaffolding, not modelled protocol — see the header comment above.
+   */
+  expireNextUpload: number;
   /** Fail the next N item creations with 503, to exercise retry. */
   failItemNext: number;
   stagingAreas: Set<string>;
@@ -59,6 +76,7 @@ export async function startMockServer(): Promise<MockServer> {
   const state: MockState = {
     issuedTokens: [],
     expireNext: 0,
+    expireNextUpload: 0,
     failItemNext: 0,
     stagingAreas: new Set(),
     uploads: [],
@@ -107,6 +125,10 @@ export async function startMockServer(): Promise<MockServer> {
 
       const stagingUpload = /^\/api\/staging\/([^/]+)\/(.+)$/.exec(path);
       if (stagingUpload && req.method === 'PUT') {
+        if (state.expireNextUpload > 0) {
+          state.expireNextUpload--;
+          return send(res, 401, { error: 'token expired' });
+        }
         const [, staging, filename] = stagingUpload;
         if (!state.stagingAreas.has(staging!)) return send(res, 404, { error: 'no staging area' });
         const body = await readBody(req);
