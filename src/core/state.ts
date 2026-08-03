@@ -8,12 +8,20 @@ import { OeqError } from './errors.js';
  * because the manifest is the only record of which items already exist.
  *
  * The temp file name includes the pid and a random uuid so two overlapping
- * `saveManifest` calls (the runner saves twice per entry; the MCP server may
- * read concurrently with the CLI writing) never share a temp path. Without
- * that, two writers racing on a fixed `${path}.tmp` could interleave writes
- * to the same file descriptor-less path (each `writeFile` call opens its own
- * handle) and rename a half-written file into place, corrupting the one
- * record of which items already exist.
+ * `saveManifest` calls never share a temp path. Without that, two writers
+ * racing on a fixed `${path}.tmp` could interleave writes to the same path
+ * (each `writeFile` call opens its own handle) and rename a half-written file
+ * into place, corrupting the one record of which items already exist.
+ *
+ * PRECONDITION — this module gives no cross-process update protection.
+ * It makes each individual write atomic and durable; it does NOT serialise
+ * load-modify-save cycles. Callers must not run overlapping cycles against the
+ * same manifest path from independent processes. That is a live hazard rather
+ * than a theoretical one: `oeq_start_job` spawns the runner detached, while
+ * `oeq_plan` and `oeq_retry_failed` also write. A retry invoked mid-run would
+ * serialise its own stale in-memory snapshot over the runner's progress,
+ * reverting a `created` entry to `pending` and causing a duplicate 150 MB
+ * upload on resume. Guarding that belongs in the runner and the MCP server.
  *
  * The temp file is fsync'd (via a file handle's `sync()`) before the rename.
  * `rename` is atomic with respect to *visibility* — a reader never observes a
