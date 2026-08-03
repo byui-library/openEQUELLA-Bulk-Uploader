@@ -17,6 +17,13 @@ export interface RunOptions {
   retryDelayMs?: number;
   /** Invoked after each entry so front ends can report progress. */
   onProgress?: (entry: ManifestEntry, done: number, total: number) => void;
+  /**
+   * Process entries that were found in `'uploading'` state at load time
+   * (leftovers from an interrupted prior run) instead of skipping them. Off
+   * by default: see the "interrupted-at-load" handling in `runManifest` for
+   * why this must be an explicit operator opt-in, never automatic.
+   */
+  forceInterrupted?: boolean;
 }
 
 export interface RunSummary {
@@ -27,6 +34,14 @@ export interface RunSummary {
    *  be verified to match what the server actually assigned. See
    *  `processEntry` below -- this is intentionally never retried. */
   incomplete: number;
+  /**
+   * Entries found `'uploading'` at load time -- leftovers from a run that
+   * was interrupted mid-row (crash, kill, disk full, laptop sleep) -- and
+   * therefore left unprocessed rather than guessed at. See `runManifest`.
+   * A CLI should surface this count prominently: it means "go check the
+   * collection by hand", not "everything's fine".
+   */
+  interrupted: number;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -139,6 +154,37 @@ async function processEntry(
  * re-invoke against the same manifest; rows already `created`, `skipped`, or
  * `incomplete` are left untouched (see `TERMINAL_STATUSES`).
  *
+ * ---- Interrupted-at-load handling ----
+ * Every row is saved as `'uploading'` just before `processEntry` runs (see
+ * the loop below), specifically so an interrupted run leaves visible
+ * evidence behind. If the process dies after `createItem` actually
+ * succeeded server-side but before the trailing `saveManifest` after it
+ * lands -- a crash, a kill, a full disk, a laptop going to sleep mid-upload,
+ * any ordinary interruption -- the on-disk entry is left stuck at
+ * `'uploading'` with no way for this code to tell whether the item exists
+ * or not.
+ *
+ * `RowStatus` has no dedicated "interrupted" value (it's fixed in
+ * types.ts), and no legitimate run ever produces a persisted `'uploading'`
+ * entry on its own -- that status only ever exists transiently in memory
+ * while a row is actively being processed within a single call. So any
+ * entry found `'uploading'` *at the moment the manifest is loaded* is
+ * unambiguous evidence of exactly this interruption, and is captured once,
+ * up front, into `interruptedAtLoad` below -- a genuine one-time load-time
+ * scan, not a per-iteration `entry.status` check, so the entries this run
+ * itself transitions through `'uploading'` on the way to `'created'` are
+ * never mistaken for leftovers of a *previous* run.
+ *
+ * Reprocessing a row in that state blind would re-upload the file and
+ * create a second item -- a silent duplicate ~150 MB contribution in a
+ * collection with no moderation queue to catch it. Skipping it costs
+ * nothing worse than a re-run after the operator manually checks the
+ * collection. That asymmetry is why the default is to skip: guessing wrong
+ * in the "process it" direction is expensive and hard to undo; guessing
+ * wrong in the "skip it" direction is cheap. `opts.forceInterrupted` is the
+ * operator's explicit override once they've checked and confirmed it's
+ * safe to retry.
+ *
  * Guarded by a `<manifestPath>.lock` file for the duration of the run (see
  * lock.ts) so a concurrently-invoked `oeq_plan`/`oeq_retry_failed`/CLI
  * `retry` can detect a run in progress instead of silently clobbering its
@@ -155,15 +201,32 @@ export async function runManifest(
   await acquireLock(manifestPath);
   try {
     const manifest = await loadManifest(manifestPath);
-    const summary: RunSummary = { created: 0, failed: 0, skipped: 0, incomplete: 0 };
+    const summary: RunSummary = { created: 0, failed: 0, skipped: 0, incomplete: 0, interrupted: 0 };
     const total = manifest.entries.length;
     let done = 0;
+
+    // One-time scan, taken before any entry in *this* run is touched. See
+    // the "Interrupted-at-load handling" doc comment above.
+    const interruptedAtLoad = new Set(
+      manifest.entries.filter((e) => e.status === 'uploading'),
+    );
 
     for (const entry of manifest.entries) {
       done++;
 
       if (TERMINAL_STATUSES.has(entry.status)) {
         summary.skipped++;
+        reportProgress(opts, entry, done, total);
+        continue;
+      }
+
+      if (interruptedAtLoad.has(entry) && !opts.forceInterrupted) {
+        entry.error =
+          `${rowContext(entry)}: a previous run was interrupted while processing this row. ` +
+          `The item may or may not have been created. Check the collection for it before ` +
+          `retrying; use --force-interrupted to process it anyway.`;
+        await saveManifest(manifestPath, manifest);
+        summary.interrupted++;
         reportProgress(opts, entry, done, total);
         continue;
       }

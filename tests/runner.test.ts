@@ -50,6 +50,11 @@ describe('runManifest', () => {
     await saveManifest(path, manifest());
     const summary = await runManifest(client, path, { retryDelayMs: 1 });
     expect(summary.created).toBe(2);
+    // A normal run transitions every entry through 'uploading' in memory on
+    // its way to 'created'. That must never be mistaken for the interrupted
+    // -at-load case below -- the scan for leftover 'uploading' entries runs
+    // once, before this loop starts, not on every iteration.
+    expect(summary.interrupted).toBe(0);
     const done = await loadManifest(path);
     expect(done.entries.every((e) => e.status === 'created')).toBe(true);
     expect(done.entries[0]!.itemUuid).toMatch(/^item-/);
@@ -177,6 +182,48 @@ describe('runManifest', () => {
     });
     expect(summary.created).toBe(2);
   });
+
+  it('does not reprocess an entry found "uploading" at load time -- an interrupted prior run', async () => {
+    // A crash between createItem succeeding and the trailing saveManifest
+    // landing leaves an entry stuck at 'uploading' on disk, with the item
+    // possibly already created server-side. Reprocessing it blind would
+    // upload the file and create the item again -- a silent duplicate in a
+    // collection with no moderation queue to catch it. The runner must
+    // treat this as ambiguous and refuse to guess.
+    const path = join(dir, 'job.json');
+    const m = manifest();
+    m.entries[0]!.status = 'uploading';
+    await saveManifest(path, m);
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.interrupted).toBe(1);
+    expect(summary.created).toBe(1);
+    expect(summary.failed).toBe(0);
+    // Only entries[1] ('b.mp4') should have produced an item.
+    expect(mock.state.items).toHaveLength(1);
+    expect(mock.state.items[0]!.metadata).toContain('b.mp4');
+
+    const done = await loadManifest(path);
+    expect(done.entries[0]!.status).toBe('uploading');
+    expect(done.entries[0]!.error).toMatch(
+      /^Row 2 \(a\.mp4\): a previous run was interrupted while processing this row\./,
+    );
+    expect(done.entries[0]!.error).toMatch(/may or may not have been created/);
+    expect(done.entries[0]!.error).toMatch(/force-interrupted/);
+    expect(done.entries[1]!.status).toBe('created');
+  });
+
+  it('processes an interrupted entry when forceInterrupted is set, as an explicit operator override', async () => {
+    const path = join(dir, 'job.json');
+    const m = manifest();
+    m.entries[0]!.status = 'uploading';
+    await saveManifest(path, m);
+    const summary = await runManifest(client, path, { retryDelayMs: 1, forceInterrupted: true });
+    expect(summary.interrupted).toBe(0);
+    expect(summary.created).toBe(2);
+    const done = await loadManifest(path);
+    expect(done.entries[0]!.status).toBe('created');
+    expect(mock.state.items).toHaveLength(2);
+  });
 });
 
 describe('runManifest job lock', () => {
@@ -223,6 +270,26 @@ describe('runManifest job lock', () => {
     );
     const summary = await runManifest(client, path, { retryDelayMs: 1 });
     expect(summary.created).toBe(2);
+    expect(await checkLock(path)).toBeNull();
+  });
+
+  it('reclaims a malformed (corrupt) lock file rather than wedging the job', async () => {
+    const path = join(dir, 'job.json');
+    await saveManifest(path, manifest());
+    await writeFile(`${path}.lock`, '{not valid json!!', 'utf8');
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.created).toBe(2);
+    expect(await checkLock(path)).toBeNull();
+  });
+
+  it('releases the lock after a run with a mix of created and failed entries', async () => {
+    const path = join(dir, 'job.json');
+    const m = manifest();
+    m.entries[0]!.filePath = join(dir, 'does-not-exist.mp4');
+    await saveManifest(path, m);
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.created).toBe(1);
+    expect(summary.failed).toBe(1);
     expect(await checkLock(path)).toBeNull();
   });
 });
