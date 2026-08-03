@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { XMLParser } from 'fast-xml-parser';
 import { buildMetadataXml } from '../src/core/metadata.js';
+import { ValidationError } from '../src/core/errors.js';
 
 describe('buildMetadataXml', () => {
   it('nests a single xpath', () => {
@@ -109,5 +110,38 @@ describe('buildMetadataXml', () => {
         '</BYUI_extended>' +
         '</xml>',
     );
+  });
+
+  it('throws when a node has both a value and a longer path beneath it (value-first order)', () => {
+    expect(() =>
+      buildMetadataXml({ 'MWDL/creators': ['X'], 'MWDL/creators/creator': ['Y'] }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      buildMetadataXml({ 'MWDL/creators': ['X'], 'MWDL/creators/creator': ['Y'] }),
+    ).toThrow(
+      "Conflicting metadata paths: 'MWDL/creators' has a value but is also a parent of 'MWDL/creators/creator'",
+    );
+  });
+
+  it('throws when a node has both a value and a longer path beneath it (children-first order)', () => {
+    expect(() =>
+      buildMetadataXml({ 'MWDL/creators/creator': ['Y'], 'MWDL/creators': ['X'] }),
+    ).toThrow(ValidationError);
+  });
+
+  it('drops blank entries from a multi-value list rather than emitting an empty sibling tag', () => {
+    const xml = buildMetadataXml({ 'MWDL/creators/creator': ['Ann', '', 'Bob'] });
+    expect(xml).toBe(
+      '<xml><MWDL><creators><creator>Ann</creator><creator>Bob</creator></creators></MWDL></xml>',
+    );
+  });
+
+  it('emits a single self-closing tag when every value in a multi-value list is blank', () => {
+    const xml = buildMetadataXml({ 'MWDL/creators/creator': ['', ''] });
+    expect(xml).toBe('<xml><MWDL><creators><creator/></creators></MWDL></xml>');
+  });
+
+  it('still emits a self-closing tag for a lone blank value (single-value case unchanged)', () => {
+    expect(buildMetadataXml({ 'MWDL/abstract': [''] })).toBe('<xml><MWDL><abstract/></MWDL></xml>');
   });
 });
