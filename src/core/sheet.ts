@@ -51,12 +51,22 @@ async function readCsv(path: string): Promise<Sheet> {
   // skipEmptyLines is deliberately off: it drops blank lines before we ever
   // see them, which would silently shift every later row's number. We tag
   // rows with their true position ourselves and filter blanks afterward.
-  // relax_column_count tolerates the resulting short/ragged rows (e.g. a
-  // blank line parses to a single empty field).
-  const records = parse(text, {
-    skipEmptyLines: false,
-    relax_column_count: true,
-  }) as string[][];
+  // relax_column_count_less tolerates the resulting short rows (e.g. a blank
+  // line parses to a single empty field) without also relaxing the *more*
+  // side: a row with too many fields — e.g. an unquoted value containing a
+  // comma, the exact hazard this tool's own fixture exists to test — must
+  // still throw, or the extra field silently shifts every column after it
+  // into the wrong xpath.
+  let records: string[][];
+  try {
+    records = parse(text, {
+      skipEmptyLines: false,
+      relax_column_count_less: true,
+    }) as string[][];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new SheetError(`${path}: ${message}`);
+  }
   const headers = (records[0] ?? []).map((h) => h.trim());
   if (headers.length === 0) throw new SheetError(`${path} has no header row`);
   const raw: RawRow[] = records.slice(1).map((values, i) => ({ rowNumber: i + 2, values }));
@@ -112,6 +122,9 @@ function cellText(value: ExcelJS.CellValue, ref: string): string {
   }
   if ('text' in value) {
     return value.text;
+  }
+  if ('error' in value) {
+    throw new SheetError(`Cell ${ref} contains an error value (${value.error}); fix it before uploading.`);
   }
   throw new SheetError(`Cell ${ref} has an unsupported value shape: ${JSON.stringify(value)}`);
 }

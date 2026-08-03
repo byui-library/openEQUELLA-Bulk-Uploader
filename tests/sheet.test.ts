@@ -157,6 +157,38 @@ describe('readSheet (xlsx) — formula, rich-text, date, and error cells', () =>
     await expect(readSheet(path)).rejects.toThrow(SheetError);
     await expect(readSheet(path)).rejects.toThrow(/B2/);
   });
+
+  it('throws a SheetError naming the cell for a bare error value (not wrapped in a formula)', async () => {
+    const path = join(tmpDir, 'bare-error.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.getCell('A1').value = 'id';
+    ws.getCell('B1').value = 'broken';
+    ws.getCell('A2').value = 'row1';
+    ws.getCell('B2').value = { error: '#REF!' };
+    await wb.xlsx.writeFile(path);
+
+    await expect(readSheet(path)).rejects.toThrow(SheetError);
+    await expect(readSheet(path)).rejects.toThrow(/B2/);
+  });
+});
+
+describe('readSheet (csv) — malformed rows', () => {
+  it('rejects a data row with more fields than the header row', async () => {
+    // The exact hazard this repo's own fixture exists to test: an unquoted
+    // value containing a comma (e.g. "Birch ,Rowan") splits into extra
+    // fields. If that's silently tolerated, the extra field shifts every
+    // later column — landing metadata in the wrong xpath with no error.
+    const tmpDir = await mkdtemp(join(tmpdir(), 'oeq-sheet-toolong-'));
+    try {
+      const path = join(tmpDir, 'too-long-row.csv');
+      await writeFile(path, 'a,b\nx,y,z\n', 'utf8');
+      await expect(readSheet(path)).rejects.toThrow(SheetError);
+      await expect(readSheet(path)).rejects.toThrow(/record length/i);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('readSheet — interior blank rows keep their true row numbers', () => {
