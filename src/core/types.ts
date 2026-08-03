@@ -32,9 +32,12 @@ export interface ManifestEntry {
   status: RowStatus;
   /** Populated once openEQUELLA returns it. The authoritative identity. */
   itemUuid?: string;
+  /** openEQUELLA items are versioned; this is the version this row created. */
   itemVersion?: number;
+  /** uuid of this row's single attachment, written back into ATTACHMENT_UUID_XPATH. */
   attachmentUuid?: string;
   error?: string;
+  /** Cumulative attempts across all resumed runs; retry resets status, not this. */
   attempts: number;
 }
 
