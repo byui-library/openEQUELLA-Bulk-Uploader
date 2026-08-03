@@ -5,42 +5,115 @@ import ExcelJS from 'exceljs';
 import type { Row, Sheet } from './types.js';
 import { SheetError } from './errors.js';
 
-/** Build a Sheet from a header array and an array of raw string rows. */
-function toSheet(headers: string[], raw: string[][]): Sheet {
-  const rows: Row[] = raw.map((values, i) => {
+/** A row of raw cell text, tagged with its true 1-based position in the source spreadsheet. */
+interface RawRow {
+  rowNumber: number;
+  values: string[];
+}
+
+/** Throw if any header appears more than once — silently colliding into one column would lose data. */
+function assertNoDuplicateHeaders(headers: string[]): void {
+  const columnsByHeader = new Map<string, number[]>();
+  headers.forEach((h, i) => {
+    const cols = columnsByHeader.get(h) ?? [];
+    cols.push(i + 1);
+    columnsByHeader.set(h, cols);
+  });
+  const duplicates = [...columnsByHeader.entries()].filter(([, cols]) => cols.length > 1);
+  if (duplicates.length > 0) {
+    const desc = duplicates
+      .map(([h, cols]) => `'${h}' (columns ${cols.join(', ')})`)
+      .join('; ');
+    throw new SheetError(`Duplicate column headers: ${desc}`);
+  }
+}
+
+/** Build a Sheet from a header array and raw rows, each already carrying its true source row number. */
+function toSheet(headers: string[], raw: RawRow[]): Sheet {
+  assertNoDuplicateHeaders(headers);
+  const rows: Row[] = raw.map(({ rowNumber, values }) => {
     const cells: Record<string, string> = {};
     headers.forEach((h, col) => {
       cells[h] = (values[col] ?? '').trim();
     });
-    return { rowNumber: i + 2, cells };
+    return { rowNumber, cells };
   });
   return { headers, rows };
 }
 
-/** Drop trailing rows where every cell is blank — spreadsheets accumulate these. */
-function dropEmptyRows(raw: string[][]): string[][] {
-  return raw.filter((r) => r.some((c) => (c ?? '').trim() !== ''));
+/** Drop rows where every cell is blank — spreadsheets accumulate these — while preserving surviving rows' true row numbers. */
+function dropEmptyRows(raw: RawRow[]): RawRow[] {
+  return raw.filter(({ values }) => values.some((c) => (c ?? '').trim() !== ''));
 }
 
 async function readCsv(path: string): Promise<Sheet> {
   const text = await readFile(path, 'utf8');
-  const records = parse(text, { skipEmptyLines: true }) as string[][];
+  // skipEmptyLines is deliberately off: it drops blank lines before we ever
+  // see them, which would silently shift every later row's number. We tag
+  // rows with their true position ourselves and filter blanks afterward.
+  // relax_column_count tolerates the resulting short/ragged rows (e.g. a
+  // blank line parses to a single empty field).
+  const records = parse(text, {
+    skipEmptyLines: false,
+    relax_column_count: true,
+  }) as string[][];
   const headers = (records[0] ?? []).map((h) => h.trim());
   if (headers.length === 0) throw new SheetError(`${path} has no header row`);
-  return toSheet(headers, dropEmptyRows(records.slice(1)));
+  const raw: RawRow[] = records.slice(1).map((values, i) => ({ rowNumber: i + 2, values }));
+  return toSheet(headers, dropEmptyRows(raw));
+}
+
+/** Excel column index (1-based) to letters, e.g. 1 -> 'A', 28 -> 'AB'. */
+function columnLetters(col: number): string {
+  let n = col;
+  let letters = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
+function cellRef(rowNumber: number, col: number): string {
+  return `${columnLetters(col)}${rowNumber}`;
 }
 
 /**
- * Render an ExcelJS cell value as plain text. Cells are usually a
- * string/number/Date, but rich-text and hyperlink cells come back as
- * objects; hyperlink cells carry their display text on `.text`.
+ * Render an ExcelJS cell value as plain text.
+ *
+ * Cells are usually a string/number/boolean, but ExcelJS returns objects for
+ * several shapes real workbooks use: formula cells come back as
+ * `{ formula, result }` (or `{ sharedFormula, result }`), rich-text cells as
+ * `{ richText: [...] }`, hyperlinks as `{ text, hyperlink }`, and dates as a
+ * genuine `Date`. A naive `String(value)` turns the object shapes into
+ * `"[object Object]"` — silently corrupting every formula-driven column,
+ * which is exactly how production spreadsheets author `attachment name` and
+ * `MWDL/title` (e.g. `=CONCATENATE(...)`).
+ *
+ * `ref` is an Excel-style cell reference (e.g. "C2") used only for error
+ * messages, so a user can find the offending cell.
  */
-function cellText(value: ExcelJS.CellValue): string {
+function cellText(value: ExcelJS.CellValue, ref: string): string {
   if (value == null) return '';
-  if (typeof value === 'object' && 'text' in value) {
+  if (typeof value !== 'object') return String(value);
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if ('result' in value) {
+    const result = value.result;
+    if (result != null && typeof result === 'object' && 'error' in result) {
+      throw new SheetError(
+        `Cell ${ref} contains a formula error (${result.error}); fix the formula before uploading.`,
+      );
+    }
+    return cellText(result, ref);
+  }
+  if ('richText' in value) {
+    return value.richText.map((r) => r.text).join('');
+  }
+  if ('text' in value) {
     return value.text;
   }
-  return String(value);
+  throw new SheetError(`Cell ${ref} has an unsupported value shape: ${JSON.stringify(value)}`);
 }
 
 async function readXlsx(path: string): Promise<Sheet> {
@@ -49,20 +122,27 @@ async function readXlsx(path: string): Promise<Sheet> {
   const ws = wb.worksheets[0];
   if (!ws) throw new SheetError(`${path} contains no worksheets`);
 
-  const raw: string[][] = [];
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    const values: string[] = [];
+  const raw: RawRow[] = [];
+  let headers: string[] = [];
+  ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
     // ExcelJS row.values is 1-indexed with a leading hole at index 0.
     const cells = row.values as ExcelJS.CellValue[];
+    const values: string[] = [];
     for (let i = 1; i < cells.length; i++) {
-      values.push(cellText(cells[i]));
+      values.push(cellText(cells[i], cellRef(rowNumber, i)));
     }
-    raw.push(values);
+    if (rowNumber === 1) {
+      headers = values.map((h) => h.trim());
+    } else {
+      // Use the row's true position from eachRow, not its index in this
+      // array — eachRow silently omits untouched rows, so array position
+      // alone would compact away any gap and mislabel every later row.
+      raw.push({ rowNumber, values });
+    }
   });
 
-  const headers = (raw[0] ?? []).map((h) => h.trim());
   if (headers.length === 0) throw new SheetError(`${path} has no header row`);
-  return toSheet(headers, dropEmptyRows(raw.slice(1)));
+  return toSheet(headers, dropEmptyRows(raw));
 }
 
 export async function readSheet(path: string): Promise<Sheet> {

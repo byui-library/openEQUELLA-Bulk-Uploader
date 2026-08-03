@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
@@ -106,5 +106,111 @@ describe('readSheet (unsupported)', () => {
   it('rejects unsupported extensions with a SheetError naming the extension', async () => {
     await expect(readSheet('notes.txt')).rejects.toThrow(SheetError);
     await expect(readSheet('notes.txt')).rejects.toThrow(/unsupported.*\.txt/i);
+  });
+});
+
+describe('readSheet (xlsx) — formula, rich-text, date, and error cells', () => {
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'oeq-sheet-cells-'));
+  });
+
+  afterAll(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('resolves formula results (string and number), rich text, and dates to plain text', async () => {
+    // Mirrors real production shapes: ExcelJS returns { formula, result } for
+    // formula cells and { richText: [...] } for rich-text cells, not plain
+    // strings. A naive String(value) turns both into "[object Object]".
+    const path = join(tmpDir, 'formula-values.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.getCell('A1').value = 'strFormula';
+    ws.getCell('B1').value = 'numFormula';
+    ws.getCell('C1').value = 'richText';
+    ws.getCell('D1').value = 'dateCell';
+    ws.getCell('A2').value = { formula: 'A2', result: 'Arnett, Erin 072126.MP4' };
+    ws.getCell('B2').value = { formula: 'SUM(1,2)', result: 42 };
+    ws.getCell('C2').value = { richText: [{ text: 'Hello ' }, { text: 'World' }] };
+    ws.getCell('D2').value = new Date('2026-01-15T00:00:00.000Z');
+    await wb.xlsx.writeFile(path);
+
+    const sheet = await readSheet(path);
+    expect(sheet.rows[0]!.cells['strFormula']).toBe('Arnett, Erin 072126.MP4');
+    expect(sheet.rows[0]!.cells['numFormula']).toBe('42');
+    expect(sheet.rows[0]!.cells['richText']).toBe('Hello World');
+    expect(sheet.rows[0]!.cells['dateCell']).toBe('2026-01-15');
+  });
+
+  it('throws a SheetError naming the cell when a formula evaluates to an Excel error', async () => {
+    const path = join(tmpDir, 'formula-error.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.getCell('A1').value = 'id';
+    ws.getCell('B1').value = 'broken';
+    ws.getCell('A2').value = 'row1';
+    ws.getCell('B2').value = { formula: 'A1/0', result: { error: '#DIV/0!' } };
+    await wb.xlsx.writeFile(path);
+
+    await expect(readSheet(path)).rejects.toThrow(SheetError);
+    await expect(readSheet(path)).rejects.toThrow(/B2/);
+  });
+});
+
+describe('readSheet — interior blank rows keep their true row numbers', () => {
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'oeq-sheet-blankrow-'));
+  });
+
+  afterAll(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('csv: a blank interior line does not shift later row numbers', async () => {
+    const path = join(tmpDir, 'blank-interior.csv');
+    await writeFile(path, 'h1,h2\nr2a,r2b\n\nr4a,r4b\n', 'utf8');
+
+    const sheet = await readSheet(path);
+    expect(sheet.rows).toHaveLength(2);
+    expect(sheet.rows[0]!.rowNumber).toBe(2);
+    expect(sheet.rows[0]!.cells['h1']).toBe('r2a');
+    expect(sheet.rows[1]!.rowNumber).toBe(4);
+    expect(sheet.rows[1]!.cells['h1']).toBe('r4a');
+  });
+
+  it('xlsx: an untouched interior row does not shift later row numbers', async () => {
+    const path = join(tmpDir, 'blank-interior.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.getRow(1).values = ['h1', 'h2'];
+    ws.getRow(2).values = ['r2a', 'r2b'];
+    // row 3 is intentionally left completely untouched — no cell ever written.
+    ws.getRow(4).values = ['r4a', 'r4b'];
+    await wb.xlsx.writeFile(path);
+
+    const sheet = await readSheet(path);
+    expect(sheet.rows).toHaveLength(2);
+    expect(sheet.rows[0]!.rowNumber).toBe(2);
+    expect(sheet.rows[0]!.cells['h1']).toBe('r2a');
+    expect(sheet.rows[1]!.rowNumber).toBe(4);
+    expect(sheet.rows[1]!.cells['h1']).toBe('r4a');
+  });
+});
+
+describe('readSheet — duplicate column headers', () => {
+  it('csv: throws a SheetError listing the duplicated header and its column positions', async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), 'oeq-sheet-dupe-'));
+    try {
+      const path = join(tmpDir, 'dupe-headers.csv');
+      await writeFile(path, 'a,b,a\nv1,v2,v3\n', 'utf8');
+      await expect(readSheet(path)).rejects.toThrow(SheetError);
+      await expect(readSheet(path)).rejects.toThrow(/'a'.*columns 1, 3/);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });
