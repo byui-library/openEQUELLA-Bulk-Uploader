@@ -7,15 +7,20 @@ import { ValidationError } from './errors.js';
  * schema has ~200 elements, each contributing several such entities, which
  * blows past fast-xml-parser's default entity-expansion guard (1000 total
  * expansions, meant to defend against billion-laughs-style attacks on
- * untrusted input). This file is trusted — it's a schema the caller exported
- * from their own openEQUELLA instance — so both limits are disabled.
+ * untrusted input). The real _entity.xml in this repo needs 1192. These
+ * bounds are raised, not removed: 20,000 expansions is >16x that observed
+ * figure (headroom for schema growth, including a future live fetch from the
+ * API rather than a local file), and 10 MB is >1000x the real definition's
+ * 7.8 KB. A schema that blows past either bound is not a case of "the schema
+ * grew a bit" — it's almost certainly a decompression-bomb-shaped input, and
+ * the guard should still fire.
  */
 const parserOptions = {
   ignoreAttributes: true,
   processEntities: {
     processEntities: true,
-    maxTotalExpansions: Infinity,
-    maxExpandedLength: Infinity,
+    maxTotalExpansions: 20_000,
+    maxExpandedLength: 10_000_000,
   },
 } as const;
 
@@ -35,10 +40,21 @@ export function extractDefinition(entityXml: string): string {
 }
 
 /**
- * Walk the definition tree and collect every element path below the <xml>
- * root, including intermediate container paths (e.g. 'MWDL/creators' as well
- * as 'MWDL/creators/creator') — a container element's own path is a legal
- * xpath in openEQUELLA even when only its children carry `field="true"`.
+ * Walk the definition tree and collect every *leaf* element path below the
+ * <xml> root — the paths that actually hold a value. A container element
+ * (e.g. 'MWDL/creators', wrapping one-or-more <creator> children) is not
+ * itself a valid xpath: writing metadata there would produce
+ * <creators>value</creators> instead of the schema-required
+ * <creators><creator>value</creator></creators>. With `ignoreAttributes:
+ * true`, a node is a leaf iff its parsed value is not an object — a
+ * self-closing or text-only tag comes back as a string (possibly '').
+ *
+ * One accepted edge case: a tag that has both a `type="text"` attribute AND
+ * a child element (e.g. this schema's `item/oai`) is genuinely ambiguous —
+ * ignoring attributes means it parses as an object and is treated as a
+ * container, so it is excluded. That fails loud (via a "not a valid xpath"
+ * suggestion) rather than silently accepting metadata that may not land
+ * where intended. No real batch header touches the `item/` subtree.
  */
 export function parseSchemaPaths(definitionXml: string): Set<string> {
   const parser = new XMLParser(parserOptions);
@@ -46,17 +62,23 @@ export function parseSchemaPaths(definitionXml: string): Set<string> {
   const root = doc['xml'];
   const out = new Set<string>();
 
+  const isLeaf = (value: unknown): boolean => value === null || typeof value !== 'object';
+
   const walk = (node: unknown, prefix: string): void => {
     if (node === null || typeof node !== 'object') return;
     for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
       const path = prefix ? `${prefix}/${key}` : key;
-      out.add(path);
       // A repeated sibling tag (e.g. two <d/> under the same parent) comes
-      // back from fast-xml-parser as an array; everything else — including a
-      // leaf with no children, which parses to '' — is handled by the base
-      // case at the top of walk.
+      // back from fast-xml-parser as an array; each occurrence is checked
+      // independently since one instance being a leaf doesn't guarantee
+      // another is.
       if (Array.isArray(value)) {
-        for (const v of value) walk(v, path);
+        for (const v of value) {
+          if (isLeaf(v)) out.add(path);
+          else walk(v, path);
+        }
+      } else if (isLeaf(value)) {
+        out.add(path);
       } else {
         walk(value, path);
       }
@@ -99,52 +121,57 @@ function lastSegment(path: string): string {
 }
 
 /**
- * Plausibility cutoffs for normalizedDistance, chosen so that garbage input
- * (e.g. a header that isn't even schema-shaped) returns no suggestions
- * rather than the three least-bad matches, while a real typo still surfaces
- * its intended target.
- *
- * A header whose final path segment matches a candidate's final segment
- * case-insensitively (TAIL_MATCH_THRESHOLD) gets a much looser bound: the
- * final segment is almost always the field name itself (e.g. 'creator',
- * 'title'), so an exact hit there is strong, near-decisive evidence of
- * intent even if the rest of the path is wrong — e.g. 'MWDL/creator' means
- * 'MWDL/creators/creator', not the more edit-distance-similar but semantically
- * unrelated container path 'MWDL/creators'. Without a header that plausible,
- * only near-identical full paths (DEFAULT_THRESHOLD) count — this is what
- * catches pure case/typo mistakes like 'MWDL/Title' -> 'MWDL/title'.
+ * Plausibility cutoff for the (possibly discounted, see TAIL_BONUS below)
+ * normalizedDistance score, chosen so that garbage input (e.g. a header
+ * that isn't even schema-shaped) returns no suggestions rather than the
+ * three least-bad matches, while a real typo still surfaces its intended
+ * target.
  */
-const TAIL_MATCH_THRESHOLD = 0.6;
-const DEFAULT_THRESHOLD = 0.35;
+const PLAUSIBLE_THRESHOLD = 0.35;
+
+/**
+ * Bounded discount applied to a candidate's score when its final path
+ * segment matches the header's final segment case-insensitively. The final
+ * segment is almost always the field name itself (e.g. 'creator', 'title'),
+ * so an exact hit there is good evidence of intent even when the rest of
+ * the path is wrong — e.g. 'MWDL/creator' should suggest
+ * 'MWDL/creators/creator', not a closer-by-raw-distance but semantically
+ * unrelated path.
+ *
+ * This must be a *bounded* discount, not a rank override: an earlier version
+ * let any tail match unconditionally outrank any non-match, which meant a
+ * badly-off candidate (edit distance 9) beat the actually-correct one (edit
+ * distance 1) whenever both happened to share a final segment with the
+ * input — e.g. 'MWDL/creators/creators' (a doubled-plural typo) wrongly
+ * topped out at a same-tailed container instead of the one-letter-away
+ * correct field. Subtracting a small, fixed amount instead means a tail
+ * match can only close a moderate gap — it can never let a much worse edit
+ * distance win outright.
+ */
+const TAIL_BONUS = 0.15;
+
+/** Similarity score used to rank a candidate: lower is better. */
+function score(headerLower: string, pathLower: string): number {
+  const base = normalizedDistance(headerLower, pathLower);
+  const tailMatches = lastSegment(headerLower) === lastSegment(pathLower);
+  return tailMatches ? Math.max(0, base - TAIL_BONUS) : base;
+}
 
 /**
  * Rank schema paths by similarity to `header`, closest first, capped at
- * `limit`. Returns [] when nothing is plausibly close — see the threshold
- * comments above.
+ * `limit`. Returns [] when nothing is plausibly close — see
+ * PLAUSIBLE_THRESHOLD above.
  */
 export function suggest(header: string, paths: Set<string>, limit = 3): string[] {
   const headerLower = header.toLowerCase();
-  const headerTail = lastSegment(headerLower);
 
-  const scored = [...paths].map((path) => {
-    const pathLower = path.toLowerCase();
-    const tailMatches = lastSegment(pathLower) === headerTail;
-    const score = normalizedDistance(headerLower, pathLower);
-    return { path, tailMatches, score };
-  });
+  const scored = [...paths]
+    .map((path) => ({ path, score: score(headerLower, path.toLowerCase()) }))
+    .filter(({ score }) => score <= PLAUSIBLE_THRESHOLD);
 
-  const plausible = scored.filter(({ tailMatches, score }) =>
-    tailMatches ? score <= TAIL_MATCH_THRESHOLD : score <= DEFAULT_THRESHOLD,
-  );
+  scored.sort((x, y) => x.score - y.score);
 
-  // Tail-matching candidates always outrank non-tail-matching ones,
-  // regardless of raw distance; within each group, closer wins.
-  plausible.sort((x, y) => {
-    if (x.tailMatches !== y.tailMatches) return x.tailMatches ? -1 : 1;
-    return x.score - y.score;
-  });
-
-  return plausible.slice(0, limit).map((s) => s.path);
+  return scored.slice(0, limit).map((s) => s.path);
 }
 
 export interface InvalidHeader {

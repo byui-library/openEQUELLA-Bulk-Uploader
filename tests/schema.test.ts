@@ -14,6 +14,15 @@ describe('parseSchemaPaths', () => {
     expect(paths.has('xml')).toBe(false);
   });
 
+  it('excludes container elements — only leaf (field) paths are valid xpaths', () => {
+    // A container like <creators><creator/></creators> has no field of its
+    // own; writing metadata to 'MWDL/creators' would produce
+    // <creators>value</creators> instead of the required
+    // <creators><creator>value</creator></creators>. Only the leaf is valid.
+    expect(paths.has('MWDL/creators')).toBe(false);
+    expect(paths.has('BYUI_extended/attachments')).toBe(false);
+  });
+
   it('finds every header used by the real spring 2026 batch', () => {
     for (const h of [
       'MWDL/identifier',
@@ -32,8 +41,15 @@ describe('parseSchemaPaths', () => {
 
   it('finds an exact expected path set from a small hand-written definition, independent of the real schema file', () => {
     // Pins parseSchemaPaths' walking behaviour (attributes, arrays, deep
-    // nesting, root exclusion) against a minimal fixture, so a change to the
-    // real _entity.xml can never mask a regression in the walker itself.
+    // nesting, root exclusion, leaf-only filtering) against a minimal
+    // fixture, so a change to the real _entity.xml can never mask a
+    // regression in the walker itself.
+    //
+    // Only leaves are valid xpaths: 'A', 'A/c', 'E', 'E/F', 'E/F/G' are all
+    // containers (their parsed value is an object, not text), so writing
+    // metadata to them would land outside the actual field element. This
+    // deliberately updates prior test expectations that asserted containers
+    // belonged in the set — that was the bug, not the intended contract.
     const def =
       '<xml>' +
       '<A>' +
@@ -43,9 +59,7 @@ describe('parseSchemaPaths', () => {
       '<E><F><G><h type="text"/></G></F></E>' +
       '</xml>';
     const result = parseSchemaPaths(def);
-    expect(result).toEqual(
-      new Set(['A', 'A/b', 'A/c', 'A/c/d', 'E', 'E/F', 'E/F/G', 'E/F/G/h']),
-    );
+    expect(result).toEqual(new Set(['A/b', 'A/c/d', 'E/F/G/h']));
   });
 
   it('finds a substantial number of paths in the real schema (loose lower bound guards against a silent parser regression)', () => {
@@ -88,5 +102,31 @@ describe('suggest', () => {
 
   it('returns nothing for input with no plausible match', () => {
     expect(suggest('zzzzzzzzzzzzzzzz', paths)).toEqual([]);
+  });
+
+  it('does not let a tail-segment match override a much better full-path edit distance', () => {
+    // Regression for a real bug: the old scoring treated an exact final-
+    // segment match as an unconditional win over every non-matching
+    // candidate, so 'MWDL/creators/creators' (a doubled-plural typo, edit
+    // distance 1 from the correct answer) surfaced 'MWDL/creators' (edit
+    // distance 9) first, purely because both end in a tail matching the
+    // input's own second-to-last segment. The tail bonus must be a bounded
+    // discount, not a hard override.
+    expect(suggest('MWDL/creators/creators', paths)[0]).toBe('MWDL/creators/creator');
+  });
+
+  it.each([
+    ['MWDL/titel', 'MWDL/title'],
+    ['MWDL/descriptions', 'MWDL/description'],
+    ['BYUI_extended/byui_rights/restrictions', 'BYUI_extended/byui_rights/restriction'],
+    ['mwdl/title', 'MWDL/title'],
+    ['MWDL/creators/creators', 'MWDL/creators/creator'],
+    ['MWDL/creator', 'MWDL/creators/creator'],
+  ])('suggest(%s) ranks %s first', (input, expected) => {
+    expect(suggest(input, paths)[0]).toBe(expected);
+  });
+
+  it('returns nothing for a schema-shaped but nonexistent field (no false positive)', () => {
+    expect(suggest('MWDL/performer', paths)).toEqual([]);
   });
 });
