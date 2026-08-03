@@ -1,45 +1,73 @@
 /**
  * openEQUELLA REST client.
  *
- * ============================ UNVERIFIED CONTRACT ============================
- * We have not been able to fetch `schema/swagger.json` from the live instance
- * (blocked on a `VIEW_APIDOCS` privilege we could not confirm we hold — see
- * CLAUDE.md, "Working notes"). Every endpoint path, payload field name, and
- * status code below is therefore an ASSUMPTION, carried over from
- * openEQUELLA's general REST API rather than confirmed against
- * `content.byui.edu`. Specifically, this file assumes:
+ * ============================ WIRE-FORMAT STATUS ============================
+ * `schema/swagger.json` (Swagger 2.0, basePath `/api`, ~443KB) has since
+ * arrived from the live instance. Below, CONFIRMED means checked directly
+ * against that file; UNVERIFIED means still an assumption swagger.json does
+ * not settle (it documents the declared contract, not a captured live
+ * response — the two can still disagree).
  *
- *   - POST   /oauth/access_token           issues a token consumed as
- *            `X-Authorization: access_token=...` (see auth.ts).
- *   - POST   /api/staging                  -> 201 { uuid } for a new staging area.
- *   - PUT    /api/staging/:uuid/:filename  accepts a raw file body, no wrapper JSON.
- *   - DELETE /api/staging/:uuid            discards a staging area.
- *   - POST   /api/item?draft=<bool>        body:
- *              { collection: { uuid }, metadata, stagingUuid,
- *                attachments: [{ type: "file", filename, description, uuid? }] }
- *            -> 201 { uuid, version, attachments: [{ uuid }] }.
- *            Assumed: `draft` query param (not a body field) toggles
- *            draft vs. published; a client-supplied attachment `uuid` is
- *            honoured rather than always server-generated.
- *            DANGER — assumed FAIL-OPEN TOWARD PUBLISHED: the assumed check
- *            is `draft === 'true'` (exact string match), so a missing,
- *            empty, malformed, or otherwise-not-literally-'true' value is
- *            assumed to mean PUBLISHED, not draft. There is no server-side
- *            safety net for this collection. `createItem` below therefore
- *            runtime-checks `req.draft` is a genuine boolean and refuses to
- *            send the request otherwise — verify this assumption FIRST
- *            against swagger.json before ever relaxing that guard.
- *   - GET    /api/search?collections=&q=&length= -> 200 { available, results }.
- *            Assumed: `q` performs *some* text match; whether it is an exact
- *            phrase match or a free-text/OR-of-terms match is UNVERIFIED
- *            (see the caveat on identifierExists() below).
+ * CONFIRMED against swagger.json:
+ *   - POST /item takes `file` (the staging area id) and `draft` as QUERY
+ *     PARAMS, not body fields. `ItemBean` (the documented body schema) has
+ *     no staging/stagingUuid property at all — a server that followed this
+ *     spec would have silently ignored a body-embedded `stagingUuid`,
+ *     creating an item whose attachment points at a staging area the
+ *     request never actually told the server about. Fixed here; see
+ *     createItem() below.
+ *   - `draft`'s documented default is `false` — omitting it means
+ *     PUBLISHED. This confirms the runtime guard in createItem() (added
+ *     defensively before swagger.json was available) was the right call,
+ *     not overcaution.
+ *   - GET /search has a `showall` query param (default `false`) described
+ *     as "If true then includes items that are not live". Items here are
+ *     created as drafts by default, i.e. not live — without `showall=true`,
+ *     identifierExists() would never see the very items it exists to find,
+ *     and a re-run would report "no duplicates" and recreate all of them.
+ *     Fixed here; see identifierExists() below.
+ *   - POST /item's only documented response is `default: successful
+ *     operation` with NO response schema — the body shape is genuinely
+ *     unspecified by the spec, not just uncaptured. openEQUELLA commonly
+ *     returns 201 Created with an empty body and a `Location:
+ *     /item/{uuid}/{version}` header in that situation. createItem() below
+ *     now tolerates both a JSON body and a Location-only response rather
+ *     than assuming either — treating an empty body as a parse failure
+ *     would misreport a genuinely-created item as failed and cause a retry
+ *     to create a duplicate.
+ *   - `AttachmentBean` does have a `uuid` property, supporting the
+ *     client-supplied attachment uuid this client relies on (see
+ *     `AttachmentSpec.uuid`).
  *
- * `tests/helpers/mockServer.ts` encodes this exact same assumed contract.
- * When `schema/swagger.json` is finally captured (or the live API responds
- * differently in practice), THIS FILE and mockServer.ts are the only two
- * files that should need to change to reconcile the difference — every other
- * module (upload orchestration, the runner, the CLI) depends only on this
- * client's TypeScript interface, never on the wire format directly.
+ * STILL UNVERIFIED (swagger.json does not settle these):
+ *   - `AttachmentBean`'s documented properties are `uuid, description,
+ *     viewer, preview, erroredIndexing, restricted, externalId` — no
+ *     `filename` or `type`. The spec does not model openEQUELLA's
+ *     polymorphic attachment subtypes (file/url/etc.), so this client's
+ *     `{ type: "file", filename, description, uuid? }` payload shape
+ *     remains a guess. This is the next thing a live smoke test must check.
+ *   - Whether `q` on /search performs an exact-phrase or free-text match
+ *     (see the caveat on identifierExists() below) — swagger.json documents
+ *     `q` only as "Query string", with no matching semantics specified.
+ *   - POST /oauth/access_token — not an `/api`-basePath endpoint, so it is
+ *     outside this swagger document entirely; still exactly as unverified
+ *     as before (see auth.ts).
+ *   - The staging-area endpoints this client assumes — POST /staging, PUT
+ *     /staging/:uuid/:filename, DELETE /staging/:uuid — are NOT covered by
+ *     this swagger.json review either: there is no "/staging" path in it at
+ *     all. The document's only file-related paths are under
+ *     `/file/{uuid}/...` (e.g. `/file/{uuid}/content/{filepath}`), which is
+ *     a materially different shape than what's implemented below. This is
+ *     a bigger discrepancy than a field name and needs its own dedicated
+ *     verification pass — flagged, not fixed, in this change — before
+ *     Task 9's upload path (upload.ts) should be trusted against the live
+ *     server.
+ *
+ * `tests/helpers/mockServer.ts` encodes this exact same contract. When the
+ * next discrepancy turns up, THIS FILE and mockServer.ts are the only two
+ * files that should need to change to reconcile it — every other module
+ * (upload orchestration, the runner, the CLI) depends only on this client's
+ * TypeScript interface, never on the wire format directly.
  * ===============================================================================
  */
 import type { AuthProvider } from './auth.js';
@@ -213,13 +241,16 @@ export class OeqClient {
           `collection has no moderation workflow to catch the mistake.`,
       );
     }
-    const res = await this.request(`/api/item?draft=${String(req.draft)}`, {
+    // `file` (the staging area id) and `draft` are QUERY params per
+    // swagger.json's `ItemBean` -- it has no staging/stagingUuid property,
+    // so this must NOT be sent in the body (see header comment).
+    const query = `draft=${String(req.draft)}&file=${encodeURIComponent(req.stagingUuid)}`;
+    const res = await this.request(`/api/item?${query}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         collection: { uuid: req.collectionUuid },
         metadata: req.metadata,
-        stagingUuid: req.stagingUuid,
         attachments: req.attachments.map((a) => ({
           type: 'file',
           filename: a.filename,
@@ -228,38 +259,91 @@ export class OeqClient {
         })),
       }),
     });
-    const body = (await res.json()) as {
-      uuid: string;
-      version: number;
-      attachments?: { uuid: string }[];
-    };
-    return {
-      uuid: body.uuid,
-      version: body.version,
-      attachmentUuids: (body.attachments ?? []).map((a) => a.uuid),
-    };
+    return this.parseCreateItemResponse(res);
+  }
+
+  /**
+   * POST /item's only documented response is "successful operation" with no
+   * schema (see header comment) -- the body shape is genuinely unspecified.
+   * Tries a JSON body first, then falls back to openEQUELLA's common
+   * `Location: /item/{uuid}/{version}` header on an empty/unparseable body.
+   * If neither yields a uuid, this throws rather than silently treating an
+   * ambiguous 2xx as a failure: the item may well already exist on the
+   * server at that point, and a caller-level retry (Task 10's runner) would
+   * create a duplicate rather than fix anything. Reusing `res.status` (a
+   * 2xx here, since `request()` already rejected non-ok responses) keeps
+   * `ApiError.retryable` false for this case without special-casing it.
+   */
+  private async parseCreateItemResponse(res: Response): Promise<CreateItemResult> {
+    const text = await res.text();
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as {
+          uuid?: string;
+          version?: number;
+          attachments?: { uuid: string }[];
+        };
+        if (parsed.uuid) {
+          return {
+            uuid: parsed.uuid,
+            version: parsed.version ?? 1,
+            attachmentUuids: (parsed.attachments ?? []).map((a) => a.uuid),
+          };
+        }
+      } catch {
+        // Not JSON -- fall through to the Location-header path below.
+      }
+    }
+
+    const location = res.headers.get('location');
+    const match = location ? /\/item\/([^/]+)\/(\d+)/.exec(location) : null;
+    if (match) {
+      const [, uuid, version] = match;
+      // No attachment uuids are recoverable from a Location-only response.
+      // upload.ts's uuid-echo check treats an empty array as "nothing to
+      // compare against" and trusts the uuid we supplied -- see that
+      // module's comment on `processEntry`.
+      return { uuid: uuid!, version: Number(version), attachmentUuids: [] };
+    }
+
+    throw new ApiError(
+      `createItem: server returned ${res.status} but no item uuid could be recovered ` +
+        `from the response body or a Location header. The item may already have been ` +
+        `created on the server -- check the collection manually before retrying this row.`,
+      res.status,
+      text,
+    );
   }
 
   /**
    * Advisory only — a hit is a question for the operator, never a silent
    * skip.
    *
-   * LIMITATION (unverified wire format, see header): this sends the
+   * `showall=true` is required (CONFIRMED against swagger.json, see header
+   * comment): /search's default excludes items that are not live, and
+   * items created by this tool default to draft. Without it, every search
+   * here would silently exclude the very rows most likely to be recent
+   * duplicates -- the ones from this tool's own earlier, not-yet-published
+   * runs -- and a re-run would report "no duplicates" and recreate them.
+   *
+   * LIMITATION (still unverified wire format, see header): this sends the
    * identifier as a quoted phrase (`"..."`) hoping the server treats it as an
    * exact-phrase match, but whether `/api/search`'s `q` parameter actually
    * honours phrase quoting or instead does free-text/OR-of-terms matching is
-   * UNCONFIRMED. If it's the latter, a search for `"Arnett, Erin
-   * 072126.MP4"` could match unrelated items that merely share a word (e.g.
-   * another "Erin" or another ".MP4" filename token), producing a false
-   * positive. That is an acceptable failure mode ONLY because the result is
-   * advisory and reviewed by a human, never used to auto-skip a row; a false
-   * negative (missing a real duplicate) is a bigger concern than a false
-   * positive here, and neither is fatal since a human sees it either way.
+   * UNCONFIRMED -- swagger.json documents `q` only as "Query string", with
+   * no matching semantics specified. If it's the latter, a search for
+   * `"Arnett, Erin 072126.MP4"` could match unrelated items that merely
+   * share a word (e.g. another "Erin" or another ".MP4" filename token),
+   * producing a false positive. That is an acceptable failure mode ONLY
+   * because the result is advisory and reviewed by a human, never used to
+   * auto-skip a row; a false negative (missing a real duplicate) is a
+   * bigger concern than a false positive here, and neither is fatal since a
+   * human sees it either way.
    */
   async identifierExists(collectionUuid: string, identifier: string): Promise<boolean> {
     const url =
       `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
-      `&q=${encodeURIComponent(`"${identifier}"`)}&length=1`;
+      `&q=${encodeURIComponent(`"${identifier}"`)}&length=1&showall=true`;
     const res = await this.request(url);
     const body = (await res.json()) as { available: number };
     return body.available > 0;

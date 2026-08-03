@@ -98,6 +98,80 @@ describe('OeqClient', () => {
     expect(await client.identifierExists('c1', 'Nobody 000000.MP4')).toBe(false);
   });
 
+  it('sends the staging uuid as a query parameter, not a body field (confirmed against swagger.json)', async () => {
+    const stagingUuid = await client.createStagingArea();
+    const result = await client.createItem({
+      collectionUuid: 'c1',
+      metadata: '<xml/>',
+      stagingUuid,
+      attachments: [],
+      draft: true,
+    });
+    const created = mock.state.items.find((i) => i.uuid === result.uuid);
+    // ItemBean has no staging/stagingUuid property -- a server following the
+    // documented contract would silently ignore it in the body, creating an
+    // item whose attachment references a staging area the request never
+    // actually told the server about. This proves it travels as `?file=`.
+    expect(created?.stagingFile).toBe(stagingUuid);
+  });
+
+  it('fails item creation when the referenced staging area does not exist', async () => {
+    const err = await client
+      .createItem({
+        collectionUuid: 'c1',
+        metadata: '<xml/>',
+        stagingUuid: 'never-created',
+        attachments: [],
+        draft: true,
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    // Confirms nothing was created despite the 4xx -- a regression to the
+    // old body-field behaviour would have silently created the item anyway.
+    expect(mock.state.items.length).toBe(0);
+  });
+
+  it('only surfaces a draft item to identifierExists via showall=true', async () => {
+    mock.state.existingIdentifiers = ['Aster, Juniper 010125.MP4'];
+    // Items are created as drafts by default, i.e. not live. Confirm
+    // directly against the mock (bypassing the client) that /api/search
+    // excludes the match without showall=true -- proving that
+    // identifierExists's showall=true is what makes a draft duplicate
+    // visible at all, not an accident of the mock always matching.
+    const auth = new OAuthClientCredentials(mock.url, 'good-id', 'secret');
+    const token = await auth.getToken();
+    const res = await fetch(
+      `${mock.url}/api/search?collections=c1&q=${encodeURIComponent(
+        '"Aster, Juniper 010125.MP4"',
+      )}&length=1`,
+      { headers: { 'X-Authorization': `access_token=${token}` } },
+    );
+    const withoutShowAll = (await res.json()) as { available: number };
+    expect(withoutShowAll.available).toBe(0);
+    expect(await client.identifierExists('c1', 'Aster, Juniper 010125.MP4')).toBe(true);
+  });
+
+  it('recovers uuid/version from a 201 with an empty body and a Location header', async () => {
+    // POST /item's response has no documented schema in swagger.json.
+    // openEQUELLA commonly returns this shape instead of a JSON body;
+    // treating it as a parse failure would misreport a genuinely-created
+    // item as failed and cause a retry to create a duplicate.
+    mock.state.locationStyleNext = 1;
+    const result = await client.createItem({
+      collectionUuid: 'c1',
+      metadata: '<xml/>',
+      stagingUuid: await client.createStagingArea(),
+      attachments: [],
+      draft: true,
+    });
+    expect(result.uuid).toMatch(/^item-/);
+    expect(result.version).toBe(1);
+    expect(result.attachmentUuids).toEqual([]);
+    // The item really was created server-side -- not just a client-side guess.
+    expect(mock.state.items.some((i) => i.uuid === result.uuid)).toBe(true);
+  });
+
   it('does not retry forever when the token is invalid twice in a row', async () => {
     mock.state.expireNext = 2;
     const err = await client.createStagingArea().catch((e: unknown) => e);

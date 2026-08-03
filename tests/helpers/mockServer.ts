@@ -1,17 +1,36 @@
 /**
- * UNVERIFIED CONTRACT.
+ * PARTIALLY VERIFIED CONTRACT.
  *
- * This mock server is our best guess at the openEQUELLA REST wire format,
- * assembled from documentation and inference — NOT from a captured
- * `schema/swagger.json`. We have not been able to confirm it against the
- * live instance because fetching `/api/swagger.json` requires a
- * `VIEW_APIDOCS` privilege we couldn't verify we have (see CLAUDE.md,
- * "Working notes").
+ * This mock server models the openEQUELLA REST wire format used by
+ * `src/core/client.ts`. `schema/swagger.json` (Swagger 2.0, basePath `/api`)
+ * has since arrived from the live instance and confirmed several details
+ * that were previously guesses — see the CONFIRMED/UNVERIFIED breakdown in
+ * `client.ts`'s header comment, which this file mirrors:
  *
- * Treat every route and payload shape below as a hypothesis, not a fact.
- * When `schema/swagger.json` is finally captured (or the real API responds
- * differently in practice), this file and `src/core/client.ts` are the only
- * two files that should need to change to reconcile the difference —
+ *   - CONFIRMED: `POST /api/item` takes the staging area id as a `file`
+ *     QUERY PARAM (not a body field), alongside `draft`. This mock 404s if
+ *     `file` is missing or names a staging area that doesn't exist, so a
+ *     regression back to sending it in the body fails loudly instead of
+ *     silently creating an orphaned attachment.
+ *   - CONFIRMED: `GET /api/search`'s `showall` query param (default false)
+ *     gates whether non-live (e.g. draft) items are matched. This mock only
+ *     reports a hit when `showall=true`, so a regression that stops sending
+ *     it fails loudly instead of silently missing every draft duplicate.
+ *   - CONFIRMED: `POST /api/item`'s response shape is unspecified by the
+ *     spec. This mock's default path returns a JSON body; `locationStyleNext`
+ *     (additive test scaffolding, see MockState) makes it instead return a
+ *     201 with an empty body and a `Location: /item/{uuid}/{version}`
+ *     header, proving the client tolerates both.
+ *   - STILL UNVERIFIED: everything else below (the `/oauth/access_token`
+ *     shape, all of `/api/staging/*`, and the attachment payload's exact
+ *     field set) remains a hypothesis, not a fact — swagger.json does not
+ *     cover `/oauth/access_token` (outside its basePath) and has no
+ *     `/staging` path at all (its only file-related paths are under
+ *     `/file/{uuid}/...`, a materially different shape). Treat those routes
+ *     here as before: a guess, pending a dedicated verification pass.
+ *
+ * When the next discrepancy turns up, this file and `src/core/client.ts`
+ * are the only two files that should need to change to reconcile it —
  * nothing downstream should depend on wire-format details directly.
  *
  * Endpoints modeled here:
@@ -44,6 +63,14 @@
  * false success. It changes no route, status code, or payload shape — the
  * response still has exactly the same `{ uuid, version, attachments: [{uuid}] }`
  * shape as the default path, just with a different `uuid` value inside it.
+ *
+ * `state.locationStyleNext` is additive test scaffolding modelling the
+ * *other* response shape swagger.json's lack of a `POST /api/item` schema
+ * permits: instead of the default `{ uuid, version, attachments }` JSON
+ * body, it makes the next N item creations return a 201 with an EMPTY body
+ * and a `Location: /item/{uuid}/{version}` header, so tests can prove the
+ * client recovers a uuid/version from either shape rather than
+ * misreporting a genuinely-created item as a parse failure.
  */
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -66,9 +93,24 @@ export interface MockState {
    * for the "server ignored our uuid" case — see header comment above.
    */
   mismatchAttachmentNext: number;
+  /**
+   * Make the next N item creations respond 201 with an empty body and a
+   * `Location: /item/{uuid}/{version}` header instead of a JSON body. Test
+   * scaffolding for the "unspecified response shape" case — see header
+   * comment above.
+   */
+  locationStyleNext: number;
   stagingAreas: Set<string>;
   uploads: { staging: string; filename: string; bytes: number }[];
-  items: { uuid: string; version: number; metadata: string; draft: boolean }[];
+  items: {
+    uuid: string;
+    version: number;
+    metadata: string;
+    draft: boolean;
+    /** The `file` query param the item was created with -- CONFIRMED to be
+     * a query param, not a body field, against swagger.json. */
+    stagingFile: string;
+  }[];
   /** Identifiers that already exist, for the duplicate pre-flight. */
   existingIdentifiers: string[];
 }
@@ -93,6 +135,7 @@ export async function startMockServer(): Promise<MockServer> {
     expireNextUpload: 0,
     failItemNext: 0,
     mismatchAttachmentNext: 0,
+    locationStyleNext: 0,
     stagingAreas: new Set(),
     uploads: [],
     items: [],
@@ -166,22 +209,42 @@ export async function startMockServer(): Promise<MockServer> {
           state.failItemNext--;
           return send(res, 503, { error: 'temporarily unavailable' });
         }
+        // CONFIRMED against swagger.json: the staging area is the `file`
+        // query param, not a body field (`ItemBean` has no such property).
+        // 404 if it's missing or names a staging area that was never
+        // created, so a regression back to sending it in the body -- where
+        // it would be silently ignored -- fails loudly here instead.
+        const fileParam = url.searchParams.get('file');
+        if (!fileParam || !state.stagingAreas.has(fileParam)) {
+          return send(res, 404, { error: 'no such staging area' });
+        }
         const body = JSON.parse((await readBody(req)).toString('utf8')) as {
           metadata: string;
           attachments?: { uuid?: string }[];
         };
         const uuid = nextId('item');
+        const version = 1;
         state.items.push({
           uuid,
-          version: 1,
+          version,
           metadata: body.metadata,
           draft: url.searchParams.get('draft') === 'true',
+          stagingFile: fileParam,
         });
         const mismatch = state.mismatchAttachmentNext > 0;
         if (mismatch) state.mismatchAttachmentNext--;
+
+        if (state.locationStyleNext > 0) {
+          state.locationStyleNext--;
+          // CONFIRMED against swagger.json: POST /item's response has no
+          // documented schema. Model openEQUELLA's common alternative here
+          // -- 201, empty body, uuid/version only recoverable from Location.
+          res.writeHead(201, { location: `/item/${uuid}/${version}` });
+          return res.end();
+        }
         return send(res, 201, {
           uuid,
-          version: 1,
+          version,
           attachments: (body.attachments ?? []).map((a) => ({
             uuid: mismatch ? nextId('att-server-assigned') : a.uuid ?? nextId('att'),
           })),
@@ -189,8 +252,14 @@ export async function startMockServer(): Promise<MockServer> {
       }
 
       if (path === '/api/search' && req.method === 'GET') {
+        // CONFIRMED against swagger.json: `showall` (default false) gates
+        // whether non-live items are matched at all. Items here default to
+        // draft, i.e. not live, so a hit requires showall=true regardless
+        // of whether the identifier is otherwise known -- modelling the
+        // live server's default of excluding drafts entirely.
+        const showAll = url.searchParams.get('showall') === 'true';
         const q = url.searchParams.get('q') ?? '';
-        const hit = state.existingIdentifiers.some((id) => q.includes(id));
+        const hit = showAll && state.existingIdentifiers.some((id) => q.includes(id));
         return send(res, 200, { available: hit ? 1 : 0, results: hit ? [{ uuid: 'existing' }] : [] });
       }
 
