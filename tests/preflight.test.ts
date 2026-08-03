@@ -76,6 +76,27 @@ describe('runPreflight', () => {
     expect(result.checks[0]!.message).toMatch(/oeq-upload login/);
   });
 
+  it('substitutes a caller-supplied loginHint for the default CLI instruction', async () => {
+    const cfg = cfgFor(mock, 'c1');
+    const auth = new AuthorizationCodeAuth(
+      cfg.baseUrl,
+      cfg.clientId,
+      cfg.clientSecret,
+      cfg.redirectUri,
+      new FileTokenStore(join(dir, 'token.json')),
+    );
+    const client = new OeqClient(cfg.baseUrl, auth);
+
+    const result = await runPreflight(cfg, auth, client, 'Call the oeq_login_url tool');
+
+    expect(result.checks[0]!.message).toContain('Call the oeq_login_url tool');
+    // The default CLI instruction must be gone entirely, not just appended to.
+    expect(result.checks[0]!.message).not.toMatch(/oeq-upload login/);
+    // The "why" (no cached token, which host) is still present -- only the
+    // actionable tail was swapped.
+    expect(result.checks[0]!.message).toContain('No cached OAuth token');
+  });
+
   it('reports a failure when the target collection does not exist on this host', async () => {
     const cfg = cfgFor(mock, 'does-not-exist');
     // No collections registered on the mock at all.

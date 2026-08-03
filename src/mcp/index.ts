@@ -495,6 +495,14 @@ export interface CheckDeps {
 }
 
 /**
+ * An MCP caller has no shell to run `oeq-upload login` in -- see
+ * preflight.ts's `loginHint` doc -- so this replaces runPreflight()'s
+ * default CLI instruction with the MCP equivalent when the Token check
+ * fails.
+ */
+const MCP_LOGIN_HINT = 'Call the oeq_login_url tool, then oeq_login_complete with the code';
+
+/**
  * Same four read-only checks `oeq-upload check` runs (see core/preflight.ts
  * -- shared with the CLI so the two front ends can't drift): a usable
  * token, who it belongs to, whether the target collection exists on THIS
@@ -509,7 +517,7 @@ export async function checkTool(env: Env = process.env, deps: CheckDeps = {}): P
         ? new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret)
         : new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, deps.tokenStore);
     const client = deps.client ?? new OeqClient(cfg.baseUrl, auth);
-    const result = await runPreflight(cfg, auth, client);
+    const result = await runPreflight(cfg, auth, client, MCP_LOGIN_HINT);
     const lines = [
       `OEQ_BASE_URL: ${cfg.baseUrl}`,
       `OEQ_COLLECTION_UUID: ${cfg.collectionUuid}`,

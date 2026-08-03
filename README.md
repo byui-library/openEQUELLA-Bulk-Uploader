@@ -7,7 +7,8 @@ contribution — a strict 1:1 relationship. Built for the BYU-Idaho instance at
 Kurian.
 
 Two front ends share one core: a CLI for a spreadsheet-comfortable operator
-running an unattended batch, and an MCP server for a conversational assistant
+running a batch (one browser sign-in to start it, then unattended for the
+rest — see Authentication), and an MCP server for a conversational assistant
 that plans, launches, and monitors a run without ever handling file bytes
 itself.
 
@@ -42,14 +43,62 @@ strips a BOM off the first key it finds — but avoiding it in the first
 place is one less thing to debug.
 
 **An admin must register an API client** in the openEQUELLA admin console,
-bound to a user holding `CREATE_ITEM` on the target collection. That
-binding is not cosmetic: **the bound user owns every item this tool
-creates.** Ownership is awkward to change after the fact, so get it right
-when the client is registered, not after the first batch runs.
+with two requirements:
 
-The instance sits behind Okta SSO, which cannot be scripted, so this tool
-only ever authenticates via OAuth 2.0 client-credentials — there is no
-interactive-login path.
+- **`redirectUrl` must be the site root** (`https://content.byui.edu`, or
+  `https://content-test.byui.edu` for the test instance) — not a `localhost`
+  callback. This tool cannot capture the login code on a local listener, so
+  the operator pastes it by hand; see Authentication below.
+- **It must NOT be bound to a fixed user.** That's deliberate, not a gap:
+  see Authentication below for why.
+
+The instance sits behind Okta SSO, which cannot be scripted — there is no
+way to authenticate without a human at a browser at least once per session.
+
+## Authentication
+
+`oeq-upload login`:
+
+1. Prints the authorize URL and tries to open it in your default browser
+   (best-effort — if that fails, headless or over SSH, the URL is printed
+   regardless).
+2. You sign in through the normal Okta SSO screen, **as yourself** — not a
+   shared service account.
+3. The browser lands on the openEQUELLA home page with `?code=…` in the
+   address bar. Copy that code and paste it at the prompt.
+4. The tool exchanges it for a token, confirms who you're logged in as
+   (`GET /api/content/currentuser`), and caches the token in
+   `.oeq-token.json` (gitignored) in the current directory.
+
+**Items are owned by whoever logged in.** That's the entire reason this
+flow exists instead of a fixed service account: the OAuth client on this
+instance is deliberately *not* bound to a fixed user, so each contributor
+owns what they contribute rather than everything being attributed to one
+account.
+
+The cached token is scoped to the `OEQ_BASE_URL` it was issued for — a
+token minted against `content-test.byui.edu` is refused against
+`content.byui.edu`, and vice versa. This matters: **the collection UUID is
+identical in both instances**, so `OEQ_BASE_URL` is the *only* thing
+distinguishing test from production, and the token guard is what stops a
+test-instance login from being silently reused against production.
+
+`oeq-upload logout` removes the cached token — useful for switching users,
+or before handing the machine to someone else.
+
+**Runs cannot be fully unattended.** Every session needs one browser
+sign-in first; there is no way around that on an SSO-backed instance with
+no fixed-user client. If a long-running batch outlives the token, the
+runner marks the remaining rows failed with a clear message rather than
+guessing — `run` afterward skips everything already created, so recovery
+is cheap (log in again, `run` the same manifest), just not automatic.
+
+`OEQ_AUTH_MODE` defaults to `code` (this flow). `client_credentials`
+(`OAuthClientCredentials` in `src/core/auth.ts`) remains available for an
+instance whose OAuth client *is* registered with a fixed user, but **does
+not work against `content-test.byui.edu` or `content.byui.edu`** — their
+client is deliberately unbound, and client-credentials against it fails
+with `invalid_client`.
 
 ## Spreadsheet format
 
@@ -79,22 +128,53 @@ Notes:
 
 ## CLI usage
 
-Four commands, used in this order:
+Seven commands. `login` once per session (see Authentication above); then,
+in order:
 
 ```bash
-# 1. Validate the sheet against files on disk and the live schema. Uploads nothing.
+# 1. Authenticate once per session -- see Authentication above.
+oeq-upload login
+
+# 2. Read-only pre-flight. Creates nothing. Do not proceed until this passes.
+oeq-upload check
+
+# 3. Validate the sheet against files on disk and the live schema. Uploads nothing.
 oeq-upload plan --sheet batch.xlsx --files ./files --manifest job.json --state draft
 
-# 2. Upload every pending row, resumably.
+# 4. Upload every pending row, resumably.
 oeq-upload run --manifest job.json
 
-# 3. Check progress at any time, including mid-run.
+# 5. Check progress at any time, including mid-run.
 oeq-upload status --manifest job.json
 
-# 4. After fixing a problem, reset failed rows so the next `run` retries them.
+# 6. After fixing a problem, reset failed rows so the next `run` retries them.
 oeq-upload retry --manifest job.json
+
+# When done, or to switch users:
+oeq-upload logout
 ```
 
+- `login` — see Authentication above. No flags.
+- `check` — read-only pre-flight; verifies, in order, that the cached token
+  is valid, which user it belongs to (created items are owned by this
+  user), that the target collection exists **on this host**, and that this
+  user holds `CREATE_ITEM` on it. Exits non-zero if any check fails. No
+  flags. Real output on full success:
+
+  ```text
+  OEQ_BASE_URL: https://content-test.byui.edu
+  OEQ_COLLECTION_UUID: bb348ab1-7a81-4e37-8ef7-adc095ade4f9
+
+  [PASS] Token: present and usable.
+  [PASS] Identity: logged in as <username> (<First> <Last>). Created items will be owned by this user.
+  [PASS] Collection: '<name>' (<uuid>) exists on https://content-test.byui.edu.
+  [PASS] Permission: CREATE_ITEM confirmed on '<name>'.
+
+  All checks passed.
+  ```
+
+  Do not proceed to `plan`/`run` — and definitely not to the live smoke test
+  below — until all four checks pass.
 - `plan` prints `Planned N item(s) -> job.json` plus any warnings (missing
   files, unmatched files, possible duplicate identifiers already in the
   collection). Flags: `--sheet`, `--files` (both required), `--manifest`
@@ -110,6 +190,7 @@ oeq-upload retry --manifest job.json
 - `retry` resets `failed` rows to `pending` (and their attempt counter to 0)
   so the next `run` gives them a fresh try. It deliberately does not touch
   interrupted rows — see below.
+- `logout` — see Authentication above. No flags.
 
 ## MCP usage
 
@@ -120,8 +201,19 @@ Register the server with Claude Code (after `npm run build`, since it spawns
 claude mcp add oeq-uploader -- node "c:/Users/milesm/Documents/repos/openEQUELLA Bulk Uploader/dist/mcp/index.js"
 ```
 
-Six tools:
+Nine tools:
 
+- `oeq_login_url()` — returns the authorize URL to open in a browser, plus
+  where to find the code afterward. An MCP tool can't drive a browser or
+  read stdin itself, so login is split across this call and the next one.
+- `oeq_login_complete(code)` — exchanges the code from `oeq_login_url` for a
+  token, caches it (so a detached `oeq_start_job` runner can use it too),
+  and confirms `Logged in as <username> (<First> <Last>).` — that user owns
+  every item created from here on.
+- `oeq_check()` — the same read-only, four-step pre-flight as the CLI's
+  `check` (token, identity, does the collection exist on this host, is it
+  contributable). Creates nothing. Run this — and confirm it passes — before
+  `oeq_plan`/`oeq_start_job`.
 - `oeq_list_schema_paths(filter?, schemaFile?)` — search the ~158 valid
   metadata xpaths; useful for finding which column header a piece of
   information belongs in.
@@ -224,6 +316,11 @@ automatically on the next `acquireLock`.
 ## The live smoke test
 
 Run this before any real batch, and before ever passing `--state published`.
+**Do not start until `oeq-upload login` then `oeq-upload check` (or
+`oeq_login_url`/`oeq_login_complete` then `oeq_check` over MCP) report all
+four checks passing** — this test creates a real item, and a failing
+pre-flight (wrong host, no `CREATE_ITEM`, wrong user) is a much cheaper
+place to catch a misconfiguration than here.
 
 1. Prepare a one-row spreadsheet and a single small test file.
 2. Point `plan` at a **test** collection (override `OEQ_COLLECTION_UUID`, or
@@ -260,7 +357,7 @@ contract) together.
 ## Development
 
 ```bash
-npm test        # vitest, 173 tests across 14 files
+npm test        # vitest, 239 tests across 16 files
 npm run typecheck
 npm run build    # emits dist/cli/index.js and dist/mcp/index.js
 ```
@@ -268,12 +365,12 @@ npm run build    # emits dist/cli/index.js and dist/mcp/index.js
 Layout:
 
 ```text
-src/core/   Framework-free core: auth, client, schema, sheet, metadata,
-            plan, upload, runner, state, lock, config, errors, types.
-            Must stay free of CLI and MCP concerns -- both front ends are
-            thin wrappers over this layer.
-src/cli/    commander: plan | run | status | retry
-src/mcp/    MCP server exposing the six tools above
+src/core/   Framework-free core: auth, authCode, tokenStore, client, schema,
+            sheet, metadata, plan, upload, runner, state, lock, preflight,
+            config, errors, types. Must stay free of CLI and MCP concerns --
+            both front ends are thin wrappers over this layer.
+src/cli/    commander: login | logout | check | plan | run | status | retry
+src/mcp/    MCP server exposing the nine tools above
 schema/     openEQUELLA schema and API reference material (committed)
 tests/      vitest specs + tests/fixtures, tests/helpers/mockServer.ts
 ```

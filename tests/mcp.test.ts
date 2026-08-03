@@ -507,11 +507,17 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(out).toContain('All checks passed.');
     });
 
-    it('reports isError and FAIL when there is no cached token', async () => {
+    it('reports isError and FAIL when there is no cached token, naming the MCP login tools -- not the CLI command', async () => {
       const tokenStore = new FileTokenStore(join(dir, 'never-logged-in.json'));
       const result = await checkTool(env(), { tokenStore });
       expect(result.isError).toBe(true);
-      expect(textOf(result)).toContain('[FAIL] Token:');
+      const out = textOf(result);
+      expect(out).toContain('[FAIL] Token:');
+      // The MCP surface has no shell to run `oeq-upload login` in -- it must
+      // point at its own tools instead.
+      expect(out).toContain('oeq_login_url');
+      expect(out).toContain('oeq_login_complete');
+      expect(out).not.toContain('oeq-upload login');
     });
 
     it('reports isError and FAIL when the target collection does not exist on this host', async () => {

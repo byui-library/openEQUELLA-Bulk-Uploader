@@ -3,6 +3,15 @@ import type { AuthProvider } from './auth.js';
 import { FileTokenStore, type TokenStore } from './tokenStore.js';
 
 /**
+ * The CLI-flavored instruction `getToken()` gives when there's nothing
+ * usable to return. Exported (rather than a private literal) so
+ * `core/preflight.ts` can find-and-replace it with a front-end-appropriate
+ * hint for MCP callers -- see getToken()'s comment below for why that lives
+ * there and not here.
+ */
+export const DEFAULT_LOGIN_HINT = 'Run:  oeq-upload login';
+
+/**
  * OAuth 2.0 authorization-code grant.
  *
  * This instance's OAuth client is deliberately NOT registered with a fixed
@@ -157,8 +166,16 @@ export class AuthorizationCodeAuth implements AuthProvider {
     // those method names mean anything to them or is something they can act
     // on directly. Action first, explanation second (and only if it stays
     // short) -- see the coordinator note that prompted this rewrite.
+    //
+    // This provider has no notion of "which front end is calling it" (CLI
+    // vs MCP), so it can only ever name the CLI command here. `DEFAULT_LOGIN_HINT`
+    // is exported so a caller that DOES know -- `core/preflight.ts`'s
+    // `runPreflight()`, for `check`/`oeq_check` -- can substitute a
+    // front-end-appropriate instruction (e.g. MCP's `oeq_login_url`/
+    // `oeq_login_complete` tools) without this module needing to know
+    // anything about MCP. See preflight.ts for how.
     const raw = await this.tokenStore.loadRaw();
-    const runLogin = 'Run:  oeq-upload login';
+    const runLogin = DEFAULT_LOGIN_HINT;
 
     if (raw && raw.baseUrl !== this.baseUrl) {
       throw new OeqError(

@@ -2,6 +2,7 @@ import type { AuthProvider } from './auth.js';
 import type { OeqClient } from './client.js';
 import { ApiError } from './errors.js';
 import type { Config } from './config.js';
+import { DEFAULT_LOGIN_HINT } from './authCode.js';
 
 export interface PreflightCheck {
   label: string;
@@ -38,11 +39,23 @@ function errorMessage(err: unknown): string {
  *      this check is what catches OEQ_BASE_URL pointed at the wrong one.
  *   4. `GET /api/collection?privilege=CREATE_ITEM` -- can this user actually
  *      contribute to that collection; if not, which ones can they.
+ *
+ * `loginHint` names how the CALLING front end wants an operator told to log
+ * in, since `getToken()` (authCode.ts) has no notion of which one is
+ * asking and can only ever say "Run:  oeq-upload login" -- correct for the
+ * CLI, meaningless for an MCP caller with no shell. Defaults to that same
+ * CLI instruction (`DEFAULT_LOGIN_HINT`) so cli/index.ts's `checkAction`
+ * doesn't need to pass anything; mcp/index.ts's `checkTool` passes its own.
+ * Deliberately just a substring find-and-replace against the known default
+ * text, not a parallel error-construction path -- the "why" (no token /
+ * wrong instance / expired) still comes from `getToken()` itself, this only
+ * swaps the actionable tail.
  */
 export async function runPreflight(
   cfg: Config,
   auth: AuthProvider,
   client: OeqClient,
+  loginHint: string = DEFAULT_LOGIN_HINT,
 ): Promise<PreflightResult> {
   const checks: PreflightCheck[] = [];
 
@@ -50,7 +63,8 @@ export async function runPreflight(
     await auth.getToken();
     checks.push({ label: 'Token', pass: true, message: 'present and usable.' });
   } catch (err) {
-    checks.push({ label: 'Token', pass: false, message: errorMessage(err) });
+    const message = errorMessage(err).split(DEFAULT_LOGIN_HINT).join(loginHint);
+    checks.push({ label: 'Token', pass: false, message });
     // Nothing below can succeed without a token, and every failure past this
     // point would just be a confusing echo of the same root cause.
     return { ok: false, checks };

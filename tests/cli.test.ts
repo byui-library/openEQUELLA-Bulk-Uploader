@@ -428,14 +428,18 @@ describe('checkAction', () => {
     expect(out).toContain('All checks passed.');
   });
 
-  it('exits 1 and reports FAIL when there is no cached token', async () => {
+  it('exits 1 and reports FAIL when there is no cached token, naming the actual CLI login command', async () => {
     const store = new FileTokenStore(join(dir, 'never-logged-in.json'));
     let code = -1;
     const logs = await captureLogs(async () => {
       code = await checkAction(env(), { tokenStore: store });
     });
     expect(code).toBe(1);
-    expect(logs.join('\n')).toContain('[FAIL] Token:');
+    const out = logs.join('\n');
+    expect(out).toContain('[FAIL] Token:');
+    // The CLI surface must name the CLI command it can actually be run from.
+    expect(out).toContain('oeq-upload login');
+    expect(out).not.toContain('oeq_login_url');
   });
 
   it('exits 1 and reports the failure when the target collection does not exist on this host', async () => {
