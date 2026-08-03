@@ -1,7 +1,7 @@
 /** Base for all errors this tool raises deliberately. */
 export class OeqError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = new.target.name;
   }
 }
