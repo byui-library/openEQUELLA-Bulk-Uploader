@@ -78,6 +78,20 @@
  * and a `Location: /item/{uuid}/{version}` header, so tests can prove the
  * client recovers a uuid/version from either shape rather than
  * misreporting a genuinely-created item as a parse failure.
+ *
+ * `state.expectedRedirectUri` and `state.validAuthCodes` are additive test
+ * scaffolding for `src/core/authCode.ts`'s authorization-code exchange
+ * (`POST /oauth/access_token?grant_type=authorization_code`). They add no
+ * new route, status code, or response shape to the pre-existing
+ * `/oauth/access_token` endpoint -- they only gate a new branch of it,
+ * selected purely by `grant_type`, that mirrors the same
+ * `{ access_token, token_type, expires_in }` success shape the
+ * client-credentials branch already used. `expectedRedirectUri` defaults to
+ * the mock's own origin (mirroring the live instance's site-root
+ * `redirectUrl` registration) and is what an incoming `redirect_uri` is
+ * compared against; `validAuthCodes` defaults empty, so a test must
+ * explicitly mint a code before exchanging it -- proving the client can't
+ * silently succeed against an untested mock.
  */
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -107,6 +121,15 @@ export interface MockState {
    * comment above.
    */
   locationStyleNext: number;
+  /**
+   * Additive test scaffolding for the authorization-code exchange -- see
+   * header comment above. The `redirect_uri` a `grant_type=authorization_code`
+   * request must send to be accepted; set once `startMockServer()` knows its
+   * own url.
+   */
+  expectedRedirectUri: string;
+  /** Codes the mock will currently accept for `grant_type=authorization_code`. Single-use. */
+  validAuthCodes: Set<string>;
   stagingAreas: Set<string>;
   uploads: { staging: string; filename: string; bytes: number }[];
   items: {
@@ -143,6 +166,8 @@ export async function startMockServer(): Promise<MockServer> {
     failItemNext: 0,
     mismatchAttachmentNext: 0,
     locationStyleNext: 0,
+    expectedRedirectUri: '', // set below once the listening url is known
+    validAuthCodes: new Set(),
     stagingAreas: new Set(),
     uploads: [],
     items: [],
@@ -167,6 +192,29 @@ export async function startMockServer(): Promise<MockServer> {
         if (url.searchParams.get('client_id') !== 'good-id') {
           return send(res, 401, { error: 'invalid_client' });
         }
+        if (url.searchParams.get('grant_type') === 'authorization_code') {
+          const redirectUri = url.searchParams.get('redirect_uri');
+          if (redirectUri !== state.expectedRedirectUri) {
+            return send(res, 400, {
+              error: 'redirect_uri_mismatch',
+              error_description:
+                'redirect_uri does not match the value used to request the authorization code',
+            });
+          }
+          const code = url.searchParams.get('code') ?? '';
+          if (!state.validAuthCodes.has(code)) {
+            return send(res, 400, {
+              error: 'invalid_grant',
+              error_description: 'The provided authorization code is invalid or has expired',
+            });
+          }
+          state.validAuthCodes.delete(code); // codes are single-use
+          const token = nextId('token');
+          state.issuedTokens.push(token);
+          return send(res, 200, { access_token: token, token_type: 'bearer', expires_in: 3600 });
+        }
+        // Default: client-credentials grant (unchanged from before the
+        // authorization-code branch above was added).
         const token = nextId('token');
         state.issuedTokens.push(token);
         return send(res, 200, { access_token: token, token_type: 'bearer', expires_in: 3600 });
@@ -276,9 +324,13 @@ export async function startMockServer(): Promise<MockServer> {
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${port}`;
+  // Default the authorization-code redirect_uri to the mock's own origin,
+  // mirroring the live instance's site-root redirectUrl registration.
+  state.expectedRedirectUri = url;
 
   return {
-    url: `http://127.0.0.1:${port}`,
+    url,
     state,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };

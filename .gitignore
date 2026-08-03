@@ -20,6 +20,10 @@ files/
 .env.*
 !.env.example
 
+# Authorization-code token cache (src/core/tokenStore.ts). Short-lived,
+# user-scoped bearer credential -- never belongs in history.
+.oeq-token.json
+
 # ---------------------------------------------------------------------------
 # Node
 # ---------------------------------------------------------------------------
