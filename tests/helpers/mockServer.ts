@@ -36,6 +36,14 @@
  * fresh file body on retry rather than resending a drained one. It adds no
  * new route, status code, or payload shape — it only changes *when* the
  * existing 401 response (also used by `expireNext`) is returned.
+ *
+ * `state.mismatchAttachmentNext` is likewise additive test scaffolding: it
+ * makes the next N `POST /api/item` calls ignore a client-supplied
+ * attachment `uuid` and assign a server-generated one instead, so tests can
+ * prove the runner (Task 10) detects that mismatch rather than reporting a
+ * false success. It changes no route, status code, or payload shape — the
+ * response still has exactly the same `{ uuid, version, attachments: [{uuid}] }`
+ * shape as the default path, just with a different `uuid` value inside it.
  */
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -52,6 +60,12 @@ export interface MockState {
   expireNextUpload: number;
   /** Fail the next N item creations with 503, to exercise retry. */
   failItemNext: number;
+  /**
+   * Make the next N item creations ignore the client-supplied attachment
+   * uuid and assign a fresh server-generated one instead. Test scaffolding
+   * for the "server ignored our uuid" case — see header comment above.
+   */
+  mismatchAttachmentNext: number;
   stagingAreas: Set<string>;
   uploads: { staging: string; filename: string; bytes: number }[];
   items: { uuid: string; version: number; metadata: string; draft: boolean }[];
@@ -78,6 +92,7 @@ export async function startMockServer(): Promise<MockServer> {
     expireNext: 0,
     expireNextUpload: 0,
     failItemNext: 0,
+    mismatchAttachmentNext: 0,
     stagingAreas: new Set(),
     uploads: [],
     items: [],
@@ -162,10 +177,14 @@ export async function startMockServer(): Promise<MockServer> {
           metadata: body.metadata,
           draft: url.searchParams.get('draft') === 'true',
         });
+        const mismatch = state.mismatchAttachmentNext > 0;
+        if (mismatch) state.mismatchAttachmentNext--;
         return send(res, 201, {
           uuid,
           version: 1,
-          attachments: (body.attachments ?? []).map((a) => ({ uuid: a.uuid ?? nextId('att') })),
+          attachments: (body.attachments ?? []).map((a) => ({
+            uuid: mismatch ? nextId('att-server-assigned') : a.uuid ?? nextId('att'),
+          })),
         });
       }
 
