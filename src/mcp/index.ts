@@ -14,7 +14,10 @@ import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
 import { OAuthClientCredentials } from '../core/auth.js';
+import { AuthorizationCodeAuth } from '../core/authCode.js';
+import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { OeqClient } from '../core/client.js';
+import { runPreflight } from '../core/preflight.js';
 import type { ItemState } from '../core/types.js';
 
 type Env = Record<string, string | undefined>;
@@ -422,6 +425,105 @@ export async function retryFailedTool(args: RetryFailedArgs): Promise<ToolResult
   }
 }
 
+export interface LoginUrlDeps {
+  tokenStore?: TokenStore;
+}
+
+/**
+ * Returns the URL the operator opens in a browser to authenticate via the
+ * authorization-code flow (see docs/SESSION-HANDOFF.md and authCode.ts) --
+ * an MCP tool cannot itself drive a browser or read stdin, so the flow here
+ * is split across two calls: this one and `oeq_login_complete` below.
+ */
+export async function loginUrlTool(env: Env = process.env, deps: LoginUrlDeps = {}): Promise<ToolResult> {
+  try {
+    const cfg = loadConfig(env);
+    const auth = new AuthorizationCodeAuth(
+      cfg.baseUrl,
+      cfg.clientId,
+      cfg.clientSecret,
+      cfg.redirectUri,
+      deps.tokenStore,
+    );
+    const url = auth.getAuthorizeUrl();
+    return text(
+      `Open this URL in a browser and sign in:\n\n${url}\n\n` +
+        "After signing in, the browser lands on the openEQUELLA home page. Find the 'code' " +
+        "parameter in its address bar (e.g. '...?code=abcd1234') and pass just that value to " +
+        'oeq_login_complete.',
+    );
+  } catch (err) {
+    return text(redactSecret(errorMessage(err), env), true);
+  }
+}
+
+export interface LoginCompleteArgs {
+  code: string;
+}
+
+export interface LoginCompleteDeps {
+  tokenStore?: TokenStore;
+}
+
+/**
+ * Exchanges the code from `oeq_login_url` for a token, caches it (so a
+ * detached `oeq_start_job` runner can pick it up), and confirms who is now
+ * logged in -- the whole point of this flow is that created items are owned
+ * by whoever ran this, not a fixed service account.
+ */
+export async function loginCompleteTool(
+  args: LoginCompleteArgs,
+  env: Env = process.env,
+  deps: LoginCompleteDeps = {},
+): Promise<ToolResult> {
+  try {
+    const cfg = loadConfig(env);
+    const tokenStore = deps.tokenStore ?? new FileTokenStore();
+    const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
+    await auth.exchangeCode(args.code);
+    const client = new OeqClient(cfg.baseUrl, auth);
+    const user = await client.currentUser();
+    return text(`Logged in as ${user.username} (${user.firstName} ${user.lastName}).`);
+  } catch (err) {
+    return text(redactSecret(errorMessage(err), env), true);
+  }
+}
+
+export interface CheckDeps {
+  tokenStore?: TokenStore;
+  client?: OeqClient;
+}
+
+/**
+ * Same four read-only checks `oeq-upload check` runs (see core/preflight.ts
+ * -- shared with the CLI so the two front ends can't drift): a usable
+ * token, who it belongs to, whether the target collection exists on THIS
+ * host, and whether this user can actually contribute to it. Creates
+ * nothing.
+ */
+export async function checkTool(env: Env = process.env, deps: CheckDeps = {}): Promise<ToolResult> {
+  try {
+    const cfg = loadConfig(env);
+    const auth =
+      cfg.authMode === 'client_credentials'
+        ? new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret)
+        : new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, deps.tokenStore);
+    const client = deps.client ?? new OeqClient(cfg.baseUrl, auth);
+    const result = await runPreflight(cfg, auth, client);
+    const lines = [
+      `OEQ_BASE_URL: ${cfg.baseUrl}`,
+      `OEQ_COLLECTION_UUID: ${cfg.collectionUuid}`,
+      '',
+      ...result.checks.map((c) => `[${c.pass ? 'PASS' : 'FAIL'}] ${c.label}: ${c.message}`),
+      '',
+      result.ok ? 'All checks passed.' : 'One or more checks failed -- see above.',
+    ];
+    return text(redactSecret(lines.join('\n'), env), !result.ok);
+  } catch (err) {
+    return text(redactSecret(errorMessage(err), env), true);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Server wiring. There is deliberately no upload tool: this layer plans,
 // validates, launches, and monitors -- it never streams file bytes.
@@ -507,6 +609,40 @@ server.tool(
     'them. Refuses to run, and writes nothing, if the manifest is locked by a job still in progress.',
   { manifestPath: z.string().describe('Job manifest to reset failures in') },
   async (args) => retryFailedTool(args),
+);
+
+server.tool(
+  'oeq_login_url',
+  'Get the URL to open in a browser to authenticate via the openEQUELLA authorization-code ' +
+    'flow (Okta SSO). This instance\'s OAuth client has no fixed user, so each session needs a ' +
+    'human to sign in once; the resulting code goes to oeq_login_complete. Read-only, creates nothing.',
+  {},
+  async () => loginUrlTool(),
+);
+
+server.tool(
+  'oeq_login_complete',
+  'Exchange the code from the oeq_login_url redirect for an access token, cache it for ' +
+    'subsequent tools and a detached oeq_start_job runner, and confirm who is now logged in -- ' +
+    'that user will own every item created from here on.',
+  {
+    code: z
+      .string()
+      .describe(
+        "The 'code' query parameter from the address bar after signing in via the oeq_login_url link",
+      ),
+  },
+  async (args) => loginCompleteTool(args),
+);
+
+server.tool(
+  'oeq_check',
+  'Read-only pre-flight, run before any upload: confirms a cached token exists, who it belongs ' +
+    'to (whoever runs oeq_login_complete owns every item created), whether the target collection ' +
+    '(OEQ_COLLECTION_UUID) exists on OEQ_BASE_URL, and whether that user actually holds ' +
+    'CREATE_ITEM on it. Creates nothing.',
+  {},
+  async () => checkTool(),
 );
 
 const isMain =

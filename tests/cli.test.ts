@@ -2,11 +2,34 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { planAction, runAction, statusAction, retryAction } from '../src/cli/index.js';
+import {
+  planAction,
+  runAction,
+  statusAction,
+  retryAction,
+  loginAction,
+  logoutAction,
+  checkAction,
+} from '../src/cli/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
+import { AuthorizationCodeAuth } from '../src/core/authCode.js';
+import { FileTokenStore } from '../src/core/tokenStore.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
 import type { Manifest } from '../src/core/types.js';
+
+/** Captures console.log output for the duration of `fn`, restoring it after -- even on throw. */
+async function captureLogs(fn: () => Promise<void>): Promise<string[]> {
+  const logs: string[] = [];
+  const orig = console.log;
+  console.log = (...args: unknown[]) => logs.push(args.join(' '));
+  try {
+    await fn();
+  } finally {
+    console.log = orig;
+  }
+  return logs;
+}
 
 let dir: string;
 beforeEach(async () => {
@@ -240,5 +263,218 @@ describe('runAction exit code', () => {
 
     const code = await runAction({ manifest: path, maxAttempts: 1 }, env());
     expect(code).toBe(1);
+  });
+});
+
+describe('loginAction', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  const env = (secret = 'secret') => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: secret,
+  });
+
+  it('prints the authorize URL, attempts to open it, exchanges the entered code, and reports who is logged in', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    const store = new FileTokenStore(join(dir, 'token.json'));
+    const openedUrls: string[] = [];
+
+    const logs = await captureLogs(() =>
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: (url) => openedUrls.push(url),
+        promptForCode: async () => 'the-code',
+      }),
+    );
+
+    expect(openedUrls).toHaveLength(1);
+    expect(openedUrls[0]).toContain('/oauth/authorise');
+    const out = logs.join('\n');
+    expect(out).toContain(openedUrls[0]);
+    expect(out).toContain('Logged in as jdoe (Jane Doe).');
+    expect(out).toContain(`Token cached at ${store.path}.`);
+    expect(await store.loadRaw()).not.toBeNull();
+  });
+
+  it('continues gracefully (still logs in) when opening the browser fails -- headless/SSH use', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    await expect(
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: () => {
+          throw new Error('no DISPLAY');
+        },
+        promptForCode: async () => 'the-code',
+      }),
+    ).resolves.toBeUndefined();
+    expect(await store.loadRaw()).not.toBeNull();
+  });
+
+  it('throws a clear error and exchanges nothing when no code is entered', async () => {
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    await expect(
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => '   ',
+      }),
+    ).rejects.toThrow(/no code/i);
+    expect(mock.state.issuedTokens).toHaveLength(0);
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  it('never prints the client secret, raw or percent-encoded', async () => {
+    const secret = 'a+b/c=d&e';
+    mock.state.validAuthCodes.add('the-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const logs = await captureLogs(() =>
+      loginAction(env(secret), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'the-code',
+      }),
+    );
+
+    const out = logs.join('\n');
+    const encoded = encodeURIComponent(secret);
+    expect(out).not.toContain(secret);
+    expect(out).not.toContain(encoded);
+  });
+});
+
+describe('logoutAction', () => {
+  it('removes the cached token', async () => {
+    const path = join(dir, 'token.json');
+    const store = new FileTokenStore(path);
+    await store.save({ accessToken: 'tok', baseUrl: 'https://example.test' });
+
+    await logoutAction({ tokenStore: store });
+
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  it('does not throw when there was nothing to log out of', async () => {
+    const store = new FileTokenStore(join(dir, 'never-logged-in.json'));
+    await expect(logoutAction({ tokenStore: store })).resolves.toBeUndefined();
+  });
+});
+
+describe('checkAction', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  const env = (overrides: Record<string, string> = {}) => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
+    ...overrides,
+  });
+
+  /** A token store already populated via a real exchange against the mock. */
+  async function loggedInStore(): Promise<FileTokenStore> {
+    mock.state.validAuthCodes.add('good-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+    const auth = new AuthorizationCodeAuth(mock.url, 'good-id', 'secret', mock.url, store);
+    await auth.exchangeCode('good-code');
+    return store;
+  }
+
+  it('prints the exact expected text on full success and exits 0', async () => {
+    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    mock.state.collections.push({
+      uuid: 'c1',
+      name: 'BYU-Idaho Faculty Content',
+      privileges: ['CREATE_ITEM'],
+    });
+    const store = await loggedInStore();
+
+    let code = -1;
+    const logs = await captureLogs(async () => {
+      code = await checkAction(env(), { tokenStore: store });
+    });
+
+    expect(code).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain(`OEQ_BASE_URL: ${mock.url}`);
+    expect(out).toContain('OEQ_COLLECTION_UUID: c1');
+    expect(out).toContain('[PASS] Token: present and usable.');
+    expect(out).toContain(
+      '[PASS] Identity: logged in as jdoe (Jane Doe). Created items will be owned by this user.',
+    );
+    expect(out).toContain(
+      `[PASS] Collection: 'BYU-Idaho Faculty Content' (c1) exists on ${mock.url}.`,
+    );
+    expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'BYU-Idaho Faculty Content'.");
+    expect(out).toContain('All checks passed.');
+  });
+
+  it('exits 1 and reports FAIL when there is no cached token', async () => {
+    const store = new FileTokenStore(join(dir, 'never-logged-in.json'));
+    let code = -1;
+    const logs = await captureLogs(async () => {
+      code = await checkAction(env(), { tokenStore: store });
+    });
+    expect(code).toBe(1);
+    expect(logs.join('\n')).toContain('[FAIL] Token:');
+  });
+
+  it('exits 1 and reports the failure when the target collection does not exist on this host', async () => {
+    const store = await loggedInStore();
+    // No collections registered on the mock -- the target does not exist here.
+    let code = -1;
+    const logs = await captureLogs(async () => {
+      code = await checkAction(env(), { tokenStore: store });
+    });
+    expect(code).toBe(1);
+    expect(logs.join('\n')).toContain('[FAIL] Collection:');
+  });
+
+  it('exits 1 and reports the failure, listing contributable collections, when the target is not contributable', async () => {
+    mock.state.collections.push(
+      { uuid: 'c1', name: 'View Only', privileges: [] },
+      { uuid: 'c2', name: 'Other Collection', privileges: ['CREATE_ITEM'] },
+    );
+    const store = await loggedInStore();
+    let code = -1;
+    const logs = await captureLogs(async () => {
+      code = await checkAction(env(), { tokenStore: store });
+    });
+    expect(code).toBe(1);
+    const out = logs.join('\n');
+    expect(out).toContain('[FAIL] Permission:');
+    expect(out).toContain('Other Collection');
+  });
+
+  it('never prints the client secret, raw or percent-encoded', async () => {
+    const secret = 'a+b/c=d&e';
+    mock.state.collections.push({ uuid: 'c1', name: 'X', privileges: ['CREATE_ITEM'] });
+    const store = await loggedInStore();
+
+    const logs = await captureLogs(async () => {
+      await checkAction(env({ OEQ_CLIENT_SECRET: secret }), { tokenStore: store });
+    });
+
+    const out = logs.join('\n');
+    const encoded = encodeURIComponent(secret);
+    expect(out).not.toContain(secret);
+    expect(out).not.toContain(encoded);
   });
 });

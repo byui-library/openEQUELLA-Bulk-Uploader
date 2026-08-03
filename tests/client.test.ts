@@ -213,3 +213,58 @@ describe('OeqClient', () => {
     expect((err as ApiError).retryable).toBe(false);
   });
 });
+
+describe('OeqClient — currentUser', () => {
+  it('returns the authenticated user', async () => {
+    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    const user = await client.currentUser();
+    expect(user).toEqual({ username: 'jdoe', firstName: 'Jane', lastName: 'Doe' });
+  });
+});
+
+describe('OeqClient — getCollection', () => {
+  it('returns the collection when it exists on this host', async () => {
+    mock.state.collections.push({ uuid: 'c1', name: 'Faculty Content', privileges: [] });
+    const collection = await client.getCollection('c1');
+    expect(collection).toEqual({ uuid: 'c1', name: 'Faculty Content' });
+  });
+
+  it('throws a non-retryable 404 ApiError when the collection does not exist on this host', async () => {
+    const err = await client.getCollection('does-not-exist').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).retryable).toBe(false);
+  });
+
+  it('falls back to the uuid when name is missing or an unrecognised shape', async () => {
+    mock.state.collections.push({ uuid: 'c2', name: '', privileges: [] });
+    const collection = await client.getCollection('c2');
+    expect(collection.name).toBe('c2');
+  });
+});
+
+describe('OeqClient — listCollections', () => {
+  it('filters by privilege', async () => {
+    mock.state.collections.push(
+      { uuid: 'c1', name: 'Contributable', privileges: ['CREATE_ITEM'] },
+      { uuid: 'c2', name: 'View only', privileges: ['VIEW_ITEM'] },
+    );
+    const results = await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(results).toEqual([{ uuid: 'c1', name: 'Contributable' }]);
+  });
+
+  it('returns everything when no privilege filter is given', async () => {
+    mock.state.collections.push(
+      { uuid: 'c1', name: 'A', privileges: ['CREATE_ITEM'] },
+      { uuid: 'c2', name: 'B', privileges: [] },
+    );
+    const results = await client.listCollections();
+    expect(results.map((c) => c.uuid).sort()).toEqual(['c1', 'c2']);
+  });
+
+  it('returns an empty list when no collection matches the privilege', async () => {
+    mock.state.collections.push({ uuid: 'c1', name: 'A', privileges: [] });
+    const results = await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(results).toEqual([]);
+  });
+});

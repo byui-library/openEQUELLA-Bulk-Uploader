@@ -69,6 +69,15 @@
  * files that should need to change to reconcile it — every other module
  * (upload orchestration, the runner, the CLI) depends only on this client's
  * TypeScript interface, never on the wire format directly.
+ *
+ * ADDED for login/check (src/cli/index.ts, src/mcp/index.ts, both read-only):
+ *   - CONFIRMED: `GET /content/currentuser` -> `CurrentUserDetails`
+ *     (`username`/`firstName`/`lastName` used here).
+ *   - CONFIRMED: `GET /collection/{uuid}` -> `CollectionBean`; `GET
+ *     /collection?privilege=...&length=...` -> `PagingBeanCollectionBean`.
+ *   - UNVERIFIED: `CollectionBean.name`'s `I18NString` type has no documented
+ *     shape at all — see `extractDisplayName()` below, the same kind of gap
+ *     as `AttachmentBean`.
  * ===============================================================================
  */
 import type { AuthProvider } from './auth.js';
@@ -93,6 +102,41 @@ export interface CreateItemResult {
   uuid: string;
   version: number;
   attachmentUuids: string[];
+}
+
+/** Who the current OAuth token authenticates as -- see `CurrentUserDetails` in swagger.json. */
+export interface CurrentUser {
+  username: string;
+  firstName: string;
+  lastName: string;
+}
+
+export interface CollectionSummary {
+  uuid: string;
+  name: string;
+}
+
+/**
+ * `CollectionBean.name` (swagger.json) is typed only as `I18NString`, which
+ * is itself documented as a bare `{ type: "object" }` -- no shape at all, the
+ * same kind of gap `AttachmentBean` has for `filename`/`type` (see this
+ * file's header comment). In practice openEQUELLA's REST responses serialise
+ * it as a plain string already resolved to the session's locale; this
+ * defensively also accepts an `I18NStrings`-shaped object (`{ strings: {
+ * [locale]: string } }`) in case a deployment does something else, and falls
+ * back to the uuid rather than letting a missing display label crash `check`
+ * / `oeq_check` over what is, worst case, cosmetic.
+ */
+function extractDisplayName(name: unknown, fallback: string): string {
+  if (typeof name === 'string' && name) return name;
+  if (name && typeof name === 'object') {
+    const strings = (name as { strings?: Record<string, string> }).strings;
+    if (strings) {
+      const first = Object.values(strings).find((v) => typeof v === 'string' && v);
+      if (first) return first;
+    }
+  }
+  return fallback;
 }
 
 /**
@@ -348,5 +392,50 @@ export class OeqClient {
     const res = await this.request(url);
     const body = (await res.json()) as { available: number };
     return body.available > 0;
+  }
+
+  /**
+   * Who the current token authenticates as -- CONFIRMED against
+   * swagger.json's `CurrentUserDetails`. This is the whole point of the
+   * authorization-code flow (authCode.ts): items get created under whoever
+   * this says, not a fixed service account, so `login`/`check` (cli/index.ts,
+   * mcp/index.ts) call this to show the operator who they're about to
+   * contribute as before anything is uploaded.
+   */
+  async currentUser(): Promise<CurrentUser> {
+    const res = await this.request('/api/content/currentuser');
+    const body = (await res.json()) as { username: string; firstName: string; lastName: string };
+    return { username: body.username, firstName: body.firstName, lastName: body.lastName };
+  }
+
+  /**
+   * CONFIRMED against swagger.json's `GET /collection/{uuid}`. Throws the
+   * same `ApiError` `request()` always throws on a non-2xx -- in particular
+   * a 404 if `uuid` doesn't exist *on this host*, which is exactly the
+   * "wrong instance" check `check`/`oeq_check` need: the collection UUID is
+   * identical between test and production, so this is the only network call
+   * that can catch OEQ_BASE_URL pointing at the wrong one.
+   */
+  async getCollection(uuid: string): Promise<CollectionSummary> {
+    const res = await this.request(`/api/collection/${encodeURIComponent(uuid)}`);
+    const body = (await res.json()) as { uuid: string; name?: unknown };
+    return { uuid: body.uuid, name: extractDisplayName(body.name, body.uuid) };
+  }
+
+  /**
+   * CONFIRMED against swagger.json's `GET /collection` (`privilege` is a
+   * documented, repeatable filter query param; `PagingBeanCollectionBean` is
+   * the response shape). Used by `check`/`oeq_check` with
+   * `privilege: 'CREATE_ITEM'` to confirm the current user can actually
+   * contribute to the target collection -- and, if not, to list the ones
+   * they can.
+   */
+  async listCollections(opts: { privilege?: string; length?: number } = {}): Promise<CollectionSummary[]> {
+    const params = new URLSearchParams();
+    if (opts.privilege) params.set('privilege', opts.privilege);
+    params.set('length', String(opts.length ?? 100));
+    const res = await this.request(`/api/collection?${params.toString()}`);
+    const body = (await res.json()) as { results: { uuid: string; name?: unknown }[] };
+    return body.results.map((r) => ({ uuid: r.uuid, name: extractDisplayName(r.name, r.uuid) }));
   }
 }

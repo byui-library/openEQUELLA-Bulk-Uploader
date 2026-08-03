@@ -10,9 +10,14 @@ import {
   startJobTool,
   jobStatusTool,
   retryFailedTool,
+  loginUrlTool,
+  loginCompleteTool,
+  checkTool,
 } from '../src/mcp/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
+import { AuthorizationCodeAuth } from '../src/core/authCode.js';
+import { FileTokenStore } from '../src/core/tokenStore.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
 import type { Manifest } from '../src/core/types.js';
 
@@ -403,5 +408,146 @@ describe('oeq_job_status', () => {
     await saveManifest(manifestPath, manifest());
     const result = await jobStatusTool({ manifestPath });
     expect(textOf(result)).toContain('No active lock.');
+  });
+});
+
+describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  const env = (secret = 'secret') => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: secret,
+  });
+
+  /** A token store already populated via a real exchange against the mock -- mirrors cli.test.ts. */
+  async function loggedInStore(): Promise<FileTokenStore> {
+    mock.state.validAuthCodes.add('good-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+    const auth = new AuthorizationCodeAuth(mock.url, 'good-id', 'secret', mock.url, store);
+    await auth.exchangeCode('good-code');
+    return store;
+  }
+
+  describe('oeq_login_url', () => {
+    it('returns the authorize URL with instructions on where to find the code', async () => {
+      const result = await loginUrlTool(env());
+      expect(result.isError).toBeFalsy();
+      const out = textOf(result);
+      expect(out).toContain(`${mock.url}/oauth/authorise`);
+      expect(out).toContain('response_type=code');
+      expect(out.toLowerCase()).toContain('code');
+      expect(out.toLowerCase()).toContain('oeq_login_complete');
+    });
+
+    it('never leaks the client secret, even on a config error', async () => {
+      const result = await loginUrlTool({ OEQ_CLIENT_ID: 'id', OEQ_CLIENT_SECRET: 'super-secret-value' });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).not.toContain('super-secret-value');
+    });
+  });
+
+  describe('oeq_login_complete', () => {
+    it('exchanges the code, caches the token, and reports who is logged in', async () => {
+      mock.state.validAuthCodes.add('the-code');
+      mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+      const tokenStore = new FileTokenStore(join(dir, 'token.json'));
+
+      const result = await loginCompleteTool({ code: 'the-code' }, env(), { tokenStore });
+
+      expect(result.isError).toBeFalsy();
+      expect(textOf(result)).toBe('Logged in as jdoe (Jane Doe).');
+      expect(await tokenStore.loadRaw()).not.toBeNull();
+    });
+
+    it('reports a clear error for an invalid or already-used code', async () => {
+      const tokenStore = new FileTokenStore(join(dir, 'token.json'));
+      const result = await loginCompleteTool({ code: 'never-issued' }, env(), { tokenStore });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/invalid|expired/i);
+    });
+
+    it('never leaks the client secret, raw or percent-encoded', async () => {
+      const secret = 'a+b/c=d&e';
+      mock.state.validAuthCodes.add('the-code');
+      const tokenStore = new FileTokenStore(join(dir, 'token.json'));
+      const result = await loginCompleteTool({ code: 'the-code' }, env(secret), { tokenStore });
+      const out = textOf(result);
+      const encoded = encodeURIComponent(secret);
+      expect(out).not.toContain(secret);
+      expect(out).not.toContain(encoded);
+    });
+  });
+
+  describe('oeq_check', () => {
+    it('mirrors the CLI: prints the same four PASS lines and succeeds when everything lines up', async () => {
+      mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+      mock.state.collections.push({
+        uuid: 'bb348ab1-7a81-4e37-8ef7-adc095ade4f9',
+        name: 'BYU-Idaho Faculty Content',
+        privileges: ['CREATE_ITEM'],
+      });
+      const tokenStore = await loggedInStore();
+
+      const result = await checkTool(env(), { tokenStore });
+
+      expect(result.isError).toBeFalsy();
+      const out = textOf(result);
+      expect(out).toContain(`OEQ_BASE_URL: ${mock.url}`);
+      expect(out).toContain('[PASS] Token: present and usable.');
+      expect(out).toContain('[PASS] Identity: logged in as jdoe (Jane Doe)');
+      expect(out).toContain("[PASS] Collection: 'BYU-Idaho Faculty Content'");
+      expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'BYU-Idaho Faculty Content'.");
+      expect(out).toContain('All checks passed.');
+    });
+
+    it('reports isError and FAIL when there is no cached token', async () => {
+      const tokenStore = new FileTokenStore(join(dir, 'never-logged-in.json'));
+      const result = await checkTool(env(), { tokenStore });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('[FAIL] Token:');
+    });
+
+    it('reports isError and FAIL when the target collection does not exist on this host', async () => {
+      const tokenStore = await loggedInStore();
+      // No collections registered on the mock.
+      const result = await checkTool(env(), { tokenStore });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('[FAIL] Collection:');
+    });
+
+    it('reports isError and FAIL, listing contributable collections, when the target is not contributable', async () => {
+      mock.state.collections.push(
+        { uuid: 'bb348ab1-7a81-4e37-8ef7-adc095ade4f9', name: 'View Only', privileges: [] },
+        { uuid: 'c2', name: 'Other Collection', privileges: ['CREATE_ITEM'] },
+      );
+      const tokenStore = await loggedInStore();
+      const result = await checkTool(env(), { tokenStore });
+      expect(result.isError).toBe(true);
+      const out = textOf(result);
+      expect(out).toContain('[FAIL] Permission:');
+      expect(out).toContain('Other Collection');
+    });
+
+    it('never leaks the client secret, raw or percent-encoded', async () => {
+      const secret = 'a+b/c=d&e';
+      mock.state.collections.push({
+        uuid: 'bb348ab1-7a81-4e37-8ef7-adc095ade4f9',
+        name: 'X',
+        privileges: ['CREATE_ITEM'],
+      });
+      const tokenStore = await loggedInStore();
+      const result = await checkTool(env(secret), { tokenStore });
+      const out = textOf(result);
+      const encoded = encodeURIComponent(secret);
+      expect(out).not.toContain(secret);
+      expect(out).not.toContain(encoded);
+    });
   });
 });

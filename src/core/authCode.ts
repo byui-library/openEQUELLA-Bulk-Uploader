@@ -177,20 +177,32 @@ export class AuthorizationCodeAuth implements AuthProvider {
   }
 
   /**
-   * Drops the in-memory cache so the next getToken() re-derives from the
-   * token store rather than blindly reusing a token that just 401'd.
+   * Drops the in-memory token AND the persisted one -- unlike
+   * `OAuthClientCredentials.invalidate()`, this cannot trigger a fresh
+   * fetch (there is no way to mint a new token without operator
+   * interaction), so "next call re-authenticates" can only mean "next call
+   * fails fast and says so."
    *
-   * Unlike `OAuthClientCredentials.invalidate()`, this does NOT trigger a
-   * fresh fetch -- there is no way to mint a new token without operator
-   * interaction. If the store still holds the same (now-known-bad) token,
-   * the single retry `client.ts` performs after a 401 will simply fail
-   * again; that one extra failure is the accepted cost (see the design
-   * doc's "Consequences" section) of a flow with no unattended refresh. If
-   * enough wall-clock time has passed that our own recorded `expiresAt` has
-   * now elapsed, the retry gets the clearer "expired" error instead.
+   * This matters at batch scale: without clearing the store, a 401 on row 1
+   * would invalidate only the in-memory copy, `client.ts`'s single retry
+   * would re-read the *same* token from disk and fail again, and then every
+   * subsequent row (2..37) would independently repeat that same
+   * fetch-stale-token-then-401 dance -- dozens of confusing
+   * `POST /api/item failed (401)` errors when the real problem is just "the
+   * session ended." Clearing the store here means row 1 still fails once
+   * (nothing can prevent that -- the 401 is what revealed the token was
+   * bad), but every row after it gets the same fast, actionable "no cached
+   * token, log in again" error from `getToken()` instead of repeating the
+   * same doomed round-trip.
+   *
+   * Uses `clearSync()`, not `clear()`: `AuthProvider.invalidate()` (auth.ts)
+   * returns `void`, and `client.ts` calls it without awaiting, then
+   * immediately retries in the same tick -- see `clearSync()`'s doc in
+   * tokenStore.ts for why an unawaited async delete would race that retry.
    */
   invalidate(): void {
     this.token = null;
+    this.tokenStore.clearSync();
   }
 
   /** Origin + path only -- no query string, so it can never carry the secret. */

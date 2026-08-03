@@ -182,15 +182,38 @@ describe('AuthorizationCodeAuth — authHeader', () => {
 });
 
 describe('AuthorizationCodeAuth — invalidate', () => {
-  it('drops the in-memory cache so the next getToken() re-derives from the store', async () => {
+  it('clears both the in-memory token and the persisted store, so the next getToken() fails fast', async () => {
+    mock.state.validAuthCodes.add('good-code');
+    const path = tokenPath();
+    const store = new FileTokenStore(path);
+    const auth = new AuthorizationCodeAuth(mock.url, 'good-id', 'secret', mock.url, store);
+    await auth.exchangeCode('good-code');
+
+    auth.invalidate();
+
+    // The store itself is empty -- not just this instance's in-memory copy.
+    expect(await store.loadRaw()).toBeNull();
+    // getToken() throws the login-required error immediately rather than
+    // returning the (now-cleared) stale token.
+    await expect(auth.getToken()).rejects.toThrow(OeqError);
+    await expect(auth.getToken()).rejects.toThrow(/getAuthorizeUrl|exchangeCode|log in/i);
+    // And crucially: no network call was made trying to refresh it.
+    expect(mock.state.issuedTokens).toHaveLength(1);
+  });
+
+  it('a fresh instance reading the same store also sees no token after invalidate()', async () => {
+    // Simulates the real hazard: client.ts calls invalidate() on a 401, then
+    // upload.ts (a different call site, effectively "a fresh look") must
+    // also see the token gone -- not just the instance that happened to call
+    // invalidate().
     mock.state.validAuthCodes.add('good-code');
     const path = tokenPath();
     const auth = new AuthorizationCodeAuth(mock.url, 'good-id', 'secret', mock.url, new FileTokenStore(path));
     await auth.exchangeCode('good-code');
     auth.invalidate();
-    // Store still has the (only) token issued -- re-derived, not re-fetched.
-    expect(await auth.getToken()).toBe(mock.state.issuedTokens[0]);
-    expect(mock.state.issuedTokens).toHaveLength(1);
+
+    const other = new AuthorizationCodeAuth(mock.url, 'good-id', 'secret', mock.url, new FileTokenStore(path));
+    await expect(other.getToken()).rejects.toThrow(OeqError);
   });
 });
 

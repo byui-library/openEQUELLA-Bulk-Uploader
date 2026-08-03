@@ -92,6 +92,13 @@
  * compared against; `validAuthCodes` defaults empty, so a test must
  * explicitly mint a code before exchanging it -- proving the client can't
  * silently succeed against an untested mock.
+ *
+ * `state.currentUser` and `state.collections` back three more additive
+ * routes -- `GET /api/content/currentuser`, `GET /api/collection/{uuid}`,
+ * `GET /api/collection` -- added for the read-only `check`/`oeq_check`
+ * pre-flight (src/core/preflight.ts) and `login`/`oeq_login_complete`'s
+ * "logged in as" confirmation. All three are CONFIRMED against
+ * swagger.json (see src/core/client.ts's header comment for specifics).
  */
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -130,6 +137,22 @@ export interface MockState {
   expectedRedirectUri: string;
   /** Codes the mock will currently accept for `grant_type=authorization_code`. Single-use. */
   validAuthCodes: Set<string>;
+  /**
+   * Additive test scaffolding for `GET /api/content/currentuser`, used by
+   * `check`/`oeq_check` (and `login`/`oeq_login_complete`) to show who
+   * created items will be owned by. Mutate directly in a test to change who
+   * "is logged in".
+   */
+  currentUser: { username: string; firstName: string; lastName: string };
+  /**
+   * Additive test scaffolding for `GET /api/collection/{uuid}` and
+   * `GET /api/collection`, backing `check`/`oeq_check`'s "does the
+   * collection exist on this host" and "can this user CREATE_ITEM on it"
+   * checks. Empty by default -- a test must explicitly add a collection
+   * (with whatever `privileges` it wants the mock's "current user" to hold
+   * on it) before either check can pass.
+   */
+  collections: { uuid: string; name: string; privileges: string[] }[];
   stagingAreas: Set<string>;
   uploads: { staging: string; filename: string; bytes: number }[];
   items: {
@@ -168,6 +191,8 @@ export async function startMockServer(): Promise<MockServer> {
     locationStyleNext: 0,
     expectedRedirectUri: '', // set below once the listening url is known
     validAuthCodes: new Set(),
+    currentUser: { username: 'test-user', firstName: 'Test', lastName: 'User' },
+    collections: [],
     stagingAreas: new Set(),
     uploads: [],
     items: [],
@@ -316,6 +341,47 @@ export async function startMockServer(): Promise<MockServer> {
         const q = url.searchParams.get('q') ?? '';
         const hit = showAll && state.existingIdentifiers.some((id) => q.includes(id));
         return send(res, 200, { available: hit ? 1 : 0, results: hit ? [{ uuid: 'existing' }] : [] });
+      }
+
+      // CONFIRMED against swagger.json: GET /content/currentuser ->
+      // CurrentUserDetails. Additive for src/core/client.ts's currentUser().
+      if (path === '/api/content/currentuser' && req.method === 'GET') {
+        return send(res, 200, state.currentUser);
+      }
+
+      // CONFIRMED against swagger.json: GET /collection/{uuid} -> CollectionBean.
+      // Additive for src/core/client.ts's getCollection(). 404 (via the
+      // standard `!res.ok` path in client.ts's request()) if the uuid isn't
+      // one of state.collections -- this is what lets `check`/`oeq_check`
+      // detect "OEQ_BASE_URL points at the wrong instance."
+      const collectionGet = /^\/api\/collection\/([^/]+)$/.exec(path);
+      if (collectionGet && req.method === 'GET') {
+        const found = state.collections.find((c) => c.uuid === collectionGet[1]);
+        if (!found) return send(res, 404, { error: 'not found' });
+        return send(res, 200, { uuid: found.uuid, name: found.name });
+      }
+
+      // CONFIRMED against swagger.json: GET /collection (PagingBeanCollectionBean).
+      // Additive for src/core/client.ts's listCollections(). `privilege` is a
+      // repeatable filter query param there; this mock only models the
+      // client's actual usage (a single `privilege` value, ANDed against each
+      // mock collection's `privileges`) rather than every combination swagger
+      // permits.
+      if (path === '/api/collection' && req.method === 'GET') {
+        const privileges = url.searchParams.getAll('privilege');
+        const length = Number(url.searchParams.get('length') ?? '10');
+        const filtered =
+          privileges.length > 0
+            ? state.collections.filter((c) => privileges.every((p) => c.privileges.includes(p)))
+            : state.collections;
+        const results = filtered.slice(0, length).map((c) => ({ uuid: c.uuid, name: c.name }));
+        return send(res, 200, {
+          start: 0,
+          length: results.length,
+          available: filtered.length,
+          results,
+          resumptionToken: '',
+        });
       }
 
       return send(res, 404, { error: 'not found' });

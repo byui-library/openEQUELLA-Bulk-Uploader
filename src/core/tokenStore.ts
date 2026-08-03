@@ -1,4 +1,5 @@
 import { readFile, writeFile, rename, unlink, mkdir } from 'node:fs/promises';
+import { unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 
@@ -50,6 +51,18 @@ export interface TokenStore {
   loadRaw(): Promise<StoredToken | null>;
   /** Remove any persisted token. */
   clear(): Promise<void>;
+  /**
+   * Synchronous equivalent of `clear()`, used only by
+   * `AuthorizationCodeAuth.invalidate()`. `AuthProvider.invalidate()` (see
+   * auth.ts) returns `void`, not `Promise<void>` -- and `client.ts` calls it
+   * without awaiting, then immediately retries the request in the same tick.
+   * A fire-and-forget `clear()` there would race that immediate retry's
+   * `getToken()` call: whether it sees the file already gone would depend on
+   * unpredictable fs completion ordering, making "the next call fails fast"
+   * a coin flip instead of a guarantee. Deleting one small JSON file
+   * synchronously is cheap and removes the race entirely.
+   */
+  clearSync(): void;
 }
 
 /**
@@ -61,10 +74,15 @@ export interface TokenStore {
  * cwd turns out to be the wrong call in practice.
  */
 export class FileTokenStore implements TokenStore {
-  constructor(private readonly path: string = '.oeq-token.json') {}
+  constructor(private readonly filePath: string = '.oeq-token.json') {}
+
+  /** Where this store reads/writes -- for operator-facing messages (e.g. `login`'s output). */
+  get path(): string {
+    return this.filePath;
+  }
 
   async save(data: StoredToken): Promise<void> {
-    const dir = dirname(this.path);
+    const dir = dirname(this.filePath);
     if (dir && dir !== '.') {
       await mkdir(dir, { recursive: true });
     }
@@ -75,10 +93,10 @@ export class FileTokenStore implements TokenStore {
     // low-stakes, short-lived credential, not the one record of what a
     // multi-hour job has already uploaded; losing it in the rare crash
     // window just means logging in again.
-    const tmp = `${this.path}.tmp.${process.pid}.${randomUUID()}`;
+    const tmp = `${this.filePath}.tmp.${process.pid}.${randomUUID()}`;
     await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
     try {
-      await rename(tmp, this.path);
+      await rename(tmp, this.filePath);
     } catch (err) {
       await unlink(tmp).catch(() => {});
       throw err;
@@ -88,7 +106,7 @@ export class FileTokenStore implements TokenStore {
   async loadRaw(): Promise<StoredToken | null> {
     let text: string;
     try {
-      text = await readFile(this.path, 'utf8');
+      text = await readFile(this.filePath, 'utf8');
     } catch {
       // Missing, unreadable, whatever -- there is no usable token.
       return null;
@@ -117,7 +135,15 @@ export class FileTokenStore implements TokenStore {
 
   async clear(): Promise<void> {
     try {
-      await unlink(this.path);
+      await unlink(this.filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+  }
+
+  clearSync(): void {
+    try {
+      unlinkSync(this.filePath);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }

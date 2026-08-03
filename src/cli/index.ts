@@ -3,14 +3,19 @@ import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 import { loadConfig } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { OAuthClientCredentials } from '../core/auth.js';
+import { AuthorizationCodeAuth } from '../core/authCode.js';
+import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { OeqClient } from '../core/client.js';
 import { runManifest } from '../core/runner.js';
+import { runPreflight } from '../core/preflight.js';
 import { checkLock } from '../core/lock.js';
 import { OeqError, ValidationError } from '../core/errors.js';
 import type { ItemState } from '../core/types.js';
@@ -199,6 +204,133 @@ export async function retryAction(o: RetryCliOptions): Promise<void> {
   console.log(`Reset ${reset} failed entr${reset === 1 ? 'y' : 'ies'} to pending. Run \`oeq-upload run\` to continue.`);
 }
 
+// ---------------------------------------------------------------------------
+// login / logout / check -- the authorization-code flow (see
+// docs/SESSION-HANDOFF.md and src/core/authCode.ts). Everything network- or
+// prompt-related is injectable via `deps` so tests never spawn a real
+// browser or block on real stdin -- see tests/cli.test.ts.
+// ---------------------------------------------------------------------------
+
+/** `start`/`open`/`xdg-open` as appropriate, best-effort. Never throws --
+ *  headless/SSH use must still work, with the URL printed either way. */
+function defaultOpenBrowser(url: string): void {
+  if (process.platform === 'win32') {
+    // `start` is a cmd.exe builtin, not an executable -- must go through
+    // `cmd /c`. The empty '' argument is the window title `start` expects
+    // as its first argument when the next one could be mistaken for it.
+    spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true }).unref();
+  } else if (process.platform === 'darwin') {
+    spawn('open', [url], { stdio: 'ignore', detached: true }).unref();
+  } else {
+    spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref();
+  }
+}
+
+async function defaultPromptForCode(): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await rl.question('Paste the code here: ');
+  } finally {
+    rl.close();
+  }
+}
+
+export interface LoginDeps {
+  tokenStore?: TokenStore;
+  openBrowser?: (url: string) => void;
+  promptForCode?: () => Promise<string>;
+}
+
+/**
+ * Authenticate via the authorization-code flow and cache a token that `run`
+ * (and a detached `oeq_start_job` runner) can pick up. Never fails just
+ * because the browser couldn't be opened -- the URL is always printed too.
+ */
+export async function loginAction(env: Env = process.env, deps: LoginDeps = {}): Promise<void> {
+  const cfg = loadConfig(env);
+  const tokenStore = deps.tokenStore ?? new FileTokenStore();
+  const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
+
+  const url = auth.getAuthorizeUrl();
+  console.log(`Open this URL in a browser and sign in:\n\n  ${url}\n`);
+  try {
+    (deps.openBrowser ?? defaultOpenBrowser)(url);
+  } catch {
+    // Best-effort only -- the URL above already covers headless/SSH use.
+  }
+
+  console.log(
+    "After signing in, the browser lands on the openEQUELLA home page. Find the 'code' " +
+      "parameter in its address bar (e.g. '...?code=abcd1234') and paste just that value below.",
+  );
+  const code = (await (deps.promptForCode ?? defaultPromptForCode)()).trim();
+  if (!code) {
+    throw new OeqError('No code entered. Run `oeq-upload login` again when you have it.');
+  }
+
+  await auth.exchangeCode(code);
+
+  const client = new OeqClient(cfg.baseUrl, auth);
+  const user = await client.currentUser();
+  console.log(`\nLogged in as ${user.username} (${user.firstName} ${user.lastName}).`);
+
+  const raw = await tokenStore.loadRaw();
+  console.log(
+    tokenStore instanceof FileTokenStore ? `Token cached at ${tokenStore.path}.` : 'Token cached.',
+  );
+  console.log(
+    raw?.expiresAt
+      ? `Expires around ${new Date(raw.expiresAt).toISOString()} (server-reported).`
+      : 'Server did not report an expiry.',
+  );
+
+  if (cfg.authMode === 'client_credentials') {
+    console.log(
+      '\nNote: OEQ_AUTH_MODE is currently "client_credentials" -- this cached token is only used ' +
+        'once you switch it (or unset it, "code" is the default) to "code".',
+    );
+  }
+}
+
+export interface LogoutDeps {
+  tokenStore?: TokenStore;
+}
+
+export async function logoutAction(deps: LogoutDeps = {}): Promise<void> {
+  const tokenStore = deps.tokenStore ?? new FileTokenStore();
+  await tokenStore.clear();
+  console.log('Logged out. The cached token has been removed.');
+}
+
+export interface CheckDeps {
+  tokenStore?: TokenStore;
+  client?: OeqClient;
+}
+
+/**
+ * Read-only pre-flight (see core/preflight.ts): confirms a token, identity,
+ * that the target collection exists on THIS host, and that this user can
+ * actually contribute to it. Creates nothing. Returns the process exit code.
+ */
+export async function checkAction(env: Env = process.env, deps: CheckDeps = {}): Promise<number> {
+  const cfg = loadConfig(env);
+  console.log(`OEQ_BASE_URL: ${cfg.baseUrl}`);
+  console.log(`OEQ_COLLECTION_UUID: ${cfg.collectionUuid}\n`);
+
+  const auth =
+    cfg.authMode === 'client_credentials'
+      ? new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret)
+      : new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, deps.tokenStore);
+  const client = deps.client ?? new OeqClient(cfg.baseUrl, auth);
+
+  const result = await runPreflight(cfg, auth, client);
+  for (const c of result.checks) {
+    console.log(`[${c.pass ? 'PASS' : 'FAIL'}] ${c.label}: ${c.message}`);
+  }
+  console.log(result.ok ? '\nAll checks passed.' : '\nOne or more checks failed -- see above.');
+  return result.ok ? 0 : 1;
+}
+
 export function buildProgram(env: Env = process.env): Command {
   const program = new Command();
   program
@@ -242,6 +374,31 @@ export function buildProgram(env: Env = process.env): Command {
     .requiredOption('--manifest <path>', 'job manifest')
     .action(async (o: RetryCliOptions) => {
       await retryAction(o);
+    });
+
+  program
+    .command('login')
+    .description(
+      'Authenticate via the openEQUELLA authorization-code flow and cache a token for `run`/`check`.',
+    )
+    .action(async () => {
+      await loginAction(env);
+    });
+
+  program
+    .command('logout')
+    .description('Remove the cached OAuth token.')
+    .action(async () => {
+      await logoutAction();
+    });
+
+  program
+    .command('check')
+    .description(
+      'Read-only pre-flight: confirms auth, identity, and CREATE_ITEM on the target collection. Creates nothing.',
+    )
+    .action(async () => {
+      process.exitCode = await checkAction(env);
     });
 
   return program;
