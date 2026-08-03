@@ -21,14 +21,24 @@ Two distinct users need serving:
 
 ## Scope
 
-**In scope (v1)**
+### In scope (v1)
 
 - Create one contribution per file, with that file as its single attachment (1:1).
 - Metadata driven by a spreadsheet whose column headers are schema xpaths.
 - Items created as draft or published, configurable per run.
 - Resumable batches with per-row failure isolation.
 
-**Out of scope (v1)**
+### Target and item state
+
+One collection per job, configured per run, defaulting to "BYU-Idaho Faculty
+Content" (itemdef `bb348ab1-7a81-4e37-8ef7-adc095ade4f9`).
+
+**That collection has no moderation workflow.** Publishing puts an item live
+immediately, with no queue in which to catch a mistake. Draft is therefore the
+default: the first run of any batch is where a subtly wrong metadata mapping
+surfaces, and draft items are trivial to delete where live ones are not.
+
+### Out of scope (v1)
 
 - Shared owners / collaborators — continues to be applied manually inside
   openEQUELLA via Manage Resources. (Cheap to add later; see Future Work.)
@@ -40,7 +50,7 @@ Two distinct users need serving:
 
 One TypeScript package on Node, three layers. The core is unaware of both front ends.
 
-```
+```text
 src/core/
   auth.ts       AuthProvider interface; OAuth client-credentials implementation
   client.ts     Typed openEQUELLA REST client
@@ -90,13 +100,20 @@ For each pending row:
 
 The runner never prompts. Anything ambiguous was resolved during planning.
 
+**Concurrency:** rows process sequentially by default, with an optional
+`--concurrency N` flag. Sequential is the right default here because the
+bottleneck is a 150 MB upload over a campus network — parallelism risks
+saturating the connection and makes partial-failure states harder to reason
+about, for a gain that only materialises if the server is the bottleneck rather
+than the link.
+
 `job.json` is the sole contract between phases and the only input `status` and
 `retry` require.
 
 ## MCP tools
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `oeq_list_schema_paths(filter)` | Search the ~200 valid xpaths |
 | `oeq_validate_sheet(path)` | Header validation with suggestions |
 | `oeq_plan(sheet, filesDir, collection, opts)` | Write manifest; return summary and problems |
@@ -110,7 +127,7 @@ There is deliberately no upload tool.
 
 Column headers are xpaths, merged into a single tree:
 
-```
+```text
 MWDL/creators/creator = "David Olsen"
   -> <MWDL><creators><creator>David Olsen</creator></creators></MWDL>
 ```
@@ -173,7 +190,7 @@ The instance sits behind Okta SSO (`id.churchofjesuschrist.org`). Interactive
 login cannot be automated, so unattended operation requires **OAuth client
 credentials**:
 
-```
+```http
 POST /oauth/access_token?grant_type=client_credentials&client_id=…&client_secret=…
 -> { "access_token": … }
 then: X-Authorization: access_token=<token>
