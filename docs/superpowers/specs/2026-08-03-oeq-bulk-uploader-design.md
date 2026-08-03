@@ -213,6 +213,23 @@ not by the person running the tool. That user needs `CREATE_ITEM` on the target
 collection. Ownership is awkward to change after the fact, so it should be settled
 when the client is registered.
 
+**Open security question — the secret travels in a query string.** RFC 6749
+§2.3.1 specifies a form-encoded POST body or HTTP Basic auth, because query
+strings are routinely recorded in web server access logs, proxy logs, and
+monitoring tools. We use query parameters because that is openEQUELLA's
+documented form and we cannot yet verify whether it accepts an alternative
+(blocked on `swagger.json`). Consequences and follow-up:
+
+- The client secret may be written to the instance's access logs on every token
+  request. Whoever administers `content.byui.edu` should know this, and the
+  secret should be treated as rotatable rather than long-lived.
+- The client redacts the secret — in both raw and percent-encoded form — from
+  every error it raises, so it cannot leak through our own logs. It cannot do
+  anything about the server's.
+- When `swagger.json` is available, check whether `POST /oauth/access_token`
+  accepts credentials in the request body. If it does, switch; it is a small
+  change confined to `auth.ts`.
+
 ## Error handling
 
 - **Per-row isolation** — one failure never terminates the job.
