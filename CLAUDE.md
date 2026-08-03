@@ -10,9 +10,19 @@ Replaces an older, no-longer-working tool by Jim Kurian.
 
 ## Status
 
-Design phase. The spec lives at
+Implemented and verified. CLI (`plan | run | status | retry`) and MCP server
+(six tools) both build clean, 173 tests pass across 14 files, and
+`npm run typecheck` is clean. See [README.md](README.md) for setup, usage,
+and the live-smoke-test procedure that must run before any real batch.
+
+One wire-format assumption remains unverified pending that live smoke test:
+whether the `{ type: 'file', filename, ... }` attachment payload shape is
+correct, since `AttachmentBean` in `schema/swagger.json` doesn't model
+openEQUELLA's polymorphic attachment subtypes. See the "Known limitations"
+section of the README and the header comment in `src/core/client.ts`.
+
+The spec lives at
 [docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md](docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md).
-No implementation code yet.
 
 ## Repository layout
 
@@ -67,6 +77,12 @@ easy to get wrong from first principles.
 - A Playwright profile with a live SSO session may exist under the session
   scratchpad. openEQUELLA's `JSESSIONID` is session-scoped, so it does not
   survive a browser restart — re-login is interactive each time.
-- `schema/swagger.json` is not yet captured. Three design decisions depend on it:
-  the staging upload endpoint, whether item UUIDs may be supplied at creation,
-  and whether attachment UUIDs may be supplied at creation.
+- `schema/swagger.json` has been captured from the live instance and is
+  committed. It confirmed the staging upload endpoints and that a
+  client-supplied attachment uuid is accepted (`AttachmentBean.uuid`), but it
+  does not settle everything: `AttachmentBean` has no `filename`/`type`
+  property at all, because the spec doesn't model openEQUELLA's polymorphic
+  attachment subtypes. Whether this tool's `{ type: 'file', filename, ... }`
+  payload shape is correct is still unverified and is exactly what the live
+  smoke test in the README exists to confirm. See the header comment in
+  `src/core/client.ts` for the full CONFIRMED/UNVERIFIED breakdown.
