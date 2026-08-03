@@ -7,11 +7,19 @@
  * that were previously guesses — see the CONFIRMED/UNVERIFIED breakdown in
  * `client.ts`'s header comment, which this file mirrors:
  *
+ *   - CONFIRMED: the staging-area endpoints modelled below are an exact
+ *     match for swagger.json — `POST /staging` ("Create a file area"),
+ *     `GET /staging/{uuid}` / `DELETE /staging/{uuid}` ("Get a file area
+ *     listing" / "Delete a staging area"), and `PUT /staging/{uuid}/{filepath}`
+ *     ("Put a file", raw body + content-length/content-type headers). The
+ *     spec's `/file/{uuid}/...` paths are a *different* API for files
+ *     already attached to an existing item, not a staging replacement.
  *   - CONFIRMED: `POST /api/item` takes the staging area id as a `file`
- *     QUERY PARAM (not a body field), alongside `draft`. This mock 404s if
- *     `file` is missing or names a staging area that doesn't exist, so a
- *     regression back to sending it in the body fails loudly instead of
- *     silently creating an orphaned attachment.
+ *     QUERY PARAM (not a body field), alongside `draft` (default `false` —
+ *     omitting it publishes live). This mock 404s if `file` is missing or
+ *     names a staging area that doesn't exist, so a regression back to
+ *     sending it in the body fails loudly instead of silently creating an
+ *     orphaned attachment.
  *   - CONFIRMED: `GET /api/search`'s `showall` query param (default false)
  *     gates whether non-live (e.g. draft) items are matched. This mock only
  *     reports a hit when `showall=true`, so a regression that stops sending
@@ -21,13 +29,12 @@
  *     (additive test scaffolding, see MockState) makes it instead return a
  *     201 with an empty body and a `Location: /item/{uuid}/{version}`
  *     header, proving the client tolerates both.
- *   - STILL UNVERIFIED: everything else below (the `/oauth/access_token`
- *     shape, all of `/api/staging/*`, and the attachment payload's exact
- *     field set) remains a hypothesis, not a fact — swagger.json does not
- *     cover `/oauth/access_token` (outside its basePath) and has no
- *     `/staging` path at all (its only file-related paths are under
- *     `/file/{uuid}/...`, a materially different shape). Treat those routes
- *     here as before: a guess, pending a dedicated verification pass.
+ *   - STILL UNVERIFIED: the attachment payload's exact field set —
+ *     `AttachmentBean` in swagger.json has no `filename`/`type` property, so
+ *     this mock's `{type, filename, description, uuid}` shape remains a
+ *     guess pending a live smoke test — and `POST /oauth/access_token`,
+ *     which sits outside `/api`'s basePath and so isn't covered by this
+ *     document at all.
  *
  * When the next discrepancy turns up, this file and `src/core/client.ts`
  * are the only two files that should need to change to reconcile it —

@@ -9,20 +9,30 @@
  * response — the two can still disagree).
  *
  * CONFIRMED against swagger.json:
+ *   - The staging-area endpoints this client and upload.ts use are an exact
+ *     match: `POST /staging` ("Create a file area"), `GET /staging/{uuid}`
+ *     ("Get a file area listing") and `DELETE /staging/{uuid}` ("Delete a
+ *     staging area"), and `PUT /staging/{uuid}/{filepath}` ("Put a file",
+ *     taking a raw `body` plus `content-length`/`content-type` headers, and
+ *     — unused here — `partNumber`/`uploadId` for multipart uploads). The
+ *     `/file/{uuid}/...` paths elsewhere in the spec are a *different* API,
+ *     for files already attached to an existing item, not a staging
+ *     replacement — do not conflate the two.
  *   - POST /item takes `file` (the staging area id) and `draft` as QUERY
  *     PARAMS, not body fields. `ItemBean` (the documented body schema) has
- *     no staging/stagingUuid property at all — a server that followed this
- *     spec would have silently ignored a body-embedded `stagingUuid`,
- *     creating an item whose attachment points at a staging area the
- *     request never actually told the server about. Fixed here; see
- *     createItem() below.
+ *     no staging/stagingUuid property at all (it does have `collaborators`,
+ *     for what it's worth) — a server that followed this spec would have
+ *     silently ignored a body-embedded `stagingUuid`, creating an item
+ *     whose attachment points at a staging area the request never actually
+ *     told the server about. Fixed here; see createItem() below.
  *   - `draft`'s documented default is `false` — omitting it means
  *     PUBLISHED. This confirms the runtime guard in createItem() (added
  *     defensively before swagger.json was available) was the right call,
  *     not overcaution.
  *   - GET /search has a `showall` query param (default `false`) described
- *     as "If true then includes items that are not live". Items here are
- *     created as drafts by default, i.e. not live — without `showall=true`,
+ *     as "If true then includes items that are not live", and a separate
+ *     `status` param whose enum includes `draft`. Items here are created as
+ *     drafts by default, i.e. not live — without `showall=true`,
  *     identifierExists() would never see the very items it exists to find,
  *     and a re-run would report "no duplicates" and recreate all of them.
  *     Fixed here; see identifierExists() below.
@@ -39,29 +49,20 @@
  *     client-supplied attachment uuid this client relies on (see
  *     `AttachmentSpec.uuid`).
  *
- * STILL UNVERIFIED (swagger.json does not settle these):
+ * STILL UNVERIFIED (swagger.json does not settle this):
  *   - `AttachmentBean`'s documented properties are `uuid, description,
  *     viewer, preview, erroredIndexing, restricted, externalId` — no
  *     `filename` or `type`. The spec does not model openEQUELLA's
  *     polymorphic attachment subtypes (file/url/etc.), so this client's
  *     `{ type: "file", filename, description, uuid? }` payload shape
- *     remains a guess. This is the next thing a live smoke test must check.
- *   - Whether `q` on /search performs an exact-phrase or free-text match
- *     (see the caveat on identifierExists() below) — swagger.json documents
- *     `q` only as "Query string", with no matching semantics specified.
- *   - POST /oauth/access_token — not an `/api`-basePath endpoint, so it is
- *     outside this swagger document entirely; still exactly as unverified
- *     as before (see auth.ts).
- *   - The staging-area endpoints this client assumes — POST /staging, PUT
- *     /staging/:uuid/:filename, DELETE /staging/:uuid — are NOT covered by
- *     this swagger.json review either: there is no "/staging" path in it at
- *     all. The document's only file-related paths are under
- *     `/file/{uuid}/...` (e.g. `/file/{uuid}/content/{filepath}`), which is
- *     a materially different shape than what's implemented below. This is
- *     a bigger discrepancy than a field name and needs its own dedicated
- *     verification pass — flagged, not fixed, in this change — before
- *     Task 9's upload path (upload.ts) should be trusted against the live
- *     server.
+ *     remains a guess. This is now the ONLY wire-format assumption left for
+ *     a live smoke test to settle.
+ *   - Two smaller items, noted for completeness rather than risk: whether
+ *     `q` on /search performs an exact-phrase or free-text match (see the
+ *     caveat on identifierExists() below — swagger.json documents `q` only
+ *     as "Query string", with no matching semantics specified); and POST
+ *     /oauth/access_token, which sits outside `/api`'s basePath and so is
+ *     simply not covered by this document at all (see auth.ts).
  *
  * `tests/helpers/mockServer.ts` encodes this exact same contract. When the
  * next discrepancy turns up, THIS FILE and mockServer.ts are the only two
