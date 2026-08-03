@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,7 @@ import {
 } from '../src/mcp/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
+import { startMockServer, type MockServer } from './helpers/mockServer.js';
 import type { Manifest } from '../src/core/types.js';
 
 let dir: string;
@@ -41,6 +42,23 @@ const configEnv = () => ({
 
 function textOf(result: { content: Array<{ type: 'text'; text: string }> }): string {
   return result.content.map((c) => c.text).join('\n');
+}
+
+/** A minimal, generic (not student) batch with an MWDL/identifier column,
+ *  so preflightDuplicates has something to check. */
+async function writeIdentifierSheet(sheetDir: string): Promise<string> {
+  const sheetPath = join(sheetDir, 'batch.csv');
+  await writeFile(
+    sheetPath,
+    [
+      'attachment name,MWDL/identifier,MWDL/title',
+      'clip1.mp4,test-id-001,Test Clip One',
+      'clip2.mp4,test-id-002,Test Clip Two',
+    ].join('\n'),
+  );
+  await writeFile(join(sheetDir, 'clip1.mp4'), '1');
+  await writeFile(join(sheetDir, 'clip2.mp4'), '2');
+  return sheetPath;
 }
 
 describe('oeq_list_schema_paths', () => {
@@ -115,6 +133,19 @@ describe('oeq_plan and a live lock', () => {
     expect(textOf(result)).not.toContain('super-secret-value');
   });
 
+  it('never leaks OEQ_CLIENT_SECRET even when the config itself is invalid (missing OEQ_BASE_URL)', async () => {
+    const manifestPath = join(dir, 'job.json');
+    const result = await planTool(
+      { sheet: 'tests/fixtures/sample-batch.csv', filesDir: dir, manifestPath },
+      // OEQ_BASE_URL deliberately omitted -- loadConfig throws here, and its
+      // error text must not carry OEQ_CLIENT_SECRET even though the secret
+      // was present in the environment this call was made with.
+      { OEQ_CLIENT_ID: 'id', OEQ_CLIENT_SECRET: 'super-secret-value' },
+    );
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).not.toContain('super-secret-value');
+  });
+
   it('plans a manifest from the sample batch when unlocked', async () => {
     // Real filenames from tests/fixtures/sample-batch.csv's 'attachment name'
     // column -- not invented student data, just the fixture's own values.
@@ -124,7 +155,11 @@ describe('oeq_plan and a live lock', () => {
 
     const manifestPath = join(dir, 'job.json');
     const result = await planTool(
-      { sheet: 'tests/fixtures/sample-batch.csv', filesDir: dir, manifestPath },
+      // skipDuplicateCheck: true -- this test is about the file-matching/
+      // manifest-writing wiring, not the duplicate check, and configEnv()'s
+      // baseUrl isn't a real server; the duplicate-check behavior itself is
+      // covered by the 'oeq_plan duplicate pre-flight' tests below.
+      { sheet: 'tests/fixtures/sample-batch.csv', filesDir: dir, manifestPath, skipDuplicateCheck: true },
       configEnv(),
     );
     expect(result.isError).toBeFalsy();
@@ -149,6 +184,83 @@ describe('oeq_plan and a live lock', () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("must be 'draft' or 'published'");
     expect(existsSync(manifestPath)).toBe(false);
+  });
+});
+
+describe('oeq_plan duplicate pre-flight', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  const mockEnv = () => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: 'secret',
+  });
+
+  it('does not attempt a network call when skipDuplicateCheck is true', async () => {
+    const sheetPath = await writeIdentifierSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    const result = await planTool(
+      { sheet: sheetPath, filesDir: dir, manifestPath, skipDuplicateCheck: true },
+      mockEnv(),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).not.toContain('Duplicate check');
+    // The strongest proof no network call was made: the mock server never
+    // even issued a token.
+    expect(mock.state.issuedTokens).toHaveLength(0);
+  });
+
+  it('surfaces a warning for a known existing identifier, matching planAction', async () => {
+    mock.state.existingIdentifiers = ['test-id-001'];
+    const sheetPath = await writeIdentifierSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    const result = await planTool({ sheet: sheetPath, filesDir: dir, manifestPath }, mockEnv());
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('test-id-001');
+    expect(mock.state.issuedTokens.length).toBeGreaterThan(0);
+
+    // The warning is persisted into the manifest itself, not just printed --
+    // mirroring planAction, so a later oeq_job_status sees it too.
+    const saved = await loadManifest(manifestPath);
+    expect(saved.warnings.join(' ')).toContain('test-id-001');
+  });
+
+  it('still returns a successful plan when credentials are absent, skipping the duplicate check with a warning', async () => {
+    const sheetPath = await writeIdentifierSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    // OEQ_BASE_URL is a real, reachable mock server here specifically to
+    // prove the *absence of credentials* is what skips the check -- if the
+    // guard were instead accidentally gated on network reachability, this
+    // would behave differently from the true "no server at all" case.
+    const result = await planTool(
+      { sheet: sheetPath, filesDir: dir, manifestPath },
+      { OEQ_BASE_URL: mock.url },
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('Duplicate check skipped');
+    expect(mock.state.issuedTokens).toHaveLength(0);
+
+    // Not a landmine: the saved manifest is structurally complete (real
+    // baseUrl, non-empty collectionUuid/schemaUuid from loadConfig's own
+    // defaults) and loads back cleanly -- proving planning without
+    // credentials doesn't silently corrupt anything for later steps.
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries).toHaveLength(2);
+    expect(saved.baseUrl).toBe(mock.url);
+    expect(saved.collectionUuid.length).toBeGreaterThan(0);
+    expect(saved.schemaUuid.length).toBeGreaterThan(0);
   });
 });
 

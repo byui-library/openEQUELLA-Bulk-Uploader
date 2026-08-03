@@ -7,12 +7,14 @@ import { existsSync, openSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import { loadConfig } from '../core/config.js';
+import { loadConfig, type Config } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths, validateHeaders, suggest } from '../core/schema.js';
-import { buildManifest } from '../core/plan.js';
+import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
+import { OAuthClientCredentials } from '../core/auth.js';
+import { OeqClient } from '../core/client.js';
 import type { ItemState } from '../core/types.js';
 
 type Env = Record<string, string | undefined>;
@@ -56,6 +58,39 @@ function redactSecret(message: string, env: Env): string {
 
 async function loadPaths(schemaFile: string): Promise<Set<string>> {
   return parseSchemaPaths(extractDefinition(await readFile(schemaFile, 'utf8')));
+}
+
+/**
+ * "Credentials" here means the OAuth client id + secret specifically --
+ * `OEQ_BASE_URL` is target configuration (which instance), not a secret, and
+ * is required regardless of this check: `buildManifest` records it in the
+ * manifest for the later `run` step, so `oeq_plan` still can't do anything
+ * useful without it.
+ */
+function hasCredentials(env: Env): boolean {
+  return Boolean(env.OEQ_CLIENT_ID) && Boolean(env.OEQ_CLIENT_SECRET);
+}
+
+/**
+ * `loadConfig` gates on `OEQ_BASE_URL`, `OEQ_CLIENT_ID`, and
+ * `OEQ_CLIENT_SECRET` together, all-or-nothing -- but `buildManifest` only
+ * ever needs `baseUrl`/`collectionUuid`/`schemaUuid` from it, and never
+ * touches the network. Planning (matching spreadsheet rows to files,
+ * catching header typos) is genuinely useful offline and must keep working
+ * even when the operator hasn't finished wiring up OAuth credentials yet --
+ * that's a very normal state, not a broken one.
+ *
+ * When the real credentials are absent, this substitutes inert placeholders
+ * for just the two credential fields so the *real*, unmodified `loadConfig`
+ * still computes the real `baseUrl` and its real collection/schema defaults
+ * -- there is no local, drift-prone copy of those defaults here. The
+ * placeholders must never be trusted for anything network-related; every
+ * caller of this function checks `hasCredentials(env)` (the original env,
+ * not the patched one) before ever reading `cfg.clientId`/`cfg.clientSecret`.
+ */
+function loadConfigForPlanning(env: Env): Config {
+  if (hasCredentials(env)) return loadConfig(env);
+  return loadConfig({ ...env, OEQ_CLIENT_ID: 'unset', OEQ_CLIENT_SECRET: 'unset' });
 }
 
 /**
@@ -149,11 +184,23 @@ export interface PlanArgs {
    */
   itemState?: string;
   schemaFile?: string;
+  /**
+   * Skip the network check for existing duplicate identifiers. Default
+   * false, matching the CLI's `plan` command -- the check is cheap, advisory
+   * (see `preflightDuplicates`'s own doc in plan.ts), and is exactly the
+   * kind of thing the *less* spreadsheet-savvy MCP audience benefits most
+   * from having on by default.
+   */
+  skipDuplicateCheck?: boolean;
 }
 
 /**
- * Validate a spreadsheet against files on disk and write a job manifest.
- * Touches the filesystem only -- no network call, no bytes uploaded.
+ * Validate a spreadsheet against files on disk and write a job manifest,
+ * then (unless skipped) run the same advisory duplicate-identifier check
+ * `planAction` runs in src/cli/index.ts, so a manifest planned via MCP
+ * carries the same warnings one planned via the CLI would -- see
+ * `loadConfigForPlanning` above for why a missing OAuth credential degrades
+ * to a warning here instead of failing the whole call.
  *
  * MUST check the lock before doing anything else: `oeq_start_job` detaches
  * the runner, so an agent can call this mid-job. Writing a stale snapshot
@@ -178,9 +225,10 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
   }
   const itemState: ItemState = itemStateRaw;
   const schemaFile = args.schemaFile ?? 'schema/_entity.xml';
+  const skipDuplicateCheck = args.skipDuplicateCheck ?? false;
 
   try {
-    const cfg = loadConfig(env);
+    const cfg = loadConfigForPlanning(env);
     const sheet = await readSheet(resolve(args.sheet));
     const paths = await loadPaths(schemaFile);
     const manifest = await buildManifest(sheet, resolve(args.filesDir), paths, {
@@ -189,6 +237,35 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
       schemaUuid: cfg.schemaUuid,
       itemState,
     });
+
+    // Mirrors planAction exactly: warnings land in manifest.warnings BEFORE
+    // saveManifest, so a manifest planned here and one planned via the CLI
+    // carry identical persisted state, not just identical console output.
+    if (!skipDuplicateCheck) {
+      if (!hasCredentials(env)) {
+        manifest.warnings.push(
+          'Duplicate check skipped: OEQ_CLIENT_ID/OEQ_CLIENT_SECRET are not configured, so ' +
+            'existing identifiers in the collection could not be checked. Configure OAuth ' +
+            'credentials and re-plan (or pass skipDuplicateCheck) once ready.',
+        );
+      } else {
+        // Guards only the setup (client construction) -- preflightDuplicates
+        // itself already survives a per-entry network failure and turns it
+        // into its own per-row warning; this is a backstop for anything
+        // unexpected happening before that point.
+        try {
+          const client = new OeqClient(
+            cfg.baseUrl,
+            new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret),
+          );
+          const dupWarnings = await preflightDuplicates(client, manifest);
+          manifest.warnings.push(...dupWarnings);
+        } catch (err) {
+          manifest.warnings.push(`Duplicate check skipped: ${errorMessage(err)}`);
+        }
+      }
+    }
+
     await saveManifest(manifestPath, manifest);
     const lines = [
       `Planned ${manifest.entries.length} item(s) -> ${manifestPath}`,
@@ -391,6 +468,14 @@ server.tool(
           'ever passing anything other than draft.',
       ),
     schemaFile: z.string().default('schema/_entity.xml').describe('Path to a local _entity.xml schema export'),
+    skipDuplicateCheck: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Skip the network check for existing duplicate identifiers in the collection. Off by ' +
+          'default; the check is advisory (never removes or blocks an entry) and is skipped ' +
+          'automatically with a warning if OAuth credentials are not configured.',
+      ),
   },
   async (args) => planTool(args),
 );
