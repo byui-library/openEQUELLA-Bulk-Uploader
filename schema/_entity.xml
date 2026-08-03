@@ -1,0 +1,78 @@
+<com.tle.common.ImportExportPack>
+  <entity class="com.tle.beans.entity.Schema">
+    <id>17</id>
+    <uuid>c93181f3-a443-41bf-9afe-ac9f7daf90b7</uuid>
+    <institution>
+      <id>1</id>
+      <uniqueId>0</uniqueId>
+      <quota>0.0</quota>
+      <enabled>true</enabled>
+    </institution>
+    <owner>2aed888f-e47d-4502-bb9c-e0fab6d84c1a</owner>
+    <dateModified class="sql-timestamp">2026-05-11 08:54:27.607</dateModified>
+    <dateCreated class="sql-timestamp">2012-07-25 10:04:54.817</dateCreated>
+    <name>
+      <id>72</id>
+      <strings>
+        <entry>
+          <string>en</string>
+          <com.tle.beans.entity.LanguageString>
+            <id>72</id>
+            <locale>en</locale>
+            <priority>1</priority>
+            <text>BYUI_MWDL</text>
+            <bundle reference="../../../.."/>
+          </com.tle.beans.entity.LanguageString>
+        </entry>
+      </strings>
+    </name>
+    <attributes/>
+    <systemType>false</systemType>
+    <disabled>false</disabled>
+    <expTransforms>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>oai_dc_limb.xsl</filename>
+        <type>oai_dc_eds</type>
+      </com.tle.beans.entity.SchemaTransform>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>oai_dc_limb.xsl</filename>
+        <type>oai_dc</type>
+      </com.tle.beans.entity.SchemaTransform>
+    </expTransforms>
+    <impTransforms>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>byui-cwb.xsl</filename>
+        <type>Content without Borders</type>
+      </com.tle.beans.entity.SchemaTransform>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>ITtoEquella3.xsl</filename>
+        <type>OAI_DC_Internet_Archive_To_Equella</type>
+      </com.tle.beans.entity.SchemaTransform>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>internetArchive2.xsl</filename>
+        <type>The Internet Archives</type>
+      </com.tle.beans.entity.SchemaTransform>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>identity_transform.xsl</filename>
+        <type>Identity Transform</type>
+      </com.tle.beans.entity.SchemaTransform>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>MappingMapTobyui-schema.xslt</filename>
+        <type>marktest</type>
+      </com.tle.beans.entity.SchemaTransform>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>Min-UEN.xsl</filename>
+        <type>UEN OAI_DC</type>
+      </com.tle.beans.entity.SchemaTransform>
+      <com.tle.beans.entity.SchemaTransform>
+        <filename>libToEquella.xsl</filename>
+        <type>LibCatalogZ3950</type>
+      </com.tle.beans.entity.SchemaTransform>
+    </impTransforms>
+    <itemNamePath>/MWDL/title</itemNamePath>
+    <itemDescriptionPath>/MWDL/description</itemDescriptionPath>
+    <serialisedDefinition>&lt;xml&gt;&lt;oai&gt;&lt;id search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;sourceRepository field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;sourceAttribution type=&quot;text&quot;/&gt;&lt;sourceCollection field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;sourceCollectionName field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/oai&gt;&lt;MWDL&gt;&lt;formats&gt;&lt;format field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;medium field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/formats&gt;&lt;title field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;description field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;creators&gt;&lt;creator field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/creators&gt;&lt;subjects&gt;&lt;subject field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/subjects&gt;&lt;alternativeTitles&gt;&lt;alternativeTitle field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/alternativeTitles&gt;&lt;contributors&gt;&lt;contributor field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/contributors&gt;&lt;abstract field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;conversionSpecifications type=&quot;text&quot;/&gt;&lt;date field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;coverage field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;extent type=&quot;text&quot;/&gt;&lt;genres&gt;&lt;genre field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/genres&gt;&lt;identifier field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;isPartOf type=&quot;text&quot;/&gt;&lt;languages&gt;&lt;language type=&quot;text&quot;/&gt;&lt;/languages&gt;&lt;publisher field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;relation type=&quot;text&quot;/&gt;&lt;rights&gt;&lt;cost search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;copyrightAndOtherRestrictions search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;description search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;type type=&quot;text&quot;/&gt;&lt;/rights&gt;&lt;source type=&quot;text&quot;/&gt;&lt;spatial type=&quot;text&quot;/&gt;&lt;tableOfContents type=&quot;text&quot;/&gt;&lt;temporal type=&quot;text&quot;/&gt;&lt;transcription type=&quot;text&quot;/&gt;&lt;types&gt;&lt;type field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/types&gt;&lt;coverages type=&quot;text&quot;/&gt;&lt;audiences&gt;&lt;audience field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/audiences&gt;&lt;isRequiredBys&gt;&lt;isRequiredBy field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/isRequiredBys&gt;&lt;isRequiredBy field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;conformsTos&gt;&lt;conforms_to field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/conformsTos&gt;&lt;/MWDL&gt;&lt;BYUI_extended&gt;&lt;dataName field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;BYUI_information&gt;&lt;delivery_modes&gt;&lt;delivery_mode field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/delivery_modes&gt;&lt;department_ids&gt;&lt;department_id field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/department_ids&gt;&lt;college_Ids&gt;&lt;college_id field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/college_Ids&gt;&lt;course_groups&gt;&lt;course_group type=&quot;text&quot;/&gt;&lt;/course_groups&gt;&lt;course_councils&gt;&lt;course_council type=&quot;text&quot;/&gt;&lt;/course_councils&gt;&lt;course_names&gt;&lt;course_name field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/course_names&gt;&lt;course_semester_year type=&quot;text&quot;/&gt;&lt;go_live_date&gt;&lt;status type=&quot;text&quot;/&gt;&lt;date type=&quot;text&quot;/&gt;&lt;/go_live_date&gt;&lt;lessons&gt;&lt;lesson field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/lessons&gt;&lt;metadata_complete type=&quot;text&quot;/&gt;&lt;special_collections&gt;&lt;date_published type=&quot;text&quot;/&gt;&lt;date_digitized type=&quot;text&quot;/&gt;&lt;finding_aid field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;alumni_obituary&gt;&lt;death_date field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/alumni_obituary&gt;&lt;spc_category field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/special_collections&gt;&lt;notes&gt;&lt;note type=&quot;text&quot;/&gt;&lt;/notes&gt;&lt;module_types&gt;&lt;module_type field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/module_types&gt;&lt;assignment_types&gt;&lt;assignment_type field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;english_types&gt;&lt;literature_type field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;composition_type field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/english_types&gt;&lt;/assignment_types&gt;&lt;administrative_offices&gt;&lt;administrative_office field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/administrative_offices&gt;&lt;folder_names&gt;&lt;folder_name field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/folder_names&gt;&lt;buildings&gt;&lt;building field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/buildings&gt;&lt;/BYUI_information&gt;&lt;accessibility&gt;&lt;section_508_compliant type=&quot;text&quot;/&gt;&lt;transcript_available type=&quot;text&quot;/&gt;&lt;closed_captioning type=&quot;text&quot;/&gt;&lt;/accessibility&gt;&lt;byui_rights&gt;&lt;copyright_statement field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;restrict_to_byui field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;restrict_to_campus type=&quot;text&quot;/&gt;&lt;why_restricted type=&quot;text&quot;/&gt;&lt;copyright_concerns type=&quot;text&quot;/&gt;&lt;rights_contributor_name type=&quot;text&quot;/&gt;&lt;rights_contributor_role type=&quot;text&quot;/&gt;&lt;rights_date type=&quot;text&quot;/&gt;&lt;creativeCommons&gt;&lt;allowCommercialUses type=&quot;text&quot;/&gt;&lt;allowModifications type=&quot;text&quot;/&gt;&lt;copyright_and_other_restrictions type=&quot;text&quot;/&gt;&lt;derivative_works type=&quot;text&quot;/&gt;&lt;license field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/creativeCommons&gt;&lt;usage&gt;&lt;usage_departments type=&quot;text&quot;/&gt;&lt;usage_courses type=&quot;text&quot;/&gt;&lt;usage_limitations type=&quot;text&quot;/&gt;&lt;usage_statement type=&quot;text&quot;/&gt;&lt;/usage&gt;&lt;textbook&gt;&lt;isbn type=&quot;text&quot;/&gt;&lt;page type=&quot;text&quot;/&gt;&lt;year type=&quot;text&quot;/&gt;&lt;title type=&quot;text&quot;/&gt;&lt;author type=&quot;text&quot;/&gt;&lt;/textbook&gt;&lt;copyright_owner type=&quot;text&quot;/&gt;&lt;restriction type=&quot;text&quot;/&gt;&lt;license_type type=&quot;text&quot;/&gt;&lt;fair_use type=&quot;text&quot;/&gt;&lt;copyright_note type=&quot;text&quot;/&gt;&lt;citation search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/byui_rights&gt;&lt;attachments&gt;&lt;attachment type=&quot;text&quot;/&gt;&lt;/attachments&gt;&lt;av&gt;&lt;inPoint type=&quot;text&quot;/&gt;&lt;outPoint type=&quot;text&quot;/&gt;&lt;released type=&quot;text&quot;/&gt;&lt;embed_code field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;resolution type=&quot;text&quot;/&gt;&lt;poster type=&quot;html&quot;/&gt;&lt;entry_ids&gt;&lt;entry_id field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/entry_ids&gt;&lt;/av&gt;&lt;photography&gt;&lt;camera_model field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;iso field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;aperture field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;exposure field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;dimensions field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;lens field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;entity field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;locations&gt;&lt;location field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/locations&gt;&lt;names&gt;&lt;first_name field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;last_name field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/names&gt;&lt;last_name field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;first_name field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/photography&gt;&lt;instruments&gt;&lt;instrument_family type=&quot;text&quot;/&gt;&lt;instrument_type type=&quot;text&quot;/&gt;&lt;/instruments&gt;&lt;equellasync&gt;&lt;created_with field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/equellasync&gt;&lt;hr&gt;&lt;hr_categories&gt;&lt;hr_category field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/hr_categories&gt;&lt;/hr&gt;&lt;show_file_browser type=&quot;text&quot;/&gt;&lt;online&gt;&lt;toggle_media_type type=&quot;text&quot;/&gt;&lt;tags field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/online&gt;&lt;activities&gt;&lt;activities_areas&gt;&lt;activities_area field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/activities_areas&gt;&lt;/activities&gt;&lt;spori&gt;&lt;locations&gt;&lt;location field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;last_move_date field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/locations&gt;&lt;values&gt;&lt;value type=&quot;text&quot;/&gt;&lt;appraised field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/values&gt;&lt;dimensions&gt;&lt;dimension type=&quot;text&quot;/&gt;&lt;/dimensions&gt;&lt;qr_codes&gt;&lt;qr_code field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/qr_codes&gt;&lt;has_photo type=&quot;text&quot;/&gt;&lt;external_urls&gt;&lt;external_url type=&quot;text&quot;/&gt;&lt;/external_urls&gt;&lt;conditions&gt;&lt;condition field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/conditions&gt;&lt;collection field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/spori&gt;&lt;athletics&gt;&lt;event field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;sport field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/athletics&gt;&lt;month field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;year field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/BYUI_extended&gt;&lt;HBCS&gt;&lt;Revision_Date type=&quot;text&quot;/&gt;&lt;Product_Type search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;Geographic_Settings&gt;&lt;Geographic_Setting type=&quot;text&quot;/&gt;&lt;/Geographic_Settings&gt;&lt;Industry_Settings&gt;&lt;Industry_Setting type=&quot;text&quot;/&gt;&lt;/Industry_Settings&gt;&lt;Gross_Revenue type=&quot;text&quot;/&gt;&lt;Event_Start_Year type=&quot;text&quot;/&gt;&lt;Event_End_year type=&quot;text&quot;/&gt;&lt;Academic_Discipline field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;Length type=&quot;text&quot;/&gt;&lt;List_Price type=&quot;text&quot;/&gt;&lt;Supplementary_Materials type=&quot;text&quot;/&gt;&lt;Best_Seller_Flags&gt;&lt;Best_Seller_Flag type=&quot;text&quot;/&gt;&lt;/Best_Seller_Flags&gt;&lt;num_employees type=&quot;text&quot;/&gt;&lt;/HBCS&gt;&lt;item&gt;&lt;oai type=&quot;text&quot;&gt;&lt;id attribute=&quot;true&quot; field=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/oai&gt;&lt;attachments&gt;&lt;attachment&gt;&lt;type search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;attributes&gt;&lt;entry&gt;&lt;string type=&quot;text&quot;/&gt;&lt;/entry&gt;&lt;/attributes&gt;&lt;/attachment&gt;&lt;/attachments&gt;&lt;collaborativeowners&gt;&lt;collaborator field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/collaborativeowners&gt;&lt;discoverable type=&quot;text&quot;/&gt;&lt;viewable type=&quot;text&quot;/&gt;&lt;projectId field=&quot;true&quot; search=&quot;true&quot; type=&quot;text&quot;/&gt;&lt;/item&gt;&lt;collection type=&quot;text&quot;/&gt;&lt;/xml&gt;</serialisedDefinition>
+    <citations/>
+  </entity>
+  <version>2025.2.1 (2025.2.1-Stable.Edalex)</version>
+</com.tle.common.ImportExportPack>

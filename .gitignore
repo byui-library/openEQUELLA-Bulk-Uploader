@@ -1,0 +1,46 @@
+# ---------------------------------------------------------------------------
+# Source media. Batches run to several GB; these are inputs, never artifacts.
+# ---------------------------------------------------------------------------
+files/
+
+# ---------------------------------------------------------------------------
+# Metadata spreadsheets. Real batches carry student names tied to recorded
+# performances, so they stay out of history entirely. Anonymized test fixtures
+# under tests/fixtures/ are the exception.
+# ---------------------------------------------------------------------------
+*.xlsx
+*.xls
+*.csv
+!tests/fixtures/**/*.csv
+
+# ---------------------------------------------------------------------------
+# Credentials
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+npm-debug.log*
+
+# ---------------------------------------------------------------------------
+# Runtime job state. Manifests reference absolute local paths and upload
+# progress; they are per-machine and not shared.
+# ---------------------------------------------------------------------------
+jobs/
+*.log
+
+# ---------------------------------------------------------------------------
+# Editor / tooling
+# ---------------------------------------------------------------------------
+.qodo/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
