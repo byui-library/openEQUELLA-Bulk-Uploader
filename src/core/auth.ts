@@ -30,11 +30,18 @@ export interface AuthProvider {
 export class OAuthClientCredentials implements AuthProvider {
   private token: string | null = null;
   private inFlight: Promise<string> | null = null;
+  /** Generation the current `inFlight` fetch was started under. */
+  private inFlightGeneration: number | null = null;
   /**
    * Bumped by invalidate(). A completing fetch only caches its result if the
    * generation it started under is still current — this stops a refresh that
    * was invalidated mid-flight from re-populating the cache with a token the
    * caller already asked to discard. See fetchToken() and invalidate() below.
+   *
+   * getToken() also refuses to hand a caller an in-flight fetch that predates
+   * the current generation: invalidate() means "the next call re-authenticates",
+   * so a caller arriving after invalidate() must get its own fresh fetch, not
+   * silently join one that was already disowned.
    */
   private generation = 0;
 
@@ -46,12 +53,27 @@ export class OAuthClientCredentials implements AuthProvider {
 
   async getToken(): Promise<string> {
     if (this.token) return this.token;
-    // Collapse concurrent refreshes into one request.
-    if (!this.inFlight) {
+    // Collapse concurrent refreshes into one request — but only join an
+    // in-flight fetch that started in the current generation. One that
+    // predates a since-fired invalidate() is not eligible to be joined; a
+    // fresh fetch is started instead.
+    if (!this.inFlight || this.inFlightGeneration !== this.generation) {
       const startedInGeneration = this.generation;
-      this.inFlight = this.fetchToken(startedInGeneration).finally(() => {
-        this.inFlight = null;
-      });
+      const promise = this.fetchToken(startedInGeneration);
+      this.inFlight = promise;
+      this.inFlightGeneration = startedInGeneration;
+      // This cleanup chain is separate from `promise` itself — callers await
+      // `promise` (via the return below) and handle its rejection there. If
+      // we didn't swallow it here too, `.finally()`'s derived promise would
+      // report the same rejection a second time as an unhandled rejection.
+      void promise
+        .finally(() => {
+          if (this.inFlight === promise) {
+            this.inFlight = null;
+            this.inFlightGeneration = null;
+          }
+        })
+        .catch(() => {});
     }
     return this.inFlight;
   }
@@ -113,7 +135,17 @@ export class OAuthClientCredentials implements AuthProvider {
 
   private redact(text: string): string {
     if (!this.clientSecret) return text;
-    return text.split(this.clientSecret).join('[REDACTED]');
+    // The secret travels in a query string, so on the wire (and in anything
+    // that echoes the raw request back, e.g. an error body) it appears
+    // percent-encoded, not literal. Base64-alphabet secrets — the overwhelming
+    // common case for generated OAuth secrets — contain '+', '/', '=', all of
+    // which get percent-escaped, so both forms must be redacted.
+    let result = text.split(this.clientSecret).join('[REDACTED]');
+    const encoded = encodeURIComponent(this.clientSecret);
+    if (encoded !== this.clientSecret) {
+      result = result.split(encoded).join('[REDACTED]');
+    }
+    return result;
   }
 
   async authHeader(): Promise<Record<string, string>> {

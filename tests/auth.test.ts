@@ -88,10 +88,31 @@ describe('OAuthClientCredentials — additional hardening', () => {
     await auth.getToken();
     expect(mock.state.issuedTokens).toHaveLength(2);
   });
+
+  it('does not hand an invalidated in-flight token to a caller who calls getToken() after invalidate()', async () => {
+    // Chosen semantics (option (a) from review): invalidate() means the NEXT
+    // call re-authenticates, full stop — even if a fetch predating the
+    // invalidation is still in flight, a caller arriving after invalidate()
+    // must not silently join it and receive a token the system already
+    // decided to discard. They get their own fresh fetch instead.
+    const auth = new OAuthClientCredentials(mock.url, 'good-id', 'secret');
+    const first = auth.getToken(); // fetch #1 in flight, pre-invalidation
+    auth.invalidate();
+    const second = auth.getToken(); // called AFTER invalidate() — must NOT join fetch #1
+
+    const [firstToken, secondToken] = await Promise.all([first, second]);
+
+    expect(mock.state.issuedTokens).toHaveLength(2);
+    expect(firstToken).toBe(mock.state.issuedTokens[0]);
+    expect(secondToken).toBe(mock.state.issuedTokens[1]);
+    expect(secondToken).not.toBe(firstToken);
+  });
 });
 
 /** A throwaway server used to probe error handling paths the shared mock doesn't model. */
-function startProbeServer(handler: (body: string) => { status: number; body: string }): Promise<{
+function startProbeServer(
+  handler: (info: { body: string; url: string }) => { status: number; body: string },
+): Promise<{
   url: string;
   close: () => Promise<void>;
 }> {
@@ -100,7 +121,10 @@ function startProbeServer(handler: (body: string) => { status: number; body: str
       const chunks: Buffer[] = [];
       req.on('data', (c: Buffer) => chunks.push(c));
       req.on('end', () => {
-        const { status, body } = handler(Buffer.concat(chunks).toString('utf8'));
+        const { status, body } = handler({
+          body: Buffer.concat(chunks).toString('utf8'),
+          url: req.url ?? '',
+        });
         res.writeHead(status, { 'content-type': 'application/json' });
         res.end(body);
       });
@@ -116,15 +140,20 @@ function startProbeServer(handler: (body: string) => { status: number; body: str
 }
 
 describe('OAuthClientCredentials — secret handling and malformed responses', () => {
-  it('never leaks the client secret into a thrown error, even when the server echoes the request', async () => {
-    const secret = 'sup3r-s3cr3t-value';
-    const probe = await startProbeServer(() => ({
+  it('never leaks the client secret, raw or percent-encoded, into a thrown error', async () => {
+    // A base64-alphabet secret: '+', '/', '=', '&' are exactly the characters
+    // that differ between the raw secret and its query-string (percent-encoded)
+    // form. Generated OAuth secrets overwhelmingly look like this — it's the
+    // common case, not a corner case.
+    const secret = 'a+b/c=d&e';
+    const probe = await startProbeServer(({ url }) => ({
       status: 400,
       body: JSON.stringify({
         error: 'invalid_request',
-        // Simulate a server that (unhelpfully) echoes back what it received,
-        // secret included — this is the case redaction has to defend against.
-        debug: `rejected request containing client_secret=${secret}`,
+        // Simulate a server that (unhelpfully) echoes the request URL back —
+        // exactly as it appeared on the wire, i.e. percent-encoded — which is
+        // the case redaction has to defend against.
+        debug: `rejected request: ${url}`,
       }),
     }));
     try {
@@ -137,9 +166,13 @@ describe('OAuthClientCredentials — secret handling and malformed responses', (
       }
       expect(caught).toBeInstanceOf(ApiError);
       const err = caught as ApiError;
+      const encoded = encodeURIComponent(secret);
       expect(err.message).not.toContain(secret);
+      expect(err.message).not.toContain(encoded);
       expect(err.body).not.toContain(secret);
+      expect(err.body).not.toContain(encoded);
       expect(String(err.stack)).not.toContain(secret);
+      expect(String(err.stack)).not.toContain(encoded);
     } finally {
       await probe.close();
     }
