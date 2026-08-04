@@ -1,8 +1,15 @@
 import { app, BrowserWindow } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { registerHandlers } from './handlers.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// Tracked so registerHandlers' getWindow() callback (and the run handler's
+// progress events) can always reach the current window, including after
+// window-all-closed on non-mac platforms tears one down and 'activate'
+// creates a new one.
+let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -29,10 +36,18 @@ function createWindow(): void {
       preload: join(here, 'preload.cjs'),
     },
   });
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
   void win.loadFile(join(here, 'ui', 'index.html'));
 }
 
 void app.whenReady().then(() => {
+  // Registered once, globally -- ipcMain.handle throws on a second
+  // registration for the same channel, and createWindow() can run again
+  // later (see 'activate' below), so this must not live inside it.
+  registerHandlers(() => mainWindow);
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
