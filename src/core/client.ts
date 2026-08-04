@@ -234,10 +234,41 @@ export class OeqClient {
     return res;
   }
 
+  /**
+   * CONFIRMED against content-test.byui.edu: this returns `201` with an
+   * EMPTY body (content-length 0, no content-type) and the uuid available
+   * only in the `Location` header:
+   *
+   *   Location: https://content-test.byui.edu/api/staging/<uuid>
+   *
+   * A bare `res.json()` therefore throws "Unexpected end of JSON input" on
+   * every single row -- which is exactly what the first live run did. Parse
+   * the body when there is one (some deployments may send it), and fall back
+   * to `Location` otherwise.
+   */
   async createStagingArea(): Promise<string> {
     const res = await this.request('/api/staging', { method: 'POST' });
-    const { uuid } = (await res.json()) as { uuid: string };
-    return uuid;
+
+    const text = await res.text();
+    if (text.trim() !== '') {
+      try {
+        const parsed = JSON.parse(text) as { uuid?: string };
+        if (parsed.uuid) return parsed.uuid;
+      } catch {
+        // Not JSON -- fall through to the Location header.
+      }
+    }
+
+    const location = res.headers.get('location');
+    const uuid = location ? location.split('/').filter(Boolean).pop() : undefined;
+    if (uuid) return uuid;
+
+    throw new ApiError(
+      `POST /api/staging succeeded (${res.status}) but no staging area uuid could be ` +
+        `recovered from the response body or a Location header.`,
+      res.status,
+      text,
+    );
   }
 
   /**

@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
-import { loadConfig } from '../core/config.js';
+import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
@@ -63,10 +63,7 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
   });
 
   if (!o.skipDuplicateCheck) {
-    const client = new OeqClient(
-      cfg.baseUrl,
-      new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret),
-    );
+    const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
     const dupWarnings = await preflightDuplicates(client, manifest);
     manifest.warnings.push(...dupWarnings);
   }
@@ -98,10 +95,7 @@ export interface RunCliOptions {
  */
 export async function runAction(o: RunCliOptions, env: Env = process.env): Promise<number> {
   const cfg = loadConfig(env);
-  const client = new OeqClient(
-    cfg.baseUrl,
-    new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret),
-  );
+  const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
   const summary = await runManifest(client, o.manifest, {
     forceInterrupted: o.forceInterrupted,
     maxAttempts: o.maxAttempts,

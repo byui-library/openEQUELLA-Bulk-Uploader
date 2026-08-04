@@ -258,7 +258,17 @@ export async function startMockServer(): Promise<MockServer> {
       if (path === '/api/staging' && req.method === 'POST') {
         const uuid = nextId('staging');
         state.stagingAreas.add(uuid);
-        return send(res, 201, { uuid });
+        // CONFIRMED against content-test.byui.edu: 201 with an EMPTY body
+        // (content-length 0, no content-type) and the uuid only in Location.
+        // This mock previously returned `{ uuid }` as a JSON body, which the
+        // real server never sends -- so every client test passed while the
+        // client crashed on the first live row with "Unexpected end of JSON
+        // input". Do not "simplify" this back to a JSON body.
+        res.writeHead(201, {
+          location: `http://${req.headers.host ?? '127.0.0.1'}/api/staging/${uuid}`,
+          'content-length': '0',
+        });
+        return res.end();
       }
 
       const stagingUpload = /^\/api\/staging\/([^/]+)\/(.+)$/.exec(path);
