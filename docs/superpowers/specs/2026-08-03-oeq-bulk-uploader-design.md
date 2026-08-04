@@ -359,17 +359,43 @@ If the server answers `201 Created` with a `Location` header and an empty body,
 failure and retry it into a duplicate. `createItem` now falls back to parsing
 `Location`.
 
-### Still unverified — the only one left
+### Settled by the live smoke test — 2026-08-04
 
 `AttachmentBean` in the spec lists only `uuid, description, viewer, preview,
-erroredIndexing, restricted, externalId`. There is **no `filename` and no
-`type`**, because the spec does not model openEQUELLA's polymorphic attachment
-subtypes. Whether our `{ type: 'file', filename, description, uuid }` payload is
-correct cannot be settled from the document.
+erroredIndexing, restricted, externalId` — **no `filename`, no `type`** — because
+the spec does not model openEQUELLA's polymorphic attachment subtypes. That could
+not be settled from the document, and no test in this repository could settle it
+either: `client.ts` and `tests/helpers/mockServer.ts` encode the same assumption
+by construction, so they will always agree with each other.
 
-This is what the live smoke test exists to answer. No test in this repository
-can: `client.ts` and `tests/helpers/mockServer.ts` encode the same assumption by
-construction, so they will always agree with each other.
+One draft item was created on `content-test.byui.edu` and read back. The payload
+shape is **correct** — the server returned:
+
+```json
+{ "type": "file", "uuid": "…", "filename": "SMOKETEST clip, sample.MP4",
+  "size": 1048583, "md5": "b62706640d8412b277f802576e7a4cda" }
+```
+
+Also confirmed in the same run: a client-supplied attachment uuid **is** honoured
+(so the one-pass design holds and the two-pass fallback is unreachable here);
+uploaded bytes are md5-identical to the source; `BYUI_extended/attachments/attachment`
+receives the uuid; quotes, `&` and `<>` survive correctly escaped; empty columns
+emit `<abstract/>`; items land as draft owned by the authenticated user; and
+re-running the manifest creates nothing.
+
+### Two bugs the live run found that 240 tests did not
+
+Both existed because the client and the mock agreed with each other:
+
+1. **`POST /api/staging` returns `201` with an empty body**, the uuid available
+   only in a `Location` header. `createStagingArea` called `res.json()` and threw
+   `Unexpected end of JSON input` on the first row. The mock had been returning a
+   JSON body the real server never sends.
+2. **`plan` and `run` hardcoded `OAuthClientCredentials`** rather than calling
+   `createAuthProvider`, so they ignored the authorization-code token entirely.
+   The factory existed and `login`/`check` used it; the two commands that matter
+   were never wired up. The CLI tests inject dependencies in a way that bypassed
+   the hardcoded path, so nothing caught it.
 
 ## Future work
 

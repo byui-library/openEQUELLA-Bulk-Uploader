@@ -25,10 +25,20 @@ export interface StoredToken {
  * re-export an env var per command.
  *
  * NOTE ON RISK: this stores a bearer credential at rest, in a plaintext JSON
- * file. That's an accepted trade-off, not an oversight: the token is
- * short-lived (server-set `expires_in`, typically well under a day) and
- * user-scoped (it authenticates as whoever ran the login flow, not a shared
- * service account), so its blast radius and window are both small. The
+ * file.
+ *
+ * An earlier version of this comment called the token "short-lived (server-set
+ * `expires_in`, typically well under a day)". That is FALSE for this instance,
+ * measured 2026-08-04: content-test.byui.edu returns
+ * `expires_in: 9223372036854775807` -- Long.MAX_VALUE, i.e. the token does not
+ * expire. So the mitigating factor is only that it is user-scoped (it
+ * authenticates as whoever ran the login flow, not a shared service account);
+ * the time window is effectively unbounded, and `oeq-upload logout` after a
+ * session is genuinely worth doing rather than merely tidy.
+ *
+ * The `expiresAt` handling below is retained because it is correct if any
+ * instance ever does set a real `expires_in`, and because refusing an expired
+ * token is the safe direction to be wrong in. It is simply inert here. The
  * alternative -- printing the token and asking the operator to `export` it
  * before every command -- was judged worse for usability for no real
  * security gain: an env var is just as readable to anything else running as
