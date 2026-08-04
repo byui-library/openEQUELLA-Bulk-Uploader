@@ -5,6 +5,73 @@ import { OeqError } from '../core/errors.js';
 const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
+ * How long to wait, after a navigation load error, for the code-capture
+ * listeners to still produce a code before treating the error as fatal. See
+ * `resolveSignIn` below for why an error alone is never trusted immediately.
+ * A few seconds is generous headroom for the self-inflicted-abort race
+ * without meaningfully delaying a genuine failure's error message.
+ */
+const LOAD_ERROR_GRACE_MS = 3000;
+
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+export interface SignInRace {
+  /** Resolves once a code has been captured. Never rejects. */
+  code: Promise<string>;
+  /**
+   * Resolves with the first load error observed on either `loadURL` call.
+   * Never rejects itself -- the error is a resolved VALUE here, not a
+   * rejection, precisely so it can sit in a `Promise.race` alongside `code`
+   * without either one starving the other.
+   */
+  loadError: Promise<Error>;
+  /** Grace period, in ms, given to `code` after a load error before giving up. */
+  graceMs: number;
+  /** Injected so tests can control timing without real delays. */
+  delay: (ms: number) => Promise<void>;
+}
+
+/**
+ * Decides whether a load error observed during sign-in is a real failure.
+ *
+ * LIVE BUG, reported by an operator: `loadURL(authorizeUrl)` (and, less
+ * often, `loadURL(baseUrl)`) is a navigation THIS MODULE may abort out from
+ * under itself. As soon as `inspect()` (in `signInInteractive` below)
+ * captures the code, the window gets destroyed while that navigation may
+ * still be in flight, and Electron surfaces the abort as `ERR_FAILED (-2)`
+ * -- "this navigation was aborted," not "the network failed." Treating that
+ * as fatal turns a routine self-inflicted abort -- direct evidence sign-in
+ * WORKED -- into a false failure.
+ *
+ * This shipped without the grace period once already and passed manual
+ * verification anyway: on a FIRST sign-in, openEQUELLA shows an Authorize
+ * button, a human-speed pause that always let the capture win the race.
+ * Once the operator has granted the client, a SECOND sign-in redirects
+ * immediately, and the abort can land before the capture listener fires.
+ * That is exactly the race this function exists to lose gracefully: a load
+ * error is never trusted the instant it arrives, only after a short grace
+ * period has passed with no code showing up. If a code does arrive within
+ * that window, the error is discarded entirely, not merely deprioritised.
+ */
+export async function resolveSignIn(race: SignInRace): Promise<string> {
+  const first = await Promise.race([
+    race.code.then((code) => ({ kind: 'code' as const, code })),
+    race.loadError.then((error) => ({ kind: 'error' as const, error })),
+  ]);
+  if (first.kind === 'code') return first.code;
+
+  const graced = await Promise.race([
+    race.code.then((code) => ({ kind: 'code' as const, code })),
+    race.delay(race.graceMs).then(() => ({ kind: 'timeout' as const })),
+  ]);
+  if (graced.kind === 'code') return graced.code;
+
+  throw new OeqError(`Sign-in could not load openEQUELLA: ${first.error.message}`);
+}
+
+/**
  * Opens openEQUELLA in a window and captures the OAuth code from its own
  * navigation events.
  *
@@ -21,6 +88,9 @@ const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1000;
  *  3. Capture matches on the instance's own ORIGIN. Signing in via SSO also
  *     produces a ?code= on id.churchofjesuschrist.org, and exchanging that
  *     one fails obscurely.
+ *
+ * A fourth thing is load-bearing but isn't about *what* URL to load: neither
+ * `loadURL` call below is trusted to fail fast -- see `resolveSignIn`.
  */
 export async function signInInteractive(
   baseUrl: string,
@@ -37,70 +107,108 @@ export async function signInInteractive(
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
 
-  const code = await new Promise<string>((resolve, reject) => {
-    let armed = false;
-    let settled = false;
+  let armed = false;
+  let codeCaptured = false;
+  // Flipped once the outer race below has settled, so the background
+  // navigation loop (which isn't awaited -- see the fire-and-forget IIFE)
+  // stops promptly instead of continuing to poll a window that's about to
+  // be destroyed for up to the full SIGN_IN_TIMEOUT_MS.
+  let stopped = false;
 
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        reject(new OeqError('Sign-in timed out.'));
-      }
-    }, SIGN_IN_TIMEOUT_MS);
-
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn();
+  let resolveCode!: (code: string) => void;
+  const codePromise = new Promise<string>((resolve) => {
+    resolveCode = (code) => {
+      if (codeCaptured) return;
+      codeCaptured = true;
+      resolve(code);
     };
-
-    const inspect = (url: string): void => {
-      if (!armed) return;
-      let parsed: URL;
-      try {
-        parsed = new URL(url);
-      } catch {
-        return;
-      }
-      if (parsed.origin !== origin) return;
-      if (parsed.pathname.startsWith('/oauth/authorise')) return;
-      const found = parsed.searchParams.get('code');
-      if (found) finish(() => resolve(found));
-    };
-
-    win.webContents.on('will-redirect', (_e, url) => inspect(url));
-    win.webContents.on('did-navigate', (_e, url) => inspect(url));
-    win.webContents.on('will-navigate', (_e, url) => inspect(url));
-
-    win.on('closed', () => finish(() => reject(new OeqError('Sign-in window was closed before completing.'))));
-
-    void (async () => {
-      // Step 1: establish the session.
-      await win.loadURL(baseUrl);
-
-      const deadline = Date.now() + SIGN_IN_TIMEOUT_MS;
-      while (Date.now() < deadline && !settled) {
-        const isUser = await win.webContents
-          .executeJavaScript(
-            `fetch('/api/content/currentuser',{credentials:'include'})
-               .then(r => r.ok ? r.json() : null)
-               .then(u => !!u && u.guest === false)
-               .catch(() => false)`,
-          )
-          .catch(() => false);
-        if (isUser) break;
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      if (settled) return;
-
-      // Step 2: only now does the authorize URL keep its query string.
-      armed = true;
-      await win.loadURL(auth.getAuthorizeUrl());
-    })().catch((err: unknown) => finish(() => reject(err)));
-  }).finally(() => {
-    if (!win.isDestroyed()) win.destroy();
   });
+
+  let loadErrorSeen = false;
+  let resolveLoadError!: (err: Error) => void;
+  const loadErrorPromise = new Promise<Error>((resolve) => {
+    resolveLoadError = (err) => {
+      if (loadErrorSeen) return; // only the first load error is meaningful
+      loadErrorSeen = true;
+      resolve(err);
+    };
+  });
+
+  const inspect = (url: string): void => {
+    if (!armed || codeCaptured) return;
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return;
+    }
+    if (parsed.origin !== origin) return;
+    if (parsed.pathname.startsWith('/oauth/authorise')) return;
+    const found = parsed.searchParams.get('code');
+    if (found) resolveCode(found);
+  };
+
+  win.webContents.on('will-redirect', (_e, url) => inspect(url));
+  win.webContents.on('did-navigate', (_e, url) => inspect(url));
+  win.webContents.on('will-navigate', (_e, url) => inspect(url));
+
+  const closedPromise = new Promise<never>((_resolve, reject) => {
+    win.on('closed', () => {
+      if (!codeCaptured) reject(new OeqError('Sign-in window was closed before completing.'));
+    });
+  });
+
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    setTimeout(() => reject(new OeqError('Sign-in timed out.')), SIGN_IN_TIMEOUT_MS);
+  });
+
+  // Fire-and-forget: this drives the two loadURL calls, but its outcome is
+  // deliberately NOT what decides success or failure for signInInteractive
+  // -- that's resolveSignIn's job, fed by codePromise/loadErrorPromise
+  // below. Any rejection here is swallowed (there is nowhere useful for it
+  // to go once both of those have their own path to the decision), so it
+  // can never surface as an unhandled rejection.
+  void (async () => {
+    // Step 1: establish the session. A load error here is recorded, not
+    // thrown -- see resolveSignIn.
+    await win.loadURL(baseUrl).catch((err: unknown) => resolveLoadError(toError(err)));
+
+    while (!codeCaptured && !stopped) {
+      const isUser = await win.webContents
+        .executeJavaScript(
+          `fetch('/api/content/currentuser',{credentials:'include'})
+             .then(r => r.ok ? r.json() : null)
+             .then(u => !!u && u.guest === false)
+             .catch(() => false)`,
+        )
+        .catch(() => false);
+      if (isUser) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    if (codeCaptured || stopped) return;
+
+    // Step 2: only now does the authorize URL keep its query string. This
+    // navigation is DESIGNED to be interrupted -- see resolveSignIn.
+    armed = true;
+    await win.loadURL(auth.getAuthorizeUrl()).catch((err: unknown) => resolveLoadError(toError(err)));
+  })().catch(() => {});
+
+  let code: string;
+  try {
+    code = await Promise.race([
+      resolveSignIn({
+        code: codePromise,
+        loadError: loadErrorPromise,
+        graceMs: LOAD_ERROR_GRACE_MS,
+        delay: (ms) => new Promise((r) => setTimeout(r, ms)),
+      }),
+      closedPromise,
+      timeoutPromise,
+    ]);
+  } finally {
+    stopped = true;
+    if (!win.isDestroyed()) win.destroy();
+  }
 
   await auth.exchangeCode(code);
 }
