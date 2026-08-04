@@ -276,9 +276,9 @@ function handleSetupInstanceChange(id: string): void {
   render();
 }
 
-async function handleSaveSettings(clientId: string, clientSecret: string): Promise<void> {
-  if (clientId === '' || clientSecret === '') {
-    state.setupError = 'Enter both the client ID and the client secret.';
+async function handleSaveSettings(clientId: string, clientSecret: string, redirectUri: string): Promise<void> {
+  if (clientId === '' || clientSecret === '' || redirectUri === '') {
+    state.setupError = 'Enter the client ID, client secret, and redirect URL.';
     render();
     return;
   }
@@ -286,7 +286,7 @@ async function handleSaveSettings(clientId: string, clientSecret: string): Promi
   state.setupError = null;
   render();
   try {
-    await window.oeq.saveSettings(state.setupInstanceId, { clientId, clientSecret });
+    await window.oeq.saveSettings(state.setupInstanceId, { clientId, clientSecret, redirectUri });
     state.setupSaving = false;
     state.setupError = null;
     // Point the rest of the app at the instance that was just configured --

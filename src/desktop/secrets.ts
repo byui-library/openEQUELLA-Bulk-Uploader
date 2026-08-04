@@ -2,6 +2,7 @@ import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises';
 import { unlinkSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { StoredToken, TokenStore } from '../core/tokenStore.js';
+import { INSTANCES } from './ipc.js';
 
 /**
  * The subset of Electron's `safeStorage` this module needs, extracted as an
@@ -18,6 +19,15 @@ export interface Cipher {
 export interface Settings {
   clientId: string;
   clientSecret: string;
+  /**
+   * Registered on the OAuth client by an administrator and NOT derivable
+   * from the instance's base url -- production has no trailing slash, one
+   * test client had one, another dedicated test client does not. This exact
+   * value has been guessed wrong TWICE in this project by hard-coding it
+   * (see ipc.ts's INSTANCES doc comment), so it is now stored configuration,
+   * collected in Setup and sent to openEQUELLA verbatim, never re-derived.
+   */
+  redirectUri: string;
 }
 
 /**
@@ -29,19 +39,48 @@ export type InstanceId = 'production' | 'test';
 
 const INSTANCE_IDS: readonly InstanceId[] = ['production', 'test'];
 
+/**
+ * On-disk shape for one instance's entry. `redirectUri` is OPTIONAL here,
+ * even though it is required on the public `Settings` type `loadSettings`
+ * returns: entries written by this project's very first per-instance store
+ * (commit f31505b, before this field existed) have no `redirectUri` key at
+ * all. See `defaultRedirectUri` and the migration note on `loadSettings`
+ * below for how that gap is filled back in.
+ */
+type StoredSettings = Pick<Settings, 'clientId' | 'clientSecret'> & Partial<Pick<Settings, 'redirectUri'>>;
+
 /** On-disk shape written by THIS version of the store. */
 interface StoredShapeV2 {
   version: 2;
-  instances: Partial<Record<InstanceId, Settings>>;
+  instances: Partial<Record<InstanceId, StoredSettings>>;
 }
 
-function isSettings(v: unknown): v is Settings {
+function isStoredSettings(v: unknown): v is StoredSettings {
   return (
     typeof v === 'object' &&
     v !== null &&
-    typeof (v as Partial<Settings>).clientId === 'string' &&
-    typeof (v as Partial<Settings>).clientSecret === 'string'
+    typeof (v as Partial<StoredSettings>).clientId === 'string' &&
+    typeof (v as Partial<StoredSettings>).clientSecret === 'string' &&
+    ((v as Partial<StoredSettings>).redirectUri === undefined ||
+      typeof (v as Partial<StoredSettings>).redirectUri === 'string')
   );
+}
+
+/**
+ * Migration default for a stored entry that predates `redirectUri` (and the
+ * sensible pre-fill Setup shows for a fresh entry): the instance's own base
+ * url, with no trailing slash -- verified live to match both of the
+ * operator's new dedicated OAuth clients. Forcing re-entry instead would
+ * have been the THIRD time in one day the operator had to retype
+ * credentials for a gap that has nothing to do with the client ID/secret
+ * they already typed correctly.
+ */
+function defaultRedirectUri(instanceId: InstanceId): string {
+  const inst = INSTANCES.find((i) => i.id === instanceId);
+  // INSTANCES always declares both known instance ids (guarded by
+  // session.test.ts); this fallback only matters if that invariant is ever
+  // violated.
+  return inst ? inst.baseUrl.replace(/\/+$/, '') : '';
 }
 
 /**
@@ -83,9 +122,25 @@ export class SecretStore {
     await writeFile(this.filePath, blob);
   }
 
+  /**
+   * Migration: an entry saved before `redirectUri` existed has no such key
+   * on disk (see `StoredSettings`'s doc comment). Rather than surface that
+   * gap as `undefined` -- which would go straight into an OAuth
+   * authorize-url query string as the literal string `"undefined"` -- it is
+   * filled in here with `defaultRedirectUri`, once, on every read. Nothing
+   * is written back to disk by this; the fill-in is applied fresh each time
+   * until the operator (or Setup's own pre-filled default) actually saves a
+   * value for it.
+   */
   async loadSettings(instanceId: InstanceId): Promise<Settings | null> {
     const all = await this.loadAll();
-    return all.instances[instanceId] ?? null;
+    const stored = all.instances[instanceId];
+    if (!stored) return null;
+    return {
+      clientId: stored.clientId,
+      clientSecret: stored.clientSecret,
+      redirectUri: stored.redirectUri ?? defaultRedirectUri(instanceId),
+    };
   }
 
   async hasSettings(instanceId: InstanceId): Promise<boolean> {
@@ -116,10 +171,10 @@ export class SecretStore {
         // migration note in this class's doc comment.
         return empty;
       }
-      const instances: Partial<Record<InstanceId, Settings>> = {};
+      const instances: Partial<Record<InstanceId, StoredSettings>> = {};
       for (const id of INSTANCE_IDS) {
         const v = (parsed.instances as Partial<Record<InstanceId, unknown>>)[id];
-        if (isSettings(v)) instances[id] = v;
+        if (isStoredSettings(v)) instances[id] = v;
       }
       return { version: 2, instances };
     } catch {

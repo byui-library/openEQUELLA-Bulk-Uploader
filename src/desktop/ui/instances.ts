@@ -8,8 +8,10 @@ import type { InstanceChoice } from '../ipc.js';
  * point of the boundary is that the renderer's only path to real data is
  * window.oeq, never a directly-imported main-process module, so nothing here
  * can quietly reach around the bridge. Only the fields the UI actually
- * displays are copied (not redirectUri, which is a wiring detail the main
- * process needs and the UI never shows).
+ * displays for the instance PICKER are copied here. `redirectUri` is not
+ * one of them -- it no longer lives on `InstanceChoice` at all (see ipc.ts):
+ * it is per-instance STORED CONFIGURATION now (secrets.ts), collected and
+ * shown on the Setup screen itself, not the instance dropdown.
  *
  * Guarded by tests/desktop/ui/instances.test.ts, which imports the real
  * INSTANCES (a test runs under plain Node, not the sandboxed renderer, so

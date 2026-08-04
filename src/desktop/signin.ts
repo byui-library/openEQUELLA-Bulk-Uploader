@@ -17,6 +17,76 @@ function toError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
+/** Matches openEQUELLA's own error page heading, e.g. "Problem description: ...". */
+const PROBLEM_DESCRIPTION = /Problem description:\s*/i;
+
+/**
+ * Pulls openEQUELLA's own error text out of a rendered error page, when
+ * present.
+ *
+ * LIVE BUG, reported by an operator: a failed sign-in surfaced
+ * "Sign-in could not load openEQUELLA: ERR_FAILED (-2) loading
+ * '.../oauth/authorise?...'" -- a transport error naming a URL, not a
+ * reason. The page openEQUELLA actually rendered said exactly what was
+ * wrong: "No OAuth client can be found with the supplied client_id (...) and
+ * redirect_uri (...)" under a "Problem description:" heading. Reporting the
+ * transport error when the server sent a perfectly good explanation is
+ * unhelpful, so `signInInteractive` reads the page's visible text and
+ * prefers this over the load error whenever it finds something.
+ *
+ * Deliberately a pure string -> string|null function, independent of any
+ * BrowserWindow, so it's unit-testable without booting Electron -- see
+ * `betterSignInError` below for how it's wired to the live page text.
+ */
+export function extractOeqError(pageText: string): string | null {
+  const match = PROBLEM_DESCRIPTION.exec(pageText);
+  if (!match) return null;
+  const rest = pageText.slice(match.index + match[0].length);
+  // The description runs until the next blank line (a run of two or more
+  // newlines) or the end of the text, whichever comes first -- openEQUELLA's
+  // error page has further boilerplate (a "Return to application" link,
+  // etc.) below it that must not be swept in.
+  const blankLine = /\n\s*\n/.exec(rest);
+  const raw = (blankLine ? rest.slice(0, blankLine.index) : rest).replace(/\s+/g, ' ').trim();
+  return raw === '' ? null : raw;
+}
+
+/**
+ * Upgrades a sign-in failure to openEQUELLA's own error text, when the
+ * window is still showing a page that has one. Best-effort and strictly
+ * defensive: `executeJavaScript` can reject if the window has already been
+ * destroyed (a real race with the `finally` block in `signInInteractive`
+ * below), and the window may have navigated somewhere else, or nowhere at
+ * all, by the time this runs. Any failure along this path falls back to the
+ * original error -- reading the page must never itself become a new way for
+ * sign-in to fail.
+ *
+ * Scoped to the instance's own ORIGIN, matching the load-bearing capture
+ * rule elsewhere in this file: a page from anywhere else (an SSO provider
+ * mid-redirect, about:blank, ...) is never inspected.
+ */
+async function betterSignInError(win: BrowserWindow, origin: string, fallback: Error): Promise<Error> {
+  if (win.isDestroyed()) return fallback;
+  let currentUrl: URL;
+  try {
+    currentUrl = new URL(win.webContents.getURL());
+  } catch {
+    return fallback;
+  }
+  if (currentUrl.origin !== origin) return fallback;
+
+  let text: unknown;
+  try {
+    text = await win.webContents.executeJavaScript(
+      'document.body ? document.body.innerText : ""',
+    );
+  } catch {
+    return fallback;
+  }
+  const found = extractOeqError(typeof text === 'string' ? text : '');
+  return found ? new OeqError(found) : fallback;
+}
+
 export interface SignInRace {
   /** Resolves once a code has been captured. Never rejects. */
   code: Promise<string>;
@@ -201,6 +271,14 @@ export async function signInInteractive(
         loadError: loadErrorPromise,
         graceMs: LOAD_ERROR_GRACE_MS,
         delay: (ms) => new Promise((r) => setTimeout(r, ms)),
+      }).catch(async (err: unknown) => {
+        // Before reporting a load error, give openEQUELLA's own error page a
+        // chance to explain itself -- see betterSignInError's doc comment.
+        // Scoped to resolveSignIn's own rejection only: closedPromise and
+        // timeoutPromise are different failure modes (the window is gone, or
+        // nothing happened for ten minutes) that this page-read doesn't
+        // apply to.
+        throw await betterSignInError(win, origin, toError(err));
       }),
       closedPromise,
       timeoutPromise,

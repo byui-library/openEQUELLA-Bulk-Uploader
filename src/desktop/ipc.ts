@@ -6,29 +6,26 @@ export interface InstanceChoice {
   id: 'production' | 'test';
   label: string;
   baseUrl: string;
-  redirectUri: string;
 }
 
 /**
  * Both instances are declared here rather than typed by the user. The
  * collection uuid is byte-identical on test and production, so the base url is
  * the ONLY thing distinguishing them -- a free-text field would be a footgun.
- * `redirectUri` differs per instance and must match what is registered on the
- * OAuth client character for character; production has no trailing slash.
+ *
+ * `redirectUri` is deliberately NOT a field here. It used to be, hard-coded
+ * per instance -- and been guessed wrong TWICE in this project: production
+ * has no trailing slash, one test OAuth client had one, the operator's next
+ * dedicated test client doesn't. It is registered per OAuth client by an
+ * administrator and is not derivable from the base url at all, so it is now
+ * per-instance STORED CONFIGURATION, collected in Setup alongside the client
+ * ID/secret and persisted in secrets.ts's `Settings` (see that module's doc
+ * comment for the migration story). `buildConfig` (session.ts) reads it from
+ * there, never from here.
  */
 export const INSTANCES: InstanceChoice[] = [
-  {
-    id: 'production',
-    label: 'Production',
-    baseUrl: 'https://content.byui.edu',
-    redirectUri: 'https://content.byui.edu',
-  },
-  {
-    id: 'test',
-    label: 'Test',
-    baseUrl: 'https://content-test.byui.edu',
-    redirectUri: 'https://content-test.byui.edu/',
-  },
+  { id: 'production', label: 'Production', baseUrl: 'https://content.byui.edu' },
+  { id: 'test', label: 'Test', baseUrl: 'https://content-test.byui.edu' },
 ];
 
 export interface ColumnReport {
@@ -66,7 +63,10 @@ export interface RunReport {
 
 export interface OeqApi {
   hasSettings(instanceId: string): Promise<boolean>;
-  saveSettings(instanceId: string, s: { clientId: string; clientSecret: string }): Promise<void>;
+  saveSettings(
+    instanceId: string,
+    s: { clientId: string; clientSecret: string; redirectUri: string },
+  ): Promise<void>;
   clearSettings(): Promise<void>;
 
   signIn(instanceId: string): Promise<CurrentUser>;

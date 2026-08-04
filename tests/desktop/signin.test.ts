@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveSignIn } from '../../src/desktop/signin.js';
+import { resolveSignIn, extractOeqError } from '../../src/desktop/signin.js';
 
 /** A promise plus its externally-callable resolver, for controlling timing from a test. */
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
@@ -62,5 +62,49 @@ describe('resolveSignIn', () => {
 
     await expect(result).resolves.toBe('fast-code');
     expect(delay).not.toHaveBeenCalled();
+  });
+});
+
+// LIVE BUG: the operator's first sign-in failure surfaced
+// "Sign-in could not load openEQUELLA: ERR_FAILED (-2) loading
+// '.../oauth/authorise?...'" -- a transport error -- when the page
+// openEQUELLA actually rendered named exactly what was wrong: "No OAuth
+// client can be found with the supplied client_id (...) and redirect_uri
+// (...)" under a "Problem description:" heading. extractOeqError is the
+// pure text-parsing half of that fix (signInInteractive wires it to the
+// live BrowserWindow, which isn't unit-testable here).
+describe('extractOeqError', () => {
+  it('extracts the message following "Problem description:"', () => {
+    const pageText = [
+      'There was a problem',
+      '',
+      'Problem description: No OAuth client can be found with the supplied client_id',
+      '(165e12ca-f516-4218-8bc2-201183424ef1) and redirect_uri (https://content-test.byui.edu/)',
+      '',
+      'Return to application',
+    ].join('\n');
+
+    expect(extractOeqError(pageText)).toBe(
+      'No OAuth client can be found with the supplied client_id ' +
+        '(165e12ca-f516-4218-8bc2-201183424ef1) and redirect_uri (https://content-test.byui.edu/)',
+    );
+  });
+
+  it('is case-insensitive about the "Problem description" heading', () => {
+    const pageText = 'PROBLEM DESCRIPTION: something specific went wrong';
+    expect(extractOeqError(pageText)).toBe('something specific went wrong');
+  });
+
+  it('returns null for unrelated page text', () => {
+    const pageText = 'Sign in to openEQUELLA\nUsername\nPassword\nLog in';
+    expect(extractOeqError(pageText)).toBeNull();
+  });
+
+  it('returns null for empty page text', () => {
+    expect(extractOeqError('')).toBeNull();
+  });
+
+  it('returns null when the heading is present but nothing follows it', () => {
+    expect(extractOeqError('Problem description:   ')).toBeNull();
   });
 });

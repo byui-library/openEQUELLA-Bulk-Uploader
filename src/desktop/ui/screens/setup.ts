@@ -6,7 +6,7 @@ export interface SetupProps {
   error: string | null;
   saving: boolean;
   onInstanceChange(id: string): void;
-  onSave(clientId: string, clientSecret: string): void;
+  onSave(clientId: string, clientSecret: string, redirectUri: string): void;
 }
 
 /**
@@ -25,6 +25,11 @@ export interface SetupProps {
 export function renderSetup(root: HTMLElement, props: SetupProps): void {
   const inst = UI_INSTANCES.find((i) => i.id === props.instanceId);
   const label = inst?.label ?? props.instanceId;
+  // Sensible default for a field non-technical staff cannot be expected to
+  // fill in from nothing: the instance's own base url, with no trailing
+  // slash -- matches both of the operator's new dedicated OAuth clients.
+  // Always editable; see the label text below for why it must match exactly.
+  const defaultRedirectUri = inst?.baseUrl ?? '';
 
   const options = UI_INSTANCES.map(
     (i) => `<option value="${i.id}"${i.id === props.instanceId ? ' selected' : ''}>${escapeHtml(i.label)}</option>`,
@@ -60,6 +65,16 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
         <label for="setup-client-secret">Client secret (${escapeHtml(label)})</label>
         <input id="setup-client-secret" name="clientSecret" type="password" autocomplete="off" spellcheck="false" />
 
+        <label for="setup-redirect-uri">Redirect URL &mdash; must match exactly what is registered on the OAuth client, including or excluding a trailing slash.</label>
+        <input
+          id="setup-redirect-uri"
+          name="redirectUri"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          value="${escapeHtml(defaultRedirectUri)}"
+        />
+
         ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
         <div class="button-row">
@@ -80,6 +95,7 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
     e.preventDefault();
     const clientId = root.querySelector<HTMLInputElement>('#setup-client-id')?.value ?? '';
     const clientSecret = root.querySelector<HTMLInputElement>('#setup-client-secret')?.value ?? '';
-    props.onSave(clientId.trim(), clientSecret);
+    const redirectUri = root.querySelector<HTMLInputElement>('#setup-redirect-uri')?.value ?? '';
+    props.onSave(clientId.trim(), clientSecret, redirectUri.trim());
   });
 }

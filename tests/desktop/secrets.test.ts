@@ -31,9 +31,67 @@ beforeEach(async () => {
 describe('SecretStore', () => {
   it('round-trips settings for one instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'shhh' });
+    await s.saveSettings('production', {
+      clientId: 'cid',
+      clientSecret: 'shhh',
+      redirectUri: 'https://content.byui.edu',
+    });
     const got = await s.loadSettings('production');
-    expect(got).toEqual({ clientId: 'cid', clientSecret: 'shhh' });
+    expect(got).toEqual({ clientId: 'cid', clientSecret: 'shhh', redirectUri: 'https://content.byui.edu' });
+  });
+
+  // The entire bug this feature fixes: the redirect URI is registered per
+  // OAuth client by an administrator and is not derivable -- production has
+  // no trailing slash, a dedicated test client might or might not. So the
+  // store must round-trip whatever exact string was saved, verbatim,
+  // including the presence or absence of a trailing slash.
+  it('round-trips a redirectUri WITH a trailing slash and one WITHOUT, verbatim', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveSettings('production', {
+      clientId: 'prod-id',
+      clientSecret: 'prod-secret',
+      redirectUri: 'https://content.byui.edu',
+    });
+    await s.saveSettings('test', {
+      clientId: 'test-id',
+      clientSecret: 'test-secret',
+      redirectUri: 'https://content-test.byui.edu/',
+    });
+
+    expect((await s.loadSettings('production'))?.redirectUri).toBe('https://content.byui.edu');
+    expect((await s.loadSettings('test'))?.redirectUri).toBe('https://content-test.byui.edu/');
+  });
+
+  // Migration: entries written before redirectUri existed (this project's
+  // very first per-instance credential store, commit f31505b) have no
+  // redirectUri key at all. Forcing re-entry would be the THIRD time today
+  // the operator has had to retype credentials -- so a missing value must
+  // yield a sensible default (the instance's own base URL, no trailing
+  // slash) instead of null/undefined or an empty string.
+  it('a stored entry lacking redirectUri (pre-migration) yields the base-url default, per instance', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    const oldBlob = fakeCipher.encrypt(
+      JSON.stringify({
+        version: 2,
+        instances: {
+          production: { clientId: 'prod-id', clientSecret: 'prod-secret' },
+          test: { clientId: 'test-id', clientSecret: 'test-secret' },
+        },
+      }),
+    );
+    await writeFile(path, oldBlob);
+
+    expect(await s.loadSettings('production')).toEqual({
+      clientId: 'prod-id',
+      clientSecret: 'prod-secret',
+      redirectUri: 'https://content.byui.edu',
+    });
+    expect(await s.loadSettings('test')).toEqual({
+      clientId: 'test-id',
+      clientSecret: 'test-secret',
+      redirectUri: 'https://content-test.byui.edu',
+    });
   });
 
   it('returns null when nothing is stored for that instance', async () => {
@@ -47,22 +105,50 @@ describe('SecretStore', () => {
   // into the other's.
   it('saving one instance leaves the other intact', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings('production', { clientId: 'prod-id', clientSecret: 'prod-secret' });
-    await s.saveSettings('test', { clientId: 'test-id', clientSecret: 'test-secret' });
+    await s.saveSettings('production', {
+      clientId: 'prod-id',
+      clientSecret: 'prod-secret',
+      redirectUri: 'https://content.byui.edu',
+    });
+    await s.saveSettings('test', {
+      clientId: 'test-id',
+      clientSecret: 'test-secret',
+      redirectUri: 'https://content-test.byui.edu/',
+    });
 
-    expect(await s.loadSettings('production')).toEqual({ clientId: 'prod-id', clientSecret: 'prod-secret' });
-    expect(await s.loadSettings('test')).toEqual({ clientId: 'test-id', clientSecret: 'test-secret' });
+    expect(await s.loadSettings('production')).toEqual({
+      clientId: 'prod-id',
+      clientSecret: 'prod-secret',
+      redirectUri: 'https://content.byui.edu',
+    });
+    expect(await s.loadSettings('test')).toEqual({
+      clientId: 'test-id',
+      clientSecret: 'test-secret',
+      redirectUri: 'https://content-test.byui.edu/',
+    });
 
     // Re-saving production must not disturb test's entry.
-    await s.saveSettings('production', { clientId: 'prod-id-2', clientSecret: 'prod-secret-2' });
-    expect(await s.loadSettings('production')).toEqual({ clientId: 'prod-id-2', clientSecret: 'prod-secret-2' });
-    expect(await s.loadSettings('test')).toEqual({ clientId: 'test-id', clientSecret: 'test-secret' });
+    await s.saveSettings('production', {
+      clientId: 'prod-id-2',
+      clientSecret: 'prod-secret-2',
+      redirectUri: 'https://content.byui.edu',
+    });
+    expect(await s.loadSettings('production')).toEqual({
+      clientId: 'prod-id-2',
+      clientSecret: 'prod-secret-2',
+      redirectUri: 'https://content.byui.edu',
+    });
+    expect(await s.loadSettings('test')).toEqual({
+      clientId: 'test-id',
+      clientSecret: 'test-secret',
+      redirectUri: 'https://content-test.byui.edu/',
+    });
   });
 
   it('hasSettings reflects only the requested instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
     expect(await s.hasSettings('production')).toBe(false);
-    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x' });
+    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x', redirectUri: 'https://content.byui.edu' });
     expect(await s.hasSettings('production')).toBe(true);
     expect(await s.hasSettings('test')).toBe(false);
   });
@@ -70,8 +156,16 @@ describe('SecretStore', () => {
   it('never writes either instance secret in plaintext', async () => {
     const path = join(dir, 'settings.enc');
     const s = new SecretStore(path, fakeCipher);
-    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'sup3rs3cretProd' });
-    await s.saveSettings('test', { clientId: 'cid2', clientSecret: 'sup3rs3cretTest' });
+    await s.saveSettings('production', {
+      clientId: 'cid',
+      clientSecret: 'sup3rs3cretProd',
+      redirectUri: 'https://content.byui.edu',
+    });
+    await s.saveSettings('test', {
+      clientId: 'cid2',
+      clientSecret: 'sup3rs3cretTest',
+      redirectUri: 'https://content-test.byui.edu/',
+    });
     const raw = await readFile(path, 'utf8');
     expect(raw).not.toContain('sup3rs3cretProd');
     expect(raw).not.toContain('sup3rs3cretTest');
@@ -111,15 +205,23 @@ describe('SecretStore', () => {
 
     // And saving one instance afterwards must not resurrect the old pair
     // under the other instance.
-    await s.saveSettings('production', { clientId: 'new-id', clientSecret: 'new-secret' });
-    expect(await s.loadSettings('production')).toEqual({ clientId: 'new-id', clientSecret: 'new-secret' });
+    await s.saveSettings('production', {
+      clientId: 'new-id',
+      clientSecret: 'new-secret',
+      redirectUri: 'https://content.byui.edu',
+    });
+    expect(await s.loadSettings('production')).toEqual({
+      clientId: 'new-id',
+      clientSecret: 'new-secret',
+      redirectUri: 'https://content.byui.edu',
+    });
     expect(await s.loadSettings('test')).toBeNull();
   });
 
   it('clear() wipes both instances', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x' });
-    await s.saveSettings('test', { clientId: 'cid2', clientSecret: 'y' });
+    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x', redirectUri: 'https://content.byui.edu' });
+    await s.saveSettings('test', { clientId: 'cid2', clientSecret: 'y', redirectUri: 'https://content-test.byui.edu/' });
     await s.clear();
     expect(await s.loadSettings('production')).toBeNull();
     expect(await s.loadSettings('test')).toBeNull();
@@ -127,7 +229,9 @@ describe('SecretStore', () => {
 
   it('refuses to save when encryption is unavailable', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), { ...fakeCipher, isAvailable: () => false });
-    await expect(s.saveSettings('production', { clientId: 'a', clientSecret: 'b' })).rejects.toThrow(/encryption/i);
+    await expect(
+      s.saveSettings('production', { clientId: 'a', clientSecret: 'b', redirectUri: 'https://content.byui.edu' }),
+    ).rejects.toThrow(/encryption/i);
   });
 });
 
