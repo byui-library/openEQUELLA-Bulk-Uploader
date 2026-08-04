@@ -282,12 +282,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SecretStore, type Cipher } from '../../src/desktop/secrets.js';
 
-// Stand-in for Electron's safeStorage. Reversible, not secure -- the point is
-// to exercise SecretStore's logic without booting Electron.
+// Stand-in for Electron's safeStorage. Reversible and not secure -- the point
+// is to exercise SecretStore's logic without booting Electron.
+//
+// It base64-transcodes rather than prefixing a marker, and that matters: a
+// fake that merely prepends something (`enc:${s}`) leaves the plaintext bytes
+// intact on disk, so the "never writes the secret in plaintext" test below can
+// never pass no matter how correct the implementation is. The fake has to
+// actually change the bytes for that assertion to mean anything.
 const fakeCipher: Cipher = {
   isAvailable: () => true,
-  encrypt: (s) => Buffer.from(`enc:${s}`, 'utf8'),
-  decrypt: (b) => b.toString('utf8').replace(/^enc:/, ''),
+  encrypt: (s) => Buffer.from(Buffer.from(s, 'utf8').toString('base64'), 'utf8'),
+  decrypt: (b) => Buffer.from(b.toString('utf8'), 'base64').toString('utf8'),
 };
 
 let dir: string;
