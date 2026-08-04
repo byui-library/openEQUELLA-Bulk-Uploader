@@ -1,0 +1,237 @@
+/*
+ * Plain CSS, no framework. Audience is non-technical staff doing a semester
+ * task, not a design showcase -- optimise for legible, obvious, and hard to
+ * misread rather than decorative.
+ */
+
+:root {
+  color-scheme: light;
+  --text: #1a1a1a;
+  --muted: #5a5a5a;
+  --bg: #ffffff;
+  --panel-bg: #f4f5f7;
+  --border: #c9ccd1;
+  --accent: #1a5fb4;
+  --accent-text: #ffffff;
+  --error-bg: #fbe4e4;
+  --error-border: #c22b2b;
+  --error-text: #7a1414;
+  --production-bg: #b3121a;
+  --production-text: #ffffff;
+  --test-bg: #3a3f46;
+  --test-text: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 1rem;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+/* --- Instance banner ---------------------------------------------------
+ * Persistent on every screen. This is the ONLY durable cue distinguishing
+ * Test from Production (the collection UUID is identical on both), so
+ * Production must be impossible to miss: full-width, high-contrast red,
+ * bold, uppercase label. Test is deliberately much quieter so the two are
+ * never visually confusable.
+ */
+.banner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.6rem 1.25rem;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+}
+
+.banner strong {
+  font-weight: 700;
+}
+
+.banner__detail {
+  opacity: 0.9;
+  font-size: 0.9rem;
+}
+
+.banner--production {
+  background: var(--production-bg);
+  color: var(--production-text);
+  border-bottom: 3px solid #7a0d12;
+}
+
+.banner--test {
+  background: var(--test-bg);
+  color: var(--test-text);
+  border-bottom: 3px solid #23262b;
+}
+
+/* --- Layout -------------------------------------------------------------- */
+
+#app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3rem;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 0 0 1rem;
+  background: var(--panel-bg);
+}
+
+legend {
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+
+/* --- Form controls -------------------------------------------------------- */
+
+label {
+  display: block;
+  font-weight: 600;
+  margin: 0.75rem 0 0.25rem;
+}
+
+input[type='text'],
+input[type='password'],
+select {
+  width: 100%;
+  font-size: 1rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+select[size] {
+  padding: 0;
+}
+
+select[size] option {
+  padding: 0.35rem 0.6rem;
+}
+
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* --- Buttons -------------------------------------------------------------- */
+
+button {
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 0.55rem 1.1rem;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+button.secondary {
+  background: var(--bg);
+  color: var(--accent);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  filter: none;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* --- Status / messaging ---------------------------------------------------- */
+
+.error {
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error-text);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  font-weight: 600;
+}
+
+.muted,
+.hint {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.note {
+  font-style: italic;
+}
+
+.path {
+  font-family: 'Consolas', 'Cascadia Mono', monospace;
+  font-size: 0.9rem;
+  word-break: break-all;
+  color: var(--muted);
+}
+
+.signed-in-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  background: var(--panel-bg);
+  margin-top: 0.75rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --text: #f0f0f0;
+    --muted: #b3b3b3;
+    --bg: #1e1f22;
+    --panel-bg: #2a2b2f;
+    --border: #45474d;
+    --accent: #5b9bf0;
+    --accent-text: #0d1117;
+    --error-bg: #3a1414;
+    --error-border: #d84a4a;
+    --error-text: #ffb3b3;
+  }
+}

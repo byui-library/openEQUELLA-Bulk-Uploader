@@ -1,0 +1,52 @@
+import { describe, it, expect } from 'vitest';
+import { initialScreen, nextScreen, canContinueChoose } from '../../../src/desktop/ui/state.js';
+
+describe('initialScreen', () => {
+  it('goes to Setup when no credentials are saved', () => {
+    expect(initialScreen(false)).toBe('setup');
+  });
+
+  it('goes to Sign-in when credentials are already saved', () => {
+    expect(initialScreen(true)).toBe('signin');
+  });
+});
+
+describe('nextScreen', () => {
+  it('advances Setup to Sign-in once settings are saved', () => {
+    expect(nextScreen('setup', { type: 'settingsSaved' })).toBe('signin');
+  });
+
+  it('advances Sign-in to Choose once signed in', () => {
+    expect(nextScreen('signin', { type: 'signedIn' })).toBe('choose');
+  });
+
+  it('keeps Sign-in on Sign-in after signing out', () => {
+    expect(nextScreen('signin', { type: 'signedOut' })).toBe('signin');
+  });
+
+  it('returns Choose to Sign-in after signing out', () => {
+    expect(nextScreen('choose', { type: 'signedOut' })).toBe('signin');
+  });
+
+  it('sends any screen back to Setup on editSettings', () => {
+    expect(nextScreen('choose', { type: 'editSettings' })).toBe('setup');
+    expect(nextScreen('signin', { type: 'editSettings' })).toBe('setup');
+  });
+});
+
+describe('canContinueChoose', () => {
+  it('is false until a collection, spreadsheet and folder are all set', () => {
+    expect(canContinueChoose({ collectionUuid: null, sheetPath: null, folderPath: null })).toBe(false);
+    expect(canContinueChoose({ collectionUuid: 'c', sheetPath: null, folderPath: null })).toBe(false);
+    expect(canContinueChoose({ collectionUuid: 'c', sheetPath: 's.xlsx', folderPath: null })).toBe(false);
+    expect(canContinueChoose({ collectionUuid: null, sheetPath: 's.xlsx', folderPath: 'f' })).toBe(false);
+  });
+
+  it('is true once all three are set', () => {
+    expect(canContinueChoose({ collectionUuid: 'c', sheetPath: 's.xlsx', folderPath: 'f' })).toBe(true);
+  });
+
+  it('treats an empty string the same as unset', () => {
+    expect(canContinueChoose({ collectionUuid: '', sheetPath: 's.xlsx', folderPath: 'f' })).toBe(false);
+  });
+});
