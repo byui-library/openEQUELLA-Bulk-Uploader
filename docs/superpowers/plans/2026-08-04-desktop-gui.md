@@ -79,6 +79,7 @@ Merge into the existing `scripts` block; do not remove existing entries.
 
 ```json
 {
+  "main": "dist-desktop/desktop/main.js",
   "scripts": {
     "build:desktop": "tsc -p tsconfig.desktop.json",
     "desktop": "npm run build:desktop && electron dist-desktop/desktop/main.js",
@@ -86,6 +87,12 @@ Merge into the existing `scripts` block; do not remove existing entries.
   }
 }
 ```
+
+**The `main` field is required.** electron-builder uses it as the packaged
+entry point and defaults to `index.js` when absent, so packaging fails without
+it. This is invisible during development because `npm run desktop` passes the
+path explicitly and never consults `main`. Leave the existing `bin` entry
+pointing at `dist/cli/index.js` — the CLI is unaffected.
 
 - [ ] **Step 3: Create `tsconfig.desktop.json`**
 
@@ -124,8 +131,17 @@ function createWindow(): void {
       // what stops the UI reaching around a safety rail.
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // preload needs require() for the typed bridge
-      preload: join(here, 'preload.js'),
+      // Keep the OS-level renderer sandbox ON. Sandboxed preloads still get a
+      // polyfilled require() covering 'electron' itself, which is all the
+      // bridge uses; everything touching the filesystem or core runs in the
+      // main process. If a later task appears to need sandbox:false, that
+      // means work is happening in the wrong process -- stop and report.
+      sandbox: true,
+      // NOTE .cjs, not .js. Under "type": "module" + nodenext, tsc emits ESM
+      // for a .ts file, and Electron's preload loader accepts only CommonJS --
+      // an ESM preload fails SILENTLY, leaving the UI stuck. The source is
+      // therefore named preload.cts, which forces a .cjs emit.
+      preload: join(here, 'preload.cjs'),
     },
   });
   void win.loadFile(join(here, 'ui', 'index.html'));
@@ -143,7 +159,13 @@ app.on('window-all-closed', () => {
 });
 ```
 
-- [ ] **Step 5: Create a placeholder `src/desktop/preload.ts`**
+- [ ] **Step 5: Create a placeholder `src/desktop/preload.cts`**
+
+**The `.cts` extension is required, not stylistic.** Under `"type": "module"`
+with `nodenext`, `tsc` emits ESM for a plain `.ts` file, and Electron's preload
+loader accepts only CommonJS. An ESM preload **fails silently** — the window
+opens, the bridge never initialises, and the UI sits there looking like a
+rendering bug. `.cts` forces a `.cjs` emit with `require()`.
 
 ```typescript
 import { contextBridge } from 'electron';

@@ -14,7 +14,15 @@ function createWindow(): void {
       // what stops the UI reaching around a safety rail.
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // preload needs require() for the typed bridge
+      // Sandboxed (the Chromium OS-level process sandbox, independent of
+      // contextIsolation/nodeIntegration -- defence in depth if the renderer
+      // is ever exploited via a V8/Chromium bug). A sandboxed preload still
+      // gets a polyfilled require() covering 'electron' itself, which is all
+      // preload.cjs needs (contextBridge, and later ipcRenderer). Everything
+      // touching the filesystem or core lives in the main process, so no
+      // preload script here should ever need raw Node APIs -- if one seems
+      // to, that's a sign the logic belongs in main.ts/handlers.ts instead.
+      sandbox: true,
       // preload.cjs (not .js): Electron's preload loader requires CommonJS.
       // See the comment atop preload.cts for why that file uses the .cts
       // extension while the rest of the main process stays ESM.

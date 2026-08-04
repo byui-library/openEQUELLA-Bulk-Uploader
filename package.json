@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "dist-desktop/desktop/main.js",
   "bin": {
     "oeq-upload": "./dist/cli/index.js"
   },
