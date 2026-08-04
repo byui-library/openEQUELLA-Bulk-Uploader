@@ -454,6 +454,14 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
   });
 
   describe('oeq_login_complete', () => {
+    beforeEach(() => {
+      // loginCompleteTool builds its AuthorizationCodeAuth from cfg.redirectUri,
+      // which env() below never overrides -- so loadConfig() defaults it to
+      // `${mock.url}/` (Bug 2 -- see config.ts). Match the mock's registered
+      // client to that same value.
+      mock.state.expectedRedirectUri = `${mock.url}/`;
+    });
+
     it('exchanges the code, caches the token, and reports who is logged in', async () => {
       mock.state.validAuthCodes.add('the-code');
       mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };

@@ -33,14 +33,18 @@ describe('loadConfig', () => {
     expect(cfg.baseUrl).toBe('https://example.test');
   });
 
-  it('defaults authMode to "code" and redirectUri to the (slash-stripped) base url', () => {
+  it('defaults authMode to "code" and redirectUri to the base url WITH a trailing slash (Bug 2)', () => {
     const cfg = loadConfig({
       OEQ_BASE_URL: 'https://example.test/',
       OEQ_CLIENT_ID: 'id',
       OEQ_CLIENT_SECRET: 'secret',
     });
     expect(cfg.authMode).toBe('code');
-    expect(cfg.redirectUri).toBe('https://example.test');
+    // baseUrl itself is still slash-stripped, but the default redirectUri
+    // adds the slash back -- the registered client on this instance requires
+    // it (verified live; see authCode.ts's header comment).
+    expect(cfg.baseUrl).toBe('https://example.test');
+    expect(cfg.redirectUri).toBe('https://example.test/');
   });
 
   it('accepts an explicit OEQ_AUTH_MODE of client_credentials', () => {
@@ -64,12 +68,22 @@ describe('loadConfig', () => {
     ).toThrow(/OEQ_AUTH_MODE/);
   });
 
-  it('honours an explicit OEQ_REDIRECT_URI and strips its trailing slash', () => {
+  it('honours an explicit OEQ_REDIRECT_URI verbatim, including its trailing slash (Bug 2 -- no longer stripped)', () => {
     const cfg = loadConfig({
       OEQ_BASE_URL: 'https://example.test',
       OEQ_CLIENT_ID: 'id',
       OEQ_CLIENT_SECRET: 'secret',
       OEQ_REDIRECT_URI: 'https://different.test/',
+    });
+    expect(cfg.redirectUri).toBe('https://different.test/');
+  });
+
+  it('honours an explicit OEQ_REDIRECT_URI verbatim when it has NO trailing slash too -- never adds one', () => {
+    const cfg = loadConfig({
+      OEQ_BASE_URL: 'https://example.test',
+      OEQ_CLIENT_ID: 'id',
+      OEQ_CLIENT_SECRET: 'secret',
+      OEQ_REDIRECT_URI: 'https://different.test',
     });
     expect(cfg.redirectUri).toBe('https://different.test');
   });

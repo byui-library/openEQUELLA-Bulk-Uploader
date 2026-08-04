@@ -24,7 +24,7 @@ afterEach(async () => {
 const tokenPath = () => join(dir, 'token.json');
 
 describe('AuthorizationCodeAuth — getAuthorizeUrl', () => {
-  it('produces the expected URL with the British spelling and a normalised redirect_uri', () => {
+  it('produces the expected URL with the British spelling and a verbatim (not normalised) redirect_uri', () => {
     const auth = new AuthorizationCodeAuth(
       'https://example.test',
       'client-1',
@@ -36,12 +36,12 @@ describe('AuthorizationCodeAuth — getAuthorizeUrl', () => {
     expect(url.origin + url.pathname).toBe('https://example.test/oauth/authorise');
     expect(url.searchParams.get('response_type')).toBe('code');
     expect(url.searchParams.get('client_id')).toBe('client-1');
-    // Trailing slash stripped: the server normalises it off anyway, and
-    // exchangeCode() must send back exactly what it echoed.
-    expect(url.searchParams.get('redirect_uri')).toBe('https://example.test');
+    // Bug 2: the trailing slash must be preserved, not stripped -- it must
+    // match the OAuth client's registered redirectUrl character-for-character.
+    expect(url.searchParams.get('redirect_uri')).toBe('https://example.test/');
   });
 
-  it('strips a trailing slash from the configured redirect URI', () => {
+  it('does NOT strip a trailing slash from the configured redirect URI -- both forms are sent verbatim and differ', () => {
     const withSlash = new AuthorizationCodeAuth(
       'https://example.test',
       'client-1',
@@ -58,8 +58,36 @@ describe('AuthorizationCodeAuth — getAuthorizeUrl', () => {
     );
     const a = new URL(withSlash.getAuthorizeUrl()).searchParams.get('redirect_uri');
     const b = new URL(withoutSlash.getAuthorizeUrl()).searchParams.get('redirect_uri');
-    expect(a).toBe('https://example.test');
-    expect(a).toBe(b);
+    expect(a).toBe('https://example.test/');
+    expect(b).toBe('https://example.test');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('AuthorizationCodeAuth — redirect_uri consistency (Bug 2 regression)', () => {
+  it('sends exchangeCode() the identical redirect_uri string getAuthorizeUrl() produced, trailing slash included', async () => {
+    const redirectUri = 'https://example.test/callback/';
+    let receivedRedirectUri: string | null = null;
+    const probe = await startProbeServer(({ url }) => {
+      const parsed = new URL(url, 'http://placeholder');
+      receivedRedirectUri = parsed.searchParams.get('redirect_uri');
+      return { status: 200, body: JSON.stringify({ access_token: 'tok', expires_in: 3600 }) };
+    });
+    try {
+      const auth = new AuthorizationCodeAuth(
+        probe.url,
+        'good-id',
+        'secret',
+        redirectUri,
+        new FileTokenStore(tokenPath()),
+      );
+      const fromAuthorizeUrl = new URL(auth.getAuthorizeUrl()).searchParams.get('redirect_uri');
+      await auth.exchangeCode('some-code');
+      expect(receivedRedirectUri).toBe(fromAuthorizeUrl);
+      expect(receivedRedirectUri).toBe(redirectUri);
+    } finally {
+      await probe.close();
+    }
   });
 });
 
@@ -80,16 +108,35 @@ describe('AuthorizationCodeAuth — exchangeCode', () => {
     expect(mock.state.issuedTokens).toHaveLength(1);
   });
 
-  it('tolerates a trailing slash on the configured redirect URI (normalised to match the mock)', async () => {
+  it('sends redirect_uri exactly as configured -- succeeds when it matches the registered value including a trailing slash', async () => {
     mock.state.validAuthCodes.add('good-code');
+    // The mock's registered client here has a trailing slash -- mirrors the
+    // real content-test.byui.edu client per Bug 2.
+    mock.state.expectedRedirectUri = `${mock.url}/`;
     const auth = new AuthorizationCodeAuth(
       mock.url,
       'good-id',
       'secret',
-      `${mock.url}/`, // trailing slash -- must still match state.expectedRedirectUri === mock.url
+      `${mock.url}/`,
       new FileTokenStore(tokenPath()),
     );
     await expect(auth.exchangeCode('good-code')).resolves.toBeUndefined();
+  });
+
+  it('Bug 2 regression: a trailing slash the registered client does NOT have now correctly fails, instead of being silently normalised away', async () => {
+    mock.state.validAuthCodes.add('good-code');
+    // mock.state.expectedRedirectUri defaults to mock.url, with NO trailing
+    // slash. Previously the constructor stripped the slash off the
+    // configured value below, so this "just worked" -- masking the exact
+    // live failure this bug report describes. It must fail now.
+    const auth = new AuthorizationCodeAuth(
+      mock.url,
+      'good-id',
+      'secret',
+      `${mock.url}/`,
+      new FileTokenStore(tokenPath()),
+    );
+    await expect(auth.exchangeCode('good-code')).rejects.toThrow(/redirect_uri/i);
   });
 
   it('persists the token to the store so a detached process can pick it up', async () => {

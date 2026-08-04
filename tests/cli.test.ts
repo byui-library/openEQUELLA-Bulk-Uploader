@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer, connect } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import {
   planAction,
   runAction,
@@ -11,6 +13,7 @@ import {
   logoutAction,
   checkAction,
   stripBomFromEnvKeys,
+  extractCode,
 } from '../src/cli/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
@@ -31,6 +34,46 @@ async function captureLogs(fn: () => Promise<void>): Promise<string[]> {
     console.log = orig;
   }
   return logs;
+}
+
+/** Grabs an OS-assigned free loopback port, for tests that need to know a
+ *  port number before `loginAction` starts its own loopback server on it. */
+function getFreePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const probe = createServer();
+    probe.on('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolvePort(port));
+    });
+  });
+}
+
+/** Polls `127.0.0.1:<port>` until a raw TCP connection succeeds -- used to
+ *  wait for `loginAction`'s loopback server to actually be listening before
+ *  firing the simulated browser redirect at it. A raw `net.connect` probe
+ *  (rather than `fetch`) so a not-yet-listening port fails fast: on Windows,
+ *  `fetch`'s HTTP-level connect can take seconds to report ECONNREFUSED. */
+function probeConnect(port: number): Promise<boolean> {
+  return new Promise((resolveProbe) => {
+    const conn = connect({ host: '127.0.0.1', port }, () => {
+      conn.destroy();
+      resolveProbe(true);
+    });
+    conn.on('error', () => {
+      conn.destroy();
+      resolveProbe(false);
+    });
+  });
+}
+
+async function waitForPort(port: number, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await probeConnect(port)) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`Timed out waiting for 127.0.0.1:${port} to accept connections.`);
 }
 
 let dir: string;
@@ -272,6 +315,16 @@ describe('loginAction', () => {
   let mock: MockServer;
   beforeEach(async () => {
     mock = await startMockServer();
+    // Bug 3: the redirect URI's host now controls whether loginAction starts
+    // a real loopback server. The mock server itself listens on 127.0.0.1,
+    // so if these tests let redirectUri default to `${mock.url}/` (Bug 2's
+    // default), loginAction would try to bind its OWN loopback server to the
+    // mock's own port -- EADDRINUSE. Force a non-loopback redirect URI here
+    // (mirroring this instance's real site-root registration) so this
+    // describe block exercises the manual-paste path throughout, same as
+    // before Bug 3 was fixed. See the "loginAction -- loopback capture"
+    // describe below for the loopback path itself.
+    mock.state.expectedRedirectUri = 'https://example.test/';
   });
   afterEach(async () => {
     await mock.close();
@@ -281,6 +334,7 @@ describe('loginAction', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: secret,
+    OEQ_REDIRECT_URI: 'https://example.test/',
   });
 
   it('prints the authorize URL, attempts to open it, exchanges the entered code, and reports who is logged in', async () => {
@@ -353,6 +407,154 @@ describe('loginAction', () => {
     const encoded = encodeURIComponent(secret);
     expect(out).not.toContain(secret);
     expect(out).not.toContain(encoded);
+  });
+
+  it('warns about the cold-SSO-session client_id(null) failure before opening anything (Bug 1)', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const logs = await captureLogs(() =>
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'the-code',
+      }),
+    );
+
+    const out = logs.join('\n');
+    expect(out).toContain('client_id (null)');
+    expect(out.toLowerCase()).toContain('sign in');
+  });
+
+  it('prints that it is using manual paste when OEQ_REDIRECT_URI is not a loopback address (Bug 3)', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const logs = await captureLogs(() =>
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'the-code',
+      }),
+    );
+
+    const out = logs.join('\n').toLowerCase();
+    expect(out).toContain('using manual paste');
+    expect(out).toContain('history');
+  });
+
+  it('extracts the code when the operator pastes the full URL instead of a bare code (Bug 3b)', async () => {
+    mock.state.validAuthCodes.add('abc123');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const logs = await captureLogs(() =>
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'https://example.test/page/home?code=abc123&state=xyz',
+      }),
+    );
+
+    expect(logs.join('\n')).toContain('Logged in as');
+    expect(await store.loadRaw()).not.toBeNull();
+  });
+});
+
+describe('loginAction -- loopback capture (Bug 3a)', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  it('captures the code automatically from a loopback redirect, shuts the server down, and completes the exchange', async () => {
+    const port = await getFreePort();
+    const redirectUri = `http://127.0.0.1:${port}/callback`;
+    mock.state.expectedRedirectUri = redirectUri;
+    mock.state.validAuthCodes.add('loop-code');
+    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(' '));
+
+    const loginPromise = loginAction(
+      {
+        OEQ_BASE_URL: mock.url,
+        OEQ_CLIENT_ID: 'good-id',
+        OEQ_CLIENT_SECRET: 'secret',
+        OEQ_REDIRECT_URI: redirectUri,
+      },
+      { tokenStore: store, openBrowser: () => {} },
+    );
+
+    try {
+      // Simulates the browser's redirect back to this machine after the
+      // operator signs in and authorizes -- loginAction should already be
+      // listening for it by the time the server is up.
+      await waitForPort(port);
+      const res = await fetch(`${redirectUri}?code=loop-code&state=xyz`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toMatch(/close this tab/i);
+
+      await loginPromise;
+    } finally {
+      console.log = origLog;
+    }
+
+    expect(await store.loadRaw()).not.toBeNull();
+    const out = logs.join('\n').toLowerCase();
+    expect(out).toContain('using loopback capture');
+    expect(out).toContain('captured automatically');
+    // No promptForCode dep was supplied at all -- if the manual path had run
+    // instead, loginAction would have hung waiting on real stdin (or thrown,
+    // depending on environment) rather than resolving.
+
+    // The server shut down after capturing the code -- a second request must
+    // be refused, not served.
+    await expect(fetch(`${redirectUri}?code=other`)).rejects.toThrow();
+  });
+
+  it('rejects with the openEQUELLA-reported error when the redirect carries `error=` instead of `code=`', async () => {
+    const port = await getFreePort();
+    const redirectUri = `http://127.0.0.1:${port}/callback`;
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const loginPromise = loginAction(
+      {
+        OEQ_BASE_URL: mock.url,
+        OEQ_CLIENT_ID: 'good-id',
+        OEQ_CLIENT_SECRET: 'secret',
+        OEQ_REDIRECT_URI: redirectUri,
+      },
+      { tokenStore: store, openBrowser: () => {} },
+    );
+
+    const assertion = expect(loginPromise).rejects.toThrow(/access_denied/i);
+    await waitForPort(port);
+    await fetch(`${redirectUri}?error=access_denied`);
+    await assertion;
+  });
+});
+
+describe('extractCode (Bug 3b -- accepts a bare code or a full pasted URL)', () => {
+  it('returns a bare code unchanged', () => {
+    expect(extractCode('abcd1234')).toBe('abcd1234');
+  });
+
+  it('extracts the code parameter from a full pasted URL', () => {
+    expect(extractCode('https://content-test.byui.edu/page/home?code=abcd1234&state=xyz')).toBe('abcd1234');
+  });
+
+  it('extracts the code parameter from a bare query string', () => {
+    expect(extractCode('?code=abcd1234&state=xyz')).toBe('abcd1234');
+  });
+
+  it('trims surrounding whitespace before extracting', () => {
+    expect(extractCode('  abcd1234  ')).toBe('abcd1234');
   });
 });
 

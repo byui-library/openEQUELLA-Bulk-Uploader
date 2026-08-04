@@ -14,6 +14,11 @@ let dir: string;
 
 beforeEach(async () => {
   mock = await startMockServer();
+  // cfgFor() below never sets OEQ_REDIRECT_URI, so loadConfig() defaults it
+  // to `${mock.url}/` (Bug 2 -- see config.ts). Match the mock's registered
+  // client to that same value so exchangeCode() in loggedInAuth() succeeds;
+  // these tests exercise runPreflight(), not redirect_uri matching itself.
+  mock.state.expectedRedirectUri = `${mock.url}/`;
   dir = await mkdtemp(join(tmpdir(), 'oeq-preflight-'));
 });
 afterEach(async () => {

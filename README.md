@@ -45,12 +45,16 @@ place is one less thing to debug.
 **An admin must register an API client** in the openEQUELLA admin console,
 with two requirements:
 
-- **`redirectUrl` must be the site root** (`https://content.byui.edu`, or
-  `https://content-test.byui.edu` for the test instance) — not a `localhost`
-  callback. This tool cannot capture the login code on a local listener, so
-  the operator pastes it by hand; see Authentication below.
+- **`redirectUrl` must match `OEQ_REDIRECT_URI` character-for-character,
+  including any trailing slash.** The default (unset `OEQ_REDIRECT_URI`) is
+  the site root **with** a trailing slash (`https://content.byui.edu/`, or
+  `https://content-test.byui.edu/` for the test instance) — confirmed live:
+  the same URL *without* the slash fails with "No OAuth client can be
+  found ...". `redirect_uri` is sent verbatim, never normalised, so a
+  mismatch of even one trailing character breaks login. See "A dedicated
+  OAuth client for this tool" below for a better option than the site root.
 - **It must NOT be bound to a fixed user.** That's deliberate, not a gap:
-  see Authentication below for why.
+  see below for why.
 
 The instance sits behind Okta SSO, which cannot be scripted — there is no
 way to authenticate without a human at a browser at least once per session.
@@ -59,16 +63,42 @@ way to authenticate without a human at a browser at least once per session.
 
 `oeq-upload login`:
 
-1. Prints the authorize URL and tries to open it in your default browser
-   (best-effort — if that fails, headless or over SSH, the URL is printed
-   regardless).
+1. Warns up front about a known SSO quirk (see "A cold SSO session" below),
+   then prints the authorize URL and tries to open it in your default
+   browser (best-effort — if that fails, headless or over SSH, the URL is
+   printed regardless).
 2. You sign in through the normal Okta SSO screen, **as yourself** — not a
    shared service account.
-3. The browser lands on the openEQUELLA home page with `?code=…` in the
-   address bar. Copy that code and paste it at the prompt.
-4. The tool exchanges it for a token, confirms who you're logged in as
-   (`GET /api/content/currentuser`), and caches the token in
+3. Gets the resulting `code` back one of two ways, chosen automatically from
+   `OEQ_REDIRECT_URI` (never guessed from browser cookies — this tool has no
+   access to them):
+   - **Loopback capture**, if `OEQ_REDIRECT_URI` points at `localhost` or
+     `127.0.0.1`: a temporary local server catches the redirect and reads
+     `code` off it directly. Nothing to copy or paste. This is only possible
+     with a dedicated client registered for a loopback `redirectUrl` — see
+     below — since the current client's `redirectUrl` is the site root.
+   - **Manual paste**, otherwise (the situation against this instance
+     today): openEQUELLA's home page discards the `?code=…` query string
+     within about a second of loading, so grabbing it straight out of the
+     address bar is a race you will usually lose. The reliable way: after
+     you sign in and click **Authorize**, open your browser's **history**
+     and look for the entry containing `?code=` — it's recorded there even
+     though the address bar has already moved on to `/page/home`. Paste
+     that whole URL at the prompt (or just the code, if you've already
+     isolated it) — either is accepted.
+4. The tool exchanges the code for a token, confirms who you're logged in
+   as (`GET /api/content/currentuser`), and caches the token in
    `.oeq-token.json` (gitignored) in the current directory.
+
+**A cold SSO session drops the query string on the first attempt.**
+Visiting the authorize URL while not already signed in to openEQUELLA in
+that browser bounces through Okta SSO and lands back on a *bare*
+`/oauth/authorise` — no query string — which openEQUELLA reports as `No
+OAuth client can be found with the supplied client_id (null) and
+redirect_uri (null)`. Confirmed live. This tool cannot detect your
+browser's session, so it can't route around this automatically: if you see
+that error, sign in to openEQUELLA at the base URL first, then run
+`oeq-upload login` again (or just re-open the URL it printed).
 
 **Items are owned by whoever logged in.** That's the entire reason this
 flow exists instead of a fixed service account: the OAuth client on this
@@ -99,6 +129,39 @@ instance whose OAuth client *is* registered with a fixed user, but **does
 not work against `content-test.byui.edu` or `content.byui.edu`** — their
 client is deliberately unbound, and client-credentials against it fails
 with `invalid_client`.
+
+### A dedicated OAuth client for this tool (recommended)
+
+The site-root `redirectUrl` this tool currently uses forces the manual-paste
+fallback above on every login. That's avoidable: **ask an admin to register
+a second, dedicated OAuth client for this tool** (leaving the existing
+"openEQUELLA Sync" client untouched) with:
+
+```text
+redirectUrl = http://localhost:8787/callback
+```
+
+then set `OEQ_REDIRECT_URI=http://localhost:8787/callback` (and the new
+client's `OEQ_CLIENT_ID`/`OEQ_CLIENT_SECRET`) in `.env`. `login` detects the
+loopback host automatically and captures the code itself — no address bar,
+no history, no pasting.
+
+This has to be a **separate** client, not a `redirectUrl` change on the
+existing Sync client: `OAuthClientBean.redirectUrl` (per
+`schema/swagger.json`) is a single value, not a list, so pointing the
+existing client at a loopback address would break Sync's own login in the
+process. Registering a second client with its own `client_id`/`client_secret`
+costs nothing and leaves Sync alone.
+
+**Alternative, not built into this tool:** a Playwright script that drives a
+real browser and captures the code at the network layer (intercepting the
+redirect response before the SPA's own navigation discards it) also works
+against the *current* site-root client, without needing a new one
+registered. This tool does not vendor Playwright as a dependency — it's a
+heavier tool than a bulk-upload CLI should carry just for this — but if
+you'd rather automate the current setup than ask for a new client, that
+approach is worth building as a separate, optional script outside this
+package.
 
 ## Spreadsheet format
 
@@ -357,7 +420,7 @@ contract) together.
 ## Development
 
 ```bash
-npm test        # vitest, 239 tests across 16 files
+npm test        # vitest, 252 tests across 16 files
 npm run typecheck
 npm run build    # emits dist/cli/index.js and dist/mcp/index.js
 ```

@@ -33,12 +33,24 @@ export const DEFAULT_LOGIN_HINT = 'Run:  oeq-upload login';
  *      injected `TokenStore`.
  *
  * `redirect_uri` MUST be byte-identical between steps 1 and 3 -- openEQUELLA
- * validates the two match, and per the design doc this is the single most
- * common way this flow breaks in practice. Both steps read the same
- * `this.redirectUri`, normalised exactly once in the constructor, so they
- * can never drift apart. The server also strips a trailing slash from
- * whatever `redirect_uri` it receives, so an un-normalised value here would
- * fail that comparison even when it's "the same" URL to a human.
+ * validates the two match against the OAuth client's registered
+ * `redirectUrl`, and per the design doc this is the single most common way
+ * this flow breaks in practice. Both steps read the same `this.redirectUri`,
+ * stored VERBATIM (not normalised) in the constructor, so they can never
+ * drift apart.
+ *
+ * Earlier revisions of this file stripped a trailing slash here, on the
+ * theory that the server normalised it away server-side. That was wrong --
+ * confirmed live against `content-test.byui.edu`, where sending
+ * `https://content-test.byui.edu` (no slash) against a client registered
+ * with `redirectUrl=https://content-test.byui.edu/` (with one) fails with
+ * "No OAuth client can be found ...", and adding the slash back fixes it.
+ * The `Location` header openEQUELLA emits elsewhere in the flow shows a
+ * normalised value, but that says nothing about the exact string stored in
+ * the client record -- do not re-introduce normalisation here. Whatever
+ * `redirectUri` this class is constructed with is sent exactly as given, in
+ * both `getAuthorizeUrl()` and `exchangeCode()`; it is `config.ts`'s job to
+ * default it sensibly (to `baseUrl + '/'`), not this class's.
  *
  * Unlike `OAuthClientCredentials`, this provider cannot refresh itself: there
  * is no way to mint a new token without a human back at a browser. A 401 mid
@@ -59,7 +71,10 @@ export class AuthorizationCodeAuth implements AuthProvider {
     tokenStore: TokenStore = new FileTokenStore(),
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.redirectUri = redirectUri.replace(/\/+$/, '');
+    // Deliberately NOT normalised -- see the class doc comment above. Sent
+    // verbatim, character-for-character, in both getAuthorizeUrl() and
+    // exchangeCode() below.
+    this.redirectUri = redirectUri;
     this.tokenStore = tokenStore;
   }
 
@@ -106,8 +121,8 @@ export class AuthorizationCodeAuth implements AuthProvider {
         this.redact(
           `Authorization code exchange failed (${res.status}). This is usually either an ` +
             `expired or already-used code, or a redirect_uri mismatch -- check that ` +
-            `OEQ_REDIRECT_URI matches exactly what is registered on the OAuth client ` +
-            `(no trailing slash).`,
+            `OEQ_REDIRECT_URI matches, character-for-character (including any trailing slash), ` +
+            `what is registered as the OAuth client's redirectUrl.`,
         ),
         res.status,
         this.redact(body),

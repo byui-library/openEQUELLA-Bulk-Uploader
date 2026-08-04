@@ -14,7 +14,15 @@ export interface Config {
   collectionUuid: string;
   schemaUuid: string;
   authMode: AuthMode;
-  /** Registered redirect URI for the authorization-code flow. Always trailing-slash-free. */
+  /**
+   * Registered redirect URI for the authorization-code flow, used VERBATIM
+   * (see authCode.ts) -- it must match the OAuth client's registered
+   * `redirectUrl` character-for-character, including any trailing slash.
+   * Defaults to `baseUrl + '/'` (see loadConfig() below) since that's what
+   * this instance's client is registered with; an admin registering a
+   * dedicated client with a different `redirectUrl` (e.g. a loopback
+   * callback) must set `OEQ_REDIRECT_URI` to match it exactly.
+   */
   redirectUri: string;
 }
 
@@ -39,11 +47,17 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   }
 
   const baseUrl = env.OEQ_BASE_URL!.replace(/\/+$/, '');
-  // The registered redirectUrl on this instance is the site root, not a
-  // local callback (see authCode.ts) -- so the base URL is the sane
-  // default. The trailing slash is stripped either way because the server
-  // strips it from whatever it receives and a mismatch fails the exchange.
-  const redirectUri = (env.OEQ_REDIRECT_URI ?? baseUrl).replace(/\/+$/, '');
+  // The registered redirectUrl on this instance is the site root WITH a
+  // trailing slash -- confirmed live: `content-test.byui.edu` (no slash)
+  // fails with "No OAuth client can be found ...", `content-test.byui.edu/`
+  // (with one) works. So the default must add the slash back after
+  // `baseUrl` strips it above. This value is sent VERBATIM by authCode.ts --
+  // no further normalisation happens there, and none should happen here for
+  // an explicit OEQ_REDIRECT_URI either: whatever the operator sets must
+  // match their OAuth client's registered redirectUrl exactly, trailing
+  // slash and all, so silently editing it would just move the mismatch
+  // somewhere harder to see.
+  const redirectUri = env.OEQ_REDIRECT_URI ?? `${baseUrl}/`;
 
   return {
     baseUrl,

@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { createServer as createHttpServer } from 'node:http';
 import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
@@ -223,29 +224,201 @@ function defaultOpenBrowser(url: string): void {
 async function defaultPromptForCode(): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    return await rl.question('Paste the code here: ');
+    return await rl.question('Paste the code, or the full URL containing it, here: ');
   } finally {
     rl.close();
   }
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Pulls a `code` value out of whatever the operator pasted at the manual
+ * prompt (see the "Manual path" doc on `loginAction` below). Accepts three
+ * shapes, tried in order:
+ *
+ *   1. A full URL (the expected case -- see loginAction's doc for why the
+ *      operator is told to paste a browser-HISTORY entry, which is a whole
+ *      URL, not a bare code): parsed and its `code` search param returned.
+ *   2. A bare query string, e.g. `?code=abcd1234&state=...` or
+ *      `code=abcd1234` -- not a valid absolute URL on its own, so (1) fails
+ *      to parse, but the same param is still extractable with a regex.
+ *   3. Anything else is assumed to already BE the bare code, unchanged
+ *      (this is what makes the manual prompt keep working exactly as before
+ *      for an operator who already isolated the code themselves).
+ *
+ * Exported (not just used internally) so it can be unit tested directly
+ * against all three shapes without driving the whole `loginAction` flow.
+ */
+export function extractCode(input: string): string {
+  const trimmed = input.trim();
+  try {
+    const asUrl = new URL(trimmed);
+    const fromUrl = asUrl.searchParams.get('code');
+    if (fromUrl) return fromUrl;
+  } catch {
+    // Not an absolute URL -- fall through to the query-string/bare-code cases.
+  }
+  const match = /(?:^|[?&])code=([^&\s]+)/.exec(trimmed);
+  if (match) return decodeURIComponent(match[1]!);
+  return trimmed;
+}
+
+/** Minimal escaping for the one place `defaultCaptureLoopbackCode` reflects
+ *  server-controlled text (the OAuth `error` param) into a locally-served
+ *  HTML page. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * The redirect URI's host/port/path, if (and only if) it names a loopback
+ * address -- the signal `loginAction` uses to choose loopback capture over
+ * the manual-paste fallback. Returns null for anything else (a real host --
+ * this instance's site-root registration, in particular).
+ */
+function loopbackTarget(redirectUri: string): { hostname: string; port: number; pathname: string } | null {
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    return null;
+  }
+  if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1' && url.hostname !== '::1') return null;
+  const port = url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80;
+  return { hostname: url.hostname, port, pathname: url.pathname };
+}
+
+/**
+ * Starts a one-shot `node:http` server on `redirectUri`'s own host/port and
+ * resolves with the `code` query parameter from the first request that
+ * carries one (or an `error` param) -- i.e. the browser's redirect after the
+ * operator signs in and authorizes. Requests that carry neither (favicon
+ * fetches, a stray probe, etc.) get a 404 and the server keeps waiting.
+ *
+ * This is the standard native-app OAuth loopback pattern: nothing is typed
+ * or pasted, because the code never has to survive in an address bar or
+ * history entry at all -- it arrives as a normal HTTP request this process
+ * is already listening for.
+ */
+function defaultCaptureLoopbackCode(redirectUri: string): Promise<string> {
+  const target = new URL(redirectUri);
+  return new Promise((resolvePromise, reject) => {
+    const server = createHttpServer((req, res) => {
+      const reqUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? target.host}`);
+      const code = reqUrl.searchParams.get('code');
+      const error = reqUrl.searchParams.get('error');
+      if (!code && !error) {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('Not found.');
+        return;
+      }
+      // `Connection: close` so the browser doesn't hold a keep-alive socket
+      // open -- without it, `server.close()` below (which waits for
+      // in-flight connections to finish on their own) can stall for however
+      // long the client's keep-alive timeout is, needlessly delaying a
+      // login that has, in substance, already succeeded.
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', connection: 'close' });
+      res.end(
+        error
+          ? `<html><body><h1>Sign-in failed</h1><p>openEQUELLA reported: ${escapeHtml(error)}</p>` +
+              `<p>You can close this tab and check the terminal.</p></body></html>`
+          : `<html><body><h1>Signed in</h1><p>You can close this tab and return to the terminal -- ` +
+              `oeq-upload has what it needs.</p></body></html>`,
+      );
+      server.close(() => {
+        if (error) reject(new OeqError(`openEQUELLA returned an error during sign-in: ${error}`));
+        else resolvePromise(code!);
+      });
+    });
+    server.on('error', reject);
+    server.listen(target.port ? Number(target.port) : 80, target.hostname);
+  });
 }
 
 export interface LoginDeps {
   tokenStore?: TokenStore;
   openBrowser?: (url: string) => void;
   promptForCode?: () => Promise<string>;
+  /** Overridable for tests; see `defaultCaptureLoopbackCode` for the real implementation. */
+  captureLoopbackCode?: (redirectUri: string) => Promise<string>;
 }
 
 /**
  * Authenticate via the authorization-code flow and cache a token that `run`
  * (and a detached `oeq_start_job` runner) can pick up. Never fails just
  * because the browser couldn't be opened -- the URL is always printed too.
+ *
+ * Two ways the code gets from the browser back to this process, chosen
+ * automatically from `OEQ_REDIRECT_URI` (never guessed from cookies -- this
+ * process has no access to the browser's session):
+ *
+ *   - Loopback capture (preferred): if the redirect URI points at
+ *     `localhost`/`127.0.0.1`, a temporary local server catches the
+ *     redirect and pulls `code` off it directly -- nothing to paste. This is
+ *     the standard native-app OAuth pattern; see the README for how to
+ *     register a client that enables it.
+ *   - Manual paste (the fallback, and the only option against THIS
+ *     instance's current client, whose `redirectUrl` is the site root, not
+ *     a loopback address): openEQUELLA's home page discards the `?code=`
+ *     query string within about a second of loading, so copying it straight
+ *     out of the address bar is a race the operator will usually lose. The
+ *     reliable way is the browser's HISTORY, which still has the
+ *     intermediate `?code=...` entry even after the address bar has moved
+ *     on -- see the printed instructions below.
+ *
+ * Also prints a warning, unconditionally, before opening anything: a COLD
+ * SSO session (no prior openEQUELLA session in this browser) makes the
+ * first `/oauth/authorise` visit bounce through Okta and land back on a
+ * BARE `/oauth/authorise` -- openEQUELLA drops the query string on that
+ * bounce-back -- which fails with `client_id (null)`/`redirect_uri (null)`.
+ * There is no way to detect this in advance (this process cannot see the
+ * browser's cookies), so the fix is operator action: sign in first, then
+ * retry. Confirmed live against `content-test.byui.edu`.
  */
 export async function loginAction(env: Env = process.env, deps: LoginDeps = {}): Promise<void> {
   const cfg = loadConfig(env);
   const tokenStore = deps.tokenStore ?? new FileTokenStore();
   const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
 
+  console.log(
+    `Step 1: if you are not already signed in to openEQUELLA in this browser, open ${cfg.baseUrl} ` +
+      `and sign in via SSO first -- skip this if you're already signed in.\n` +
+      `Step 2: once signed in, come back here; the URL below will be opened for you.\n\n` +
+      `(Why: a cold SSO session drops the query string on the bounce-back to openEQUELLA, which ` +
+      `then fails with "No OAuth client can be found with the supplied client_id (null) and ` +
+      `redirect_uri (null)". This process cannot detect your browser's session, so if you see that ` +
+      `error: sign in at ${cfg.baseUrl}, then run \`oeq-upload login\` again -- or just re-open the ` +
+      `URL printed below once you're signed in.)\n`,
+  );
+
   const url = auth.getAuthorizeUrl();
+  const loopback = loopbackTarget(cfg.redirectUri);
+
+  if (loopback) {
+    console.log(
+      `Using loopback capture: OEQ_REDIRECT_URI (${cfg.redirectUri}) points at a local address, so ` +
+        `this tool will start a temporary local server at ${loopback.hostname}:${loopback.port} and ` +
+        `capture the code automatically once you sign in and authorize -- nothing to paste.\n`,
+    );
+  } else {
+    console.log(
+      `Using manual paste: OEQ_REDIRECT_URI (${cfg.redirectUri}) is not a loopback address, so this ` +
+        `tool cannot capture the code automatically. openEQUELLA's home page discards the '?code=' ` +
+        `query string almost immediately after it loads, so copying it straight out of the address ` +
+        `bar is a race you will usually lose. The reliable way: after you sign in and click ` +
+        `Authorize, open your browser's HISTORY and look for the entry containing '?code=' -- it is ` +
+        `recorded there even though the address bar has already moved on to /page/home. Paste that ` +
+        `whole URL below (or just the code, if you already isolated it).\n`,
+    );
+  }
+
   console.log(`Open this URL in a browser and sign in:\n\n  ${url}\n`);
   try {
     (deps.openBrowser ?? defaultOpenBrowser)(url);
@@ -253,13 +426,25 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
     // Best-effort only -- the URL above already covers headless/SSH use.
   }
 
-  console.log(
-    "After signing in, the browser lands on the openEQUELLA home page. Find the 'code' " +
-      "parameter in its address bar (e.g. '...?code=abcd1234') and paste just that value below.",
-  );
-  const code = (await (deps.promptForCode ?? defaultPromptForCode)()).trim();
-  if (!code) {
-    throw new OeqError('No code entered. Run `oeq-upload login` again when you have it.');
+  let code: string;
+  if (loopback) {
+    console.log('Waiting for openEQUELLA to redirect back to this machine...');
+    try {
+      code = await (deps.captureLoopbackCode ?? defaultCaptureLoopbackCode)(cfg.redirectUri);
+    } catch (err) {
+      throw new OeqError(
+        `Could not capture the code automatically at ${cfg.redirectUri}: ${errorMessage(err)}. Check ` +
+          `that nothing else is using that port, or point OEQ_REDIRECT_URI at a non-loopback address ` +
+          `to fall back to the manual-paste flow.`,
+      );
+    }
+    console.log('Code captured automatically from the local redirect.');
+  } else {
+    const raw = (await (deps.promptForCode ?? defaultPromptForCode)()).trim();
+    if (!raw) {
+      throw new OeqError('No code entered. Run `oeq-upload login` again when you have it.');
+    }
+    code = extractCode(raw);
   }
 
   await auth.exchangeCode(code);
