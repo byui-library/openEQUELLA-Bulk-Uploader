@@ -79,6 +79,39 @@ cannot be reused — it needs its own client. Until then `login` falls back to a
 manual paste, which now accepts a full URL and points the operator at browser
 history (where the intermediate `?code=` URL survives).
 
+## PRODUCTION RUN COMPLETED — 2026-08-04
+
+37 jury videos contributed to **BYU-Idaho Faculty Content** on
+`https://content.byui.edu`. All verified by reading each item back from the
+API: byte-exact md5 against the source file, correct size, filename intact,
+exactly one attachment each, attachment uuid present in the metadata, all
+`draft`, all owned by `milesm`. 5.68 GB in 6.1 minutes (15.9 MB/s), zero
+failures. A full rehearsal on `content-test` beforehand was identical and was
+purged afterwards.
+
+Outstanding for the operator: review and submit the drafts, and apply shared
+owners via Manage Resources (still manual in v1).
+
+## `redirect_uri` differs between the two instances
+
+This will bite anyone setting the tool up elsewhere, and it is not guessable:
+
+| instance | registered `redirectUrl` |
+| --- | --- |
+| `content-test.byui.edu` | `https://content-test.byui.edu/` (**with** trailing slash) |
+| `content.byui.edu` | `https://content.byui.edu` (**no** trailing slash) |
+
+`OEQ_REDIRECT_URI` must be set to match the registered value **character for
+character**. It is never normalised — deliberately, because an earlier version
+stripped the trailing slash based on openEQUELLA emitting a normalised value in
+a `Location` header, and that inference was wrong. Sending the wrong form
+yields `No OAuth client can be found with the supplied client_id (...) and
+redirect_uri (...)` even though the client plainly exists.
+
+Production now uses a **dedicated OAuth client for this tool** rather than
+sharing openEQUELLA Sync's. Sharing Sync's worked, but coupled this tool to
+another application's registered redirect, secret rotation, and ACLs.
+
 ## Environment
 
 `.env` is gitignored and populated, pointing at the **test** instance:
