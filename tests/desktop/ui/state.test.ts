@@ -50,3 +50,25 @@ describe('canContinueChoose', () => {
     expect(canContinueChoose({ collectionUuid: '', sheetPath: 's.xlsx', folderPath: 'f' })).toBe(false);
   });
 });
+
+describe('nextScreen -- Task 8 (Review, Confirm, Progress, Results)', () => {
+  it('keeps Review on Review after a successful plan check -- the warnings stay visible', () => {
+    expect(nextScreen('review', { type: 'planChecked' })).toBe('review');
+  });
+
+  it('advances Review to Confirm only on the separate, explicit approval event', () => {
+    expect(nextScreen('review', { type: 'reviewApproved' })).toBe('confirm');
+  });
+
+  it('advances Confirm to Progress once the upload starts', () => {
+    expect(nextScreen('confirm', { type: 'uploadStarted' })).toBe('progress');
+  });
+
+  it('advances Progress to Results once the run finishes', () => {
+    expect(nextScreen('progress', { type: 'runFinished' })).toBe('results');
+  });
+
+  it('sends Results back to Progress when a retry run starts', () => {
+    expect(nextScreen('results', { type: 'retryStarted' })).toBe('progress');
+  });
+});

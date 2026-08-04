@@ -20,6 +20,10 @@
   --production-text: #ffffff;
   --test-bg: #3a3f46;
   --test-text: #ffffff;
+  --valid-bg: #e1f3e1;
+  --valid-text: #1c6b1c;
+  --pending-bg: #fff3cd;
+  --pending-text: #7a5b00;
 }
 
 * {
@@ -89,8 +93,12 @@ p {
 
 /* --- Layout -------------------------------------------------------------- */
 
+/* 760px rather than a narrower form-only width: Review and Results both
+   carry a multi-column table (headers/suggestions; row/file/reason) that
+   needs the extra room, and a wider column reads fine for the simpler
+   screens too. */
 #app {
-  max-width: 640px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 2rem 1.5rem 3rem;
 }
@@ -241,6 +249,187 @@ button.link-button:hover:not(:disabled) {
   margin-top: 0.75rem;
 }
 
+/* --- Review screen -------------------------------------------------------- */
+
+.review-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1rem;
+}
+
+.review-table th,
+.review-table td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.review-table .col-header {
+  font-family: 'Consolas', 'Cascadia Mono', monospace;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge--valid {
+  background: var(--valid-bg);
+  color: var(--valid-text);
+}
+
+.badge--invalid {
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.badge--pending {
+  background: var(--pending-bg);
+  color: var(--pending-text);
+}
+
+.override-select {
+  width: 100%;
+  margin-bottom: 0.35rem;
+}
+
+.override-custom {
+  width: 100%;
+}
+
+.override-custom.hidden {
+  display: none;
+}
+
+.warning-group {
+  margin: 0.75rem 0;
+}
+
+.warning-group h3 {
+  font-size: 1rem;
+  margin: 0 0 0.35rem;
+}
+
+.warning-group ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.warning-group li {
+  margin-bottom: 0.25rem;
+}
+
+/* --- Confirm screen -------------------------------------------------------- */
+
+.confirm-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.confirm-summary dt {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.confirm-summary dd {
+  margin: 0;
+}
+
+.radio-label {
+  display: block;
+  font-weight: 400;
+  margin: 0.5rem 0;
+}
+
+.radio-label input {
+  margin-right: 0.5rem;
+}
+
+.danger-panel {
+  border: 2px solid var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 0.75rem 0;
+}
+
+.danger-panel label {
+  color: var(--error-text);
+}
+
+.danger-panel input[type='text'] {
+  max-width: 12rem;
+}
+
+/* --- Progress screen -------------------------------------------------------- */
+
+.progress-count {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 1.25rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar__fill {
+  height: 100%;
+  background: var(--accent);
+  /* The width itself is updated on every progress event, which is what
+     actually makes the bar move; this transition just smooths each of those
+     discrete jumps instead of snapping, so the screen reads as live rather
+     than static between events. */
+  transition: width 0.4s ease-out;
+}
+
+.progress-current {
+  margin: 0.75rem 0;
+}
+
+.progress-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+}
+
+.log-line {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-family: 'Consolas', 'Cascadia Mono', monospace;
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+
+.log-line:last-child {
+  border-bottom: none;
+}
+
+.log-line--failed {
+  color: var(--error-text);
+  font-weight: 600;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
@@ -254,5 +443,9 @@ button.link-button:hover:not(:disabled) {
     --error-bg: #3a1414;
     --error-border: #d84a4a;
     --error-text: #ffb3b3;
+    --valid-bg: #163a1e;
+    --valid-text: #8fe39a;
+    --pending-bg: #3a2f0a;
+    --pending-text: #f0cf6a;
   }
 }

@@ -3,11 +3,9 @@
  *
  * Kept separate from app.ts (which does the actual DOM work and window.oeq
  * calls) so the transition rules -- what screen follows what event -- can be
- * unit tested without booting Electron or touching the DOM. Task 7 only
- * wires up setup, signin and choose; 'choose' is a terminal state here until
- * Task 8 adds review/confirm/progress/results.
+ * unit tested without booting Electron or touching the DOM.
  */
-export type Screen = 'setup' | 'signin' | 'choose';
+export type Screen = 'setup' | 'signin' | 'choose' | 'review' | 'confirm' | 'progress' | 'results';
 
 /** On launch: no saved credentials means first run. */
 export function initialScreen(hasSettings: boolean): Screen {
@@ -18,7 +16,12 @@ export type ScreenEvent =
   | { type: 'settingsSaved' }
   | { type: 'signedIn' }
   | { type: 'signedOut' }
-  | { type: 'editSettings' };
+  | { type: 'editSettings' }
+  | { type: 'planChecked' }
+  | { type: 'reviewApproved' }
+  | { type: 'uploadStarted' }
+  | { type: 'runFinished' }
+  | { type: 'retryStarted' };
 
 export function nextScreen(current: Screen, event: ScreenEvent): Screen {
   switch (event.type) {
@@ -33,6 +36,21 @@ export function nextScreen(current: Screen, event: ScreenEvent): Screen {
       return 'signin';
     case 'editSettings':
       return 'setup';
+    // 'planChecked' deliberately does NOT change screen -- a successful
+    // plan() from Review reveals the warnings/entry-count on the SAME
+    // screen (spec: "Nothing uploads from this screen") so the user has a
+    // real chance to read them before a second, separate click
+    // ('reviewApproved') moves on. See handleReviewContinue in app.ts.
+    case 'planChecked':
+      return current;
+    case 'reviewApproved':
+      return 'confirm';
+    case 'uploadStarted':
+      return 'progress';
+    case 'runFinished':
+      return 'results';
+    case 'retryStarted':
+      return 'progress';
     default:
       return current;
   }
