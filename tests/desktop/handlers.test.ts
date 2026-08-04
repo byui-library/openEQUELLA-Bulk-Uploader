@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyOverrides, resolveSchemaPath } from '../../src/desktop/handlers.js';
+import { applyOverrides, reportColumns, resolveSchemaPath } from '../../src/desktop/handlers.js';
 import type { Sheet } from '../../src/core/types.js';
 
 describe('applyOverrides', () => {
@@ -76,6 +76,47 @@ describe('applyOverrides', () => {
   it('an override key that does not match any header is harmless', () => {
     const result = applyOverrides(sheet, { NoSuchColumn: 'MWDL/whatever' });
     expect(result.headers).toEqual(sheet.headers);
+  });
+});
+
+describe('reportColumns', () => {
+  // 'attachment name' is valid via schema.ts's own RESERVED set, independent
+  // of what's in `paths` -- included here to also cover that a valid header
+  // never carries suggestions regardless of why it's valid.
+  const paths = new Set(['MWDL/title', 'MWDL/identifier']);
+
+  it('a valid header comes back with an empty suggestions list', () => {
+    const [report] = reportColumns(['MWDL/title'], paths);
+    expect(report).toEqual({ header: 'MWDL/title', valid: true, suggestions: [] });
+  });
+
+  it('the reserved attachment-name column is valid with no suggestions', () => {
+    const [report] = reportColumns(['attachment name'], paths);
+    expect(report).toEqual({ header: 'attachment name', valid: true, suggestions: [] });
+  });
+
+  it('an invalid header comes back with a non-empty suggestions list', () => {
+    // One edit away from 'MWDL/title' -- close enough that schema.ts's
+    // `suggest()` is expected to surface it.
+    const [report] = reportColumns(['MWDL/titel'], paths);
+    expect(report!.valid).toBe(false);
+    expect(report!.suggestions.length).toBeGreaterThan(0);
+    expect(report!.suggestions).toContain('MWDL/title');
+  });
+
+  it('an invalid header with no plausible match still comes back with an empty list, never a crash', () => {
+    const [report] = reportColumns(['Completely Unrelated Nonsense'], paths);
+    expect(report!.valid).toBe(false);
+    expect(report!.suggestions).toEqual([]);
+  });
+
+  it('reports each header independently in a mixed set', () => {
+    const result = reportColumns(['MWDL/title', 'Some Bogus Header', 'attachment name'], paths);
+    expect(result).toEqual([
+      { header: 'MWDL/title', valid: true, suggestions: [] },
+      { header: 'Some Bogus Header', valid: false, suggestions: [] },
+      { header: 'attachment name', valid: true, suggestions: [] },
+    ]);
   });
 });
 

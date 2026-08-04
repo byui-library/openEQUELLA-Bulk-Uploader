@@ -968,9 +968,28 @@ async function requireSettings() {
   return s;
 }
 
-/** Schema xpaths, read from the bundled reference export. */
+/**
+ * Schema xpaths, read from the bundled reference export.
+ *
+ * Do NOT use `app.getAppPath()` for the development branch. Verified live:
+ * when launched as `electron dist-desktop/desktop/main.js`, it resolves to
+ * `dist-desktop/desktop` (Electron walks up looking for a package.json and
+ * finds none), producing `ENOENT ...dist-desktop\desktop\schema\_entity.xml`.
+ * Compute it from this module's own compiled location instead — two levels up
+ * from `dist-desktop/desktop/` is the repo root.
+ *
+ * Packaged, the file lives under `process.resourcesPath` via the
+ * `extraResources` entry added in Task 9.
+ */
+export function resolveSchemaPath(isPackaged: boolean, moduleDir: string, resourcesPath: string): string {
+  return isPackaged
+    ? join(resourcesPath, 'schema', '_entity.xml')
+    : join(moduleDir, '..', '..', 'schema', '_entity.xml');
+}
+
 async function schemaPaths(): Promise<Set<string>> {
-  const p = join(app.getAppPath(), 'schema', '_entity.xml');
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const p = resolveSchemaPath(app.isPackaged, moduleDir, process.resourcesPath);
   return parseSchemaPaths(extractDefinition(await readFile(p, 'utf8')));
 }
 
@@ -1049,10 +1068,13 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
     const paths = await schemaPaths();
     const { invalid } = validateHeaders(sheet.headers, paths);
     const invalidSet = new Map(invalid.map((i) => [i.header, i.suggestions]));
+    // Suggestions only for INVALID headers. Falling back to `suggest(h, paths)`
+    // for a valid one makes the UI offer "did you mean…" against a column that
+    // is already correct, which reads as though something is wrong with it.
     const reports: ColumnReport[] = sheet.headers.map((h) => ({
       header: h,
       valid: !invalidSet.has(h),
-      suggestions: invalidSet.get(h) ?? suggest(h, paths),
+      suggestions: invalidSet.get(h) ?? [],
     }));
     return reports;
   });

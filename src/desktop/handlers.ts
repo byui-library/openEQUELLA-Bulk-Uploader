@@ -6,7 +6,7 @@ import { CHANNELS, type ColumnReport, type OeqApi, type PlanReport, type RunRepo
 import { SecretStore, EncryptedTokenStore } from './secrets.js';
 import { buildAuth, buildClient, buildConfig } from './session.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths, suggest, validateHeaders } from '../core/schema.js';
+import { extractDefinition, parseSchemaPaths, validateHeaders } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
@@ -105,6 +105,25 @@ export function applyOverrides(sheet: Sheet, overrides: Record<string, string>):
   return { headers, rows };
 }
 
+/**
+ * Build the per-column report for a set of headers against known schema
+ * paths. Suggestions are populated ONLY for invalid headers: a column that
+ * is already valid must never carry "did you mean..." alternatives on the
+ * Review screen, where it reads to a non-technical user as "something is
+ * wrong with this one" -- precisely backwards for a screen that exists to
+ * make mapping less confusing. Shared by the `validate` and `plan` handlers
+ * so the two can't drift apart on this rule.
+ */
+export function reportColumns(headers: string[], paths: Set<string>): ColumnReport[] {
+  const { invalid } = validateHeaders(headers, paths);
+  const invalidSet = new Map(invalid.map((i) => [i.header, i.suggestions]));
+  return headers.map((h) => ({
+    header: h,
+    valid: !invalidSet.has(h),
+    suggestions: invalidSet.get(h) ?? [],
+  }));
+}
+
 export function registerHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(CHANNELS.hasSettings, async () => (await secrets().loadSettings()) !== null);
 
@@ -180,13 +199,7 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
     async (_e, args: Parameters<OeqApi['validate']>[0]): Promise<ColumnReport[]> => {
       const sheet = await readSheet(args.sheetPath);
       const paths = await schemaPaths();
-      const { invalid } = validateHeaders(sheet.headers, paths);
-      const invalidSet = new Map(invalid.map((i) => [i.header, i.suggestions]));
-      return sheet.headers.map((h) => ({
-        header: h,
-        valid: !invalidSet.has(h),
-        suggestions: invalidSet.get(h) ?? suggest(h, paths),
-      }));
+      return reportColumns(sheet.headers, paths);
     },
   );
 
@@ -219,15 +232,10 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
       // override is itself wrong (e.g. mapped to a still-invalid xpath), the
       // UI must still say so.
       const { invalid } = validateHeaders(sheet.headers, paths);
-      const invalidSet = new Map(invalid.map((i) => [i.header, i.suggestions]));
       return {
         manifestPath,
         entryCount: manifest.entries.length,
-        columns: sheet.headers.map((h) => ({
-          header: h,
-          valid: !invalidSet.has(h),
-          suggestions: invalidSet.get(h) ?? [],
-        })),
+        columns: reportColumns(sheet.headers, paths),
         invalidHeaders: invalid,
         warnings: manifest.warnings,
       };
