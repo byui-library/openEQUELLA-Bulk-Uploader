@@ -1,0 +1,15 @@
+appId: edu.byui.oeq-bulk-uploader
+productName: openEQUELLA Bulk Uploader
+directories:
+  output: release
+files:
+  - dist-desktop/**/*
+  - node_modules/**/*
+  - package.json
+win:
+  target:
+    - portable
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

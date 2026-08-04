@@ -29,7 +29,9 @@ files/
 # ---------------------------------------------------------------------------
 node_modules/
 dist/
+dist-desktop/
 build/
+release/
 *.tsbuildinfo
 npm-debug.log*
 

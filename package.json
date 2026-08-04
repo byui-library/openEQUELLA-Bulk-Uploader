@@ -3,9 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "oeq-upload": "./dist/cli/index.js" },
+  "bin": {
+    "oeq-upload": "./dist/cli/index.js"
+  },
   "scripts": {
     "build": "tsc",
+    "build:desktop": "tsc -p tsconfig.desktop.json && node scripts/copy-ui-assets.mjs",
+    "desktop": "npm run build:desktop && electron dist-desktop/desktop/main.js",
+    "dist": "npm run build:desktop && electron-builder",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
@@ -20,6 +25,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   }
