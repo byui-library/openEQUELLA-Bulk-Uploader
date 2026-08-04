@@ -12,6 +12,7 @@ export interface SigninProps {
   onSignIn(): void;
   onSignOut(): void;
   onContinue(): void;
+  onResetSettings(): void;
 }
 
 /**
@@ -63,6 +64,10 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
       ${props.checkingUser ? `<p class="muted">Checking for an existing sign-in…</p>` : ''}
 
       ${signedInBlock}
+
+      <p class="reset-row">
+        <button id="reset-settings-btn" type="button" class="link-button">Change credentials…</button>
+      </p>
     </section>
   `;
 
@@ -72,4 +77,7 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
   root.querySelector<HTMLButtonElement>('#signin-btn')?.addEventListener('click', () => props.onSignIn());
   root.querySelector<HTMLButtonElement>('#signout-btn')?.addEventListener('click', () => props.onSignOut());
   root.querySelector<HTMLButtonElement>('#continue-btn')?.addEventListener('click', () => props.onContinue());
+  root
+    .querySelector<HTMLButtonElement>('#reset-settings-btn')
+    ?.addEventListener('click', () => props.onResetSettings());
 }

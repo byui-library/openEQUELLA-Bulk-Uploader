@@ -936,6 +936,30 @@ Register one handler per channel. Each wraps a core call. Key requirements:
 - `run` forwards `onProgress` to the renderer over `CHANNELS.progress`.
 - Every handler catches and returns a readable message; `OeqError` text is surfaced verbatim rather than replaced.
 
+**But "verbatim" needs work on the renderer side.** Electron wraps every error
+that crosses IPC. Verified with a real `ipcMain.handle`/`ipcRenderer.invoke`
+round-trip:
+
+```text
+handler throws : new OeqError('Sign-in timed out.')
+renderer sees  : "Error invoking remote method 'oeq:signIn': OeqError: Sign-in timed out."
+```
+
+So reading `err.message` in the renderer is not sufficient — it must strip the
+leading `Error invoking remote method '<channel>':` prefix (including the space
+that follows it) and then the `<ClassName>:` prefix after
+that. **Anchor the pattern to the start of the string:** real messages
+contain colons (`Row 14 (Sears, Rivka 072126.MP4): POST /api/item failed`) and
+must survive intact. This affects every error path in the app, including
+sign-in timeout and window-closed-early.
+
+**Escaping:** anything reaching the DOM from the server (collection names, user
+names, error text) or from the user (the filter query, chosen file paths) must
+be escaped, and escaping must cover **quotes** as well as angle brackets — those
+values are interpolated into attributes as well as text. A demonstrated payload
+(`uuid: 'evil" onmouseover="..." data-x="'`) broke out of an attribute and was
+stopped only by the CSP. Do not rely on the CSP to cover an escaping bug.
+
 ```typescript
 import { app, dialog, ipcMain, BrowserWindow } from 'electron';
 import { safeStorage } from 'electron';

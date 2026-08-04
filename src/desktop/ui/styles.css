@@ -184,6 +184,27 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+/* Low-emphasis text-style button for a rarely-used, destructive-ish action
+   (resetting saved credentials) that must still be reachable, but should
+   never visually compete with the primary Sign in / Continue buttons. */
+button.link-button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  text-decoration: underline;
+  font-weight: 400;
+  padding: 0.25rem 0;
+}
+
+button.link-button:hover:not(:disabled) {
+  color: var(--accent);
+  filter: none;
+}
+
+.reset-row {
+  margin-top: 1.5rem;
+}
+
 /* --- Status / messaging ---------------------------------------------------- */
 
 .error {

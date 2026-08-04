@@ -1,6 +1,7 @@
 import type { OeqApi } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
 import { initialScreen, nextScreen, type Screen } from './state.js';
+import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
 import { renderSetup } from './screens/setup.js';
 import { renderSignin } from './screens/signin.js';
@@ -64,12 +65,6 @@ function initialState(): AppState {
 
 const state = initialState();
 
-/** Every core/main-process error already carries operator-facing text (see errors.ts) -- surfaced verbatim, never replaced. */
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
 function requireEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`missing #${id} in index.html`);
@@ -99,6 +94,7 @@ function render(): void {
         onSignIn: handleSignIn,
         onSignOut: handleSignOut,
         onContinue: handleSigninContinue,
+        onResetSettings: handleResetSettings,
       });
       break;
     case 'choose':
@@ -226,6 +222,37 @@ async function handleSignOut(): Promise<void> {
   render();
 }
 
+/**
+ * "Reset settings" (spec: "clears everything including the client
+ * credentials") -- distinct from Sign out, which only clears the token.
+ * Reachable from the Sign-in screen regardless of sign-in state, since the
+ * scenario it exists for is a mistyped client ID/secret that never gets far
+ * enough to produce a signed-in state at all. Confirmed via window.confirm
+ * before clearing -- it discards the secret the administrator supplied, and
+ * getting it again is a support request, so a click that can't be undone
+ * needs a deliberate second step, not just a click that happens to land on
+ * the wrong button.
+ */
+async function handleResetSettings(): Promise<void> {
+  const confirmed = window.confirm(
+    'This clears the saved client ID and secret for this Windows user. ' +
+      "You'll need to enter them again -- ask your administrator if you no longer have them. Continue?",
+  );
+  if (!confirmed) return;
+  try {
+    await window.oeq.clearSettings();
+  } catch (err) {
+    state.signinError = errorMessage(err);
+    render();
+    return;
+  }
+  state.user = null;
+  state.signinError = null;
+  state.setupError = null;
+  state.screen = nextScreen(state.screen, { type: 'editSettings' });
+  render();
+}
+
 function handleSigninContinue(): void {
   state.screen = nextScreen('signin', { type: 'signedIn' });
   state.collections = null;
@@ -262,13 +289,18 @@ function handleCollectionQueryChange(q: string): void {
 
 function handleSelectCollection(uuid: string): void {
   state.collectionUuid = uuid;
+  // Whatever "ready" meant is now stale -- the collection just changed.
+  state.readyMessage = null;
   render();
 }
 
 async function handleChooseSpreadsheet(): Promise<void> {
   try {
     const path = await window.oeq.chooseSpreadsheet();
-    if (path) state.sheetPath = path;
+    if (path) {
+      state.sheetPath = path;
+      state.readyMessage = null;
+    }
   } catch (err) {
     state.chooseError = errorMessage(err);
   }
@@ -278,7 +310,10 @@ async function handleChooseSpreadsheet(): Promise<void> {
 async function handleChooseFolder(): Promise<void> {
   try {
     const path = await window.oeq.chooseFolder();
-    if (path) state.folderPath = path;
+    if (path) {
+      state.folderPath = path;
+      state.readyMessage = null;
+    }
   } catch (err) {
     state.chooseError = errorMessage(err);
   }
