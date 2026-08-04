@@ -1,10 +1,10 @@
-# Desktop GUI Implementation Plan
+﻿# Desktop GUI Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Package the working bulk uploader as an Electron desktop application that non-technical Windows staff can double-click, with no prerequisites and nothing to configure except a client ID and secret delivered separately.
 
-**Architecture:** The existing `src/core/` is reused **unchanged** — its 252 tests continue to apply and no wire-format, runner, or manifest behaviour is revisited. A new `src/desktop/` adds an Electron main process that owns all core calls and filesystem access, and a renderer with no Node integration that communicates over a typed IPC channel.
+**Architecture:** The existing `src/core/` is reused **unchanged** â€” its 252 tests continue to apply and no wire-format, runner, or manifest behaviour is revisited. A new `src/desktop/` adds an Electron main process that owns all core calls and filesystem access, and a renderer with no Node integration that communicates over a typed IPC channel.
 
 **Tech Stack:** Electron 33+, electron-builder, TypeScript, vitest (existing).
 
@@ -14,7 +14,7 @@
 
 ## Before you start
 
-**Read the spec.** Then read these core modules — the plan calls them by exact signature and inventing a different one will not compile:
+**Read the spec.** Then read these core modules â€” the plan calls them by exact signature and inventing a different one will not compile:
 
 ```text
 src/core/types.ts      Manifest, ManifestEntry, ItemState, Sheet, ATTACHMENT_COLUMN
@@ -29,7 +29,7 @@ src/core/schema.ts     extractDefinition, parseSchemaPaths, validateHeaders, sug
 src/core/sheet.ts      readSheet(path)
 ```
 
-**Conventions:** `moduleResolution: "nodenext"` — relative imports need `.js` extensions. `strict` + `noUncheckedIndexedAccess`. `npm run typecheck` covers `src/` and `tests/`. **All 252 existing tests must keep passing after every task.**
+**Conventions:** `moduleResolution: "nodenext"` â€” relative imports need `.js` extensions. `strict` + `noUncheckedIndexedAccess`. `npm run typecheck` covers `src/` and `tests/`. **All 252 existing tests must keep passing after every task.**
 
 **Hard constraint:** do NOT modify anything under `src/core/`, `src/cli/`, `src/mcp/`, `schema/`, or `tests/` except to add new test files. If you believe a core change is needed, STOP and report rather than editing.
 
@@ -92,7 +92,7 @@ Merge into the existing `scripts` block; do not remove existing entries.
 entry point and defaults to `index.js` when absent, so packaging fails without
 it. This is invisible during development because `npm run desktop` passes the
 path explicitly and never consults `main`. Leave the existing `bin` entry
-pointing at `dist/cli/index.js` — the CLI is unaffected.
+pointing at `dist/cli/index.js` â€” the CLI is unaffected.
 
 - [ ] **Step 3: Create `tsconfig.desktop.json`**
 
@@ -163,7 +163,7 @@ app.on('window-all-closed', () => {
 
 **The `.cts` extension is required, not stylistic.** Under `"type": "module"`
 with `nodenext`, `tsc` emits ESM for a plain `.ts` file, and Electron's preload
-loader accepts only CommonJS. An ESM preload **fails silently** — the window
+loader accepts only CommonJS. An ESM preload **fails silently** â€” the window
 opens, the bridge never initialises, and the UI sits there looking like a
 rendering bug. `.cts` forces a `.cjs` emit with `require()`.
 
@@ -187,7 +187,7 @@ contextBridge.exposeInMainWorld('oeq', {
   </head>
   <body>
     <h1>openEQUELLA Bulk Uploader</h1>
-    <p id="status">loading…</p>
+    <p id="status">loadingâ€¦</p>
     <script type="module" src="./app.js"></script>
   </body>
 </html>
@@ -254,7 +254,7 @@ nsis:
 Run: `npm run desktop`
 Expected: a window opens showing "openEQUELLA Bulk Uploader" and the status line reads `pong`.
 
-Run: `npm test` — expected still 252 passing.
+Run: `npm test` â€” expected still 252 passing.
 
 - [ ] **Step 11: Commit**
 
@@ -351,7 +351,7 @@ describe('SecretStore', () => {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npx vitest run tests/desktop/secrets.test.ts`
-Expected: FAIL — cannot resolve `secrets.js`.
+Expected: FAIL â€” cannot resolve `secrets.js`.
 
 - [ ] **Step 3: Implement `src/desktop/secrets.ts`**
 
@@ -511,7 +511,7 @@ git commit -m "feat(desktop): OS-encrypted credential and token storage"
 
 ## Task 3: Typed IPC contract
 
-**Files:** Create `src/desktop/ipc.ts`, rewrite `src/desktop/preload.ts`
+**Files:** Create `src/desktop/ipc.ts`, rewrite `src/desktop/preload.cts`
 
 One place defining every call the renderer can make. If it is not here, the UI cannot do it.
 
@@ -634,7 +634,29 @@ export const CHANNELS = {
 } as const;
 ```
 
-- [ ] **Step 2: Rewrite `src/desktop/preload.ts`**
+- [ ] **Step 2: Rewrite `src/desktop/preload.cts`**
+
+**CONSTRAINT, verified live:** a sandboxed preload can `require()` only
+Electron's own built-ins. A relative require of a local project file
+(`require('./ipc.js')`) fails with `module not found`, and that **aborts the
+entire preload silently** â€” `window.oeq` comes back `undefined`, which presents
+as a broken UI rather than a module error.
+
+So `preload.cts` may import **types** from `ipc.ts` (erased at compile time,
+zero runtime cost) but must not import **values**. `CHANNELS` is therefore
+duplicated as a literal in the preload, guarded by
+`tests/desktop/preload-channels.test.ts`, which reads the preload as text and
+asserts its channel strings match `Object.values(CHANNELS)` so the two cannot
+drift.
+
+The alternatives were rejected deliberately: `sandbox: false` gives up the
+OS-level renderer sandbox for a convenience, and a bundler adds a build
+dependency this project does not otherwise need. Any future preload addition
+needing a runtime value from another module hits the same wall and needs the
+same treatment.
+
+Note also `<T,>` rather than `<T>` on the generic below â€” in a `.cts` file the
+latter is parsed as JSX and raises TS7060.
 
 ```typescript
 import { contextBridge, ipcRenderer } from 'electron';
@@ -716,7 +738,7 @@ describe('buildConfig', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `npx vitest run tests/desktop/session.test.ts` — FAIL, cannot resolve.
+Run: `npx vitest run tests/desktop/session.test.ts` â€” FAIL, cannot resolve.
 
 - [ ] **Step 3: Implement `src/desktop/session.ts`**
 
@@ -765,7 +787,7 @@ export function buildClient(cfg: Config, auth: AuthorizationCodeAuth): OeqClient
 
 - [ ] **Step 4: Verify and commit**
 
-Run: `npx vitest run tests/desktop/session.test.ts` — PASS, 4 tests. Then `npm test`.
+Run: `npx vitest run tests/desktop/session.test.ts` â€” PASS, 4 tests. Then `npm test`.
 
 ```bash
 git add src/desktop/session.ts tests/desktop/session.test.ts
@@ -891,7 +913,7 @@ export async function signInInteractive(
 
 Run: `npm run build:desktop && npm run typecheck`
 
-Note: this is not unit-tested — it is almost entirely Electron window orchestration, and a test would assert against mocks rather than behaviour. It is covered by the manual verification in Task 10.
+Note: this is not unit-tested â€” it is almost entirely Electron window orchestration, and a test would assert against mocks rather than behaviour. It is covered by the manual verification in Task 10.
 
 ```bash
 git add src/desktop/signin.ts
@@ -909,7 +931,7 @@ git commit -m "feat(desktop): embedded sign-in with session-first and origin-mat
 Register one handler per channel. Each wraps a core call. Key requirements:
 
 - Settings, token store, and manifests live under `app.getPath('userData')`.
-- `plan` applies the renderer's `overrides` by rewriting the sheet's headers **in memory** before `buildManifest` — the user's file is never modified.
+- `plan` applies the renderer's `overrides` by rewriting the sheet's headers **in memory** before `buildManifest` â€” the user's file is never modified.
 - `plan` runs `preflightDuplicates` and folds its warnings in, matching the CLI.
 - `run` forwards `onProgress` to the renderer over `CHANNELS.progress`.
 - Every handler catches and returns a readable message; `OeqError` text is surfaced verbatim rather than replaced.
@@ -1132,13 +1154,13 @@ git commit -m "feat(desktop): IPC handlers over the existing core"
 
 ---
 
-## Task 7: UI — Setup, Sign-in, Choose
+## Task 7: UI â€” Setup, Sign-in, Choose
 
 **Files:** Create `src/desktop/ui/app.ts`, `src/desktop/ui/screens/*.ts`, `src/desktop/ui/styles.css`; update `index.html`
 
 - [ ] **Step 1: Screen routing in `app.ts`**
 
-A simple state machine: `setup → signin → choose → review → confirm → progress → results`. On launch, call `hasSettings()`; if false go to Setup, else Sign-in.
+A simple state machine: `setup â†’ signin â†’ choose â†’ review â†’ confirm â†’ progress â†’ results`. On launch, call `hasSettings()`; if false go to Setup, else Sign-in.
 
 - [ ] **Step 2: Setup screen**
 
@@ -1158,7 +1180,7 @@ Collection dropdown from `listCollections`, spreadsheet picker, folder picker, a
 
 - [ ] **Step 6: Verify and commit**
 
-Run: `npm run desktop`, walk through Setup → Sign-in → Choose against the **test** instance.
+Run: `npm run desktop`, walk through Setup â†’ Sign-in â†’ Choose against the **test** instance.
 
 ```bash
 git add src/desktop/ui
@@ -1167,7 +1189,7 @@ git commit -m "feat(desktop): setup, sign-in and choose screens"
 
 ---
 
-## Task 8: UI — Review, Confirm, Progress, Results
+## Task 8: UI â€” Review, Confirm, Progress, Results
 
 **Files:** `src/desktop/ui/screens/*.ts`
 
@@ -1227,7 +1249,7 @@ Expected: `release/` contains a portable `.exe` and an NSIS installer.
 
 - [ ] **Step 3: Write `docs/INSTALL.md`**
 
-Cover: copying from the network share; the SmartScreen warning with a screenshot and the exact click path (**More info → Run anyway**); entering the client ID and secret supplied separately; signing in; and that items are created as drafts which must be submitted in openEQUELLA.
+Cover: copying from the network share; the SmartScreen warning with a screenshot and the exact click path (**More info â†’ Run anyway**); entering the client ID and secret supplied separately; signing in; and that items are created as drafts which must be submitted in openEQUELLA.
 
 State plainly that credentials are **not** included in the download and must come from the administrator.
 
@@ -1271,18 +1293,18 @@ This is the only way to prove the "zero prerequisites" claim, and no automated t
 
 ## Self-review notes
 
-**Spec coverage:** Electron app (1) · renderer isolation (1, 3) · OS-encrypted credentials and token (2) · instance dropdown with per-instance redirect URI (3, 4) · session-first, origin-matched sign-in (5) · collection picker from CREATE_ITEM (6, 7) · in-app column remapping without touching the file (6, 8) · duplicate pre-flight (6) · draft default with typed publish confirmation (8) · progress and per-row failures (8) · packaging and SmartScreen guidance (9) · clean-machine proof (10).
+**Spec coverage:** Electron app (1) Â· renderer isolation (1, 3) Â· OS-encrypted credentials and token (2) Â· instance dropdown with per-instance redirect URI (3, 4) Â· session-first, origin-matched sign-in (5) Â· collection picker from CREATE_ITEM (6, 7) Â· in-app column remapping without touching the file (6, 8) Â· duplicate pre-flight (6) Â· draft default with typed publish confirmation (8) Â· progress and per-row failures (8) Â· packaging and SmartScreen guidance (9) Â· clean-machine proof (10).
 
 **Known gaps, deliberate:**
 
-1. `signin.ts` has no unit test — it is Electron window orchestration, and a mock-based test would assert against the mock rather than the behaviour. Covered by Task 10 Step 3.
+1. `signin.ts` has no unit test â€” it is Electron window orchestration, and a mock-based test would assert against the mock rather than the behaviour. Covered by Task 10 Step 3.
 2. Column overrides are per-run and not persisted, per the spec. A saved mapping profile is v2.
 3. No auto-update and no code signing. Signing is a build-config change when a certificate exists.
 4. **Tasks 7 and 8 specify the UI by behaviour and data rather than by complete
    markup.** Every other task carries runnable code; these two would need
    several thousand lines of HTML/CSS to do the same, which would obscure the
    requirements rather than clarify them. What each screen must show, what it
-   must disable, and which IPC calls it makes are stated precisely — the
+   must disable, and which IPC calls it makes are stated precisely â€” the
    implementer chooses the markup. If a task feels underspecified while
    building it, that is a signal to ask rather than improvise, particularly
    around the Confirm screen's publish guard.
@@ -1292,7 +1314,8 @@ This is the only way to prove the "zero prerequisites" claim, and no automated t
 - `OeqClient.listCollections` takes an options object, not a positional
   privilege string. The first draft of Task 6 would not have compiled.
 - `OeqClient.currentUser()` takes no arguments and returns
-  `{ username, firstName, lastName }` — no `guest` field, so "am I signed in?"
+  `{ username, firstName, lastName }` â€” no `guest` field, so "am I signed in?"
   is answered by the call succeeding, not by inspecting a flag.
 - `CollectionSummary` is `{ uuid, name }`, with `name` already resolved from
   openEQUELLA's untyped `I18NString` by the client.
+
