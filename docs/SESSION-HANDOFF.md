@@ -2,14 +2,82 @@
 
 Read this first in a new session.
 
+## Current work: the desktop GUI
+
+The CLI is finished and has run in production (see below). Active work is
+packaging it as an Electron app for non-technical Windows staff.
+
+- Branch: **`feature/desktop-gui`**
+- Design: [superpowers/specs/2026-08-04-desktop-gui-design.md](superpowers/specs/2026-08-04-desktop-gui-design.md)
+- Plan: [superpowers/plans/2026-08-04-desktop-gui.md](superpowers/plans/2026-08-04-desktop-gui.md)
+- **Tasks 1–6 of 10 are done. 285 tests across 20 files.**
+
+Remaining: Task 7 (Setup/Sign-in/Choose screens), Task 8 (Review/Confirm/
+Progress/Results), Task 9 (packaging + install docs), Task 10 (verification,
+including a clean-machine test).
+
+### Verified live against production, 2026-08-04
+
+A read-only checkpoint drove the app's IPC surface via CDP — nothing created:
+
+```text
+[1] BRIDGE      15 methods exposed
+[2] SETTINGS    saved and read back through real safeStorage
+[3] SIGN IN     ok -- milesm (Mathew Miles)
+[4] COLLECTIONS 29 contributable; target "BYU-Idaho Faculty Content" present
+```
+
+The embedded sign-in worked first time. That is the piece that took three
+failed attempts and a Playwright fallback in the CLI — inside the app,
+session-first ordering and origin-matched capture are enforced by
+construction, so those failure modes are not reachable.
+
+### Electron facts learned the hard way
+
+Each of these failed **silently** and was found by inspecting the running app,
+not by reading code or watching a build succeed:
+
+- **The preload must be CommonJS.** Under `"type": "module"` + `nodenext`,
+  `tsc` emits ESM for a `.ts` file and Electron's preload loader cannot execute
+  it. The source is `preload.cts`, which forces a `.cjs` emit. An ESM preload
+  opens the window normally and simply never initialises the bridge.
+- **A sandboxed preload can `require()` only Electron's built-ins.** Importing
+  `CHANNELS` as a *value* from `./ipc.js` aborts the whole preload with
+  `module not found`, leaving `window.oeq` undefined. The preload imports
+  **types** only and keeps a duplicated `CHANNELS` literal, guarded by
+  `tests/desktop/preload-channels.test.ts` so the two cannot drift.
+- **`sandbox: false` is unnecessary.** Sandboxed preloads get a polyfilled
+  `require()` for `'electron'`, which is all the bridge uses. Keep
+  `sandbox: true` — if something appears to need otherwise, work is happening
+  in the wrong process.
+- **`app.getAppPath()` is not the repo root** when launched as
+  `electron dist-desktop/desktop/main.js` — it resolves to
+  `dist-desktop/desktop`. Resolve bundled files from the module's own compiled
+  location in development, and `process.resourcesPath` when packaged.
+
+### UI note for Task 7
+
+`listCollections` returns **29** collections on production. A bare `<select>`
+puts "Sample" and "Web Utilities" above the one anyone actually wants, so the
+picker needs a **search box** with the list sorted by name.
+
+### Verifying the app
+
+Use the Chrome DevTools Protocol (`--remote-debugging-port`, then Playwright's
+`connectOverCDP`) to read the renderer. **Do not use desktop screen capture** —
+an earlier attempt grabbed the operator's Outlook window instead of the app.
+
+This sandbox sets `ELECTRON_RUN_AS_NODE=1`, which makes `electron.exe` behave
+as plain Node; unset it before launching. It will not be present for end users.
+
 ## State
 
 **The tool works end to end against a live openEQUELLA instance.** A single
 draft item was created on `content-test.byui.edu` and verified by reading it
 back through the API. Every wire-format assumption is now confirmed.
 
-```
-252 tests passing, 16 files       npm test
+```text
+285 tests passing, 20 files       npm test
 typecheck clean                   npm run typecheck
 builds                            npm run build  -> dist/cli/index.js, dist/mcp/index.js
 branch                            feature/bulk-uploader
@@ -116,7 +184,7 @@ another application's registered redirect, secret rotation, and ACLs.
 
 `.env` is gitignored and populated, pointing at the **test** instance:
 
-```
+```text
 OEQ_BASE_URL=https://content-test.byui.edu
 OEQ_COLLECTION_UUID=bb348ab1-7a81-4e37-8ef7-adc095ade4f9   # "BYU-Idaho Faculty Content"
 ```

@@ -10,8 +10,20 @@ Replaces an older, no-longer-working tool by Jim Kurian.
 
 ## Status
 
-**Read [docs/SESSION-HANDOFF.md](docs/SESSION-HANDOFF.md) first.** It states the
-current blocker and exactly what to do next.
+**Read [docs/SESSION-HANDOFF.md](docs/SESSION-HANDOFF.md) first.** It states
+where the work stands and exactly what to do next.
+
+**The CLI is finished and has run in production** — 37 jury videos contributed
+to BYU-Idaho Faculty Content on 2026-08-04, every one verified byte-for-byte
+against its source file.
+
+**Active work: a desktop GUI**, on branch `feature/desktop-gui`. An Electron
+app for non-technical Windows staff, reusing `src/core/` unchanged. Tasks 1–6
+of 10 are done; 285 tests across 20 files. The plumbing has been verified
+against production read-only — sign-in, credential storage, and collection
+listing all work. Remaining: the UI screens, packaging, and a clean-machine
+test. See the handoff for the Electron-specific traps, all of which failed
+silently and were found only by inspecting the running app.
 
 Implemented and verified. CLI (`plan | run | status | retry`) and MCP server
 (six tools) both build clean, 173 tests pass across 14 files, and
@@ -36,8 +48,12 @@ The spec lives at
 
 ## Repository layout
 
-```
+```text
 files/            Batch inputs — MP4s + spreadsheet. GITIGNORED (size + student names).
+src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by every front end.
+src/cli/          plan | run | status | retry | login | logout | check
+src/mcp/          Nine MCP tools
+src/desktop/      Electron app (in progress). Renderer has no Node access.
 schema/           openEQUELLA schema reference material (committed).
   _entity.xml       BYUI_MWDL schema export, uuid c93181f3-a443-41bf-9afe-ac9f7daf90b7
   sample.xml        A real contributed item, used as the golden target for output
