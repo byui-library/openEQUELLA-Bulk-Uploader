@@ -65,8 +65,8 @@ export interface RunReport {
 }
 
 export interface OeqApi {
-  hasSettings(): Promise<boolean>;
-  saveSettings(s: { clientId: string; clientSecret: string }): Promise<void>;
+  hasSettings(instanceId: string): Promise<boolean>;
+  saveSettings(instanceId: string, s: { clientId: string; clientSecret: string }): Promise<void>;
   clearSettings(): Promise<void>;
 
   signIn(instanceId: string): Promise<CurrentUser>;

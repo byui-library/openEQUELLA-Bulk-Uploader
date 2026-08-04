@@ -17,6 +17,7 @@ export type ScreenEvent =
   | { type: 'signedIn' }
   | { type: 'signedOut' }
   | { type: 'editSettings' }
+  | { type: 'addCredentials' }
   | { type: 'planChecked' }
   | { type: 'reviewApproved' }
   | { type: 'uploadStarted' }
@@ -35,6 +36,14 @@ export function nextScreen(current: Screen, event: ScreenEvent): Screen {
       // themselves are still valid and don't need re-entering.
       return 'signin';
     case 'editSettings':
+      return 'setup';
+    // Distinct from 'editSettings': this is the Sign-in screen's per-instance
+    // "add credentials" prompt (see ui/signin.ts's signinMode), reached when
+    // the selected instance has never been configured. It goes to the same
+    // Setup screen but -- unlike 'editSettings' (the "Reset settings"
+    // action) -- app.ts does NOT clear anything before firing it; the OTHER
+    // instance's saved credentials, if any, must survive untouched.
+    case 'addCredentials':
       return 'setup';
     // 'planChecked' deliberately does NOT change screen -- a successful
     // plan() from Review reveals the warnings/entry-count on the SAME

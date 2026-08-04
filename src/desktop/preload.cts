@@ -49,8 +49,8 @@ const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
 const api: OeqApi = {
-  hasSettings: () => invoke(CHANNELS.hasSettings),
-  saveSettings: (s) => invoke(CHANNELS.saveSettings, s),
+  hasSettings: (instanceId) => invoke(CHANNELS.hasSettings, instanceId),
+  saveSettings: (instanceId, s) => invoke(CHANNELS.saveSettings, instanceId, s),
   clearSettings: () => invoke(CHANNELS.clearSettings),
   signIn: (instanceId) => invoke(CHANNELS.signIn, instanceId),
   signOut: () => invoke(CHANNELS.signOut),

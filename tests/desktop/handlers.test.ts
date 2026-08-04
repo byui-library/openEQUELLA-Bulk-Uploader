@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { applyOverrides, reportColumns, resolveSchemaPath } from '../../src/desktop/handlers.js';
+import {
+  applyOverrides,
+  reportColumns,
+  resolveSchemaPath,
+  missingCredentialsMessage,
+} from '../../src/desktop/handlers.js';
 import type { Sheet } from '../../src/core/types.js';
 
 describe('applyOverrides', () => {
@@ -117,6 +122,29 @@ describe('reportColumns', () => {
       { header: 'Some Bogus Header', valid: false, suggestions: [] },
       { header: 'attachment name', valid: true, suggestions: [] },
     ]);
+  });
+});
+
+describe('missingCredentialsMessage', () => {
+  // The exact wording an operator sees when they pick an instance that has
+  // never had credentials saved -- it must name the instance so "no
+  // credentials" isn't ambiguous between production and test.
+  it('names Production when that instance has no saved credentials', () => {
+    expect(missingCredentialsMessage('production')).toBe(
+      'No credentials saved for Production. Enter the client ID and secret for that instance in Setup.',
+    );
+  });
+
+  it('names Test when that instance has no saved credentials', () => {
+    expect(missingCredentialsMessage('test')).toBe(
+      'No credentials saved for Test. Enter the client ID and secret for that instance in Setup.',
+    );
+  });
+
+  it('falls back to the raw id for an unrecognised instance rather than crashing', () => {
+    expect(missingCredentialsMessage('staging')).toBe(
+      'No credentials saved for staging. Enter the client ID and secret for that instance in Setup.',
+    );
   });
 });
 

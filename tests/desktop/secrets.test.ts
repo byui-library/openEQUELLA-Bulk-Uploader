@@ -29,24 +29,52 @@ beforeEach(async () => {
 });
 
 describe('SecretStore', () => {
-  it('round-trips settings', async () => {
+  it('round-trips settings for one instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings({ clientId: 'cid', clientSecret: 'shhh' });
-    const got = await s.loadSettings();
+    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'shhh' });
+    const got = await s.loadSettings('production');
     expect(got).toEqual({ clientId: 'cid', clientSecret: 'shhh' });
   });
 
-  it('returns null when nothing is stored', async () => {
+  it('returns null when nothing is stored for that instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    expect(await s.loadSettings()).toBeNull();
+    expect(await s.loadSettings('production')).toBeNull();
+    expect(await s.loadSettings('test')).toBeNull();
   });
 
-  it('never writes the secret in plaintext', async () => {
+  // The bug this whole change fixes: production and test use different OAuth
+  // clients, so saving one instance's credentials must never clobber or leak
+  // into the other's.
+  it('saving one instance leaves the other intact', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveSettings('production', { clientId: 'prod-id', clientSecret: 'prod-secret' });
+    await s.saveSettings('test', { clientId: 'test-id', clientSecret: 'test-secret' });
+
+    expect(await s.loadSettings('production')).toEqual({ clientId: 'prod-id', clientSecret: 'prod-secret' });
+    expect(await s.loadSettings('test')).toEqual({ clientId: 'test-id', clientSecret: 'test-secret' });
+
+    // Re-saving production must not disturb test's entry.
+    await s.saveSettings('production', { clientId: 'prod-id-2', clientSecret: 'prod-secret-2' });
+    expect(await s.loadSettings('production')).toEqual({ clientId: 'prod-id-2', clientSecret: 'prod-secret-2' });
+    expect(await s.loadSettings('test')).toEqual({ clientId: 'test-id', clientSecret: 'test-secret' });
+  });
+
+  it('hasSettings reflects only the requested instance', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    expect(await s.hasSettings('production')).toBe(false);
+    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x' });
+    expect(await s.hasSettings('production')).toBe(true);
+    expect(await s.hasSettings('test')).toBe(false);
+  });
+
+  it('never writes either instance secret in plaintext', async () => {
     const path = join(dir, 'settings.enc');
     const s = new SecretStore(path, fakeCipher);
-    await s.saveSettings({ clientId: 'cid', clientSecret: 'sup3rs3cret' });
+    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'sup3rs3cretProd' });
+    await s.saveSettings('test', { clientId: 'cid2', clientSecret: 'sup3rs3cretTest' });
     const raw = await readFile(path, 'utf8');
-    expect(raw).not.toContain('sup3rs3cret');
+    expect(raw).not.toContain('sup3rs3cretProd');
+    expect(raw).not.toContain('sup3rs3cretTest');
   });
 
   it('treats a corrupt blob as absent rather than throwing', async () => {
@@ -58,19 +86,48 @@ describe('SecretStore', () => {
         throw new Error('bad blob');
       },
     });
-    expect(await s.loadSettings()).toBeNull();
+    expect(await s.loadSettings('production')).toBeNull();
+    expect(await s.loadSettings('test')).toBeNull();
   });
 
-  it('clear() removes everything', async () => {
+  // Migration decision: a store written by the old single-pair format (a
+  // flat `{clientId, clientSecret}` object, with no `version`/`instances`
+  // wrapper) is indistinguishable from "which instance was this for?" -- the
+  // old format never recorded that. Guessing wrong would silently send one
+  // instance's client_id to the other, which is exactly the bug this change
+  // fixes. So an unrecognised shape (old format OR anything else we don't
+  // understand) is treated as "no credentials saved for either instance" --
+  // the operator re-enters them once, which is a minor inconvenience, never
+  // a silently wrong credential.
+  it('treats an old-format (pre-migration) store as no credentials for either instance', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    // Write the OLD flat shape directly, bypassing the new saveSettings.
+    const oldBlob = fakeCipher.encrypt(JSON.stringify({ clientId: 'old-id', clientSecret: 'old-secret' }));
+    await writeFile(path, oldBlob);
+
+    expect(await s.loadSettings('production')).toBeNull();
+    expect(await s.loadSettings('test')).toBeNull();
+
+    // And saving one instance afterwards must not resurrect the old pair
+    // under the other instance.
+    await s.saveSettings('production', { clientId: 'new-id', clientSecret: 'new-secret' });
+    expect(await s.loadSettings('production')).toEqual({ clientId: 'new-id', clientSecret: 'new-secret' });
+    expect(await s.loadSettings('test')).toBeNull();
+  });
+
+  it('clear() wipes both instances', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings({ clientId: 'cid', clientSecret: 'x' });
+    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x' });
+    await s.saveSettings('test', { clientId: 'cid2', clientSecret: 'y' });
     await s.clear();
-    expect(await s.loadSettings()).toBeNull();
+    expect(await s.loadSettings('production')).toBeNull();
+    expect(await s.loadSettings('test')).toBeNull();
   });
 
   it('refuses to save when encryption is unavailable', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), { ...fakeCipher, isAvailable: () => false });
-    await expect(s.saveSettings({ clientId: 'a', clientSecret: 'b' })).rejects.toThrow(/encryption/i);
+    await expect(s.saveSettings('production', { clientId: 'a', clientSecret: 'b' })).rejects.toThrow(/encryption/i);
   });
 });
 

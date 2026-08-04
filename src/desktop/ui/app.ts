@@ -24,13 +24,25 @@ declare global {
 
 interface AppState {
   screen: Screen;
+  // The instance the rest of the app (Sign-in beyond the missing-credentials
+  // prompt, Choose, Confirm, Progress, Results) acts against.
   instanceId: string;
 
-  // Setup screen
+  // Setup screen -- which instance is being configured. Deliberately a
+  // SEPARATE field from `instanceId`: credentials are per instance
+  // (secrets.ts), and Setup must default to Production (most operators only
+  // ever configure that one) without disturbing `instanceId`'s own
+  // safety-first default -- see initialState().
+  setupInstanceId: string;
   setupSaving: boolean;
   setupError: string | null;
 
   // Sign-in screen
+  // Whether `instanceId` currently has credentials saved at all -- see
+  // ui/signin.ts's signinMode. Refreshed whenever the selected instance
+  // changes (checkInstanceState) so the screen can offer to add credentials
+  // instead of presenting a "Sign in" button that can only fail.
+  instanceHasSettings: boolean;
   user: CurrentUser | null;
   checkingUser: boolean;
   signingIn: boolean;
@@ -84,8 +96,14 @@ function initialState(): AppState {
   return {
     screen: 'setup',
     instanceId: 'test',
+    // Most operators only ever have Production credentials -- see
+    // renderSetup's doc comment. Reassigned to 'production' explicitly
+    // wherever Setup is (re)entered fresh; see init() and
+    // handleResetSettings().
+    setupInstanceId: 'production',
     setupSaving: false,
     setupError: null,
+    instanceHasSettings: false,
     user: null,
     checkingUser: false,
     signingIn: false,
@@ -132,20 +150,27 @@ function currentInstance() {
 }
 
 function render(): void {
-  renderBanner(requireEl('banner'), state.instanceId);
+  // On Setup, the banner must reflect the instance being CONFIGURED
+  // (setupInstanceId), not the app's separate action-flow instance -- a
+  // form labelled "Client ID (Production)" under a banner reading TEST
+  // would look broken.
+  renderBanner(requireEl('banner'), state.screen === 'setup' ? state.setupInstanceId : state.instanceId);
 
   const app = requireEl('app');
   switch (state.screen) {
     case 'setup':
       renderSetup(app, {
+        instanceId: state.setupInstanceId,
         error: state.setupError,
         saving: state.setupSaving,
+        onInstanceChange: handleSetupInstanceChange,
         onSave: handleSaveSettings,
       });
       break;
     case 'signin':
       renderSignin(app, {
         instanceId: state.instanceId,
+        instanceHasSettings: state.instanceHasSettings,
         user: state.user,
         checkingUser: state.checkingUser,
         signingIn: state.signingIn,
@@ -154,6 +179,7 @@ function render(): void {
         onSignIn: handleSignIn,
         onSignOut: handleSignOut,
         onContinue: handleSigninContinue,
+        onAddCredentials: handleAddCredentials,
         onResetSettings: handleResetSettings,
       });
       break;
@@ -244,6 +270,12 @@ function renderFatal(message: string): void {
 
 // --- Setup ---------------------------------------------------------------
 
+function handleSetupInstanceChange(id: string): void {
+  state.setupInstanceId = id;
+  state.setupError = null;
+  render();
+}
+
 async function handleSaveSettings(clientId: string, clientSecret: string): Promise<void> {
   if (clientId === '' || clientSecret === '') {
     state.setupError = 'Enter both the client ID and the client secret.';
@@ -254,12 +286,16 @@ async function handleSaveSettings(clientId: string, clientSecret: string): Promi
   state.setupError = null;
   render();
   try {
-    await window.oeq.saveSettings({ clientId, clientSecret });
+    await window.oeq.saveSettings(state.setupInstanceId, { clientId, clientSecret });
     state.setupSaving = false;
     state.setupError = null;
+    // Point the rest of the app at the instance that was just configured --
+    // landing back on Sign-in still defaulted to a DIFFERENT (uncredentialed)
+    // instance would look like nothing had happened.
+    state.instanceId = state.setupInstanceId;
     state.screen = nextScreen('setup', { type: 'settingsSaved' });
     render();
-    void checkExistingUser();
+    void checkInstanceState();
   } catch (err) {
     state.setupSaving = false;
     state.setupError = errorMessage(err);
@@ -270,26 +306,28 @@ async function handleSaveSettings(clientId: string, clientSecret: string): Promi
 // --- Sign-in ---------------------------------------------------------------
 
 /**
- * Silently checks whether a still-valid token already exists for the
- * currently selected instance. `currentUser()`'s handler already swallows
- * its own errors and resolves null (handlers.ts) rather than throwing, so
- * this never needs to surface a failure -- "not signed in" is a normal
- * result, not an error condition.
+ * Refreshes, for the currently selected instance, both whether it has saved
+ * credentials at all (ui/signin.ts's signinMode -- missing credentials must
+ * pre-empt attempting a sign-in) and whether a still-valid token already
+ * exists. Both IPC calls fail soft (`Promise.allSettled`): a rejection from
+ * either -- in practice only `currentUser()` can genuinely error, and even
+ * its handler already swallows failures and resolves null (handlers.ts) --
+ * is treated as "not signed in" / "no credentials confirmed", never thrown,
+ * since "not signed in yet" is a normal result here, not an error condition.
  */
-async function checkExistingUser(): Promise<void> {
+async function checkInstanceState(): Promise<void> {
   state.checkingUser = true;
   render();
   const instanceId = state.instanceId;
-  let user: CurrentUser | null = null;
-  try {
-    user = await window.oeq.currentUser(instanceId);
-  } catch {
-    user = null;
-  }
+  const [hasSettingsResult, userResult] = await Promise.allSettled([
+    window.oeq.hasSettings(instanceId),
+    window.oeq.currentUser(instanceId),
+  ]);
   // The instance may have changed while this was in flight; a stale result
   // for the previous instance must never be attributed to the new one.
   if (state.instanceId !== instanceId) return;
-  state.user = user;
+  state.instanceHasSettings = hasSettingsResult.status === 'fulfilled' ? hasSettingsResult.value : false;
+  state.user = userResult.status === 'fulfilled' ? userResult.value : null;
   state.checkingUser = false;
   render();
 }
@@ -299,10 +337,28 @@ function handleInstanceChange(id: string): void {
   state.user = null;
   state.signinError = null;
   render();
-  void checkExistingUser();
+  void checkInstanceState();
+}
+
+/**
+ * Sign-in's "Add credentials for {instance}" prompt (ui/signin.ts's
+ * signinMode === 'missing-credentials'). Unlike `handleResetSettings`, this
+ * clears NOTHING -- it only points Setup at the instance that's missing
+ * credentials so the OTHER instance's saved credentials, if any, are left
+ * completely untouched.
+ */
+function handleAddCredentials(): void {
+  state.setupInstanceId = state.instanceId;
+  state.setupError = null;
+  state.screen = nextScreen('signin', { type: 'addCredentials' });
+  render();
 }
 
 async function handleSignIn(): Promise<void> {
+  // Defensive: the Sign-in button is only ever rendered when credentials
+  // exist for this instance (ui/signin.ts), but a doomed sign-in attempt
+  // must never fire even if that invariant is ever violated.
+  if (!state.instanceHasSettings) return;
   state.signingIn = true;
   state.signinError = null;
   render();
@@ -356,8 +412,11 @@ async function handleResetSettings(): Promise<void> {
     return;
   }
   state.user = null;
+  state.instanceHasSettings = false;
   state.signinError = null;
   state.setupError = null;
+  // Both instances were just wiped -- back to Setup's usual default.
+  state.setupInstanceId = 'production';
   state.screen = nextScreen(state.screen, { type: 'editSettings' });
   render();
 }
@@ -683,10 +742,17 @@ async function init(): Promise<void> {
   // this more than once would fire the handler multiple times per event.
   window.oeq.onProgress(handleProgress);
   try {
-    const hasSettings = await window.oeq.hasSettings();
-    state.screen = initialScreen(hasSettings);
+    // "First run" means NEITHER instance has ever been configured -- an
+    // operator who set up Production only (the common case) must land on
+    // Sign-in, not be sent back through Setup just because Test, which they
+    // may never use, has nothing saved.
+    const [hasProduction, hasTest] = await Promise.all([
+      window.oeq.hasSettings('production'),
+      window.oeq.hasSettings('test'),
+    ]);
+    state.screen = initialScreen(hasProduction || hasTest);
     render();
-    if (state.screen === 'signin') void checkExistingUser();
+    if (state.screen === 'signin') void checkInstanceState();
   } catch (err) {
     renderFatal(errorMessage(err));
   }

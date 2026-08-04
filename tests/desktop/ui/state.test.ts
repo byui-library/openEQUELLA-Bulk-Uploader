@@ -32,6 +32,16 @@ describe('nextScreen', () => {
     expect(nextScreen('choose', { type: 'editSettings' })).toBe('setup');
     expect(nextScreen('signin', { type: 'editSettings' })).toBe('setup');
   });
+
+  // Credentials are now per instance (secrets.ts): picking an instance on
+  // Sign-in that has never been configured must offer a way to add just
+  // that instance's credentials, distinct from 'editSettings' (the "Reset
+  // settings" action), which wipes BOTH instances. Both land on the same
+  // Setup screen -- what differs is what app.ts does around the transition
+  // (editSettings clears everything first; addCredentials clears nothing).
+  it('sends Sign-in to Setup on addCredentials, without implying a reset', () => {
+    expect(nextScreen('signin', { type: 'addCredentials' })).toBe('setup');
+  });
 });
 
 describe('canContinueChoose', () => {

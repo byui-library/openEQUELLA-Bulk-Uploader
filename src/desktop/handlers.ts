@@ -2,9 +2,9 @@ import { app, dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron'
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { CHANNELS, type ColumnReport, type OeqApi, type PlanReport, type RunReport } from './ipc.js';
+import { CHANNELS, INSTANCES, type ColumnReport, type OeqApi, type PlanReport, type RunReport } from './ipc.js';
 import { SecretStore, EncryptedTokenStore } from './secrets.js';
-import { buildAuth, buildClient, buildConfig } from './session.js';
+import { buildAuth, buildClient, buildConfig, instanceById } from './session.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths, validateHeaders } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
@@ -25,9 +25,25 @@ const cipher = {
 const secrets = () => new SecretStore(join(userData(), 'settings.enc'), cipher);
 const tokens = () => new EncryptedTokenStore(join(userData(), 'token.enc'), cipher);
 
-async function requireSettings() {
-  const s = await secrets().loadSettings();
-  if (!s) throw new OeqError('No credentials saved yet. Enter your client ID and secret in Setup.');
+/**
+ * The exact wording an operator sees when the instance they've selected has
+ * no saved credentials. Names the instance -- with credentials now per
+ * instance (see secrets.ts), a bare "no credentials" would be actively
+ * confusing: which one? Falls back to the raw id for a value that isn't a
+ * known instance rather than crashing; `instanceById` (session.ts) already
+ * rejects a truly bogus id earlier in the same call, so this fallback only
+ * matters for whatever calls this function directly without going through
+ * that guard first.
+ */
+export function missingCredentialsMessage(instanceId: string): string {
+  const label = INSTANCES.find((i) => i.id === instanceId)?.label ?? instanceId;
+  return `No credentials saved for ${label}. Enter the client ID and secret for that instance in Setup.`;
+}
+
+async function requireSettings(instanceId: string) {
+  const inst = instanceById(instanceId);
+  const s = await secrets().loadSettings(inst.id);
+  if (!s) throw new OeqError(missingCredentialsMessage(inst.id));
   return s;
 }
 
@@ -125,12 +141,23 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
 }
 
 export function registerHandlers(getWindow: () => BrowserWindow | null): void {
-  ipcMain.handle(CHANNELS.hasSettings, async () => (await secrets().loadSettings()) !== null);
+  ipcMain.handle(
+    CHANNELS.hasSettings,
+    async (_e, instanceId: Parameters<OeqApi['hasSettings']>[0]) => {
+      const inst = instanceById(instanceId);
+      return secrets().hasSettings(inst.id);
+    },
+  );
 
   ipcMain.handle(
     CHANNELS.saveSettings,
-    async (_e, s: Parameters<OeqApi['saveSettings']>[0]) => {
-      await secrets().saveSettings(s);
+    async (
+      _e,
+      instanceId: Parameters<OeqApi['saveSettings']>[0],
+      s: Parameters<OeqApi['saveSettings']>[1],
+    ) => {
+      const inst = instanceById(instanceId);
+      await secrets().saveSettings(inst.id, s);
     },
   );
 
@@ -142,7 +169,7 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(
     CHANNELS.signIn,
     async (_e, instanceId: Parameters<OeqApi['signIn']>[0]) => {
-      const settings = await requireSettings();
+      const settings = await requireSettings(instanceId);
       const cfg = buildConfig(instanceId, settings, 'unused-for-signin');
       const auth = buildAuth(cfg, tokens());
       await signInInteractive(cfg.baseUrl, auth, getWindow() ?? undefined);
@@ -157,7 +184,8 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(
     CHANNELS.currentUser,
     async (_e, instanceId: Parameters<OeqApi['currentUser']>[0]) => {
-      const settings = await secrets().loadSettings();
+      const inst = instanceById(instanceId);
+      const settings = await secrets().loadSettings(inst.id);
       if (!settings) return null;
       const cfg = buildConfig(instanceId, settings, 'unused');
       const auth = buildAuth(cfg, tokens());
@@ -172,7 +200,7 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(
     CHANNELS.listCollections,
     async (_e, instanceId: Parameters<OeqApi['listCollections']>[0]) => {
-      const settings = await requireSettings();
+      const settings = await requireSettings(instanceId);
       const cfg = buildConfig(instanceId, settings, 'unused');
       const auth = buildAuth(cfg, tokens());
       // NOTE the signature: listCollections takes an OPTIONS OBJECT, not a
@@ -206,7 +234,7 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(
     CHANNELS.plan,
     async (_e, args: Parameters<OeqApi['plan']>[0]): Promise<PlanReport> => {
-      const settings = await requireSettings();
+      const settings = await requireSettings(args.instanceId);
       const cfg = buildConfig(args.instanceId, settings, args.collectionUuid);
       const auth = buildAuth(cfg, tokens());
       const client = buildClient(cfg, auth);
@@ -245,7 +273,7 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(
     CHANNELS.run,
     async (_e, args: Parameters<OeqApi['run']>[0]): Promise<RunReport> => {
-      const settings = await requireSettings();
+      const settings = await requireSettings(args.instanceId);
       const manifest = await loadManifest(args.manifestPath);
       const cfg = buildConfig(args.instanceId, settings, manifest.collectionUuid);
       const auth = buildAuth(cfg, tokens());
