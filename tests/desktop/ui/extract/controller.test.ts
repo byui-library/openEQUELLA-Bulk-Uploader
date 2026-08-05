@@ -95,6 +95,20 @@ describe('createExtractController', () => {
     expect(c.state().error).toBe('boom');
   });
 
+  // Going Back to step 1 and re-picking a folder must not throw away the
+  // columns the operator has already set up. A mutation pass found that
+  // replacing the profile unconditionally broke no test, so the `??` in
+  // chooseFolder was load-bearing and unverified.
+  it('keeps the columns already set up when the folder is picked again', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.addColumn('MWDL/title');
+    await c.chooseFolder();
+    expect(c.state().profile?.columns.map((x) => x.path)).toEqual([ATTACHMENT_COLUMN, 'MWDL/title']);
+  });
+
   it('re-renders after every transition', async () => {
     const render = vi.fn();
     const c = createExtractController({ api: api() as never, onExit: vi.fn(), render });
