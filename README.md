@@ -255,6 +255,66 @@ oeq-upload logout
   interrupted rows — see below.
 - `logout` — see Authentication above. No flags.
 
+## Extracting metadata from files
+
+Builds the spreadsheet from a folder of PDFs and `.docx` files, so it does not
+have to be typed by hand.
+
+```bash
+# 1. Look at the folder and write a starter profile
+oeq-upload extract --dir ./files --profile music.profile.json --init-profile
+
+# 2. Edit music.profile.json: add a column per metadata field you want
+#    (see the columns array; each column says where its value comes from)
+
+# 3. Check what it will produce, without writing anything
+oeq-upload extract --dir ./files --profile music.profile.json --dry-run
+
+# 4. Write the spreadsheet
+oeq-upload extract --dir ./files --profile music.profile.json --out rows.csv
+```
+
+Then **open `rows.csv` and check it** before uploading. Two columns exist for
+that purpose and are ignored by the uploader:
+
+- `_source` — where each value came from, as `field=source` pairs
+- `_notes` — problems with that row, such as a filename that did not match the
+  pattern or a PDF with no text layer
+
+### What it can and cannot read
+
+| | |
+| --- | --- |
+| PDF with a text layer | Text and document properties |
+| Scanned PDF | Filename and document properties only, flagged in `_notes` |
+| `.docx` | Text and core properties |
+| `.doc` (Word 2003) | Not supported — save as `.docx` first |
+
+There is no OCR. A scanned page yields no text, and the row says so rather than
+guessing.
+
+### Known limitation: extra separators
+
+Placeholders match as little as possible, left to right, so an unexpected extra
+separator lands in the **last** placeholder. Against
+`{last}_{first}_{title}_{date}`, the file `Smith_Jane_Senior_Recital_2026-04-12.pdf`
+yields `title=Senior` and `date=Recital_2026-04-12`. Use `--dry-run` to see this
+before it reaches a spreadsheet.
+
+### Known limitation: values that look like formulas
+
+A metadata value beginning with `=`, `+`, `-` or `@` is written to the CSV
+correctly, but **Excel will interpret it as a formula when you open the file**.
+A title like `=Summary` will display as an error rather than as text.
+
+This is not fixable in the file itself: the usual defence is to prefix the
+value with an apostrophe, which would then be uploaded to openEQUELLA as part
+of the value. If you hit this, fix the cell in Excel before uploading. It is
+rare -- filenames and document text seldom start with those characters.
+
+> Note: PDF support adds `pdfjs-dist` (~35 MB installed) to the packaged app.
+> Only its `legacy/build` entry point is used at runtime.
+
 ## MCP usage
 
 Register the server with Claude Code (after `npm run build`, since it spawns
@@ -420,7 +480,7 @@ contract) together.
 ## Development
 
 ```bash
-npm test        # vitest, 252 tests across 16 files
+npm test        # vitest, 522 tests across 47 files
 npm run typecheck
 npm run build    # emits dist/cli/index.js and dist/mcp/index.js
 ```
