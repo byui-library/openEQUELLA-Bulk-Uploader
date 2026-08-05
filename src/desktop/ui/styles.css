@@ -449,3 +449,55 @@ button.link-button:hover:not(:disabled) {
     --pending-text: #f0cf6a;
   }
 }
+
+/* ---- Extract flow ---------------------------------------------------- */
+/* Every colour here comes from the custom properties above, so these
+   screens follow the light/dark theme like the rest of the app. The
+   warn-inline pair maps onto the existing --pending-* tokens, which already
+   mean "needs a human" everywhere else in this UI. */
+
+.screen.wide { max-width: 62rem; }
+
+.segments { font-family: monospace; }
+.segments .segment {
+  display: inline-block; padding: 0.15rem 0.4rem;
+  background: var(--panel-bg); border: 1px solid var(--border); border-radius: 3px;
+}
+.segments .segment em { display: block; font-size: 0.75em; color: var(--muted); font-style: normal; }
+.segments .sep { padding: 0 0.3rem; color: var(--muted); }
+
+table.columns { width: 100%; border-collapse: collapse; }
+table.columns td { padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+table.columns tr.locked { background: var(--panel-bg); color: var(--muted); }
+table.columns .name code { display: block; font-size: 0.78em; color: var(--muted); }
+table.columns .handle button { padding: 0 0.35rem; line-height: 1.4; }
+table.columns .remove button { color: var(--error-border); font-size: 1.1em; background: none; border: 0; }
+table.columns .fixed { color: var(--muted); font-size: 0.85em; }
+
+.preview-scroll { overflow-x: auto; }
+table.preview { border-collapse: collapse; font-size: 0.85em; }
+table.preview th, table.preview td { padding: 0.25rem 0.5rem; border: 1px solid var(--border); white-space: nowrap; }
+table.preview th { background: var(--panel-bg); text-align: left; }
+table.preview .blank { color: var(--muted); font-style: italic; }
+
+/* Warnings carry text as well as colour -- never colour alone. */
+.warn-inline {
+  color: var(--pending-text); background: var(--pending-bg);
+  padding: 0.05rem 0.35rem; border-radius: 3px; font-size: 0.85em;
+}
+details.warn summary { color: var(--pending-text); cursor: pointer; }
+
+.undo { background: var(--panel-bg); border: 1px solid var(--border); padding: 0.4rem 0.6rem; border-radius: 3px; }
+
+.path-list { list-style: none; padding: 0; max-height: 22rem; overflow-y: auto; }
+.path-list button.pick {
+  display: block; width: 100%; text-align: left;
+  padding: 0.35rem 0.5rem; background: none; border: 0; color: var(--text);
+}
+.path-list button.pick:hover, .path-list button.pick:focus { background: var(--panel-bg); }
+.path-list code { color: var(--muted); font-size: 0.8em; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
