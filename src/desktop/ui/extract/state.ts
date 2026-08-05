@@ -1,6 +1,6 @@
 // src/desktop/ui/extract/state.ts
 import type { ExtractScan } from '../../ipc.js';
-import type { ExtractedRow, Profile } from '../../../core/extract/types.js';
+import type { Column, ExtractedRow, Profile } from '../../../core/extract/types.js';
 
 export type ExtractStep = 'folder' | 'columns' | 'save';
 
@@ -24,6 +24,8 @@ export interface ExtractState {
   adding: boolean;
   /** The picker's search box. */
   addQuery: string;
+  /** The most recently removed column, kept so it can be put back where it was. */
+  removed: { column: Column; index: number } | null;
 }
 
 export function initialExtractState(): ExtractState {
@@ -41,6 +43,7 @@ export function initialExtractState(): ExtractState {
     savedFlagged: 0,
     adding: false,
     addQuery: '',
+    removed: null,
   };
 }
 

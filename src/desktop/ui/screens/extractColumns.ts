@@ -19,6 +19,8 @@ export interface ExtractColumnsProps {
   onRemove(path: string): void;
   onMove(path: string, delta: number): void;
   onAdd(): void;
+  removed: { path: string } | null;
+  onUndoRemove(): void;
   onOpenProfile(): void;
   onSaveProfile(): void;
   onContinue(): void;
@@ -140,6 +142,15 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
         ${props.profile.columns.map((c, i) => columnRow(props, c.path, i)).join('')}
       </tbody></table>
 
+      ${
+        props.removed === null
+          ? ''
+          : `<p class="undo" role="status">
+               Removed <strong>${escapeHtml(props.removed.path)}</strong>.
+               <button id="extract-undo" type="button">Undo</button>
+             </p>`
+      }
+
       ${previewTable(props)}
       ${props.error === null ? '' : `<p class="error" role="alert">${escapeHtml(props.error)}</p>`}
 
@@ -177,6 +188,7 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
     props.onPatternChange((e.target as HTMLInputElement).value),
   );
   root.querySelector<HTMLButtonElement>('#extract-add-column')?.addEventListener('click', props.onAdd);
+  root.querySelector<HTMLButtonElement>('#extract-undo')?.addEventListener('click', props.onUndoRemove);
   root.querySelector<HTMLButtonElement>('#extract-open-profile')?.addEventListener('click', props.onOpenProfile);
   root.querySelector<HTMLButtonElement>('#extract-save-profile')?.addEventListener('click', props.onSaveProfile);
   root.querySelector<HTMLButtonElement>('#extract-continue')?.addEventListener('click', props.onContinue);

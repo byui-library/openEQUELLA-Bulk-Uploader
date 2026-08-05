@@ -28,6 +28,7 @@ export interface ExtractController {
   openProfile(): Promise<void>;
   saveProfile(): Promise<void>;
   save(): Promise<void>;
+  undoRemove(): Promise<void>;
   openAdd(): void;
   setAddQuery(query: string): void;
   closeAdd(): void;
@@ -64,7 +65,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
   /** Apply a pure column operation, then refresh the preview from the result. */
   const edit = (fn: (p: Profile) => Profile) => async (): Promise<void> => {
     if (state.profile === null) return;
-    await guard(async () => refreshPreview(fn(state.profile!)));
+    await guard(async () => ({ ...(await refreshPreview(fn(state.profile!))), removed: null }));
   };
 
   return {
@@ -107,7 +108,20 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       set({ adding: false, addQuery: '' });
     },
     async removeColumn(path) {
-      await edit((p) => removeColumn(p, path))();
+      if (state.profile === null) return;
+      const index = state.profile.columns.findIndex((c) => c.path === path);
+      const column = state.profile.columns[index];
+      await guard(async () => {
+        // removeColumn throws for the locked attachment column. Computing the
+        // next state BEFORE recording the undo means a refused removal leaves
+        // no undo behind, which would otherwise offer to restore a column
+        // that was never taken away.
+        const next = removeColumn(state.profile!, path);
+        return {
+          ...(await refreshPreview(next)),
+          removed: column === undefined ? null : { column, index },
+        };
+      });
     },
     async moveColumn(path, delta) {
       await edit((p) => moveColumn(p, path, delta))();
@@ -143,6 +157,18 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       await guard(async () => {
         const report = await options.api.extractRun({ dir: state.dir!, profile: state.profile!, outPath });
         return { savedPath: report.outPath, savedFlagged: report.flagged };
+      });
+    },
+
+    async undoRemove() {
+      const pending = state.removed;
+      if (pending === null || state.profile === null) return;
+      await guard(async () => {
+        const columns = [...state.profile!.columns];
+        // Spliced back at its original index: the order IS the spreadsheet's
+        // column order, so an undo that appends is not an undo.
+        columns.splice(Math.min(pending.index, columns.length), 0, pending.column);
+        return { ...(await refreshPreview({ ...state.profile!, columns })), removed: null };
       });
     },
 
