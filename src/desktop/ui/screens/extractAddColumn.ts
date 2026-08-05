@@ -1,5 +1,5 @@
 // src/desktop/ui/screens/extractAddColumn.ts
-import { escapeHtml } from '../dom.js';
+import { escapeHtml, keepCaret } from '../dom.js';
 import { availablePaths, groupPaths, plainLabel } from '../extract/picker.js';
 
 export interface ExtractAddColumnProps {
@@ -20,14 +20,10 @@ export interface ExtractAddColumnProps {
 export function renderExtractAddColumn(root: HTMLElement, props: ExtractAddColumnProps): void {
   const matches = availablePaths(props.schemaPaths, props.usedPaths, props.query);
 
-  // Every keystroke re-renders this screen, which destroys and recreates the
-  // search box. Focusing the new one without restoring the caret leaves it at
-  // position 0, so each character lands BEFORE the last and the text comes out
-  // reversed -- "title" typed as "eltit". Read the caret off the old element
-  // before it is replaced, and put it back afterwards.
-  const previous = root.querySelector<HTMLInputElement>('#add-col-q');
-  const hadFocus = previous !== null && root.ownerDocument.activeElement === previous;
-  const caret = hadFocus ? previous.selectionStart : null;
+  // Every keystroke re-renders this screen, destroying and recreating the
+  // search box. focusWhenNew also gives it focus the first time the dialog
+  // opens, so the operator can type immediately.
+  const restoreCaret = keepCaret(root, '#add-col-q', { focusWhenNew: true });
 
   root.innerHTML = `
     <section class="screen modal" role="dialog" aria-modal="true" aria-labelledby="add-col-h">
@@ -65,14 +61,7 @@ export function renderExtractAddColumn(root: HTMLElement, props: ExtractAddColum
 
   const input = root.querySelector<HTMLInputElement>('#add-col-q');
   input?.addEventListener('input', () => props.onQueryChange(input.value));
-
-  if (input !== null) {
-    input.focus();
-    // Restore the caret where it was, or put it at the end when the picker has
-    // just opened. Never leave it at 0, which is what reversed the text.
-    const position = caret ?? input.value.length;
-    input.setSelectionRange(position, position);
-  }
+  restoreCaret();
 
   root.querySelectorAll<HTMLButtonElement>('.pick').forEach((b) =>
     b.addEventListener('click', () => props.onPick(b.getAttribute('data-path') ?? '')),

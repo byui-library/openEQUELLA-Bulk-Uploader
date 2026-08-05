@@ -1,7 +1,7 @@
 import type { CollectionSummary } from '../../../core/client.js';
 import { filterCollections } from '../filter.js';
 import { canContinueChoose } from '../state.js';
-import { escapeHtml } from '../dom.js';
+import { escapeHtml, keepCaret } from '../dom.js';
 
 export interface ChooseProps {
   /** null while listCollections() is in flight. */
@@ -57,6 +57,8 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
     `;
   }
 
+  const restoreCaret = keepCaret(root, '#collection-filter');
+
   root.innerHTML = `
     <section class="screen">
       <h1>Choose what to upload</h1>
@@ -100,6 +102,10 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
   root.querySelector<HTMLInputElement>('#collection-filter')?.addEventListener('input', (e) => {
     props.onQueryChange((e.target as HTMLInputElement).value);
   });
+  // Same as the Confirm screen: filtering re-renders, which recreated this
+  // box and dropped focus after each character.
+  restoreCaret();
+
   root.querySelector<HTMLSelectElement>('#collection-select')?.addEventListener('change', (e) => {
     props.onSelectCollection((e.target as HTMLSelectElement).value);
   });

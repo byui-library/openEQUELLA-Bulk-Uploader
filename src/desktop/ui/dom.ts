@@ -24,6 +24,46 @@
  * the other four characters' entity references does not itself get
  * re-escaped.
  */
+/**
+ * Preserve a text input's focus and caret across a re-render.
+ *
+ * Every screen here renders by replacing `innerHTML`, which destroys and
+ * recreates its inputs. Any input whose `input` event triggers a re-render
+ * therefore loses focus on every keystroke, so only the first character
+ * arrives and the operator has to click back into the box for the next one.
+ * Worse, a screen that *does* call `focus()` afterwards without restoring the
+ * caret leaves it at position 0, and the text comes out reversed --
+ * "title" typed as "eltit". Both were live: the Add-column search typed
+ * backwards, and the Confirm screen's item-count box, which is the gate on
+ * publishing to a collection with no review queue, dropped focus each time.
+ *
+ * Call before assigning `innerHTML`; call the returned function after.
+ *
+ * `focusWhenNew` is for a control that should take focus the first time it
+ * appears, such as a search box in a dialog that has just opened.
+ *
+ * Not unit tested: this is DOM behaviour and the project has no jsdom. It was
+ * verified by hand in the running app, which is the only place it can fail.
+ */
+export function keepCaret(
+  root: HTMLElement,
+  selector: string,
+  options: { focusWhenNew?: boolean } = {},
+): () => void {
+  const previous = root.querySelector<HTMLInputElement>(selector);
+  const hadFocus = previous !== null && root.ownerDocument.activeElement === previous;
+  const caret = hadFocus ? previous.selectionStart : null;
+
+  return () => {
+    if (!hadFocus && options.focusWhenNew !== true) return;
+    const next = root.querySelector<HTMLInputElement>(selector);
+    if (next === null) return;
+    next.focus();
+    const position = caret ?? next.value.length;
+    next.setSelectionRange(position, position);
+  };
+}
+
 export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
