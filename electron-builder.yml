@@ -6,6 +6,19 @@ files:
   - dist-desktop/**/*
   - node_modules/**/*
   - package.json
+# handlers.ts#resolveSchemaPath reads this at runtime to validate spreadsheet
+# xpaths. `to:` is relative to the app's resources directory (what
+# process.resourcesPath points at when packaged), NOT to the project root --
+# so `to: schema/_entity.xml` lands at `<resourcesPath>/schema/_entity.xml`,
+# exactly what resolveSchemaPath's packaged branch expects. Verified by
+# inspecting the built release tree in Task 9 (see docs/INSTALL.md context /
+# session handoff): a `to:` of just `schema` would still work (electron-builder
+# treats a directory-less `to` on a single file as the destination file path
+# only when it ends without a trailing slash and matches the source basename),
+# but being explicit here removes any doubt.
+extraResources:
+  - from: schema/_entity.xml
+    to: schema/_entity.xml
 win:
   target:
     - portable

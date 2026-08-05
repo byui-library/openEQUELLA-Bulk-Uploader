@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { registerHandlers } from './handlers.js';
@@ -40,6 +40,33 @@ function createWindow(): void {
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
   });
+
+  // The Results screen's "open collection" link is a plain
+  // <a target="_blank">. Without this handler Electron would honour that by
+  // opening a second, chromeless BrowserWindow -- a dead end for a
+  // non-technical user, since it has no address bar, back button, or way to
+  // get back to the app. Hand off to the OS browser instead and always deny
+  // the new Electron window.
+  //
+  // Restricted to http/https deliberately: `url` here is whatever the page
+  // asked to open, and openEQUELLA content (collection names, item text) is
+  // server-controlled. Handing an arbitrary scheme (file:, javascript:, a
+  // custom protocol) straight to shell.openExternal / the OS shell can launch
+  // other installed applications or touch the filesystem. http/https to
+  // shell.openExternal only ever opens the user's default browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { action: 'deny' };
+    }
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
   void win.loadFile(join(here, 'ui', 'index.html'));
 }
 
