@@ -63,14 +63,35 @@ export function detectPattern(allFilenames: string[]): string {
 }
 
 /**
- * A profile that is valid and runnable immediately: the attachment column and
- * nothing else. Columns are added by the operator, who is the only one who
- * knows what each filename part means.
+ * A profile that is valid and runnable immediately: the attachment column, plus
+ * the three fields almost every contribution needs.
+ *
+ * Title and creator are wired to the document properties that state them.
+ * That is not a guess -- a PDF's `/Info Title` and a Word file's `dc:creator`
+ * say what they are. Wiring a filename part to a field WOULD be a guess: the
+ * program can see a name has four parts but cannot know part 2 is a first
+ * name rather than an accession number, so no filename part is mapped here and
+ * the operator does that themselves.
+ *
+ * Description is offered as an empty column deliberately. No document property
+ * means "description" unambiguously -- PDF's `/Subject` is close but not the
+ * same thing -- and inventing one would put a wrong value somewhere nobody
+ * would think to look. An empty column is a legitimate, useful thing: somewhere
+ * to type in Excel.
+ *
+ * Every path here is checked against the real schema by a test, because a
+ * profile naming a field that does not exist is rejected at load time and this
+ * is the one profile nobody chose to write.
  */
 export function starterProfile(filenames: string[]): Profile {
   return {
     version: 1,
     pattern: detectPattern(filenames),
-    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ property: 'title' }] },
+      { path: 'MWDL/creators/creator', sources: [{ property: 'author' }] },
+      { path: 'MWDL/description', sources: [] },
+    ],
   };
 }

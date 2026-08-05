@@ -52,10 +52,46 @@ describe('starterProfile', () => {
     });
   });
 
-  it('proposes only the attachment column, leaving the mapping to the operator', () => {
+  it('proposes the three fields almost every item needs', () => {
     const profile = starterProfile(['Smith_Jane_Recital.pdf']);
-    expect(profile.columns).toHaveLength(1);
+    expect(profile.columns.map((c) => c.path)).toEqual([
+      ATTACHMENT_COLUMN,
+      'MWDL/title',
+      'MWDL/creators/creator',
+      'MWDL/description',
+    ]);
     expect(profile.pattern).toBe('{part1}_{part2}_{part3}.pdf');
+  });
+
+  // Reading a title out of a document's own Title property is not a guess --
+  // the document says so. Reading it out of filename part 2 would be, which is
+  // why no filename part is wired up here.
+  it('wires title and creator to the document properties that state them', () => {
+    const columns = starterProfile(['a.pdf']).columns;
+    expect(columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([{ property: 'title' }]);
+    expect(columns.find((c) => c.path === 'MWDL/creators/creator')?.sources).toEqual([
+      { property: 'author' },
+    ]);
+  });
+
+  // Description is offered as an empty column on purpose. No document property
+  // means "description" unambiguously -- PDF's /Subject is close but not the
+  // same thing -- and inventing one would put a wrong value somewhere nobody
+  // would think to check.
+  it('leaves description empty, as a column to fill in by hand', () => {
+    const description = starterProfile(['a.pdf']).columns.find((c) => c.path === 'MWDL/description');
+    expect(description?.sources).toEqual([]);
+    expect(description?.default).toBeUndefined();
+  });
+
+  it('proposes nothing that is not a real schema path', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { extractDefinition, parseSchemaPaths } = await import('../../src/core/schema.js');
+    const paths = parseSchemaPaths(extractDefinition(await readFile('schema/_entity.xml', 'utf8')));
+    for (const column of starterProfile(['a.pdf']).columns) {
+      if (column.path === ATTACHMENT_COLUMN) continue;
+      expect(paths.has(column.path), `${column.path} is not in the schema`).toBe(true);
+    }
   });
 
   it('is a valid profile', async () => {
