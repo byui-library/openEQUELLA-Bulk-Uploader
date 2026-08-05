@@ -11,7 +11,7 @@
     "build": "tsc",
     "build:desktop": "tsc -p tsconfig.desktop.json && node scripts/copy-ui-assets.mjs",
     "desktop": "npm run build:desktop && electron dist-desktop/desktop/main.js",
-    "dist": "npm run build:desktop && electron-builder",
+    "dist": "npm run build:desktop && electron-builder --publish never",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
