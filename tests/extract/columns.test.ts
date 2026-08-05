@@ -48,6 +48,20 @@ describe('removeColumn', () => {
   it('throws on an unknown path', () => {
     expect(() => removeColumn(profile(), 'MWDL/nope')).toThrow(/not in this profile/i);
   });
+
+  // Removal is by index, not by path equality. parseProfile rejects duplicate
+  // paths, so this state should be unreachable -- but columns.ts does not
+  // depend on that invariant and must not silently delete two columns if it
+  // ever is. A mutation pass showed the suite could not tell the two
+  // implementations apart. This is a data-loss guard.
+  it('removes only one column even if a duplicate path somehow exists', () => {
+    const withDuplicate: Profile = {
+      ...profile(),
+      columns: [...profile().columns, { path: 'MWDL/title', sources: [] }],
+    };
+    const after = removeColumn(withDuplicate, 'MWDL/title');
+    expect(after.columns.filter((c) => c.path === 'MWDL/title')).toHaveLength(1);
+  });
 });
 
 describe('moveColumn', () => {

@@ -37,4 +37,23 @@ describe('findLabels', () => {
   it('returns an empty map for empty text', () => {
     expect(findLabels('').size).toBe(0);
   });
+
+  // The two tests below isolate the label-shape rules from each other. The
+  // "whole sentence" test above is over-determined: that sentence is rejected
+  // by the length cap alone, so it passes even with the word-count rule
+  // deleted. Found by a mutation pass; without these, both rules could drift
+  // or vanish unnoticed.
+
+  it('ignores a short line with too many words before the colon', () => {
+    // 18 characters -- well under the length cap -- but four words, so it is
+    // prose, not a field name. Only the word-count rule can reject this.
+    expect(findLabels('See the note below: details').size).toBe(0);
+  });
+
+  it('accepts a label at the length cap and rejects one past it', () => {
+    const atCap = 'A'.repeat(40);
+    const pastCap = 'A'.repeat(41);
+    expect(findLabels(`${atCap}: value`).get(atCap)).toBe('value');
+    expect(findLabels(`${pastCap}: value`).size).toBe(0);
+  });
 });
