@@ -90,14 +90,32 @@ jobs:
           $notes = @"
           Windows build of the openEQUELLA Bulk Uploader desktop app.
 
+          ### Which file do I want?
+
+          - **Setup .exe** -- installer. Start Menu shortcut, uninstaller, and you
+            see the security warning below only once. Take this if you will use
+            the tool more than once.
+          - **Plain .exe** -- single file, nothing installed. Good for trying it
+            out or for machines you cannot install onto. You will see the
+            security warning each time you are given a new copy.
+
+          Both keep settings in the same place, so you can switch without
+          re-entering credentials.
+
+          ### Before you start
+
           **This download contains no credentials.** The OAuth client ID, secret
           and redirect URL are supplied separately by the administrator and are
           entered once on first run. See docs/INSTALL.md.
 
-          The build is unsigned, so Windows SmartScreen will warn on first run --
-          click **More info**, then **Run anyway**. That means "not code-signed",
-          not "unsafe".
+          The build is unsigned, so Windows SmartScreen will warn on first run.
+          The dialog offers only **Don't run** until you click **More info** --
+          then **Run anyway** appears. It means "not code-signed", not "unsafe".
 
-          Items are created as **drafts** and must be submitted in openEQUELLA.
+          ### Drafts and publishing
+
+          You choose per upload. **Draft is the default**; **Published** is also
+          available and requires typing the item count to confirm, because the
+          target collection has no review queue and there is no undo.
           "@
           gh release create "$env:GITHUB_REF_NAME" (Get-ChildItem release -Filter *.exe | ForEach-Object { $_.FullName }) --title "$env:GITHUB_REF_NAME" --notes $notes
