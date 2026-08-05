@@ -1226,7 +1226,14 @@ git commit -m "feat(extract): read text and properties from .docx"
 - Create: `src/core/extract/readers/pdf.ts`
 - Test: `tests/extract/pdf.test.ts`
 
-**Note on the import:** use `pdfjs-dist/legacy/build/pdf.mjs`. The default build assumes a browser DOM and fails under Node. Set `isEvalSupported: false` and `useSystemFonts: false` — we want text, not rendering.
+**Note on the import:** use `pdfjs-dist/legacy/build/pdf.mjs`. The default build assumes a browser DOM and fails under Node.
+
+**Corrected during implementation against the installed `pdfjs-dist@6.2.108`.** The import path was right, but two API details in the code below were not, and both were caught by running against real PDF bytes rather than by reading:
+
+- **`destroy()` is on the loading task, not the document.** `getDocument()` returns a `PDFDocumentLoadingTask`; `await task.promise` gives a `PDFDocumentProxy`, which has `cleanup()` but no `destroy()`. Keep a reference to the task and call `task.destroy()` in the `finally`. Calling it on the document throws at runtime.
+- **`isEvalSupported` no longer exists** and must be dropped from the `getDocument()` call, or `tsc` fails. This is not a security regression: the option is absent from the whole package in v6, and `new Function(` appears zero times in the legacy build — pdf.js removed the eval-based font path upstream, so the protection is now unconditional rather than opt-in. `useSystemFonts: false` is still valid and is kept.
+
+**Expect a `standardFontDataUrl` warning** on tests that extract text, and an `Indexing all PDF objects` warning on the malformed-input test. Both are non-fatal and expected: this reader extracts text and never renders, so font metrics are irrelevant.
 
 - [ ] **Step 1: Write the failing test**
 
