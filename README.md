@@ -293,6 +293,39 @@ that purpose and are ignored by the uploader:
 There is no OCR. A scanned page yields no text, and the row says so rather than
 guessing.
 
+### Declaring a date format
+
+A compact date such as `12032025` is refused by default, because it reads as
+3 December or 12 March depending on who wrote it and nothing in the file says
+which. Rather than guess, state the convention in the profile:
+
+```json
+{ "path": "MWDL/date",
+  "sources": [{ "placeholder": "date" }],
+  "transform": { "date": "MMDDYYYY" } }
+```
+
+Use `YYYY`, `MM` and `DD` exactly once each, with any literal separators —
+`MMDDYYYY`, `YYYYMMDD`, `DD-MM-YYYY`. A malformed format is rejected when the
+profile loads, not part-way through a batch.
+
+Declaring a format buys precision, not permissiveness: a value that does not
+match is still kept as found and flagged, and `02302025` is rejected as not a
+real date.
+
+Leave `"transform": "date"` for values that are already unambiguous, such as
+`2026-04-12` or a document's own timestamp.
+
+### Known limitation: metadata held in Word tables
+
+Label matching looks for `Label: value` lines. Word documents often put the
+same information in a **table** instead, which extracts as `Company` on one
+line and `HCA` on the next, with no colon anywhere — so nothing is found.
+
+If your documents are laid out that way, the filename and the document
+properties are still available; the body is not. Say so if you hit this, as
+supporting it is a known and deferred piece of work rather than a surprise.
+
 ### Known limitation: extra separators
 
 Placeholders match as little as possible, left to right, so an unexpected extra
