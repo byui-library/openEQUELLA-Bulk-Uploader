@@ -20,6 +20,7 @@ import { runPreflight } from '../core/preflight.js';
 import { checkLock } from '../core/lock.js';
 import { OeqError, ValidationError } from '../core/errors.js';
 import type { ItemState } from '../core/types.js';
+import { runExtract, type ExtractCliOptions } from './extract.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -578,6 +579,19 @@ export function buildProgram(env: Env = process.env): Command {
     )
     .action(async () => {
       process.exitCode = await checkAction(env);
+    });
+
+  program
+    .command('extract')
+    .description('build a spreadsheet from a folder of PDFs and .docx files')
+    .requiredOption('--dir <path>', 'folder of files to read')
+    .requiredOption('--profile <path>', 'extraction profile (.profile.json)')
+    .option('--out <path>', 'where to write the spreadsheet', 'extracted.csv')
+    .option('--schema-file <path>', 'local schema export', 'schema/_entity.xml')
+    .option('--dry-run', 'show the first few rows without writing anything')
+    .option('--init-profile', 'write a starter profile for this folder, then stop')
+    .action(async (o: ExtractCliOptions) => {
+      await runExtract(o, (message) => console.log(message));
     });
 
   return program;
