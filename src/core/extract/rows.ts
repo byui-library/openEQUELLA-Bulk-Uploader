@@ -4,7 +4,15 @@ import { findLabels } from './labels.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
 import { ATTACHMENT_COLUMN } from './types.js';
 
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/**
+ * An ISO date, optionally followed by a time and offset. The date part is
+ * taken verbatim and `Date` is never involved, because it must not be:
+ * `new Date('2025-12-04T01:00:00Z')` read through local date parts yields
+ * December the 3rd anywhere west of UTC. Word writes its `created` property
+ * as a UTC timestamp, so that silently shifted the day on real documents --
+ * with no note, because nothing had gone wrong as far as the code knew.
+ */
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/;
 
 /**
  * Normalise a recognised date to YYYY-MM-DD, or return null. Deliberately
@@ -15,7 +23,9 @@ const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 export function normaliseDate(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed === '') return null;
-  if (ISO_DATE.test(trimmed)) return trimmed;
+
+  const iso = ISO_DATE.exec(trimmed);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
 
   // Require a four-digit year somewhere, so that "Recital_2026" and other
   // half-dates are rejected rather than coerced into January the 1st.
