@@ -116,6 +116,42 @@ That name matters: it's who will own every item the program creates during
 this session. If it shows the wrong name, sign out and sign in again as
 yourself before doing any uploads.
 
+## Try it first: the built-in starter kit
+
+Before you build your own spreadsheet, it's worth doing one real test upload
+using the starter kit built into the program — it takes a minute and proves
+your sign-in, collection, and spreadsheet all work together before you risk
+any real data on it.
+
+Once you're signed in, on the **Choose what to upload** screen there's a
+button next to the spreadsheet picker: **Save a template and sample file…**.
+Click it and pick any folder — your Desktop is fine. The program saves two
+files there:
+
+- **`upload-template.csv`** — a spreadsheet with the real column headers the
+  program expects (the ones your administrator's schema actually uses, not
+  guesses), already filled in with one example row.
+- **`sample-upload.txt`** — a small text file that example row uploads as its
+  attachment.
+
+The example row's title is deliberately **`TEST UPLOAD - safe to delete`** —
+so if you go through with it, the item it creates in openEQUELLA is
+unmistakable and easy to find again afterward.
+
+To run the test upload:
+
+1. Set the **files folder** (step 3 on the Choose screen) to the folder you
+   just saved the two files into.
+2. Set the **spreadsheet** (step 2) to `upload-template.csv` in that same
+   folder.
+3. Pick any collection you have access to, then continue through Review and
+   Confirm as you normally would.
+
+This creates one real **draft** item in openEQUELLA — go find and delete it
+there once you've confirmed the upload worked. Nothing about running this
+test is different from a real batch; it's the same code path, just with a
+spreadsheet and file the program already knows are correct.
+
 ## What happens when you upload
 
 This guide covers installing and starting the program, not the full upload

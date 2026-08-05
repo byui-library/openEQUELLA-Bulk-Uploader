@@ -12,6 +12,11 @@ files/
 *.xls
 *.csv
 !tests/fixtures/**/*.csv
+# The starter-kit template (resources/template/) is a fabricated, generic
+# example row -- no real student data, ever -- shipped deliberately so the
+# app has something to hand the operator. Same exception shape as the test
+# fixtures above, for the same reason.
+!resources/template/**/*.csv
 
 # ---------------------------------------------------------------------------
 # Credentials

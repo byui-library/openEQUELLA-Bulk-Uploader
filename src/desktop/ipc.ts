@@ -78,6 +78,15 @@ export interface OeqApi {
   chooseSpreadsheet(): Promise<string | null>;
   chooseFolder(): Promise<string | null>;
 
+  /**
+   * Copies the bundled starter-kit template CSV and sample file into a
+   * folder the operator picks. Resolves to the destination path on success,
+   * or null if the folder picker was cancelled -- same convention as
+   * chooseSpreadsheet/chooseFolder above. Rejects (see handlers.ts) if the
+   * destination already has either file, or can't be written to.
+   */
+  saveStarterKit(): Promise<string | null>;
+
   validate(args: { instanceId: string; sheetPath: string }): Promise<ColumnReport[]>;
   plan(args: {
     instanceId: string;
@@ -105,6 +114,7 @@ export const CHANNELS = {
   listCollections: 'oeq:listCollections',
   chooseSpreadsheet: 'oeq:chooseSpreadsheet',
   chooseFolder: 'oeq:chooseFolder',
+  saveStarterKit: 'oeq:saveStarterKit',
   validate: 'oeq:validate',
   plan: 'oeq:plan',
   run: 'oeq:run',

@@ -13,10 +13,15 @@ export interface ChooseProps {
   folderPath: string | null;
   error: string | null;
   readyMessage: string | null;
+  /** True while saveStarterKit() is in flight -- disables the button so a slow dialog can't be double-fired. */
+  starterKitSaving: boolean;
+  /** Set after a successful save, telling the operator exactly what to do next. Cleared on any new pick. */
+  starterKitMessage: string | null;
   onQueryChange(q: string): void;
   onSelectCollection(uuid: string): void;
   onChooseSpreadsheet(): void;
   onChooseFolder(): void;
+  onSaveStarterKit(): void;
   onContinue(): void;
 }
 
@@ -64,6 +69,13 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
         <legend>2. Spreadsheet</legend>
         <button id="choose-sheet" type="button">Choose spreadsheet…</button>
         <p class="path">${props.sheetPath ? escapeHtml(props.sheetPath) : 'No spreadsheet chosen yet.'}</p>
+        <p class="muted">
+          Don't have a spreadsheet yet?
+          <button id="save-starter-kit" type="button" ${props.starterKitSaving ? 'disabled' : ''}>
+            ${props.starterKitSaving ? 'Saving…' : 'Save a template and sample file…'}
+          </button>
+        </p>
+        ${props.starterKitMessage ? `<p class="note">${escapeHtml(props.starterKitMessage)}</p>` : ''}
       </fieldset>
 
       <fieldset>
@@ -92,6 +104,9 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
   root
     .querySelector<HTMLButtonElement>('#choose-sheet')
     ?.addEventListener('click', () => props.onChooseSpreadsheet());
+  root
+    .querySelector<HTMLButtonElement>('#save-starter-kit')
+    ?.addEventListener('click', () => props.onSaveStarterKit());
   root
     .querySelector<HTMLButtonElement>('#choose-folder')
     ?.addEventListener('click', () => props.onChooseFolder());

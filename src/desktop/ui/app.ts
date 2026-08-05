@@ -58,6 +58,8 @@ interface AppState {
   folderPath: string | null;
   chooseError: string | null;
   readyMessage: string | null;
+  starterKitSaving: boolean;
+  starterKitMessage: string | null;
 
   // Review screen -- see ui/review.ts for why `reviewColumns` (from
   // validate() against the ORIGINAL sheet) rather than a plan() response is
@@ -117,6 +119,8 @@ function initialState(): AppState {
     folderPath: null,
     chooseError: null,
     readyMessage: null,
+    starterKitSaving: false,
+    starterKitMessage: null,
     reviewLoadingColumns: false,
     reviewColumns: null,
     reviewOverrides: {},
@@ -193,10 +197,13 @@ function render(): void {
         folderPath: state.folderPath,
         error: state.chooseError,
         readyMessage: state.readyMessage,
+        starterKitSaving: state.starterKitSaving,
+        starterKitMessage: state.starterKitMessage,
         onQueryChange: handleCollectionQueryChange,
         onSelectCollection: handleSelectCollection,
         onChooseSpreadsheet: handleChooseSpreadsheet,
         onChooseFolder: handleChooseFolder,
+        onSaveStarterKit: handleSaveStarterKit,
         onContinue: handleChooseContinue,
       });
       break;
@@ -432,6 +439,8 @@ function handleSigninContinue(): void {
   state.folderPath = null;
   state.chooseError = null;
   state.readyMessage = null;
+  state.starterKitSaving = false;
+  state.starterKitMessage = null;
   render();
   void loadCollections();
 }
@@ -488,6 +497,36 @@ async function handleChooseFolder(): Promise<void> {
     state.chooseError = errorMessage(err);
   }
   render();
+}
+
+/**
+ * Saves the bundled starter kit (template CSV + sample file) to a folder the
+ * operator picks, then tells them plainly what to do with it: those two
+ * files are enough to run one real test upload immediately, without having
+ * to build their own spreadsheet first. A cancelled dialog (null) is not an
+ * error -- same convention as handleChooseSpreadsheet/handleChooseFolder
+ * above -- it just leaves the screen as it was.
+ */
+async function handleSaveStarterKit(): Promise<void> {
+  state.starterKitSaving = true;
+  state.starterKitMessage = null;
+  state.chooseError = null;
+  render();
+  try {
+    const destDir = await window.oeq.saveStarterKit();
+    state.starterKitSaving = false;
+    if (destDir) {
+      state.starterKitMessage =
+        `Saved to ${destDir}. Next: set the files folder above to ${destDir}, set the ` +
+        `spreadsheet to upload-template.csv inside it, then Continue -- that runs one real ` +
+        `test upload you can safely delete afterward.`;
+    }
+    render();
+  } catch (err) {
+    state.starterKitSaving = false;
+    state.chooseError = errorMessage(err);
+    render();
+  }
 }
 
 function handleChooseContinue(): void {

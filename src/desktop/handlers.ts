@@ -1,7 +1,7 @@
 import { app, dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, copyFile } from 'node:fs/promises';
 import { CHANNELS, INSTANCES, type ColumnReport, type OeqApi, type PlanReport, type RunReport } from './ipc.js';
 import { SecretStore, EncryptedTokenStore } from './secrets.js';
 import { buildAuth, buildClient, buildConfig, instanceById } from './session.js';
@@ -81,24 +81,76 @@ export function resolveSchemaPath(opts: {
   appPath: string;
   resourcesPath: string;
 }): string {
+  return resolveResourcePath(opts, 'schema', '_entity.xml');
+}
+
+/**
+ * General form of resolveSchemaPath's packaged/unpackaged branch, for any
+ * file or directory that ships via electron-builder's `extraResources`
+ * alongside `schema/_entity.xml` (see resolveSchemaPath's doc comment above
+ * for the full story on why `appPath` is NOT `app.getAppPath()`, and why it
+ * only matters for the unpackaged branch). `segments` is the path under the
+ * resource root, e.g. `('schema', '_entity.xml')` or `('template',)` -- a
+ * new bundled resource reuses this instead of re-deriving the same branch.
+ */
+export function resolveResourcePath(
+  opts: { isPackaged: boolean; appPath: string; resourcesPath: string },
+  ...segments: string[]
+): string {
   return opts.isPackaged
-    ? join(opts.resourcesPath, 'schema', '_entity.xml')
-    : join(opts.appPath, 'schema', '_entity.xml');
+    ? join(opts.resourcesPath, ...segments)
+    : join(opts.appPath, ...segments);
 }
 
 /** Directory containing this compiled module (dist-desktop/desktop at runtime). */
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** Schema xpaths, read from the bundled reference export. */
-async function schemaPaths(): Promise<Set<string>> {
-  const p = resolveSchemaPath({
+/** The three inputs resolveResourcePath needs, read from `app`/`process` once per call site. */
+function resourcePathOpts(): { isPackaged: boolean; appPath: string; resourcesPath: string } {
+  return {
     isPackaged: app.isPackaged,
     // Repo root: see resolveSchemaPath's doc comment for why this is not
     // app.getAppPath().
     appPath: join(here, '..', '..'),
     resourcesPath: process.resourcesPath,
-  });
+  };
+}
+
+/** Schema xpaths, read from the bundled reference export. */
+async function schemaPaths(): Promise<Set<string>> {
+  const p = resolveSchemaPath(resourcePathOpts());
   return parseSchemaPaths(extractDefinition(await readFile(p, 'utf8')));
+}
+
+/**
+ * The two files the starter kit (see CHANNELS.saveStarterKit below) copies
+ * out for the operator: the blank/example template CSV, and the file its one
+ * example row attaches. Exported so checkStarterKitDestination's tests can
+ * assert against the same list this module actually copies, rather than a
+ * second hand-typed copy that could silently drift from it.
+ */
+export const STARTER_KIT_FILES = ['upload-template.csv', 'sample-upload.txt'] as const;
+
+/** Directory containing the bundled starter-kit template + sample file. */
+function templateDir(): string {
+  return resolveResourcePath(resourcePathOpts(), 'template');
+}
+
+/**
+ * Decide whether copying the starter kit into a destination folder can
+ * proceed, given the file names already present there. Pure -- no filesystem
+ * access -- so the "do not silently overwrite" policy is unit-testable
+ * without touching disk. Refuses on ANY collision, naming every file that
+ * collides (not just the first), rather than overwriting something the
+ * operator may have put there on purpose, or silently skipping just one of
+ * the two files and leaving them with an incomplete, confusing kit.
+ */
+export function checkStarterKitDestination(
+  existingNames: string[],
+): { ok: true } | { ok: false; conflicts: string[] } {
+  const existing = new Set(existingNames);
+  const conflicts = STARTER_KIT_FILES.filter((f) => existing.has(f));
+  return conflicts.length > 0 ? { ok: false, conflicts } : { ok: true };
 }
 
 /**
@@ -220,6 +272,58 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(CHANNELS.chooseFolder, async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     return r.canceled ? null : (r.filePaths[0] ?? null);
+  });
+
+  /**
+   * Copies the starter-kit template CSV and its sample file into a folder
+   * the operator picks, for the Choose screen's "Save a template and sample
+   * file..." control. Returns the destination path on success (so the UI can
+   * tell the operator exactly where to find them), or null if the folder
+   * picker was cancelled -- matching chooseSpreadsheet/chooseFolder's own
+   * cancel convention above.
+   *
+   * Never overwrites: checkStarterKitDestination refuses the whole copy (both
+   * files, even if only one collides) with a message naming exactly which
+   * file(s) are already there, rather than silently clobbering something the
+   * operator may have put in that folder on purpose, or leaving them with
+   * half a kit.
+   */
+  ipcMain.handle(CHANNELS.saveStarterKit, async (): Promise<string | null> => {
+    const r = await dialog.showOpenDialog({
+      title: 'Choose a folder to save the template and sample file',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const destDir = r.filePaths[0];
+
+    let existingNames: string[];
+    try {
+      existingNames = await readdir(destDir);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new OeqError(`Could not read ${destDir}: ${detail}`);
+    }
+
+    const check = checkStarterKitDestination(existingNames);
+    if (!check.ok) {
+      const named = check.conflicts.map((f) => `'${f}'`).join(' and ');
+      throw new OeqError(
+        `${destDir} already has ${named}. Choose an empty folder, or move/rename the ` +
+          `existing file(s) first, so nothing already there gets overwritten.`,
+      );
+    }
+
+    const src = templateDir();
+    try {
+      for (const f of STARTER_KIT_FILES) {
+        await copyFile(join(src, f), join(destDir, f));
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new OeqError(`Could not save the starter kit to ${destDir}: ${detail}`);
+    }
+
+    return destDir;
   });
 
   ipcMain.handle(

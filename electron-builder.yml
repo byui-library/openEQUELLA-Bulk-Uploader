@@ -124,6 +124,16 @@ files:
 extraResources:
   - from: schema/_entity.xml
     to: schema/_entity.xml
+  # The starter-kit template CSV + sample file the Choose screen's "Save a
+  # template and sample file..." button copies out for the operator
+  # (handlers.ts's STARTER_KIT_FILES / resolveResourcePath -- the SAME
+  # packaged/unpackaged split as resolveSchemaPath and the `to:` reasoning
+  # above, just parameterised). `to: template` (a directory, no trailing
+  # file) copies the whole `resources/template` folder to
+  # `<resourcesPath>/template/`, which is exactly what
+  # resolveResourcePath's packaged branch expects.
+  - from: resources/template
+    to: template
 win:
   target:
     - portable
