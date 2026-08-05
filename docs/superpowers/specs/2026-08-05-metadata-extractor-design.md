@@ -84,11 +84,15 @@ file → read (text + properties, or a no-text flag)
      → row
 ```
 
-Precedence is fixed and never overwrites: filename, then labels, then
-properties. Filenames rank highest because naming conventions here are
-deliberate and institution-controlled, while embedded properties are frequently
-junk inherited from whoever created the file (`Author` is often a license
-holder, not a creator).
+Precedence never overwrites: the first source to yield a value keeps it. The
+default order is filename, then labels, then properties — filenames rank highest
+because naming conventions here are deliberate and institution-controlled, while
+embedded properties are frequently junk inherited from whoever created the file
+(`Author` is often a license holder, not a creator).
+
+That order is a **default, not a rule**: it is stored per column in the profile,
+so a collection whose embedded metadata is actually trustworthy can invert it
+without a code change. See "Profile format".
 
 ### The honesty guarantees
 
@@ -119,38 +123,65 @@ a confidently wrong one is not.
 
 ## Profile format
 
+**The profile is an ordered list of output columns.** That list is the
+authoritative description of the spreadsheet: what columns exist, in what order,
+and where each one's values come from. Columns are added, removed, reordered and
+retargeted freely.
+
 ```json
 {
   "version": 1,
   "pattern": "{last}_{first}_{title}_{date}.pdf",
-  "fields": {
-    "last+first": { "path": "MWDL/creators/creator", "join": "{last}, {first}" },
-    "title":      { "path": "MWDL/title" },
-    "date":       { "path": "MWDL/date", "transform": "date" }
-  },
-  "labels": { "Performer": "MWDL/creators/creator" },
-  "defaults": { "MWDL/publisher": "BYU-Idaho" }
+  "columns": [
+    { "path": "attachment name",       "sources": [{ "filename": "*" }], "locked": true },
+    { "path": "MWDL/title",            "sources": [{ "placeholder": "title" }, { "label": "Title" }] },
+    { "path": "MWDL/creators/creator", "sources": [{ "join": "{last}, {first}" }, { "label": "Performer" }] },
+    { "path": "MWDL/date",             "sources": [{ "placeholder": "date" }, { "property": "created" }],
+                                       "transform": "date" },
+    { "path": "MWDL/publisher",        "sources": [], "default": "BYU-Idaho" },
+    { "path": "MWDL/description",      "sources": [] }
+  ]
 }
 ```
 
-Three details that are otherwise easy to misread:
+Reading that: title comes from the filename, falling back to a `Title:` line.
+Creator joins two filename parts, falling back to a `Performer:` label.
+Publisher is a constant on every row. **Description has no source at all — it is
+an empty column, deliberately, so there is somewhere to type in Excel.**
 
-- **`fields` keys are placeholder names from `pattern`.** A key naming several
-  placeholders (`"last+first"`) combines them into one field using `join`, which
-  is a template over those same placeholders.
-- **`transform: "date"`** normalises a recognised date to `YYYY-MM-DD`. If the
-  value is not recognisable as a date it is left exactly as found and noted in
-  `_notes` — a transform never discards the original.
-- **`defaults` is one map, keyed by xpath, serving both UI controls.** The
-  per-field "when blank" control and the collapsed "add a value to every row"
-  panel both write here. A default applies when the field is blank after all
-  three sources have run, which makes a constant simply the case where the field
-  is always blank. One concept, one place in the file.
+This one structure replaces the three separate maps the design previously had,
+and it is what makes add/remove/change possible: each of those operations is an
+edit to one list.
+
+Details that are otherwise easy to misread:
+
+- **`sources` is tried in order; the first non-empty value wins.** Nothing later
+  overwrites anything earlier. The default order when the program builds a
+  profile for you is filename, then label, then property — but because the order
+  is per column and stored, you can override it where a particular collection
+  needs it. This replaces the previously global, unchangeable precedence rule.
+- **`sources: []` means an empty column.** Combined with `default`, it is a
+  constant; without one, it is a blank column for manual entry. Both are
+  legitimate and neither is an error.
+- **`placeholder` names come from `pattern`;** `join` is a template over those
+  same placeholders, for the common case of a name split across parts.
+- **`transform: "date"`** normalises a recognised date to `YYYY-MM-DD`. A value
+  it cannot recognise is left exactly as found and noted in `_notes` — a
+  transform never discards the original.
+- **`attachment name` is `locked`.** It is the one column the uploader requires,
+  and it always holds the real filename on disk. It cannot be removed, renamed,
+  reordered out of first position, or given a different source. Every other
+  column is fully editable. The UI shows it greyed with a short explanation
+  rather than hiding it, so its absence from the editable set is never a
+  mystery.
 
 Validated with zod at load time and checked against the real schema — a profile
-mapping to an xpath that does not exist in `schema/_entity.xml` is rejected
-immediately, not after 300 files. `version` exists so a future format change can
-be detected rather than misread.
+naming an xpath that does not exist in `schema/_entity.xml` is rejected
+immediately, not after 300 files, using the existing `validateHeaders` and
+`suggest` in `src/core/schema.ts` so a typo gets the same "did you mean" help the
+uploader already gives. Duplicate `path` entries are rejected for the same
+reason `sheet.ts` rejects duplicate headers. `version` exists so a future format
+change can be detected rather than misread.
 
 A plain file is the only form of reuse that works identically in the GUI, the
 CLI and MCP, which is why profiles are files rather than app settings.
@@ -171,7 +202,8 @@ Each is tied to a concrete decision rather than cited decoratively.
 | **Visibility of system status** (#1) | A live preview of the first five files updates on every change. Extraction of a large folder shows per-file progress, as the upload screen already does. |
 | **Error prevention over error messages** (#5) | Field targets are a dropdown of real schema xpaths, not free text. An invalid mapping cannot be expressed. |
 | **Match the user's language** (#2) | Dropdowns read `Title — MWDL/title`, plain-language label first. The xpath stays visible because it is what the spreadsheet header must say. |
-| **User control and freedom** (#3) | The output is a file. Nothing is committed, everything is reversible, and Back never loses entered mapping. |
+| **User control and freedom** (#3) | The output is a file. Nothing is committed, and Back never loses entered mapping. Removing a column offers inline **Undo** rather than a confirmation dialog — a modal in front of a reversible action is friction pretending to be safety. |
+| **Flexibility and efficiency of use** (#7) | Columns can be added, removed, reordered and retargeted; source precedence is per column; profiles make a worked-out setup reusable. The novice never has to touch any of it, because the program proposes a working set of columns from the files themselves. |
 | **Consistency** (#4) | Reuses the shipped screen chrome, banner, and button placement. Extract is a sub-wizard of the existing wizard, not a new idiom. |
 | **Minimalism** (#8) | Label matching and defaults start collapsed. The common case — filenames only — fits on one screen with nothing expanded. |
 | **Recover from errors** (#9) | A summary before saving: "12 of 300 files produced no title." Problems are counted and listed, never left for the user to notice in Excel. |
@@ -193,38 +225,62 @@ directly:
 broken down by type, and any that cannot be read (`.doc`, unsupported) listed
 explicitly rather than silently skipped.
 
-**Step 2 — Map.** The core screen. The detected segmentation is shown against a
-real filename from the folder:
+**Step 2 — Columns.** The core screen, and the one the add/remove/change
+requirement lands on. The detected filename structure is shown for reference at
+the top; below it, **the columns of the spreadsheet, in order, as an editable
+list**:
 
 ```text
 Your files look like this:
 
    Smith  _  Jane  _  Recital  _  2026-04-12 .pdf
-   └──1──┘   └─2─┘   └───3───┘   └────4─────┘
+   └─last─┘  └first┘  └─title─┘   └───date────┘        ▸ edit the pattern
 
-   1  Smith        → [ Creator — MWDL/creators/creator  ▾ ]  when blank [ leave empty ▾ ]
-   2  Jane         → [ ⤷ joined with 1 as "Last, First"  ▾ ]
-   3  Recital      → [ Title — MWDL/title               ▾ ]  when blank [ leave empty ▾ ]
-   4  2026-04-12   → [ Date — MWDL/date                 ▾ ]  when blank [ leave empty ▾ ]
+Columns in your spreadsheet                              [ + Add column ]
 
-   ▸ Also read labels inside the documents            (collapsed)
-   ▸ Add a value to every row                          (collapsed)
+  ⋮⋮  attachment name          the file itself           🔒 required
+  ⋮⋮  Title                    from  [ title      ▾ ]    ✕
+  ⋮⋮  Creator                  from  [ last, first ▾ ]   ✕
+  ⋮⋮  Date                     from  [ date       ▾ ]    ✕
+  ⋮⋮  Publisher                always [ BYU-Idaho    ]   ✕
+  ⋮⋮  Description              (empty — fill in Excel)   ✕
+                                                          ⚠ nothing fills this
 
    Preview — first 5 files                    ⚠ 1 of 5 has no title
-   ┌────────────────────┬───────────────┬────────────┐
-   │ attachment name    │ MWDL/title    │ MWDL/date  │
-   │ Smith_Jane_…pdf    │ Recital       │ 2026-04-12 │
-   │ Lee_Anna_…pdf      │ Jury          │ 2026-04-13 │
-   │ scan_0142.pdf      │ (blank)       │ 2026-04-13 │
-   └────────────────────┴───────────────┴────────────┘
-
-   Advanced: edit the pattern directly  {last}_{first}_{title}_{date}.pdf
+   ┌──────────────────┬─────────────┬────────────┬─────────────┐
+   │ attachment name  │ MWDL/title  │ MWDL/date  │ MWDL/descr… │
+   │ Smith_Jane_…pdf  │ Recital     │ 2026-04-12 │             │
+   │ Lee_Anna_…pdf    │ Jury        │ 2026-04-13 │             │
+   │ scan_0142.pdf    │ (blank)     │ 2026-04-13 │             │
+   └──────────────────┴─────────────┴────────────┴─────────────┘
 ```
 
-The template remains the stored form and the source of truth — the segment table
-is a view over it, and the text field stays available for filenames too
-irregular for the detector. This preserves the template mechanism chosen during
-design while removing the requirement to type one.
+- **Add** opens the schema field list — searchable, showing plain-language names
+  with their xpaths, and greying out fields already used. This reuses
+  `parseSchemaPaths`, so the choices are the real ~158 leaf paths and nothing
+  invalid can be picked.
+- **Remove** (`✕`) takes the column out of the output entirely. It is
+  immediately undoable from an inline "Removed *Date*. **Undo**" message rather
+  than guarded by a confirmation dialog — the action is cheap to reverse and
+  nothing is destroyed, so a modal would be friction without safety.
+- **Reorder** by dragging the handle, with keyboard equivalents (a focused row
+  moves with `Alt`+`↑`/`↓`), because drag-only reordering is unusable for
+  keyboard and screen-reader users.
+- **Change** the source from the per-row dropdown: a filename part, a document
+  label, a document property, a constant, or nothing. The dropdown offers only
+  sources that actually exist for these files — a `Performer:` label appears
+  only if it was found in the scanned documents, so the list is evidence-based
+  rather than aspirational.
+- **A column that nothing fills is warned about, not forbidden.** Empty columns
+  are a legitimate, common choice: somewhere to type in Excel.
+
+Every edit re-renders the preview immediately, so the consequence of a change is
+visible in the same glance as the change itself.
+
+The template remains the stored form and the source of truth — the segment
+display is a view over it, and editing it as text stays available for filenames
+too irregular for the detector. This preserves the template mechanism chosen
+during design while removing the requirement to type one.
 
 **Step 3 — Save.** A summary of what will be written and what is thin, then Save.
 Afterwards: the path, an **Open containing folder** button, and a plain
@@ -248,6 +304,11 @@ oeq-upload extract --dir ./files --profile music.profile.json --dry-run
 ```
 
 `--dry-run` prints the first five rows and the problem summary without writing.
+
+Adding, removing or reordering columns from the command line means editing the
+profile's `columns` array in a text editor — which is the point of keeping the
+profile a plain, ordered, human-readable file rather than app state. `--dry-run`
+after an edit is the fast way to confirm it did what you meant.
 
 ## MCP
 
@@ -297,7 +358,16 @@ assumption — `src/core/client.ts` and `tests/helpers/mockServer.ts` did exactl
 that twice, and a 240-test suite stayed green. Fixtures must be bytes.
 
 Unit coverage for `pattern.ts` (including filenames that do not match), the
-precedence chain, `labels.ts`, and profile validation including a bad xpath.
+per-column source chain, `labels.ts`, and profile validation including a bad
+xpath.
+
+Column editing gets its own tests, because it is the part a user touches most
+and the part where a silent mistake is most expensive: that removing a column
+removes exactly one, that reordering changes only order and never values, that
+adding a duplicate path is rejected, that an empty column produces an empty
+cell rather than a missing one, and that `attachment name` cannot be removed,
+reordered, retargeted or renamed by any operation. That last one is a data-loss
+guard, not a niceness — a spreadsheet without it cannot be uploaded at all.
 
 Fixtures carry no real student names, per the standing rule.
 
@@ -321,6 +391,7 @@ plain modules that tests can import without Electron, as `confirm.ts` and
 | Extraction sources | Filename, document text labels, embedded properties |
 | Output | A spreadsheet file, reviewed in Excel; not loaded into the app |
 | Repeating value | One constant per field, filled down; multi-value dropped |
+| Column control | Add, remove, reorder and retarget any column; `attachment name` locked. Empty columns allowed on purpose |
 | Filename mechanism | Fill-in-the-blank template, with a segment picker over it |
 | Formats | PDF (text layer), `.docx`; scanned PDFs flagged; `.doc` excluded |
 | Scanned PDFs | Filename + properties, flagged — no OCR |
