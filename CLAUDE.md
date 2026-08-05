@@ -56,6 +56,7 @@ The spec lives at
 ```text
 files/            Batch inputs — MP4s + spreadsheet. GITIGNORED (size + student names).
 src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by every front end.
+src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
 src/cli/          plan | run | status | retry | login | logout | check
 src/mcp/          Nine MCP tools
 src/desktop/      Electron app (in progress). Renderer has no Node access.
