@@ -60,14 +60,13 @@ certificate that Windows recognizes. That's a paperwork/cost step, not a
 safety one — Windows shows this warning for *any* unsigned program, no matter
 how safe it is, the first time it's run on a computer.
 
-<!--
-  PENDING: real screenshot of the SmartScreen "Windows protected your PC"
-  dialog, to be captured by the operator during the clean-machine test
-  (docs/superpowers/plans/2026-08-04-desktop-gui.md, Task 10 Step 3). Replace
-  this placeholder with the actual image once captured -- do not remove the
-  slot, the plan and spec both require a screenshot here.
--->
-![Windows protected your PC — click More info, then Run anyway](images/smartscreen.png)
+This is what it looks like:
+
+![The Windows SmartScreen warning: a blue dialog headed "Windows protected your PC", with a "More info" link below the message and a "Don't run" button in the corner](images/smartscreen.png)
+
+Note there is no "Run anyway" button visible at first — only **Don't run**.
+That is deliberate on Microsoft's part, and it is where most people give up.
+Click **More info** and the button appears.
 
 To continue past it:
 
