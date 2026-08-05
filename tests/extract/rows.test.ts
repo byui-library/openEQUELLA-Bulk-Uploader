@@ -34,6 +34,21 @@ describe('normaliseDate', () => {
   it('returns null for empty input', () => {
     expect(normaliseDate('')).toBeNull();
   });
+
+  // The bare-year guard. V8 parses new Date('1953') successfully, to
+  // 1953-01-01 -- inventing a month and a day that were never in the source.
+  // Year-only dates are ordinary in digitised material, so this is not an
+  // edge case. A mutation pass found that deleting both guard lines broke no
+  // test, because the existing "not a date" inputs are rejected by V8 anyway.
+  it('returns null for a bare year rather than inventing January the 1st', () => {
+    expect(normaliseDate('1953')).toBeNull();
+    expect(normaliseDate('2026')).toBeNull();
+  });
+
+  it('returns null for a value with no four-digit year at all', () => {
+    expect(normaliseDate('April')).toBeNull();
+    expect(normaliseDate('12/04')).toBeNull();
+  });
 });
 
 describe('buildRow', () => {
@@ -85,6 +100,15 @@ describe('buildRow', () => {
   it('keeps an unrecognisable date verbatim and says so', () => {
     const row = buildRow(profile, 'Smith_Jane_Recital_x.pdf', EMPTY_DOC);
     expect(row.cells['MWDL/date']).toBe('x');
+    expect(row.notes.join(' ')).toMatch(/not recognised as a date/i);
+  });
+
+  // The same guard as above, but reached the way a real batch would reach it:
+  // through a filename whose date part is just a year. The cell must keep the
+  // year as found and say so, not silently become the first of January.
+  it('keeps a year-only date verbatim instead of inventing a month and day', () => {
+    const row = buildRow({ ...profile, pattern: '{title}_{date}.pdf' }, 'Recital_1953.pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/date']).toBe('1953');
     expect(row.notes.join(' ')).toMatch(/not recognised as a date/i);
   });
 
