@@ -1583,8 +1583,11 @@ describe('buildRow', () => {
     expect(row.cells['MWDL/date']).toBe('2026-04-12');
   });
 
+  // Exactly four underscore-separated tokens, matching the four placeholders.
+  // A fifth token would be absorbed by {date} through the lazy matching that
+  // pattern.ts documents and tests, giving 'Recital_x' rather than 'x'.
   it('keeps an unrecognisable date verbatim and says so', () => {
-    const row = buildRow(profile, 'Smith_Jane_Senior_Recital_x.pdf', EMPTY_DOC);
+    const row = buildRow(profile, 'Smith_Jane_Recital_x.pdf', EMPTY_DOC);
     expect(row.cells['MWDL/date']).toBe('x');
     expect(row.notes.join(' ')).toMatch(/not recognised as a date/i);
   });
@@ -1756,7 +1759,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run tests/extract/rows.test.ts`
-Expected: PASS, 17 tests.
+Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Typecheck and commit**
 
