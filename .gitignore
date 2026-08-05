@@ -55,3 +55,7 @@ jobs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Real files used for hands-on trials of the extractor. Never committed:
+# size, and they are whatever the operator happened to point the tool at.
+tests/test files/
