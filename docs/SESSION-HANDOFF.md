@@ -1,10 +1,11 @@
-# Session handoff — updated 2026-08-04
+# Session handoff — updated 2026-08-05
 
 Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **389 passing across 32 files**.
+1. `npm install && npm test` — expect **522 passing across 47 files** (389 from
+   the desktop GUI plus the metadata extractor's own tests, added since).
 2. Task 9 (packaging) and Task 10 (verification) from the desktop plan.
 
 Sign-in is confirmed working on **both** instances; there is no open loop.
@@ -25,7 +26,8 @@ staff, reusing `src/core/` unchanged.
 - The CLI lives on `feature/bulk-uploader`; `main` holds only initial scaffolding
 - Design: [superpowers/specs/2026-08-04-desktop-gui-design.md](superpowers/specs/2026-08-04-desktop-gui-design.md)
 - Plan: [superpowers/plans/2026-08-04-desktop-gui.md](superpowers/plans/2026-08-04-desktop-gui.md)
-- **Tasks 1–8 of 10 done. 389 tests across 32 files.**
+- **Tasks 1–8 of 10 done. 389 tests across 32 files as of that work** (the repo
+  total is now 522 across 47 files — see the metadata extractor below).
 
 Built so far: Electron scaffolding with a fully sandboxed renderer,
 per-instance encrypted credential/token storage, a typed IPC contract, session
@@ -36,13 +38,49 @@ Remaining: **Task 9** (packaging + `docs/INSTALL.md`), **Task 10**
 (verification including a clean-machine test).
 
 ```text
-npm test            389 tests, 32 files
+npm test            522 tests, 47 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
 npm run desktop     build then launch
 npm run dist        electron-builder -> release/
 ```
+
+**Metadata extractor, stage 1 (core + CLI) is complete** on
+`feature/metadata-extractor`. `oeq-upload extract` builds a spreadsheet from a
+folder of PDFs and `.docx` files, driven by a profile. Stage 2 (desktop screens)
+and stage 3 (MCP tools) are specified but not planned; write their plans from
+[the design doc](superpowers/specs/2026-08-05-metadata-extractor-design.md)
+once this has been run against a real folder.
+
+**Not yet run against real material.** Before trusting it on a batch, point it
+at a folder of genuine files with `--dry-run` and read the `_notes` column.
+
+**Tried against real material, three times.** Nine PDFs; the same PDFs renamed
+to a convention; then 59 real Word documents. Every trial found something the
+generated fixtures could not — PDF-syntax dates, a UTC day-shift, and compact
+filename dates — all fixed. The final run produced 59 rows with nothing
+flagged. The lesson worth keeping: the fixtures were *correct* but incomplete,
+and each gap was a thing every real file has and no fixture had.
+
+**Known gap, deliberately deferred: metadata held in Word tables.** Those 59
+documents keep their fields in a table, so the text extracts as `Company` then
+`HCA` on separate lines. Label matching only understands `Label: value` with a
+colon, so it found nothing in any of them — everything usable came from the
+filename and the document properties. Supporting "this line labels the next"
+would open up the document body. Decided against building it before the
+desktop stage, on the grounds that these files may not represent a real upload
+batch. Ask the operator before investing in it.
+
+Two decisions deferred to the operator, neither blocking:
+
+- **`pdfjs-dist` adds ~35 MB to the installer**, which is distributed over a
+  network share. Only `legacy/build` is used, so electron-builder `files`
+  exclusions may be able to trim it. Untested -- needs a real packaged build
+  to verify, which is why it was not attempted mid-implementation.
+- **Values beginning with `=` `+` `-` `@` become formulas when the CSV is
+  opened in Excel.** Documented rather than sanitised, because escaping them
+  would corrupt the value for upload.
 
 ## Sign-in — RESOLVED on both instances
 
