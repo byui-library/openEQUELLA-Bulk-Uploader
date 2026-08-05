@@ -208,8 +208,20 @@ describe('applyPattern', () => {
   it('does not match a placeholder to an empty string', () => {
     expect(applyPattern('{a}_{b}.pdf', '_x.pdf')).toBeNull();
   });
+
+  // Guards the trailing `$` anchor. Without it a filename that merely STARTS
+  // like the pattern matches, silently producing partial, wrong metadata --
+  // and every other "no match" test here fails for a different reason
+  // (missing separator, empty capture), so none of them would notice.
+  it('does not match when the filename has extra trailing characters', () => {
+    expect(applyPattern('{name}.pdf', 'Report.pdfExtra')).toBeNull();
+    expect(applyPattern('{last}_{first}.pdf', 'Smith_Jane.pdf.bak')).toBeNull();
+  });
 });
 ```
+
+This last test was added after a mutation pass found that deleting the `$`
+anchor broke nothing. **Expect 10 tests, not 9.**
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -230,7 +242,9 @@ export function placeholders(pattern: string): string[] {
   const seen = new Set<string>();
   for (const n of names) {
     if (seen.has(n)) {
-      throw new ValidationError(`Pattern uses {${n}} more than once; each name may appear only once.`);
+      // Wording matches sheet.ts's "Duplicate column headers" -- same problem,
+      // same word, so the two errors read as one family.
+      throw new ValidationError(`Duplicate placeholder {${n}}: each name may appear only once in a pattern.`);
     }
     seen.add(n);
   }

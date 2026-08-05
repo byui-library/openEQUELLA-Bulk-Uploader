@@ -42,4 +42,13 @@ describe('applyPattern', () => {
   it('does not match a placeholder to an empty string', () => {
     expect(applyPattern('{a}_{b}.pdf', '_x.pdf')).toBeNull();
   });
+
+  // Guards the trailing `$` anchor. Without it a filename that merely STARTS
+  // like the pattern matches, silently producing partial, wrong metadata --
+  // and every other "no match" test here fails for a different reason
+  // (missing separator, empty capture), so none of them would notice.
+  it('does not match when the filename has extra trailing characters', () => {
+    expect(applyPattern('{name}.pdf', 'Report.pdfExtra')).toBeNull();
+    expect(applyPattern('{last}_{first}.pdf', 'Smith_Jane.pdf.bak')).toBeNull();
+  });
 });
