@@ -13,6 +13,7 @@ import { runManifest } from '../core/runner.js';
 import { signInInteractive } from './signin.js';
 import type { Sheet } from '../core/types.js';
 import { OeqError } from '../core/errors.js';
+import { registerExtractHandlers } from './extractHandlers.js';
 
 const userData = () => app.getPath('userData');
 
@@ -424,4 +425,10 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
     CHANNELS.loadManifest,
     async (_e, p: Parameters<OeqApi['loadManifest']>[0]) => loadManifest(p),
   );
+
+  // Extract flow. Kept in its own module so this file does not keep growing,
+  // and so the schema path is resolved once, here, where packaging is known.
+  registerExtractHandlers(ipcMain, {
+    schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
+  });
 }
