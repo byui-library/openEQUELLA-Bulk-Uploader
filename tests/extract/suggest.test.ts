@@ -31,6 +31,15 @@ describe('detectPattern', () => {
   it('ignores files whose extension differs from the majority', () => {
     expect(detectPattern(['a_b.pdf', 'c_d.pdf', 'notes.txt'])).toBe('{part1}_{part2}.pdf');
   });
+
+  // Only readable files may vote on the pattern. A real folder contains the
+  // profile .json itself, Thumbs.db, stray notes -- and when unreadable files
+  // were counted, a single .json alongside a single .pdf won the tie and
+  // produced "{part1}.json". Found by the CLI's --init-profile test.
+  it('ignores unreadable files even when they outnumber the readable ones', () => {
+    expect(detectPattern(['Recital.pdf', 'p.profile.json'])).toBe('{part1}.pdf');
+    expect(detectPattern(['a_b.pdf', 'x.json', 'y.json', 'Thumbs.db'])).toBe('{part1}_{part2}.pdf');
+  });
 });
 
 describe('starterProfile', () => {

@@ -1,6 +1,7 @@
 // src/core/extract/suggest.ts
 import { extname } from 'node:path';
 import { ATTACHMENT_COLUMN, type Profile } from './types.js';
+import { isSupported } from './readers/index.js';
 
 const SEPARATORS = ['_', '-', ' '] as const;
 
@@ -29,7 +30,13 @@ function majorityExtension(filenames: string[]): string {
  * placeholder covering the whole name, which always matches and is honest
  * about having found no structure.
  */
-export function detectPattern(filenames: string[]): string {
+export function detectPattern(allFilenames: string[]): string {
+  // Only files the extractor can actually read may influence the pattern. A
+  // folder routinely contains other things -- the profile .json itself,
+  // Thumbs.db, a stray .txt -- and letting those vote produced a pattern
+  // built around the wrong extension entirely. Filtering here rather than in
+  // each caller keeps every front end correct by construction.
+  const filenames = allFilenames.filter(isSupported);
   const extension = majorityExtension(filenames);
   const stems = filenames
     .filter((n) => extname(n).toLowerCase() === extension)
