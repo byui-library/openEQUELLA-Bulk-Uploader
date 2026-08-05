@@ -52,7 +52,7 @@ export function renderExtract(
         profile: state.profile!,
         profilePath: state.profilePath,
         sampleFilename: state.scan?.supported[0] ?? '',
-        scan: state.scan ?? { supported: [], skipped: [], labels: [], properties: [] },
+        scan: state.scan ?? { labels: [], properties: [] },
         preview: state.preview,
         busy: state.busy,
         error: state.error,
@@ -73,7 +73,7 @@ export function renderExtract(
 
     case 'save':
       renderExtractSave(root, {
-        fileCount: state.scan?.supported.length ?? 0,
+        fileCount: state.savedPath === null ? (state.scan?.supported.length ?? 0) : state.savedWritten,
         flagged: state.savedFlagged,
         savedPath: state.savedPath,
         busy: state.busy,

@@ -2,7 +2,7 @@
 import type { OeqApi } from '../../ipc.js';
 import { addColumn, removeColumn, moveColumn, setSources, setDefault } from '../../../core/extract/columns.js';
 import type { Profile, Source } from '../../../core/extract/types.js';
-import { stripElectronWrapper } from '../errors.js';
+import { errorMessage } from '../errors.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
 
 export interface ExtractControllerOptions {
@@ -52,7 +52,11 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     try {
       set({ ...(await work()), busy: false });
     } catch (error) {
-      set({ busy: false, error: stripElectronWrapper((error as Error).message) });
+      // errorMessage, not stripElectronWrapper directly: it handles a thrown
+      // value that is not an Error, where `(error as Error).message` would be
+      // undefined and blank the error line instead of showing anything. Every
+      // other catch site in the desktop app uses it.
+      set({ busy: false, error: errorMessage(error) });
     }
   };
 
@@ -74,8 +78,13 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       const dir = await options.api.chooseFolder();
       if (dir === null) return;
       await guard(async () => {
-        const scan = await options.api.extractScan(dir);
-        const schemaPaths = await options.api.schemaPaths();
+        // Independent of each other: one samples the chosen folder, the other
+        // parses a static bundled schema file. Run together, as app.ts already
+        // does for its own pair of unrelated calls.
+        const [scan, schemaPaths] = await Promise.all([
+          options.api.extractScan(dir),
+          options.api.schemaPaths(),
+        ]);
         // The starter profile is built in the main process and arrives with the
         // scan. It holds only the attachment column: the program can see a
         // filename has four parts but cannot know part 2 is a first name.
@@ -162,7 +171,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       if (outPath === null) return;
       await guard(async () => {
         const report = await options.api.extractRun({ dir: state.dir!, profile: state.profile!, outPath });
-        return { savedPath: report.outPath, savedFlagged: report.flagged };
+        return { savedPath: report.outPath, savedWritten: report.written, savedFlagged: report.flagged };
       });
     },
 

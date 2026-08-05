@@ -4,11 +4,29 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **522 passing across 47 files** (389 from
-   the desktop GUI plus the metadata extractor's own tests, added since).
-2. Task 9 (packaging) and Task 10 (verification) from the desktop plan.
+1. `npm install && npm test` — expect **602 passing across 55 files**.
+2. You are on **`feature/extractor-desktop`**, open as **PR #3**, not merged.
+3. **The next thing to do is one manual check**, described under "The one test
+   that has never been run" below. It needs a human and takes ten minutes.
 
-Sign-in is confirmed working on **both** instances; there is no open loop.
+Do NOT build an installer yet. The operator asked that packaging wait.
+
+Sign-in is confirmed working on **both** instances; there is no open loop there.
+
+### Running the desktop app
+
+```bash
+npm run build:desktop
+npx electron dist-desktop/desktop/main.js
+```
+
+**Unset `ELECTRON_RUN_AS_NODE` first if it is set** — this sandbox sets it, and
+it turns `electron.exe` into plain Node, so the app exits silently with no
+window and no error. `npm run desktop` does the same two steps.
+
+The Extract flow is reached from **Choose what to upload → "I don't have a
+spreadsheet yet…"**, which means you must sign in to get to it, even though
+extraction never touches the network. Test instance is fine.
 
 ## Where the project is
 
@@ -55,13 +73,82 @@ a fully editable column list, a live preview, and an inline undo. It lives on
 [the design doc](superpowers/specs/2026-08-05-metadata-extractor-design.md) but
 not planned.
 
-**The desktop flow has never been driven by a human.** Its logic is covered by
-unit tests over plain modules, but native file dialogs cannot be scripted over
-the DevTools Protocol, so nothing has exercised the real thing end to end. The
-plan's Task 16 lists seven manual checks; the one that matters most is the
-last — feed a generated spreadsheet to the normal upload flow and confirm it
-validates without edits, which is the only thing that proves the two halves of
-the program fit together.
+**The desktop flow HAS now been driven by a human**, on 2026-08-05, and it
+works: folder chosen, columns edited, a column added, the picker and search
+usable. That session found six faults no test caught — see "What live testing
+found" below, which is the most useful section in this document.
+
+### The one test that has never been run
+
+**Save a spreadsheet from the Extract flow, then feed it straight back through
+Choose → Review and confirm it validates without edits.**
+
+That is the only step that proves the extractor and the uploader agree on the
+format. Everything else tests one half in isolation. If it fails it will fail on
+a column header or a value shape, and it is far cheaper to find now than on a
+real batch. It takes about ten minutes:
+
+1. Launch the app (see START HERE), sign in to Test
+2. Choose → **I don't have a spreadsheet yet…**
+3. Folder: `tests/test files` (gitignored; put PDFs or `.docx` files there)
+4. Continue → Save → write the CSV
+5. Back to Choose → **Choose spreadsheet…** → pick that CSV → Review
+
+Expected: Review lists the rows with no invalid-header complaints. The `_source`
+and `_notes` columns are `_`-prefixed and should be ignored by the uploader —
+if Review objects to them, that is the bug this check exists to find.
+
+### What live testing found — read this before writing any more UI
+
+Six faults, in one session of an operator clicking through the app. **Every one
+was invisible to 590 passing tests**, and the reasons are worth internalising
+because they will recur.
+
+1. **Blank white window.** `ui/extract/controller.ts` imported a core module
+   that reached `node:fs` three hops down. The renderer is sandboxed, the import
+   failed, the whole module graph died. Nothing on the terminal.
+   *Why tests missed it: vitest runs in Node, where those imports resolve.*
+   Now guarded by `tests/desktop/rendererPurity.test.ts`.
+
+2. **MWDL fields unreachable in the Add-column picker.** Sorted alphabetically
+   and capped at 50 rows, and `BYUI_extended` supplies 98 of the schema's 158
+   paths — so `MWDL/title` sat at position ~99 and no amount of scrolling
+   reached it. *Why tests missed it: the unit tests use four-path fixtures where
+   nothing can hide.* Now ordered MWDL first, grouped under headings, no cap.
+
+3. **The search box typed backwards** — "title" arrived as "eltit". Every
+   keystroke re-renders, destroying the input; re-focusing without restoring the
+   caret leaves it at position 0. *Why tests missed it: pure DOM behaviour, and
+   this project has no jsdom.*
+
+4. **Two SHIPPED inputs lost focus after every character** — the Confirm
+   screen's item-count box (the publish gate) and the Choose screen's collection
+   filter. Same root cause as (3). Unnoticed for months because Draft is the
+   default so the publish gate is rarely used. Both now call
+   `ui/dom.ts#keepCaret`.
+
+5. **A one-column starter profile** left the operator with nothing obvious to
+   do. Now proposes Title, Creator and Description.
+
+6. **A warning that fired on the default setup** — "nothing fills this" beside
+   every empty column, including the Description the starter profile now ships
+   empty on purpose. A warning that is always present is one people stop
+   reading. Removed; the dropdown already says "(nothing — fill in Excel)".
+
+The pattern across all six: **the tests verify logic, and every one of these was
+about behaviour at a boundary the tests do not cross** — the browser context,
+the real schema, the DOM, the default configuration. More unit tests would not
+have helped. Ten minutes of a person clicking would have, and did.
+
+**Open question worth deciding:** whether to add jsdom. It would have caught (3)
+and (4) outright. Against: another dependency, and jsdom is not Chromium, so it
+gives real confidence about some things and false confidence about others.
+
+**Known rough edge, not fixed:** on the Choose screen, "I don't have a
+spreadsheet yet…" sits below the starter-kit paragraph, so someone with no
+spreadsheet clicks the big obvious "Choose spreadsheet…" first, lands in a file
+picker filtered to `.xlsx/.xls/.csv`, and is stuck. The operator hit this. It
+should sit directly beneath "Choose spreadsheet…", where that question arises.
 
 **Tried against real material, three times.** Nine PDFs; the same PDFs renamed
 to a convention; then 59 real Word documents. Every trial found something the
