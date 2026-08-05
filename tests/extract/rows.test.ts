@@ -1,6 +1,6 @@
 // tests/extract/rows.test.ts
 import { describe, it, expect } from 'vitest';
-import { buildRow, normaliseDate } from '../../src/core/extract/rows.js';
+import { buildRow, normaliseDate, normaliseDateWithFormat } from '../../src/core/extract/rows.js';
 import { ATTACHMENT_COLUMN, type DocumentData, type Profile } from '../../src/core/extract/types.js';
 
 const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {} };
@@ -66,6 +66,46 @@ describe('normaliseDate', () => {
   });
 });
 
+describe('normaliseDateWithFormat', () => {
+  // A compact date is genuinely ambiguous -- 12032025 is 3 December to one
+  // reader and 12 March to another -- so the tool never guesses it. The
+  // profile declares which it is, because the operator knows and the file
+  // does not say. Found by running against 59 real files whose convention is
+  // MMDDYYYY; every row was flagged until the format could be stated.
+  it('parses a compact date in the declared order', () => {
+    expect(normaliseDateWithFormat('12032025', 'MMDDYYYY')).toBe('2025-12-03');
+    expect(normaliseDateWithFormat('12032025', 'DDMMYYYY')).toBe('2025-03-12');
+    expect(normaliseDateWithFormat('20251203', 'YYYYMMDD')).toBe('2025-12-03');
+  });
+
+  it('parses a date with separators', () => {
+    expect(normaliseDateWithFormat('12/03/2025', 'MM/DD/YYYY')).toBe('2025-12-03');
+    expect(normaliseDateWithFormat('03-12-2025', 'DD-MM-YYYY')).toBe('2025-12-03');
+  });
+
+  it('returns null when the value does not match the declared format', () => {
+    expect(normaliseDateWithFormat('2025-12-03', 'MMDDYYYY')).toBeNull();
+    expect(normaliseDateWithFormat('120325', 'MMDDYYYY')).toBeNull();
+    expect(normaliseDateWithFormat('', 'MMDDYYYY')).toBeNull();
+  });
+
+  it('rejects a value that matches the shape but is not a real date', () => {
+    expect(normaliseDateWithFormat('13012025', 'MMDDYYYY')).toBeNull();
+    expect(normaliseDateWithFormat('02302025', 'MMDDYYYY')).toBeNull();
+    expect(normaliseDateWithFormat('00012025', 'MMDDYYYY')).toBeNull();
+  });
+
+  it('accepts a real leap day and rejects a false one', () => {
+    expect(normaliseDateWithFormat('02292024', 'MMDDYYYY')).toBe('2024-02-29');
+    expect(normaliseDateWithFormat('02292025', 'MMDDYYYY')).toBeNull();
+  });
+
+  it('treats separator characters literally, not as regex', () => {
+    expect(normaliseDateWithFormat('12.03.2025', 'MM.DD.YYYY')).toBe('2025-12-03');
+    expect(normaliseDateWithFormat('12x03x2025', 'MM.DD.YYYY')).toBeNull();
+  });
+});
+
 describe('buildRow', () => {
   it('fills the attachment column with the filename verbatim', () => {
     const row = buildRow(profile, 'Smith_Jane_Recital_2026-04-12.pdf', EMPTY_DOC);
@@ -124,6 +164,33 @@ describe('buildRow', () => {
   it('keeps a year-only date verbatim instead of inventing a month and day', () => {
     const row = buildRow({ ...profile, pattern: '{title}_{date}.pdf' }, 'Recital_1953.pdf', EMPTY_DOC);
     expect(row.cells['MWDL/date']).toBe('1953');
+    expect(row.notes.join(' ')).toMatch(/not recognised as a date/i);
+  });
+
+  // The declared format reaching a row the way a real batch does.
+  it('uses a declared date format from the column', () => {
+    const withFormat: Profile = {
+      ...profile,
+      pattern: '{title}_{date}.pdf',
+      columns: profile.columns.map((c) =>
+        c.path === 'MWDL/date' ? { ...c, transform: { date: 'MMDDYYYY' } as const } : c,
+      ),
+    };
+    const row = buildRow(withFormat, 'Recital_12032025.pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/date']).toBe('2025-12-03');
+    expect(row.notes).toEqual([]);
+  });
+
+  it('notes when a value does not match the declared date format', () => {
+    const withFormat: Profile = {
+      ...profile,
+      pattern: '{title}_{date}.pdf',
+      columns: profile.columns.map((c) =>
+        c.path === 'MWDL/date' ? { ...c, transform: { date: 'MMDDYYYY' } as const } : c,
+      ),
+    };
+    const row = buildRow(withFormat, 'Recital_2025-12-03.pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/date']).toBe('2025-12-03');
     expect(row.notes.join(' ')).toMatch(/not recognised as a date/i);
   });
 

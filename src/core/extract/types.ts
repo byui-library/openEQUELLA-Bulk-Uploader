@@ -31,14 +31,28 @@ export type Source =
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 
+/** How a date column is normalised: automatically, or by a format the profile declares. */
+export type DateTransform = 'date' | { date: string };
+
 export interface Column {
   /** A schema xpath, or ATTACHMENT_COLUMN. Becomes the spreadsheet header. */
   path: string;
   sources: Source[];
   /** Used when every source came back empty. A column with no sources and a default is a constant. */
   default?: string;
-  /** Normalise a recognised date to YYYY-MM-DD. Never discards an unrecognised value. */
-  transform?: 'date';
+  /**
+   * Normalise a recognised date to YYYY-MM-DD. Never discards an unrecognised
+   * value -- it is kept as found and noted.
+   *
+   * `'date'` recognises unambiguous forms only. A compact date such as
+   * `12032025` is refused, because it reads as 3 December or 12 March
+   * depending on who wrote it and the file does not say which.
+   *
+   * `{ date: 'MMDDYYYY' }` states the format, so the value can be read without
+   * guessing. Tokens are YYYY, MM and DD, each exactly once, with any literal
+   * separators: `MMDDYYYY`, `YYYYMMDD`, `DD-MM-YYYY`.
+   */
+  transform?: DateTransform;
   /** True only for ATTACHMENT_COLUMN. Blocks removal, reordering and retargeting. */
   locked?: boolean;
 }
