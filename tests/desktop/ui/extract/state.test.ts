@@ -25,12 +25,12 @@ describe('initialExtractState', () => {
 describe('canContinue', () => {
   it('is false on the folder step until a folder with supported files is chosen', () => {
     expect(canContinue(state())).toBe(false);
-    expect(canContinue(state({ dir: 'C:/x', scan: { supported: [], skipped: [], labels: [], properties: [] } }))).toBe(false);
+    expect(canContinue(state({ dir: 'C:/x', scan: { supported: [], skipped: [], labels: [], properties: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } } }))).toBe(false);
   });
 
   it('is true once the folder holds at least one supported file', () => {
     expect(
-      canContinue(state({ dir: 'C:/x', scan: { supported: ['a.pdf'], skipped: [], labels: [], properties: [] } })),
+      canContinue(state({ dir: 'C:/x', scan: { supported: ['a.pdf'], skipped: [], labels: [], properties: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } } })),
     ).toBe(true);
   });
 

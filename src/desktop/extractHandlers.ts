@@ -10,6 +10,7 @@ import { findLabels } from '../core/extract/labels.js';
 import { buildRow } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
+import { starterProfile } from '../core/extract/suggest.js';
 import { DOCUMENT_PROPERTIES, type DocumentData, type ExtractedRow, type Profile } from '../core/extract/types.js';
 import { CHANNELS, type ExtractScan, type ExtractRunReport } from './ipc.js';
 
@@ -73,7 +74,13 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       for (const key of DOCUMENT_PROPERTIES) if (doc.properties[key] !== undefined) properties.add(key);
     }
 
-    return { supported, skipped, labels: [...labels].sort(), properties: [...properties] };
+    return {
+      supported,
+      skipped,
+      labels: [...labels].sort(),
+      properties: [...properties],
+      starter: starterProfile(supported),
+    };
   });
 
   ipcMain.handle(
