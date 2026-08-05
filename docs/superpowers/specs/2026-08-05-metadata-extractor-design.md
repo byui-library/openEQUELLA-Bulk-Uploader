@@ -57,7 +57,7 @@ spreadsheet in between.
 
 ```text
 src/core/extract/
-  profile.ts     load / save / validate the .profile.json   (zod, as config.ts)
+  profile.ts     load / save / validate the .profile.json   (zod, as src/mcp)
   pattern.ts     "{last}_{first}_{title}" → parse a filename
   labels.ts      find "Performer: Jane Smith" in document text
   readers/
@@ -133,7 +133,7 @@ retargeted freely.
   "version": 1,
   "pattern": "{last}_{first}_{title}_{date}.pdf",
   "columns": [
-    { "path": "attachment name",       "sources": [{ "filename": "*" }], "locked": true },
+    { "path": "attachment name",       "sources": [{ "filename": true }], "locked": true },
     { "path": "MWDL/title",            "sources": [{ "placeholder": "title" }, { "label": "Title" }] },
     { "path": "MWDL/creators/creator", "sources": [{ "join": "{last}, {first}" }, { "label": "Performer" }] },
     { "path": "MWDL/date",             "sources": [{ "placeholder": "date" }, { "property": "created" }],
@@ -343,11 +343,20 @@ result is a working extractor with a command line — not a half-built feature.
 
 ## Dependencies
 
-One new production dependency for PDF text extraction (`pdfjs-dist` or
-equivalent). `.docx` requires only zip + XML. CSV writing goes through `exceljs`,
-already a production dependency, rather than hand-rolled quoting — the sheet
-reader's history with malformed CSV is reason enough not to hand-roll the
-writer.
+Two new production dependencies:
+
+- **`pdfjs-dist`** — PDF text and document properties. Used via its `legacy`
+  build, which is the one that runs under Node without a DOM.
+- **`fflate`** — a small zero-dependency unzipper. `.docx` is a zip of XML, and
+  while `exceljs` bundles a zip implementation it does not expose one. The XML
+  inside is parsed with `fast-xml-parser`, already a dependency.
+
+CSV writing goes through `exceljs`, already a production dependency, rather than
+hand-rolled quoting — the sheet reader's history with malformed CSV is reason
+enough not to hand-roll the writer.
+
+Both new packages ship inside the installer. The credential-scan step in
+`.github/workflows/release.yml` covers them like any other bundled code.
 
 ## Testing
 
