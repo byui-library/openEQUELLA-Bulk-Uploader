@@ -171,6 +171,44 @@ there once you've confirmed the upload worked. Nothing about running this
 test is different from a real batch; it's the same code path, just with a
 spreadsheet and file the program already knows are correct.
 
+## Building a spreadsheet from your files
+
+If you have a folder of PDFs or Word documents and no spreadsheet, the program
+can build one for you. On the **Choose what to upload** screen, click
+**I don't have a spreadsheet yet…**.
+
+It works in three steps:
+
+1. **Choose the folder.** The program says how many files it can read, and
+   lists any it cannot — nothing is skipped silently.
+2. **Set up the columns.** It shows one of your filenames broken into parts, and
+   a list of the columns your spreadsheet will have. Add, remove and reorder
+   them, and say where each one's value comes from. A preview of the first few
+   files updates as you go.
+3. **Save.** The spreadsheet is written where you choose.
+
+**Then open it in Excel and check it before uploading.** This step guesses, and
+everything else the program does doesn't. Two extra columns help you check:
+
+- `_notes` — rows that need a look, and why
+- `_source` — where each value came from
+
+The uploader ignores both, so you can leave them in place.
+
+### If the dates come out wrong
+
+Dates are the thing most likely to need a second look. A date written as
+`12032025` could be 3 December or 12 March — the program will not guess, so it
+leaves the value alone and flags the row. If all your files name dates the same
+way, ask your administrator to set the date format in the profile once, and it
+will read them correctly from then on.
+
+A date that is only a year, like `1953`, is kept exactly as it is rather than
+being turned into the 1st of January.
+
+If you will do this again with the same kind of files, click **Save profile…**
+so you don't have to set the columns up next time.
+
 ## What happens when you upload
 
 This guide covers installing and starting the program, not the full upload

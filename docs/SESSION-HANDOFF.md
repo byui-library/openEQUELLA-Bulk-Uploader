@@ -46,15 +46,22 @@ npm run desktop     build then launch
 npm run dist        electron-builder -> release/
 ```
 
-**Metadata extractor, stage 1 (core + CLI) is complete** on
-`feature/metadata-extractor`. `oeq-upload extract` builds a spreadsheet from a
-folder of PDFs and `.docx` files, driven by a profile. Stage 2 (desktop screens)
-and stage 3 (MCP tools) are specified but not planned; write their plans from
-[the design doc](superpowers/specs/2026-08-05-metadata-extractor-design.md)
-once this has been run against a real folder.
+**Metadata extractor stages 1 and 2 are complete.** Stage 1 (core + CLI) is
+merged to `main`. `oeq-upload extract` builds a spreadsheet from a folder of
+PDFs and `.docx` files, driven by a profile. Stage 2 gives the desktop app the
+same flow across three screens — choose a folder, edit the columns, save — with
+a fully editable column list, a live preview, and an inline undo. It lives on
+`feature/extractor-desktop`. Stage 3 (MCP tools) is specified in
+[the design doc](superpowers/specs/2026-08-05-metadata-extractor-design.md) but
+not planned.
 
-**Not yet run against real material.** Before trusting it on a batch, point it
-at a folder of genuine files with `--dry-run` and read the `_notes` column.
+**The desktop flow has never been driven by a human.** Its logic is covered by
+unit tests over plain modules, but native file dialogs cannot be scripted over
+the DevTools Protocol, so nothing has exercised the real thing end to end. The
+plan's Task 16 lists seven manual checks; the one that matters most is the
+last — feed a generated spreadsheet to the normal upload flow and confirm it
+validates without edits, which is the only thing that proves the two halves of
+the program fit together.
 
 **Tried against real material, three times.** Nine PDFs; the same PDFs renamed
 to a convention; then 59 real Word documents. Every trial found something the
