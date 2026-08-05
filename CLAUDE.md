@@ -59,7 +59,8 @@ src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by e
 src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
 src/cli/          plan | run | status | retry | login | logout | check
 src/mcp/          Nine MCP tools
-src/desktop/      Electron app (in progress). Renderer has no Node access.
+src/desktop/      Electron app. Renderer is sandboxed: NO Node access, no `node:` imports.
+src/desktop/ui/extract/  The extract flow's own state, controller and screens.
 schema/           openEQUELLA schema reference material (committed).
   _entity.xml       BYUI_MWDL schema export, uuid c93181f3-a443-41bf-9afe-ac9f7daf90b7
   sample.xml        A real contributed item, used as the golden target for output
@@ -103,6 +104,19 @@ easy to get wrong from first principles.
 - **The MCP layer never streams file bytes.** It plans, validates, launches, and
   monitors. Uploading belongs to the runner process.
 - Never commit real spreadsheets, `.env` files, or media.
+- **Nothing reachable from `src/desktop/ui/` may import `node:*` or `electron`.**
+  The renderer is sandboxed. Such an import does not fail loudly — it kills the
+  whole module graph and the window renders blank, with nothing on the terminal.
+  This happened: `ui/extract/controller.ts` imported a core module that reached
+  `node:fs` three hops down, and all 590 tests still passed, because vitest runs
+  in Node. `tests/desktop/rendererPurity.test.ts` now walks the import graph and
+  fails the build instead. If the renderer needs something a Node-dependent
+  module computes, compute it in the main process and send it over IPC.
+- **Any input whose `input` event triggers a re-render must call
+  `ui/dom.ts#keepCaret`.** Screens render by replacing `innerHTML`, so the input
+  is destroyed and recreated on every keystroke; without it the field loses
+  focus after one character, or types backwards if it re-focuses without
+  restoring the caret. Both shipped for months unnoticed.
 
 ## Working notes
 

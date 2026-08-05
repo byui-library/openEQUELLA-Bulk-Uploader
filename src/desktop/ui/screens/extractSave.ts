@@ -26,19 +26,24 @@ export function renderExtractSave(root: HTMLElement, props: ExtractSaveProps): v
 
       ${
         done
-          ? `<p class="summary">Saved to <code>${escapeHtml(props.savedPath!)}</code></p>
-             <p><strong>Open it in Excel and check it before uploading.</strong>
-             The <code>_notes</code> column says which rows need a look, and
-             <code>_source</code> says where each value came from. Delete both
-             columns or leave them &mdash; the uploader ignores them.</p>`
-          : `<p class="summary">
-               <strong>${props.fileCount}</strong> row(s) will be written.
+          ? `<p class="summary">
+               Saved <strong>${props.fileCount}</strong> row(s) to
+               <code>${escapeHtml(props.savedPath!)}</code>.
                ${
                  props.flagged === 0
                    ? 'None need review.'
                    : `<strong>${props.flagged}</strong> need review &mdash; see the <code>_notes</code> column.`
                }
-             </p>`
+             </p>
+             <p><strong>Open it in Excel and check it before uploading.</strong>
+             The <code>_notes</code> column says which rows need a look, and
+             <code>_source</code> says where each value came from. Delete both
+             columns or leave them &mdash; the uploader ignores them.</p>`
+          : // Deliberately says nothing about how many rows need review. The
+            // count comes from the real run, which has not happened yet -- it
+            // is zero here for the whole life of this screen, so claiming
+            // "None need review" before writing anything was simply false.
+            `<p class="summary"><strong>${props.fileCount}</strong> row(s) will be written.</p>`
       }
 
       ${props.error === null ? '' : `<p class="error" role="alert">${escapeHtml(props.error)}</p>`}

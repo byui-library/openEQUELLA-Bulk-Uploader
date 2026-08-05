@@ -1,11 +1,11 @@
 // src/desktop/extractHandlers.ts
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IpcMain } from 'electron';
 import { dialog, shell } from 'electron';
 import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
-import { extractFolder } from '../core/extract/extract.js';
-import { readDocument, isSupported } from '../core/extract/readers/index.js';
+import { extractFolder, listFolder } from '../core/extract/extract.js';
+import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
 import { buildRow } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
@@ -29,10 +29,19 @@ export function __resetExtractCache(): void {
   cache = null;
 }
 
-async function sample(dir: string, filenames: string[]): Promise<CacheEntry> {
+/**
+ * The documents behind the preview, read once per folder.
+ *
+ * Listing the folder happens INSIDE the cache miss. It used to happen at both
+ * call sites before this was invoked, which meant every column edit walked the
+ * directory again and then threw the result away, since a cache hit never looks
+ * at it.
+ */
+async function sample(dir: string): Promise<CacheEntry> {
   if (cache?.dir === dir) return cache;
+  const { supported } = await listFolder(dir);
   const docs: { filename: string; doc: DocumentData }[] = [];
-  for (const filename of filenames.slice(0, Math.max(PREVIEW_ROWS, SAMPLE_DOCS))) {
+  for (const filename of supported.slice(0, Math.max(PREVIEW_ROWS, SAMPLE_DOCS))) {
     try {
       docs.push({ filename, doc: await readDocument(join(dir, filename)) });
     } catch {
@@ -51,21 +60,14 @@ export interface ExtractHandlerOptions {
 
 export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandlerOptions): void {
   ipcMain.handle(CHANNELS.extractScan, async (_e, dir: string): Promise<ExtractScan> => {
-    const entries = await readdir(dir, { withFileTypes: true });
-    const files = entries.filter((e) => e.isFile()).map((e) => e.name).sort((a, b) => a.localeCompare(b));
-    const supported = files.filter(isSupported);
-
-    const skipped = files
-      .filter((f) => !isSupported(f))
-      .map((file) => ({
-        file,
-        reason: file.toLowerCase().endsWith('.doc')
-          ? 'Word 2003 and earlier (.doc) cannot be read -- save as .docx first'
-          : 'unsupported file type',
-      }));
+    // listFolder is core's own, shared with extractFolder. This handler used to
+    // reimplement it, with a shorter skip reason that omitted the extension --
+    // so a skipped file was described one way here and another way in the run
+    // that followed.
+    const { supported, skipped } = await listFolder(dir);
 
     cache = null;
-    const { docs } = await sample(dir, supported);
+    const { docs } = await sample(dir);
 
     const labels = new Set<string>();
     const properties = new Set<string>();
@@ -86,14 +88,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
   ipcMain.handle(
     CHANNELS.extractPreview,
     async (_e, args: { dir: string; profile: Profile }): Promise<ExtractedRow[]> => {
-      const entries = await readdir(args.dir, { withFileTypes: true });
-      const supported = entries
-        .filter((e) => e.isFile())
-        .map((e) => e.name)
-        .filter(isSupported)
-        .sort((a, b) => a.localeCompare(b));
-
-      const { docs } = await sample(args.dir, supported);
+      const { docs } = await sample(args.dir);
       return docs
         .slice(0, PREVIEW_ROWS)
         .map(({ filename, doc }) => buildRow(args.profile, filename, doc));

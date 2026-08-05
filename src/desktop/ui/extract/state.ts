@@ -19,6 +19,8 @@ export interface ExtractState {
   error: string | null;
   /** Set once the spreadsheet has been written. */
   savedPath: string | null;
+  /** Rows actually written by the run, which can be fewer than the folder scan found. */
+  savedWritten: number;
   savedFlagged: number;
   /** True while the Add-column picker is open. */
   adding: boolean;
@@ -40,6 +42,7 @@ export function initialExtractState(): ExtractState {
     busy: false,
     error: null,
     savedPath: null,
+    savedWritten: 0,
     savedFlagged: 0,
     adding: false,
     addQuery: '',

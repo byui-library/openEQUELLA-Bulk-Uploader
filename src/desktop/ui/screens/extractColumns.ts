@@ -1,7 +1,7 @@
 // src/desktop/ui/screens/extractColumns.ts
 import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
-import { describeSource, sourceOptions } from '../extract/sources.js';
+import { describeSource, sourceOptions, type SourceEvidence } from '../extract/sources.js';
 import { plainLabel } from '../extract/picker.js';
 import type { ExtractedRow, Profile, Source } from '../../../core/extract/types.js';
 
@@ -9,7 +9,10 @@ export interface ExtractColumnsProps {
   profile: Profile;
   profilePath: string | null;
   sampleFilename: string;
-  scan: { supported: string[]; skipped: { file: string; reason: string }[]; labels: string[]; properties: string[] };
+  /** Only the evidence the source dropdowns are built from. This screen reads
+   * neither the file list nor the skipped list, and carrying them meant every
+   * caller had to construct fields nobody looked at. */
+  scan: SourceEvidence;
   preview: ExtractedRow[];
   busy: boolean;
   error: string | null;

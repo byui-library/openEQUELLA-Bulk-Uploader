@@ -185,6 +185,14 @@ It works in three steps:
    a list of the columns your spreadsheet will have. Add, remove and reorder
    them, and say where each one's value comes from. A preview of the first few
    files updates as you go.
+
+   You start with four columns already there: the file itself, **Title** and
+   **Creator** (both read from the document's own properties, where most PDFs
+   and Word files record them), and an empty **Description** for you to fill in.
+   Remove any you don't want — nothing is compulsory except the file itself,
+   which is how each row is matched to its document.
+
+   Removing a column offers an **Undo** straight away, so it is safe to try.
 3. **Save.** The spreadsheet is written where you choose.
 
 **Then open it in Excel and check it before uploading.** This step guesses, and
@@ -194,6 +202,12 @@ everything else the program does doesn't. Two extra columns help you check:
 - `_source` — where each value came from
 
 The uploader ignores both, so you can leave them in place.
+
+`_source` earns its keep on titles in particular. Most documents record a
+sensible title, but a fair few record something left over from how the file was
+made — an internal reference number, or the name of the Word file it was
+exported from. Sort by `_source` in Excel, glance down the rows that say
+`title=properties`, and you will spot those in a moment.
 
 ### If the dates come out wrong
 
