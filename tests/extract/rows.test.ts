@@ -45,6 +45,21 @@ describe('normaliseDate', () => {
     expect(normaliseDate('2026')).toBeNull();
   });
 
+  // Word writes `created` as a UTC timestamp. Reading local date parts off it
+  // shifted the day backwards for any time before the UTC offset -- a silently
+  // wrong date, with no note, on a published item. Found by running against 59
+  // real .docx files. The date part of an ISO timestamp is taken verbatim now;
+  // no Date parsing, so no timezone can be involved.
+  it('takes the date from an ISO timestamp without shifting the day', () => {
+    expect(normaliseDate('2025-12-04T01:00:00Z')).toBe('2025-12-04');
+    expect(normaliseDate('2025-06-04T02:30:00Z')).toBe('2025-06-04');
+    expect(normaliseDate('2025-12-03T23:58:00Z')).toBe('2025-12-03');
+  });
+
+  it('takes the date from an ISO timestamp with a non-UTC offset', () => {
+    expect(normaliseDate('2025-12-04T01:00:00+13:00')).toBe('2025-12-04');
+  });
+
   it('returns null for a value with no four-digit year at all', () => {
     expect(normaliseDate('April')).toBeNull();
     expect(normaliseDate('12/04')).toBeNull();
