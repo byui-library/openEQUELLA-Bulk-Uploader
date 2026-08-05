@@ -48,6 +48,13 @@ jobs:
       - name: Build installers
         # The build is unsigned. Disabling auto-discovery stops electron-builder
         # hunting for a certificate and failing confusingly when it finds none.
+        #
+        # `npm run dist` passes `--publish never`. Without it, electron-builder
+        # detects CI plus a matching tag and tries to publish to GitHub Releases
+        # on its own, then fails with "GitHub Personal Access Token is not set"
+        # AFTER both installers have been built successfully -- which reads like
+        # a build failure but isn't. We publish with `gh` further down instead,
+        # to keep the dependency surface small.
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run dist
