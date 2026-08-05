@@ -211,7 +211,9 @@ None blocking, all flagged during implementation:
 
 ## Outstanding for the operator
 
-- Review and submit the 37 production drafts.
+- Nothing. The 37 production items are **meant to stay as drafts** — draft is
+  the finished state for this collection, not a pending step. Do not suggest
+  submitting them.
 - Apply shared owners via Manage Resources.
 - Task 10 needs a Windows machine with **no Node installed** — the only way to
   prove the "zero prerequisites" claim.

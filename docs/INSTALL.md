@@ -159,10 +159,13 @@ folder of files, and reviewing everything before anything is sent. The one
 thing worth knowing in advance:
 
 **Items are created as drafts by default**, and this is deliberate. A draft
-is created in openEQUELLA but is not visible to anyone until it is reviewed
-and submitted *inside openEQUELLA itself* — the program does not do that part
-for you. After a batch finishes, someone still needs to go into openEQUELLA
-and submit the new drafts. Nothing goes live automatically.
+exists in openEQUELLA but is not visible to others. Nothing goes live
+automatically, and this program never submits anything for you.
+
+Whether drafts should stay as drafts or be submitted afterwards depends on
+your workflow — for some collections, draft *is* the finished state. Ask
+whoever asked you to run the upload. If they do want them submitted, that
+happens inside openEQUELLA, not here.
 
 (The program also offers a "Published" option that skips the draft step and
 makes items visible immediately. It's guarded by an extra confirmation
