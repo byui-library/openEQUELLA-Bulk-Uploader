@@ -116,3 +116,32 @@ describe('createExtractController', () => {
     expect(render).toHaveBeenCalled();
   });
 });
+
+describe('add-column picker', () => {
+  it('opens and closes', async () => {
+    const c = createExtractController({ api: api() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    c.openAdd();
+    expect(c.state().adding).toBe(true);
+    c.closeAdd();
+    expect(c.state().adding).toBe(false);
+  });
+
+  it('clears the query when it closes, so it does not reopen pre-filtered', async () => {
+    const c = createExtractController({ api: api() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    c.openAdd();
+    c.setAddQuery('title');
+    c.closeAdd();
+    expect(c.state().addQuery).toBe('');
+  });
+
+  it('closes after adding a column', async () => {
+    const c = createExtractController({ api: api() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    c.openAdd();
+    await c.addColumn('MWDL/title');
+    expect(c.state().adding).toBe(false);
+  });
+});

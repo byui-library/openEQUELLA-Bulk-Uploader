@@ -20,6 +20,10 @@ export interface ExtractState {
   /** Set once the spreadsheet has been written. */
   savedPath: string | null;
   savedFlagged: number;
+  /** True while the Add-column picker is open. */
+  adding: boolean;
+  /** The picker's search box. */
+  addQuery: string;
 }
 
 export function initialExtractState(): ExtractState {
@@ -35,6 +39,8 @@ export function initialExtractState(): ExtractState {
     error: null,
     savedPath: null,
     savedFlagged: 0,
+    adding: false,
+    addQuery: '',
   };
 }
 
