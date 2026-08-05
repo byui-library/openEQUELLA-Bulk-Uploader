@@ -5,10 +5,9 @@ Read this first.
 ## START HERE
 
 1. `npm install && npm test` — expect **389 passing across 32 files**.
-2. **Ask the operator whether Test-instance sign-in works now.** It was still
-   failing when the session ended and the last fix is unconfirmed. See
-   "Open loop" below.
-3. Then Task 9 (packaging) and Task 10 (verification) from the desktop plan.
+2. Task 9 (packaging) and Task 10 (verification) from the desktop plan.
+
+Sign-in is confirmed working on **both** instances; there is no open loop.
 
 ## Where the project is
 
@@ -45,11 +44,13 @@ npm run desktop     build then launch
 npm run dist        electron-builder -> release/
 ```
 
-## Open loop — Test-instance sign-in
+## Sign-in — RESOLVED on both instances
 
-Production sign-in works and was verified live, twice. **Test sign-in was still
-failing when the session ended.** Two causes were found and fixed; the second
-fix is unconfirmed by the operator.
+Production sign-in was verified live, twice. **Test sign-in was confirmed
+working by the operator on 2026-08-05**, after the two fixes below. No open
+loop remains here.
+
+Two causes were found and fixed:
 
 1. Selecting Test sent **production's** client ID — credentials were stored
    globally when they are per-instance. Fixed in `f31505b`: `SecretStore` is now
@@ -70,8 +71,9 @@ surface its "Problem description" rather than reporting `ERR_FAILED (-2)`. A
 transport error was being shown while the server had rendered a clear
 explanation.
 
-**First question for the operator:** did Test sign-in work? If not, the error
-should now be openEQUELLA's own wording — act on that rather than theorising.
+Both instances now sign in successfully. The redirect URI being editable in
+Setup is what makes this survivable — an administrator can register a client
+with either form and nobody needs a code change.
 
 ## OAuth clients in play
 
