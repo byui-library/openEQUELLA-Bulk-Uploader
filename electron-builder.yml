@@ -1,0 +1,143 @@
+appId: edu.byui.oeq-bulk-uploader
+productName: openEQUELLA Bulk Uploader
+directories:
+  output: release
+files:
+  - dist-desktop/**/*
+  - node_modules/**/*
+  - package.json
+  # --------------------------------------------------------------------------
+  # @modelcontextprotocol/sdk (src/mcp/, the maintainer-facing MCP server) and
+  # its dependency-only tree ride along under `node_modules/**/*` above even
+  # though nothing under src/desktop or src/core imports them -- confirmed by
+  # walking package-lock.json's dependency graph and diffing everything
+  # reachable from @modelcontextprotocol/sdk against everything reachable from
+  # what the desktop app and core actually depend on (commander, csv-parse,
+  # exceljs, fast-xml-parser, zod). Every name below is unreachable from that
+  # second set; each one is excluded here individually (rather than a single
+  # broad exclusion) precisely so nothing gets excluded on a guess. Notably
+  # `zod` itself is NOT in this list -- it's also required by
+  # src/core/state.ts (manifest load/save), which is reachable from
+  # src/desktop/handlers.ts, so it has to stay.
+  #
+  # Re-derive this list (e.g. after a dependency bump) with:
+  #   node -e "<see the graph-diff script used to generate this in the Task 9 session notes>"
+  # and confirm with `npx asar list release/win-unpacked/resources/app.asar`
+  # that no @modelcontextprotocol/express/ajv/etc. trace remains.
+  - "!node_modules/@hono/**/*"
+  - "!node_modules/@modelcontextprotocol/**/*"
+  - "!node_modules/accepts/**/*"
+  - "!node_modules/ajv/**/*"
+  - "!node_modules/ajv-formats/**/*"
+  - "!node_modules/body-parser/**/*"
+  - "!node_modules/bytes/**/*"
+  - "!node_modules/call-bind-apply-helpers/**/*"
+  - "!node_modules/call-bound/**/*"
+  - "!node_modules/content-disposition/**/*"
+  - "!node_modules/content-type/**/*"
+  - "!node_modules/cookie/**/*"
+  - "!node_modules/cookie-signature/**/*"
+  - "!node_modules/cors/**/*"
+  - "!node_modules/cross-spawn/**/*"
+  - "!node_modules/debug/**/*"
+  - "!node_modules/depd/**/*"
+  - "!node_modules/dunder-proto/**/*"
+  - "!node_modules/ee-first/**/*"
+  - "!node_modules/encodeurl/**/*"
+  - "!node_modules/es-define-property/**/*"
+  - "!node_modules/es-errors/**/*"
+  - "!node_modules/es-object-atoms/**/*"
+  - "!node_modules/escape-html/**/*"
+  - "!node_modules/etag/**/*"
+  - "!node_modules/eventsource/**/*"
+  - "!node_modules/eventsource-parser/**/*"
+  - "!node_modules/express/**/*"
+  - "!node_modules/express-rate-limit/**/*"
+  - "!node_modules/fast-deep-equal/**/*"
+  - "!node_modules/fast-uri/**/*"
+  - "!node_modules/finalhandler/**/*"
+  - "!node_modules/forwarded/**/*"
+  - "!node_modules/fresh/**/*"
+  - "!node_modules/function-bind/**/*"
+  - "!node_modules/get-intrinsic/**/*"
+  - "!node_modules/get-proto/**/*"
+  - "!node_modules/gopd/**/*"
+  - "!node_modules/has-symbols/**/*"
+  - "!node_modules/hasown/**/*"
+  - "!node_modules/hono/**/*"
+  - "!node_modules/http-errors/**/*"
+  - "!node_modules/iconv-lite/**/*"
+  - "!node_modules/ip-address/**/*"
+  - "!node_modules/ipaddr.js/**/*"
+  - "!node_modules/is-promise/**/*"
+  - "!node_modules/isexe/**/*"
+  - "!node_modules/jose/**/*"
+  - "!node_modules/json-schema-traverse/**/*"
+  - "!node_modules/json-schema-typed/**/*"
+  - "!node_modules/math-intrinsics/**/*"
+  - "!node_modules/media-typer/**/*"
+  - "!node_modules/merge-descriptors/**/*"
+  - "!node_modules/mime-db/**/*"
+  - "!node_modules/mime-types/**/*"
+  - "!node_modules/ms/**/*"
+  - "!node_modules/negotiator/**/*"
+  - "!node_modules/object-assign/**/*"
+  - "!node_modules/object-inspect/**/*"
+  - "!node_modules/on-finished/**/*"
+  - "!node_modules/parseurl/**/*"
+  - "!node_modules/path-key/**/*"
+  - "!node_modules/path-to-regexp/**/*"
+  - "!node_modules/pkce-challenge/**/*"
+  - "!node_modules/proxy-addr/**/*"
+  - "!node_modules/qs/**/*"
+  - "!node_modules/range-parser/**/*"
+  - "!node_modules/raw-body/**/*"
+  - "!node_modules/require-from-string/**/*"
+  - "!node_modules/router/**/*"
+  - "!node_modules/safer-buffer/**/*"
+  - "!node_modules/send/**/*"
+  - "!node_modules/serve-static/**/*"
+  - "!node_modules/setprototypeof/**/*"
+  - "!node_modules/shebang-command/**/*"
+  - "!node_modules/shebang-regex/**/*"
+  - "!node_modules/side-channel/**/*"
+  - "!node_modules/side-channel-list/**/*"
+  - "!node_modules/side-channel-map/**/*"
+  - "!node_modules/side-channel-weakmap/**/*"
+  - "!node_modules/statuses/**/*"
+  - "!node_modules/toidentifier/**/*"
+  - "!node_modules/type-is/**/*"
+  - "!node_modules/unpipe/**/*"
+  - "!node_modules/vary/**/*"
+  - "!node_modules/which/**/*"
+  - "!node_modules/zod-to-json-schema/**/*"
+# handlers.ts#resolveSchemaPath reads this at runtime to validate spreadsheet
+# xpaths. `to:` is relative to the app's resources directory (what
+# process.resourcesPath points at when packaged), NOT to the project root --
+# so `to: schema/_entity.xml` lands at `<resourcesPath>/schema/_entity.xml`,
+# exactly what resolveSchemaPath's packaged branch expects. Verified by
+# inspecting the built release tree in Task 9 (see docs/INSTALL.md context /
+# session handoff): a `to:` of just `schema` would still work (electron-builder
+# treats a directory-less `to` on a single file as the destination file path
+# only when it ends without a trailing slash and matches the source basename),
+# but being explicit here removes any doubt.
+extraResources:
+  - from: schema/_entity.xml
+    to: schema/_entity.xml
+  # The starter-kit template CSV + sample file the Choose screen's "Save a
+  # template and sample file..." button copies out for the operator
+  # (handlers.ts's STARTER_KIT_FILES / resolveResourcePath -- the SAME
+  # packaged/unpackaged split as resolveSchemaPath and the `to:` reasoning
+  # above, just parameterised). `to: template` (a directory, no trailing
+  # file) copies the whole `resources/template` folder to
+  # `<resourcesPath>/template/`, which is exactly what
+  # resolveResourcePath's packaged branch expects.
+  - from: resources/template
+    to: template
+win:
+  target:
+    - portable
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

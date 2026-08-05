@@ -132,7 +132,16 @@ MWDL/creators/creator = "David Olsen"
   -> <MWDL><creators><creator>David Olsen</creator></creators></MWDL>
 ```
 
-- Repeated headers become sibling elements.
+- Repeated values under one xpath become sibling elements. **In v1 this is not
+  reachable from a spreadsheet:** `sheet.ts` rejects duplicate column headers
+  outright, because `Row.cells` is `Record<string, string>` and two identical
+  headers would otherwise silently discard the first column's data. The XML
+  builder accepts multiple values per path, so supporting genuinely repeated
+  fields (two `MWDL/creators/creator` columns for co-creators, say) means
+  changing only the sheet reader. Deferred until a real batch needs it.
+- Blank values inside a multi-value list are dropped; a lone blank still emits a
+  self-closing tag. An empty slot among real values is a spreadsheet artifact,
+  not a value.
 - **Blank cells emit empty tags** (`<abstract/>`), matching what the openEQUELLA
   wizard produces and what existing items look like. Consistency matters here
   because the OAI Dublin Core transform (`schema/oai_dc_limb.xsl`) runs over this
@@ -186,6 +195,11 @@ each carrying a 150 MB attachment that must then be deleted by hand.
 
 ## Authentication
 
+> **SUPERSEDED 2026-08-03.** The client-credentials design below was rejected in
+> practice. See "Authentication — revised" immediately after it. The
+> implemented `OAuthClientCredentials` provider remains in the codebase and
+> works, but cannot be used against this instance.
+
 The instance sits behind Okta SSO (`id.churchofjesuschrist.org`). Interactive
 login cannot be automated, so unattended operation requires **OAuth client
 credentials**:
@@ -203,6 +217,85 @@ the client. Credentials live in a gitignored `.env`.
 not by the person running the tool. That user needs `CREATE_ITEM` on the target
 collection. Ownership is awkward to change after the fact, so it should be settled
 when the client is registered.
+
+**Open security question — the secret travels in a query string.** RFC 6749
+§2.3.1 specifies a form-encoded POST body or HTTP Basic auth, because query
+strings are routinely recorded in web server access logs, proxy logs, and
+monitoring tools. We use query parameters because that is openEQUELLA's
+documented form and we cannot yet verify whether it accepts an alternative
+(blocked on `swagger.json`). Consequences and follow-up:
+
+- The client secret may be written to the instance's access logs on every token
+  request. Whoever administers `content.byui.edu` should know this, and the
+  secret should be treated as rotatable rather than long-lived.
+- The client redacts the secret — in both raw and percent-encoded form — from
+  every error it raises, so it cannot leak through our own logs. It cannot do
+  anything about the server's.
+- When `swagger.json` is available, check whether `POST /oauth/access_token`
+  accepts credentials in the request body. If it does, switch; it is a small
+  change confined to `auth.ts`. (Still open: the OAuth token endpoints are not
+  under `basePath: /api`, so the captured spec does not describe them.)
+
+## Authentication — revised
+
+Client credentials **cannot** be used against this instance. Attempting it
+returns:
+
+```json
+{ "error": "invalid_client",
+  "error_description": "To use the Client Credentials flow your client must be registered with a fixed user" }
+```
+
+`OAuthClientBean` (from the captured spec) has `clientId`, `clientSecret`,
+`redirectUrl`, and `userId`. `userId` is the "fixed user": set it and
+client-credentials works; leave it empty and the client is for the
+authorization-code flow.
+
+**The owner has declined to set a fixed user**, and that is the right call:
+each contributor should own what they contribute, rather than everything being
+attributed to one service account. Their existing "openEQUELLA Sync" tool
+already uses the authorization-code flow, so the pattern is proven here.
+
+### Flow
+
+1. `GET {base}/oauth/authorise?response_type=code&client_id=…&redirect_uri=…`
+2. The user authenticates through the normal Okta SSO screen, as themselves.
+3. openEQUELLA redirects to the registered `redirectUrl` with `?code=…`.
+4. `POST {base}/oauth/access_token?grant_type=authorization_code&code=…&redirect_uri=…&client_id=…&client_secret=…`
+
+Verified against the test instance:
+
+- **`/oauth/authorise`** (British spelling) is canonical; `/oauth/authorize`
+  302-redirects to it.
+- The registered `redirectUrl` is the **site root** — `https://content-test.byui.edu`
+  for test, `https://content.byui.edu` for production. It is *not* a local
+  callback, so the tool cannot capture the code on a loopback listener.
+- The server normalises the trailing slash off `redirect_uri`. Send exactly what
+  it echoes back or the exchange fails on a mismatch.
+
+### Consequences
+
+- **The code must be pasted by hand.** The browser lands on the openEQUELLA home
+  page carrying `?code=…`; the operator copies it into the tool. If that page
+  strips the parameter before it can be read, the fallback is driving a browser
+  with Playwright, which already works in this project's tooling.
+- **Unattended and scheduled runs are no longer possible.** Every session needs a
+  human at a browser once. Acceptable for a per-semester batch; it is the price
+  of per-user ownership.
+- **A detached runner cannot re-authenticate.** The token is acquired in the
+  foreground and handed to the child. If a 5.5 GB run outlives the token, the
+  runner marks the remaining rows failed with an explanatory message; resume
+  then skips everything already created, so recovery is cheap. openEQUELLA's
+  token lifetime on this instance has not been measured and should be.
+- `AuthProvider` was designed as a swappable interface for exactly this. The new
+  provider is additive: `client.ts`, `upload.ts`, `runner.ts`, and `plan.ts` are
+  unaffected.
+
+### Open decision
+
+Whether to keep `OAuthClientCredentials` alongside the new provider (roughly
+twenty extra lines, leaves the door open for a fixed-user client and scheduled
+runs later) or remove it. Not yet decided.
 
 ## Error handling
 
@@ -226,21 +319,83 @@ when the client is registered.
   backoff, and 401 refresh.
 - **Smoke** — single-file dry run into a test collection before any real batch.
 
-## Unverified assumptions
+## Assumptions — resolved by `schema/swagger.json`
 
-All three resolve by capturing `schema/swagger.json` from
-`https://content.byui.edu/api/swagger.json` (gated by the `VIEW_APIDOCS` privilege).
+`schema/swagger.json` was captured from the live instance and is committed
+(Swagger 2.0, `basePath: /api`, 198 paths, ~443 KB). It settled most of what was
+open, and **refuted two assumptions the whole test suite had agreed with**.
 
-1. The staging-area upload endpoint shape, and whether it supports chunked or
-   resumable transfer. If it does not, a failed 150 MB upload restarts from zero.
-2. Whether item UUIDs may be supplied at creation. If so, deterministic
-   client-side UUIDs would make retries naturally idempotent — the cleanest
-   possible answer to the duplicate problem.
-3. Whether attachment UUIDs may be supplied at creation, deciding the one-pass
-   versus two-pass question above.
+### Confirmed
 
-None block writing the implementation plan; all should be confirmed before the
-code that depends on them is written.
+- `POST /staging`, `PUT /staging/{uuid}/{filepath}`, `DELETE /staging/{uuid}`
+  exist with the assumed semantics ("Create a file area", "Put a file", "Delete
+  a staging area"). `PUT` also documents multipart parameters (`partNumber`,
+  `uploadId`) we do not use.
+- `POST /item` takes `draft` as a **query** parameter, boolean, **default
+  `False`** — omitting it publishes live. The runtime guard rejecting a
+  non-boolean `draft` is therefore justified, not defensive clutter.
+- `AttachmentBean` has a `uuid` property, so a client-supplied attachment uuid is
+  plausible and the one-pass design stands.
+- `ItemBean` has `collaborators`, confirming that automating shared owners later
+  is a small change.
+- `GET /search` returns `{ start, length, available, results }`; reading
+  `available` is correct.
+
+### Refuted — both were real bugs, now fixed
+
+1. **The staging area is a query parameter, not a body field.** `POST /item` takes
+   `file` in the query ("The id of a file area to use"); `ItemBean` has no
+   staging field at all. We were sending `stagingUuid` in the body, where it
+   would have been ignored — producing 37 items whose attachments had no backing
+   file, all reported as successes.
+2. **`GET /search` defaults `showall=false`**, excluding items that are not live.
+   Since this tool creates **drafts**, the duplicate pre-flight was structurally
+   blind to exactly the items it exists to find. A re-run would have reported
+   "no duplicates" and created a second full copy.
+
+A third risk surfaced by omission: `POST /item` documents no response schema.
+If the server answers `201 Created` with a `Location` header and an empty body,
+`res.json()` throws — the runner would record a *successfully created* item as a
+failure and retry it into a duplicate. `createItem` now falls back to parsing
+`Location`.
+
+### Settled by the live smoke test — 2026-08-04
+
+`AttachmentBean` in the spec lists only `uuid, description, viewer, preview,
+erroredIndexing, restricted, externalId` — **no `filename`, no `type`** — because
+the spec does not model openEQUELLA's polymorphic attachment subtypes. That could
+not be settled from the document, and no test in this repository could settle it
+either: `client.ts` and `tests/helpers/mockServer.ts` encode the same assumption
+by construction, so they will always agree with each other.
+
+One draft item was created on `content-test.byui.edu` and read back. The payload
+shape is **correct** — the server returned:
+
+```json
+{ "type": "file", "uuid": "…", "filename": "SMOKETEST clip, sample.MP4",
+  "size": 1048583, "md5": "b62706640d8412b277f802576e7a4cda" }
+```
+
+Also confirmed in the same run: a client-supplied attachment uuid **is** honoured
+(so the one-pass design holds and the two-pass fallback is unreachable here);
+uploaded bytes are md5-identical to the source; `BYUI_extended/attachments/attachment`
+receives the uuid; quotes, `&` and `<>` survive correctly escaped; empty columns
+emit `<abstract/>`; items land as draft owned by the authenticated user; and
+re-running the manifest creates nothing.
+
+### Two bugs the live run found that 240 tests did not
+
+Both existed because the client and the mock agreed with each other:
+
+1. **`POST /api/staging` returns `201` with an empty body**, the uuid available
+   only in a `Location` header. `createStagingArea` called `res.json()` and threw
+   `Unexpected end of JSON input` on the first row. The mock had been returning a
+   JSON body the real server never sends.
+2. **`plan` and `run` hardcoded `OAuthClientCredentials`** rather than calling
+   `createAuthProvider`, so they ignored the authorization-code token entirely.
+   The factory existed and `login`/`check` used it; the two commands that matter
+   were never wired up. The CLI tests inject dependencies in a way that bypassed
+   the hardcoded path, so nothing caught it.
 
 ## Future work
 

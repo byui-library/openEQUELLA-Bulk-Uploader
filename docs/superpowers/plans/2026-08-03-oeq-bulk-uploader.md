@@ -2108,6 +2108,20 @@ git commit -m "feat: CLI with plan, run, status, and retry commands"
 No upload tool exists here by design. `oeq_start_job` spawns the CLI runner
 detached and returns immediately.
 
+**REQUIRED — job lock.** `state.ts` makes each write atomic and durable but does
+not serialise load-modify-save cycles across processes. Since `oeq_start_job`
+detaches the runner while `oeq_plan` and `oeq_retry_failed` also write the
+manifest, a retry invoked mid-run would save its stale snapshot over the
+runner's progress — reverting a `created` entry to `pending` and causing a
+duplicate 150 MB upload on resume.
+
+Before `runManifest` begins, write `<manifest>.lock` containing the pid and
+start time; remove it on exit, including the error path. `oeq_plan`,
+`oeq_retry_failed`, and the CLI `retry` command must refuse to write while a
+live lock exists, naming the owning pid. Treat a lock whose pid is no longer
+running as stale and reclaim it, so a killed runner doesn't wedge the job
+permanently.
+
 - [ ] **Step 1: Implement `src/mcp/index.ts`**
 
 ```typescript

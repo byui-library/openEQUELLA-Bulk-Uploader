@@ -1,0 +1,10 @@
+This is the sample file that comes with the openEQUELLA Bulk Uploader
+starter kit.
+
+It exists only so the example row in upload-template.csv has a real file to
+attach, so you can do one genuine test upload as soon as you have your
+credentials and a collection selected -- before you build your own
+spreadsheet.
+
+This file, and the draft item it creates in openEQUELLA, are safe to delete
+once you've confirmed the test upload worked.

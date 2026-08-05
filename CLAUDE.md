@@ -10,14 +10,55 @@ Replaces an older, no-longer-working tool by Jim Kurian.
 
 ## Status
 
-Design phase. The spec lives at
+**Read [docs/SESSION-HANDOFF.md](docs/SESSION-HANDOFF.md) first.** It states
+where the work stands and exactly what to do next.
+
+**The CLI is finished and has run in production** — 37 jury videos contributed
+to BYU-Idaho Faculty Content on 2026-08-04, every one verified byte-for-byte
+against its source file.
+
+**Active work: a desktop GUI**, on branch `feature/desktop-gui`. An Electron
+app for non-technical Windows staff, reusing `src/core/` unchanged. Tasks 1–8
+of 10 are done; **389 tests across 32 files**. All seven screens exist, and
+production sign-in has been verified live. Remaining: packaging and a
+clean-machine test.
+
+**One open loop:** Test-instance sign-in was still failing when the last
+session ended. Credentials and the redirect URI are both per-instance now;
+the fix is unconfirmed. Ask the operator first — see the handoff.
+
+The handoff also lists the Electron-specific traps, every one of which failed
+silently and was found only by inspecting the running app.
+
+Implemented and verified. CLI (`plan | run | status | retry`) and MCP server
+(six tools) both build clean, 173 tests pass across 14 files, and
+`npm run typecheck` is clean. See [README.md](README.md) for setup, usage,
+and the live-smoke-test procedure that must run before any real batch.
+
+**Blocked on authentication.** `OAuthClientCredentials` cannot be used against
+this instance — the OAuth client has no fixed user, and the owner has
+deliberately declined to set one so that each contributor owns what they
+contribute. The authorization-code flow must be implemented in a new
+`src/core/authCode.ts` behind the existing `AuthProvider` interface. Nothing has
+run against a live instance yet.
+
+One wire-format assumption remains unverified pending that live smoke test:
+whether the `{ type: 'file', filename, ... }` attachment payload shape is
+correct, since `AttachmentBean` in `schema/swagger.json` doesn't model
+openEQUELLA's polymorphic attachment subtypes. See the "Known limitations"
+section of the README and the header comment in `src/core/client.ts`.
+
+The spec lives at
 [docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md](docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md).
-No implementation code yet.
 
 ## Repository layout
 
-```
+```text
 files/            Batch inputs — MP4s + spreadsheet. GITIGNORED (size + student names).
+src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by every front end.
+src/cli/          plan | run | status | retry | login | logout | check
+src/mcp/          Nine MCP tools
+src/desktop/      Electron app (in progress). Renderer has no Node access.
 schema/           openEQUELLA schema reference material (committed).
   _entity.xml       BYUI_MWDL schema export, uuid c93181f3-a443-41bf-9afe-ac9f7daf90b7
   sample.xml        A real contributed item, used as the golden target for output
@@ -67,6 +108,22 @@ easy to get wrong from first principles.
 - A Playwright profile with a live SSO session may exist under the session
   scratchpad. openEQUELLA's `JSESSIONID` is session-scoped, so it does not
   survive a browser restart — re-login is interactive each time.
-- `schema/swagger.json` is not yet captured. Three design decisions depend on it:
-  the staging upload endpoint, whether item UUIDs may be supplied at creation,
-  and whether attachment UUIDs may be supplied at creation.
+- `schema/swagger.json` has been captured from the live instance and is
+  committed. It confirmed the staging upload endpoints and that a
+  client-supplied attachment uuid is accepted (`AttachmentBean.uuid`), but it
+  does not settle everything: `AttachmentBean` has no `filename`/`type`
+  property at all, because the spec doesn't model openEQUELLA's polymorphic
+  attachment subtypes. Whether this tool's `{ type: 'file', filename, ... }`
+  payload shape is correct is still unverified and is exactly what the live
+  smoke test in the README exists to confirm. See the header comment in
+  `src/core/client.ts` for the full CONFIRMED/UNVERIFIED breakdown.
+- It also **refuted two assumptions the entire test suite agreed with**: the
+  staging area is a `?file=` query parameter (not a body field), and
+  `GET /search` defaults `showall=false`, which made the duplicate pre-flight
+  blind to the drafts this tool creates. Both are fixed.
+- OAuth endpoints are **not** under `basePath: /api`, so swagger.json does not
+  describe them. Verified by probe: `/oauth/authorise` is canonical (British
+  spelling); `/oauth/authorize` 302-redirects to it. The registered
+  `redirectUrl` is the site root, and the server strips its trailing slash.
+- `OEQ_SCHEMA_UUID` is recorded in the manifest but **never sent anywhere**.
+  Schema validation reads the local `schema/_entity.xml`. Don't chase it.
