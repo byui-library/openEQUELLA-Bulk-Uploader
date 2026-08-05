@@ -145,3 +145,63 @@ describe('add-column picker', () => {
     expect(c.state().adding).toBe(false);
   });
 });
+
+describe('undo a removed column', () => {
+  const withColumns = () => api({
+    schemaPaths: vi.fn(async () => ['MWDL/title', 'MWDL/date']),
+  });
+
+  it('remembers what was removed, and from where', async () => {
+    const c = createExtractController({ api: withColumns() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.addColumn('MWDL/title');
+    await c.addColumn('MWDL/date');
+    await c.removeColumn('MWDL/title');
+    expect(c.state().removed?.column.path).toBe('MWDL/title');
+    expect(c.state().removed?.index).toBe(1);
+  });
+
+  it('puts the column back at its original index, not on the end', async () => {
+    const c = createExtractController({ api: withColumns() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.addColumn('MWDL/title');
+    await c.addColumn('MWDL/date');
+    await c.removeColumn('MWDL/title');
+    await c.undoRemove();
+    expect(c.state().profile?.columns.map((x) => x.path)).toEqual([
+      ATTACHMENT_COLUMN, 'MWDL/title', 'MWDL/date',
+    ]);
+  });
+
+  it('clears the undo once it has been used, so it cannot fire twice', async () => {
+    const c = createExtractController({ api: withColumns() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.addColumn('MWDL/title');
+    await c.removeColumn('MWDL/title');
+    await c.undoRemove();
+    expect(c.state().removed).toBeNull();
+    await c.undoRemove();
+    expect(c.state().profile?.columns.filter((x) => x.path === 'MWDL/title')).toHaveLength(1);
+  });
+
+  it('does not record an undo for a removal that was refused', async () => {
+    const c = createExtractController({ api: withColumns() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.removeColumn(ATTACHMENT_COLUMN);
+    expect(c.state().removed).toBeNull();
+  });
+
+  it('forgets the undo when a different edit is made', async () => {
+    const c = createExtractController({ api: withColumns() as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.addColumn('MWDL/title');
+    await c.removeColumn('MWDL/title');
+    await c.addColumn('MWDL/date');
+    expect(c.state().removed).toBeNull();
+  });
+});

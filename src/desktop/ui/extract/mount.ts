@@ -62,6 +62,8 @@ export function renderExtract(
         onRemove: (path) => void controller.removeColumn(path),
         onMove: (path, d) => void controller.moveColumn(path, d),
         onAdd: () => controller.openAdd(),
+        removed: state.removed === null ? null : { path: state.removed.column.path },
+        onUndoRemove: () => void controller.undoRemove(),
         onOpenProfile: () => void controller.openProfile(),
         onSaveProfile: () => void controller.saveProfile(),
         onContinue: () => void controller.continue(),
