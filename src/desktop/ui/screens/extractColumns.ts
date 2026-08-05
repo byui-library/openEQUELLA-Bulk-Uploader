@@ -33,7 +33,6 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
   const options = sourceOptions(props.profile.pattern, props.scan);
   const current = column.sources[0];
   const currentLabel = current === undefined ? '' : describeSource(current);
-  const unfilled = !locked && column.sources.length === 0 && column.default === undefined;
 
   const optionHtml = [
     `<option value="">(nothing &mdash; fill in Excel)</option>`,
@@ -81,7 +80,14 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
             : `<button type="button" class="remove-column" aria-label="Remove ${escapeHtml(plainLabel(path))}">&times;</button>`
         }
       </td>
-      <td class="flag">${unfilled ? '<span class="warn-inline">nothing fills this</span>' : ''}</td>
+      <!--
+        No "nothing fills this" warning here. The source dropdown already reads
+        "(nothing -- fill in Excel)" for such a column, so the badge said the
+        same thing twice, and said it in warning amber. An empty column is a
+        deliberate, useful choice -- the starter profile ships description that
+        way on purpose -- so warning about it fires on the default setup, and a
+        warning that always fires is one people learn to ignore.
+      -->
     </tr>`;
 }
 
