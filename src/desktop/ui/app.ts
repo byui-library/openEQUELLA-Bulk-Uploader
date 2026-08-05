@@ -15,6 +15,8 @@ import { canContinueReview } from './review.js';
 import { canUpload } from './confirm.js';
 import { collectionUrl } from './collectionUrl.js';
 import { UI_INSTANCES } from './instances.js';
+import { createExtractController } from './extract/controller.js';
+import { renderExtract } from './extract/mount.js';
 
 declare global {
   interface Window {
@@ -205,6 +207,18 @@ function render(): void {
         onChooseFolder: handleChooseFolder,
         onSaveStarterKit: handleSaveStarterKit,
         onContinue: handleChooseContinue,
+        onExtract: () => {
+          // The extract flow owns its own state and render loop; app.ts hands
+          // over the root element and gets it back on exit. Deliberately not
+          // folded into this file's state machine -- see the plan's rationale.
+          const root = requireEl('app');
+          const controller = createExtractController({
+            api: window.oeq,
+            onExit: () => render(),
+            render: (s) => renderExtract(root, s, controller, (p) => window.oeq.openPath(p)),
+          });
+          renderExtract(root, controller.state(), controller, (p) => window.oeq.openPath(p));
+        },
       });
       break;
     case 'review':
