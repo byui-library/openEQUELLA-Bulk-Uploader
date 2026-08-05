@@ -1,6 +1,7 @@
 import { renderExtractFolder } from '../screens/extractFolder.js';
 import { renderExtractColumns } from '../screens/extractColumns.js';
 import { renderExtractSave } from '../screens/extractSave.js';
+import { renderExtractAddColumn } from '../screens/extractAddColumn.js';
 import { canContinue, type ExtractState } from './state.js';
 import type { ExtractController } from './controller.js';
 
@@ -20,6 +21,18 @@ export function renderExtract(
   controller: ExtractController,
   onOpenFolder: (path: string) => void,
 ): void {
+  if (state.adding && state.profile !== null) {
+    renderExtractAddColumn(root, {
+      schemaPaths: state.schemaPaths,
+      usedPaths: state.profile.columns.map((c) => c.path),
+      query: state.addQuery,
+      onQueryChange: (q) => controller.setAddQuery(q),
+      onPick: (path) => void controller.addColumn(path),
+      onCancel: () => controller.closeAdd(),
+    });
+    return;
+  }
+
   switch (screenFor(state)) {
     case 'folder':
       renderExtractFolder(root, {
@@ -48,10 +61,7 @@ export function renderExtract(
         onDefaultChange: (path, v) => void controller.setDefault(path, v),
         onRemove: (path) => void controller.removeColumn(path),
         onMove: (path, d) => void controller.moveColumn(path, d),
-        onAdd: () => {
-          const path = window.prompt('Schema path to add (e.g. MWDL/description)');
-          if (path !== null && path.trim() !== '') void controller.addColumn(path.trim());
-        },
+        onAdd: () => controller.openAdd(),
         onOpenProfile: () => void controller.openProfile(),
         onSaveProfile: () => void controller.saveProfile(),
         onContinue: () => void controller.continue(),

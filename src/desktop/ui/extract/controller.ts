@@ -28,6 +28,9 @@ export interface ExtractController {
   openProfile(): Promise<void>;
   saveProfile(): Promise<void>;
   save(): Promise<void>;
+  openAdd(): void;
+  setAddQuery(query: string): void;
+  closeAdd(): void;
   exit(): void;
 }
 
@@ -101,6 +104,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
 
     async addColumn(path) {
       await edit((p) => addColumn(p, path))();
+      set({ adding: false, addQuery: '' });
     },
     async removeColumn(path) {
       await edit((p) => removeColumn(p, path))();
@@ -141,6 +145,10 @@ export function createExtractController(options: ExtractControllerOptions): Extr
         return { savedPath: report.outPath, savedFlagged: report.flagged };
       });
     },
+
+    openAdd: () => set({ adding: true, addQuery: '' }),
+    setAddQuery: (addQuery) => set({ addQuery }),
+    closeAdd: () => set({ adding: false, addQuery: '' }),
 
     exit: options.onExit,
   };
