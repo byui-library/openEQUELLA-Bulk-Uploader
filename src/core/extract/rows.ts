@@ -41,6 +41,68 @@ export function normaliseDate(value: string): string | null {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Parse a date using a format the profile declares, e.g. `MMDDYYYY`.
+ *
+ * A compact date is genuinely ambiguous -- `12032025` is 3 December to one
+ * reader and 12 March to another, and nothing in the file says which. Rather
+ * than guess, the operator states the convention once; they know it and the
+ * document does not record it.
+ *
+ * Anything not matching the declared format returns null, so it is kept as
+ * found and noted rather than coerced. Declaring a format buys precision, not
+ * permissiveness.
+ */
+export function normaliseDateWithFormat(value: string, format: string): string | null {
+  const order: ('Y' | 'M' | 'D')[] = [];
+  let source = '^';
+
+  for (let i = 0; i < format.length; ) {
+    const rest = format.slice(i);
+    if (rest.startsWith('YYYY')) {
+      order.push('Y');
+      source += '(\\d{4})';
+      i += 4;
+    } else if (rest.startsWith('MM')) {
+      order.push('M');
+      source += '(\\d{2})';
+      i += 2;
+    } else if (rest.startsWith('DD')) {
+      order.push('D');
+      source += '(\\d{2})';
+      i += 2;
+    } else {
+      // Separators are literal. Escaping matters: a format of "MM.DD.YYYY"
+      // must not quietly accept "12x03x2025".
+      source += format[i]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      i += 1;
+    }
+  }
+
+  const match = new RegExp(`${source}$`).exec(value.trim());
+  if (!match) return null;
+
+  const parts: Partial<Record<'Y' | 'M' | 'D', string>> = {};
+  order.forEach((key, n) => {
+    parts[key] = match[n + 1];
+  });
+  const { Y: year, M: month, D: day } = parts;
+  if (year === undefined || month === undefined || day === undefined) return null;
+
+  // Reject a value that fits the shape but is not a real date -- 02302025
+  // matches MMDDYYYY perfectly. Built in UTC so no timezone can shift it.
+  const asDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (
+    asDate.getUTCFullYear() !== Number(year) ||
+    asDate.getUTCMonth() !== Number(month) - 1 ||
+    asDate.getUTCDate() !== Number(day)
+  ) {
+    return null;
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
 /** A short name for where a value came from, written into the _source column. */
 function sourceKind(source: Source): string {
   if ('filename' in source) return 'filename';
@@ -86,8 +148,11 @@ function fill(column: Column, context: Context, notes: string[]): { value: strin
     const raw = resolve(source, context).trim();
     if (raw === '') continue;
 
-    if (column.transform === 'date') {
-      const normalised = normaliseDate(raw);
+    if (column.transform !== undefined) {
+      const normalised =
+        column.transform === 'date'
+          ? normaliseDate(raw)
+          : normaliseDateWithFormat(raw, column.transform.date);
       if (normalised === null) {
         notes.push(`${column.path}: '${raw}' was not recognised as a date and was left as found`);
         return { value: raw, source: sourceKind(source) };

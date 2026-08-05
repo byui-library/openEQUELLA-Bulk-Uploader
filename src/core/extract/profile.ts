@@ -28,7 +28,9 @@ const columnSchema = z
     path: z.string().min(1),
     sources: z.array(sourceSchema),
     default: z.string().optional(),
-    transform: z.literal('date').optional(),
+    transform: z
+      .union([z.literal('date'), z.object({ date: z.string().min(1) }).strict()])
+      .optional(),
     locked: z.boolean().optional(),
   })
   .strict();
@@ -70,6 +72,24 @@ export function parseProfile(input: unknown): Profile {
       ? `'${ATTACHMENT_COLUMN}' must be the first column.`
       : `Profile must include the '${ATTACHMENT_COLUMN}' column -- it is how each row is matched to its file.`;
     throw new ValidationError(message);
+  }
+
+  // A declared date format must name each part exactly once. Catching this at
+  // load time matters: a malformed format compiles to a regex that simply
+  // never matches, so every row would be silently kept-as-found and flagged,
+  // with nothing pointing at the profile as the cause.
+  for (const column of profile.columns) {
+    if (column.transform === undefined || column.transform === 'date') continue;
+    const format = column.transform.date;
+    for (const token of ['YYYY', 'MM', 'DD'] as const) {
+      const occurrences = format.split(token).length - 1;
+      if (occurrences !== 1) {
+        throw new ValidationError(
+          `Column '${column.path}' has date format '${format}', which uses ${token} ${occurrences} times. ` +
+            `A format must use YYYY, MM and DD exactly once each, e.g. 'MMDDYYYY' or 'DD-MM-YYYY'.`,
+        );
+      }
+    }
   }
 
   const known = new Set(placeholders(profile.pattern));

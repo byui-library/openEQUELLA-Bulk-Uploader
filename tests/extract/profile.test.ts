@@ -54,6 +54,24 @@ describe('parseProfile', () => {
     expect(() => parseProfile({ ...GOOD, columns })).toThrow();
   });
 
+  it('accepts a declared date format', () => {
+    const columns = [GOOD.columns[0]!, { path: 'MWDL/title', sources: [], transform: { date: 'MMDDYYYY' } }];
+    expect(parseProfile({ ...GOOD, columns }).columns[1]?.transform).toEqual({ date: 'MMDDYYYY' });
+  });
+
+  // A malformed format compiles to a regex that never matches, so every row
+  // would be quietly kept-as-found with nothing naming the profile as the
+  // cause. Rejected at load instead.
+  it('rejects a date format that omits a part', () => {
+    const columns = [GOOD.columns[0]!, { path: 'MWDL/title', sources: [], transform: { date: 'MMYYYY' } }];
+    expect(() => parseProfile({ ...GOOD, columns })).toThrow(/DD 0 times/);
+  });
+
+  it('rejects a date format that repeats a part', () => {
+    const columns = [GOOD.columns[0]!, { path: 'MWDL/title', sources: [], transform: { date: 'MMDDMMYYYY' } }];
+    expect(() => parseProfile({ ...GOOD, columns })).toThrow(/MM 2 times/);
+  });
+
   it('accepts a column with no sources and no default -- an empty column', () => {
     const columns = [GOOD.columns[0]!, { path: 'MWDL/description', sources: [] }];
     expect(parseProfile({ ...GOOD, columns }).columns).toHaveLength(2);
