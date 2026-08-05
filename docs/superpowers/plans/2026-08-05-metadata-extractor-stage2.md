@@ -2269,6 +2269,15 @@ git commit -m "feat(desktop): reach the extract flow from the Choose screen"
 **Files:**
 - Modify: `src/desktop/ui/styles.css`
 
+**Corrected during implementation.** The version originally written here used
+hardcoded hex colours. This app has a full light/dark theme built on CSS custom
+properties (`--text`, `--panel-bg`, `--border`, `--muted`, `--pending-bg`,
+`--pending-text`, …) declared in `:root` with a `prefers-color-scheme: dark`
+override, so hardcoded colours would have produced a screen that looked broken
+in dark mode — light grey panels on a dark background. Every colour below comes
+from those variables instead. The `warn-inline` pair maps onto the existing
+`--pending-*` tokens, which already mean "needs a human" elsewhere in this UI.
+
 - [ ] **Step 1: Append the extract styles**
 
 ```css
