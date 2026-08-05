@@ -27,18 +27,38 @@ folder to somewhere on your own computer — your Desktop or Documents folder
 is fine. Do not run it directly from the network share; copy it locally
 first, then run it from there.
 
-Two versions of the program may be provided:
+Two versions of the program are provided. They are the same program — the
+difference is only in how it gets onto the computer.
 
-- **`openEQUELLA Bulk Uploader 0.1.0.exe`** — a single file. Just double-click
-  it to run; nothing is installed. This is the simplest option if you're not
-  sure which one to use.
-- **`openEQUELLA Bulk Uploader Setup 0.1.0.exe`** — an installer. Double-click
-  it, follow the prompts, and it adds a shortcut to your Start Menu like a
-  normal Windows program. Use this one if you want it to show up in your
-  Start Menu and you're comfortable clicking through an installer.
+- **`openEQUELLA Bulk Uploader 0.1.0.exe`** — a single file. Double-click it
+  to run; nothing is installed anywhere.
+- **`openEQUELLA Bulk Uploader Setup 0.1.0.exe`** — an installer. Adds a Start
+  Menu shortcut and an entry in Add or Remove Programs, like a normal Windows
+  program.
 
-Either one works the same way once it's running. If you're not sure, use the
-single-file version.
+### Which one should I use?
+
+| | Single file | Installer |
+| --- | --- | --- |
+| Shows up in the Start Menu | No | Yes |
+| Can be uninstalled normally | No — just delete it | Yes |
+| Needs an administrator | Never | No, if you take the default |
+| Security warning (Step 2) | Every time you're given a new copy | Once, when you install |
+| To update it | Replace the file | Run the new installer |
+
+**If you're going to use this more than once, take the installer.** The main
+reason is the security warning: with the installer you see it once, at install
+time. With the single file you'll see it again every time someone sends you an
+updated copy, and it's alarming enough that people stop and ask whether the
+program is safe.
+
+**Take the single file if** you're just trying it out, you're on a shared or
+lab computer you'd rather not install things onto, or your computer blocks
+installers.
+
+**You can switch later.** Both versions keep your settings and sign-in in the
+same place, so if you start with the single file and install it properly
+afterwards, you won't have to enter your credentials again.
 
 If you use the installer, one screen asks **who** to install it for. Leave
 the default option selected — it installs just for you and needs no special
@@ -158,19 +178,20 @@ process — the program itself walks you through choosing a spreadsheet, a
 folder of files, and reviewing everything before anything is sent. The one
 thing worth knowing in advance:
 
-**Items are created as drafts by default**, and this is deliberate. A draft
-exists in openEQUELLA but is not visible to others. Nothing goes live
-automatically, and this program never submits anything for you.
+**You choose whether items are created as drafts or published**, on the screen
+just before the upload starts. Both are supported.
 
-Whether drafts should stay as drafts or be submitted afterwards depends on
-your workflow — for some collections, draft *is* the finished state. Ask
-whoever asked you to run the upload. If they do want them submitted, that
-happens inside openEQUELLA, not here.
+- **Draft** (the default) — the item exists in openEQUELLA but is not visible
+  to others. For some collections this is the finished state; for others
+  someone submits them afterwards inside openEQUELLA. Ask whoever asked you to
+  run the upload which applies. This program never submits anything for you.
+- **Published** — items become visible to everyone immediately.
 
-(The program also offers a "Published" option that skips the draft step and
-makes items visible immediately. It's guarded by an extra confirmation
-because there is no way to undo it from the program — if you weren't told to
-use it, don't.)
+Publishing asks you to **type the number of items** before the upload button
+becomes available. That is deliberate, not a glitch. The collection this tool
+was built for has no review queue, so published means visible straight away,
+and there is no undo from inside the program. If nobody told you to publish,
+choose Draft.
 
 ## If something goes wrong
 
