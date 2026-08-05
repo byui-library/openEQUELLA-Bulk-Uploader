@@ -1,4 +1,4 @@
-# Session handoff — updated 2026-08-05
+# Session handoff — updated 2026-08-05 (end of the desktop-extractor session)
 
 Read this first.
 
@@ -37,31 +37,29 @@ attachment count, draft state and the attachment uuid in metadata against the
 source file on disk. 5.68 GB in 6.1 minutes, zero failures. A full rehearsal on
 `content-test` beforehand was identical and was purged afterwards.
 
-**Active work is a desktop GUI** — an Electron app for non-technical Windows
-staff, reusing `src/core/` unchanged.
+**The desktop GUI is finished, released and merged.** All seven original
+screens (Setup, Sign-in, Choose, Review, Confirm, Progress, Results), a fully
+sandboxed renderer, per-instance encrypted credentials, and a typed IPC
+contract. Released as **v0.1.0** with both installers, and clean-machine tested
+by the operator. Merged to `main` as PR #1.
 
-- Branch: **`feature/desktop-gui`** (pushed)
-- The CLI lives on `feature/bulk-uploader`; `main` holds only initial scaffolding
-- Design: [superpowers/specs/2026-08-04-desktop-gui-design.md](superpowers/specs/2026-08-04-desktop-gui-design.md)
-- Plan: [superpowers/plans/2026-08-04-desktop-gui.md](superpowers/plans/2026-08-04-desktop-gui.md)
-- **Tasks 1–8 of 10 done. 389 tests across 32 files as of that work** (the repo
-  total is now 522 across 47 files — see the metadata extractor below).
+**What is on `main`:** the CLI, the MCP server, the desktop GUI, and the
+metadata extractor's core + `oeq-upload extract` command (PR #2).
 
-Built so far: Electron scaffolding with a fully sandboxed renderer,
-per-instance encrypted credential/token storage, a typed IPC contract, session
-assembly, embedded sign-in, IPC handlers over the existing core, and all seven
-screens (Setup, Sign-in, Choose, Review, Confirm, Progress, Results).
+**What is not yet merged:** the extractor's desktop screens, on
+`feature/extractor-desktop` as **PR #3** — this session's work.
 
-Remaining: **Task 9** (packaging + `docs/INSTALL.md`), **Task 10**
-(verification including a clean-machine test).
+- Extractor design: [superpowers/specs/2026-08-05-metadata-extractor-design.md](superpowers/specs/2026-08-05-metadata-extractor-design.md)
+- Stage 1 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage1.md](superpowers/plans/2026-08-05-metadata-extractor-stage1.md)
+- Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            522 tests, 47 files
+npm test            602 tests, 55 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
 npm run desktop     build then launch
-npm run dist        electron-builder -> release/
+npm run dist        electron-builder -> release/   (NOT yet, per the operator)
 ```
 
 **Metadata extractor stages 1 and 2 are complete.** Stage 1 (core + CLI) is
@@ -97,6 +95,39 @@ real batch. It takes about ten minutes:
 Expected: Review lists the rows with no invalid-header complaints. The `_source`
 and `_notes` columns are `_`-prefixed and should be ignored by the uploader —
 if Review objects to them, that is the bug this check exists to find.
+
+### Two improvements a review found, deliberately not rushed
+
+Both came out of a `/simplify` pass at the end of the session and were left for
+next time rather than done hastily. Neither is urgent; both are small.
+
+**1. The renderer/Node split belongs in a tsconfig, not a regex test.**
+`tests/desktop/rendererPurity.test.ts` catches `node:` imports reaching the
+renderer, and it did catch the real bug. But it is a test, so it only runs when
+someone runs tests, and its regexes have known holes: single-quoted specifiers
+only, no dynamic `import()`, no re-export chains (`export * from`), and it would
+false-positive on an erasable `import type`.
+
+The compiler-level fix: a `tsconfig.renderer.json` scoped to `src/desktop/ui/**`
+with `"types": []`, which turns `import 'node:path'` into a compile error on
+every `tsc` run. The project already has three tsconfigs, so this is a
+well-precedented addition. Keep the test as a backstop; make the compiler the
+primary mechanism.
+
+**2. `ExtractScan.starter` is a workaround for a mixed-concern module.**
+The renderer cannot call `starterProfile` because `core/extract/suggest.ts`
+imports `extname` from `node:path` and pulls in `readers/index.ts`, which drags
+in pdf.js and `node:fs`. So the main process computes it and ships it inside the
+scan result.
+
+But `isSupported` is a Set lookup on a file extension — genuinely pure. The
+impurity is accidental: `readers/index.ts` mixes it with `readDocument`, which
+touches disk. Splitting `SUPPORTED_EXTENSIONS`/`isSupported` into their own
+node-free module (with a hand-rolled extension parser instead of `extname`)
+would let the renderer call `starterProfile` directly, as the original plan had
+it, and remove the IPC field plus three comments explaining the workaround.
+`core/extract/columns.ts` is already structured this way and the renderer
+imports it directly, so the pattern is proven here.
 
 ### What live testing found — read this before writing any more UI
 
@@ -319,13 +350,15 @@ None blocking, all flagged during implementation:
 
 - `ui/collectionUrl.ts` builds `/page/search?collections=<uuid>` — a best-effort
   guess at openEQUELLA's New UI route, **unverified against a live instance**.
-- The Results screen's "open in browser" link is a plain `<a target="_blank">`.
-  Without `shell.openExternal` / `setWindowOpenHandler` in `main.ts`, Electron
-  opens its own window instead of handing off to the OS browser. `main.ts` was
-  out of scope for the UI task; worth doing in Task 9.
 - The custom-xpath field on Review commits on blur, not on Enter.
 - Native file-open dialogs have never been driven in automation — they are not
-  CDP-scriptable. Task 10's manual test must cover them.
+  CDP-scriptable, so every dialog in the app is covered only by the logic behind
+  it. This is why the round-trip check at the top of this document has to be
+  done by a person.
+- The Choose screen's **"I don't have a spreadsheet yet…"** sits below the
+  starter-kit paragraph, so someone with no spreadsheet reaches for the obvious
+  "Choose spreadsheet…" first and lands in an empty file picker. The operator
+  hit this. Move it directly beneath "Choose spreadsheet…".
 - `npm audit` reports findings; 18 of 21 are in electron-builder's devDependency
   tree, but `fast-xml-parser` and `uuid` (via `exceljs`) are production
   dependencies that ship. Pre-existing, deliberately not upgraded.
@@ -343,15 +376,41 @@ None blocking, all flagged during implementation:
 
 ## Outstanding for the operator
 
-- Nothing. The 37 production items are **meant to stay as drafts** — draft is
-  the finished state for this collection, not a pending step. Do not suggest
+- **The round-trip check** described under "The one test that has never been
+  run". This is the only thing genuinely blocking confidence in stage 2.
+- **Decide on packaging.** The operator asked that no installer be built yet, so
+  PR #3 is code only. When it is time: `npm run dist`, and note that
+  `pdfjs-dist` adds ~35 MB to an installer distributed over a network share.
+  Only `legacy/build` is used at runtime, so electron-builder `files`
+  exclusions may trim it — untested, and it needs a real packaged build to
+  verify, which is why nobody has tried.
+- **Decide whether Word tables are worth supporting.** The 59 test documents
+  kept their metadata in tables, which label matching cannot read. Whether that
+  matters depends on whether real upload batches look like those files.
+- **Decide on jsdom.** Three of the six faults live testing found were DOM
+  behaviour that no test here can express. See "What live testing found".
+- The 37 production items are **meant to stay as drafts** — draft is the
+  finished state for this collection, not a pending step. Do not suggest
   submitting them.
 - Apply shared owners via Manage Resources.
-- Task 10 needs a Windows machine with **no Node installed** — the only way to
-  prove the "zero prerequisites" claim.
+- A clean-machine test needs a Windows machine with **no Node installed** — the
+  only way to prove the "zero prerequisites" claim.
 
 ## Things that bit us, worth not re-learning
 
+- **A green suite says nothing about the browser context.** The renderer is a
+  different runtime from the tests. 590 tests passed while the app showed a
+  blank window, because vitest runs in Node and the failing import resolves
+  there. Anything that only breaks in Chromium is invisible here.
+- **Fixtures are correct but incomplete, and that is the dangerous shape.**
+  Three real bugs in the extractor lived in things every real file has and no
+  fixture had: PDFs always store dates as `D:2026...`, Word always stores UTC,
+  real filename conventions use compact dates. The fixtures were not wrong.
+  They were polite in exactly the ways the code assumed.
+- **A warning that fires on the default configuration is noise.** "Nothing fills
+  this" appeared beside a column the starter profile ships empty on purpose.
+  People stop reading warnings that are always there, and then the warning is
+  not there when it matters.
 - **Tests agreeing with the code prove nothing about the server.** Two wire-format
   bugs survived a 240-test suite because `client.ts` and
   `tests/helpers/mockServer.ts` encoded the same wrong assumption.
