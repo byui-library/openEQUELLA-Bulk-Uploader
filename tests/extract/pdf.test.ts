@@ -38,6 +38,26 @@ describe('readPdf', () => {
     expect(doc.properties.title).toBe('Scanned Programme');
   });
 
+  // Every PDF stores dates in this syntax -- it is not an edge case, it is the
+  // only case. Found by running against a real folder: the date column came
+  // out as "D:20260803230446+00'00'" on all nine files. Converted here in the
+  // reader, because the format is a PDF concern and nothing downstream should
+  // have to know about it.
+  it('converts a PDF-syntax creation date to a plain ISO date', async () => {
+    const doc = await readPdf(await write(makePdf({ text: 'x', created: "D:20260803230446+00'00'" })));
+    expect(doc.properties.created).toBe('2026-08-03');
+  });
+
+  it('converts a PDF date with no timezone suffix', async () => {
+    const doc = await readPdf(await write(makePdf({ text: 'x', created: 'D:19530412000000' })));
+    expect(doc.properties.created).toBe('1953-04-12');
+  });
+
+  it('keeps a creation date it cannot parse rather than dropping it', async () => {
+    const doc = await readPdf(await write(makePdf({ text: 'x', created: 'sometime last spring' })));
+    expect(doc.properties.created).toBe('sometime last spring');
+  });
+
   it('fails with a clear message when the file is not a PDF', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'oeq-pdf-'));
     const path = join(dir, 'broken.pdf');

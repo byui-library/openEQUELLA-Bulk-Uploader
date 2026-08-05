@@ -7,8 +7,14 @@ import { zipSync, strToU8 } from 'fflate';
  * the same way it parses a real file, which is the entire point of using it
  * instead of a stub.
  */
-export function makePdf(options: { text?: string; title?: string; author?: string }): Uint8Array {
-  const { text, title, author } = options;
+export function makePdf(options: {
+  text?: string;
+  title?: string;
+  author?: string;
+  /** Raw PDF date syntax, e.g. "D:20260803230446+00'00'" -- what real PDFs contain. */
+  created?: string;
+}): Uint8Array {
+  const { text, title, author, created } = options;
 
   const escape = (s: string): string => s.replace(/([\\()])/g, '\\$1');
   const content = text === undefined ? '' : `BT /F1 12 Tf 72 720 Td (${escape(text)}) Tj ET`;
@@ -16,6 +22,7 @@ export function makePdf(options: { text?: string; title?: string; author?: strin
   const info: string[] = [];
   if (title !== undefined) info.push(`/Title (${escape(title)})`);
   if (author !== undefined) info.push(`/Author (${escape(author)})`);
+  if (created !== undefined) info.push(`/CreationDate (${escape(created)})`);
 
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',

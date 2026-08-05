@@ -11,6 +11,34 @@ import type { DocumentData, DocumentProperty } from '../types.js';
  */
 const MIN_TEXT_LAYER_CHARS = 12;
 
+/**
+ * PDF stores dates as `D:YYYYMMDDHHmmSSOHH'mm'` -- everything after the year
+ * is optional. This is not an unusual case to handle, it is the only case: a
+ * real folder produced `D:20260803230446+00'00'` on every single file, which
+ * nothing downstream could make sense of.
+ *
+ * Converted here rather than in `normaliseDate` because the syntax is a PDF
+ * concern, and the reader is the only layer that knows the value came from a
+ * PDF. A value that does not match is returned untouched -- never dropped.
+ *
+ * A date carrying only a year stays a bare year rather than gaining an
+ * invented January the 1st; `normaliseDate` then keeps it verbatim and says
+ * so, which is the honest outcome.
+ */
+function fromPdfDate(raw: string): string {
+  const match = /^D:(\d{4})(?:(\d{2})(\d{2}))?/.exec(raw);
+  if (!match) return raw;
+
+  const [, year, month, day] = match;
+  if (month === undefined || day === undefined) return year!;
+
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  if (monthNumber < 1 || monthNumber > 12 || dayNumber < 1 || dayNumber > 31) return raw;
+
+  return `${year}-${month}-${day}`;
+}
+
 const PROPERTY_KEYS: Record<string, DocumentProperty> = {
   Title: 'title',
   Author: 'author',
@@ -81,7 +109,9 @@ export async function readPdf(path: string): Promise<DocumentData> {
     const info = (metadata.info ?? {}) as Record<string, unknown>;
     for (const [pdfName, key] of Object.entries(PROPERTY_KEYS)) {
       const value = info[pdfName];
-      if (typeof value === 'string' && value.trim() !== '') properties[key] = value.trim();
+      if (typeof value !== 'string' || value.trim() === '') continue;
+      const trimmed = value.trim();
+      properties[key] = key === 'created' ? fromPdfDate(trimmed) : trimmed;
     }
 
     return { text, hasTextLayer: text.length >= MIN_TEXT_LAYER_CHARS, properties };
