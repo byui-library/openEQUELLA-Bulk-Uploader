@@ -56,6 +56,22 @@ once this has been run against a real folder.
 **Not yet run against real material.** Before trusting it on a batch, point it
 at a folder of genuine files with `--dry-run` and read the `_notes` column.
 
+**Tried against real material, three times.** Nine PDFs; the same PDFs renamed
+to a convention; then 59 real Word documents. Every trial found something the
+generated fixtures could not — PDF-syntax dates, a UTC day-shift, and compact
+filename dates — all fixed. The final run produced 59 rows with nothing
+flagged. The lesson worth keeping: the fixtures were *correct* but incomplete,
+and each gap was a thing every real file has and no fixture had.
+
+**Known gap, deliberately deferred: metadata held in Word tables.** Those 59
+documents keep their fields in a table, so the text extracts as `Company` then
+`HCA` on separate lines. Label matching only understands `Label: value` with a
+colon, so it found nothing in any of them — everything usable came from the
+filename and the document properties. Supporting "this line labels the next"
+would open up the document body. Decided against building it before the
+desktop stage, on the grounds that these files may not represent a real upload
+batch. Ask the operator before investing in it.
+
 Two decisions deferred to the operator, neither blocking:
 
 - **`pdfjs-dist` adds ~35 MB to the installer**, which is distributed over a
