@@ -1,0 +1,41 @@
+name: Tests
+
+# Runs on every push and pull request. Deliberately does NOT build installers --
+# that happens only on a tag (see release.yml), because Windows runners bill at
+# 2x against the private-repo minute allowance and an Electron build is slow.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    # windows-latest rather than ubuntu, despite costing more minutes: this is a
+    # Windows-targeted application, several behaviours under test are
+    # Windows-specific (NTFS rename races in state.ts, path resolution,
+    # BOM-tolerant .env loading), and a green Linux run would prove less than it
+    # appears to. The suite itself takes seconds; the cost is runner startup.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build CLI and MCP server
+        run: npm run build
+
+      - name: Build desktop app
+        run: npm run build:desktop

@@ -1,0 +1,105 @@
+import type { RunReport } from '../../ipc.js';
+import { escapeHtml } from '../dom.js';
+
+export interface InterruptedEntry {
+  rowNumber: number;
+  fileName: string;
+}
+
+export interface ResultsProps {
+  report: RunReport;
+  interrupted: InterruptedEntry[];
+  collectionUrl: string;
+  retrying: boolean;
+  error: string | null;
+  onRetryFailed(): void;
+}
+
+/**
+ * Counts, per-row failures, a Retry failed action, and a link to the
+ * collection. If anything was left `interrupted` by an earlier crashed run,
+ * that gets its own plain-language explanation -- it is the runner
+ * deliberately declining to guess, not an error (spec).
+ */
+export function renderResults(root: HTMLElement, props: ResultsProps): void {
+  const r = props.report;
+
+  const interruptedSection =
+    r.interrupted > 0
+      ? `
+      <div class="danger-panel" role="status">
+        <p>
+          <strong>${r.interrupted} row(s) were left over from a previous run that stopped midway</strong>
+          (a crash, a lost connection, or the app being closed while a file was uploading).
+        </p>
+        <p>
+          For each one, the item may or may not have actually been created in
+          openEQUELLA &mdash; check the collection by hand before reprocessing.
+          These rows are <strong>not</strong> retried automatically or by the
+          Retry failed button below.
+        </p>
+        ${
+          props.interrupted.length > 0
+            ? `<ul>${props.interrupted
+                .map((e) => `<li>Row ${e.rowNumber}: ${escapeHtml(e.fileName)}</li>`)
+                .join('')}</ul>`
+            : ''
+        }
+      </div>`
+      : '';
+
+  const failureRows = r.failures
+    .map(
+      (f) => `
+      <tr>
+        <td>${f.rowNumber}</td>
+        <td>${escapeHtml(f.fileName)}</td>
+        <td>${escapeHtml(f.error)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const failuresSection =
+    r.failures.length > 0
+      ? `
+      <fieldset>
+        <legend>Failed rows (${r.failures.length})</legend>
+        <table class="review-table">
+          <thead><tr><th>Row</th><th>File</th><th>Reason</th></tr></thead>
+          <tbody>${failureRows}</tbody>
+        </table>
+        <div class="button-row">
+          <button id="results-retry-btn" type="button" ${props.retrying ? 'disabled' : ''}>
+            ${props.retrying ? 'Retrying…' : 'Retry failed'}
+          </button>
+        </div>
+      </fieldset>`
+      : '';
+
+  root.innerHTML = `
+    <section class="screen">
+      <h1>Done</h1>
+
+      <dl class="confirm-summary">
+        <dt>Created</dt><dd>${r.created}</dd>
+        <dt>Failed</dt><dd>${r.failed}</dd>
+        <dt>Skipped (already done)</dt><dd>${r.skipped}</dd>
+        <dt>Incomplete</dt><dd>${r.incomplete}</dd>
+        <dt>Interrupted</dt><dd>${r.interrupted}</dd>
+      </dl>
+
+      ${interruptedSection}
+      ${failuresSection}
+
+      ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
+
+      <p>
+        <a id="results-open-collection" href="${escapeHtml(props.collectionUrl)}" target="_blank" rel="noopener noreferrer">
+          Open the collection in openEQUELLA
+        </a>
+      </p>
+    </section>
+  `;
+
+  root.querySelector<HTMLButtonElement>('#results-retry-btn')?.addEventListener('click', () => props.onRetryFailed());
+}

@@ -1,0 +1,96 @@
+name: Release
+
+# Builds the Windows installers and attaches them to a GitHub Release.
+#
+# Triggered only by a version tag, because Windows runners bill at 2x against
+# the private-repo minute allowance and this job is far slower than the test
+# job. To cut a release:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# NOTE ON DISTRIBUTION: this repository is private, so a GitHub Release is not
+# a delivery channel for end users -- they would each need repo access. It is
+# the canonical, reproducible build and the version archive. Staff still get
+# the executable from the network share; this is where you fetch the copy to
+# put there.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # required to create the release and upload assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Gate the release on the same checks as an ordinary push. A tag should
+      # never produce an artifact that a normal commit would have failed.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build installers
+        # The build is unsigned. Disabling auto-discovery stops electron-builder
+        # hunting for a certificate and failing confusingly when it finds none.
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist
+
+      - name: List artifacts
+        shell: pwsh
+        run: Get-ChildItem release -Filter *.exe | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      # Fail loudly rather than shipping a build containing credentials. The
+      # app is designed so the administrator supplies the client ID and secret
+      # separately; this asserts that design actually holds in the artifact.
+      - name: Assert no credentials in the build
+        shell: pwsh
+        run: |
+          $hits = Select-String -Path release\**\* -Pattern 'OEQ_CLIENT_SECRET','client_secret=' -SimpleMatch -List -ErrorAction SilentlyContinue
+          if ($hits) { $hits | ForEach-Object { Write-Host "FOUND: $($_.Path)" }; throw 'Possible credential material in release artifacts' }
+          Write-Host 'No credential markers found in release artifacts.'
+
+      - name: Upload artifacts to the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: release/*.exe
+          retention-days: 90
+
+      - name: Create GitHub Release
+        # gh is preinstalled on GitHub runners. Used in preference to a
+        # third-party action to keep the supply-chain surface small.
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = @"
+          Windows build of the openEQUELLA Bulk Uploader desktop app.
+
+          **This download contains no credentials.** The OAuth client ID, secret
+          and redirect URL are supplied separately by the administrator and are
+          entered once on first run. See docs/INSTALL.md.
+
+          The build is unsigned, so Windows SmartScreen will warn on first run --
+          click **More info**, then **Run anyway**. That means "not code-signed",
+          not "unsafe".
+
+          Items are created as **drafts** and must be submitted in openEQUELLA.
+          "@
+          gh release create "$env:GITHUB_REF_NAME" (Get-ChildItem release -Filter *.exe | ForEach-Object { $_.FullName }) --title "$env:GITHUB_REF_NAME" --notes $notes
