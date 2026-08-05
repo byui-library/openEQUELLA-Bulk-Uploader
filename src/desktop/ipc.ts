@@ -117,6 +117,8 @@ export interface OeqApi {
   saveProfileAs(profile: Profile): Promise<string | null>;
   /** Ask where to write the spreadsheet. Null if cancelled. */
   chooseCsvPath(): Promise<string | null>;
+  /** Reveal a file in the OS file manager. */
+  openPath(path: string): Promise<void>;
 
   onProgress(cb: (p: RunProgress) => void): void;
 }
@@ -163,4 +165,5 @@ export const CHANNELS = {
   openProfile: 'oeq:openProfile',
   saveProfileAs: 'oeq:saveProfileAs',
   chooseCsvPath: 'oeq:chooseCsvPath',
+  openPath: 'oeq:openPath',
 } as const;

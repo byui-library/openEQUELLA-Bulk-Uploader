@@ -2,7 +2,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IpcMain } from 'electron';
-import { dialog } from 'electron';
+import { dialog, shell } from 'electron';
 import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
 import { extractFolder } from '../core/extract/extract.js';
 import { readDocument, isSupported } from '../core/extract/readers/index.js';
@@ -141,5 +141,11 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       filters: [{ name: 'Spreadsheet', extensions: ['csv'] }],
     });
     return r.canceled || r.filePath === undefined ? null : r.filePath;
+  });
+
+  ipcMain.handle(CHANNELS.openPath, async (_e, path: string): Promise<void> => {
+    // showItemInFolder rather than openPath: the operator wants the folder
+    // with the file selected, not Excel launching behind the app window.
+    shell.showItemInFolder(path);
   });
 }

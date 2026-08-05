@@ -51,6 +51,7 @@ const CHANNELS = {
   openProfile: 'oeq:openProfile',
   saveProfileAs: 'oeq:saveProfileAs',
   chooseCsvPath: 'oeq:chooseCsvPath',
+  openPath: 'oeq:openPath',
 } as const;
 
 const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
@@ -79,6 +80,7 @@ const api: OeqApi = {
   openProfile: () => invoke(CHANNELS.openProfile),
   saveProfileAs: (profile) => invoke(CHANNELS.saveProfileAs, profile),
   chooseCsvPath: () => invoke(CHANNELS.chooseCsvPath),
+  openPath: (path) => invoke(CHANNELS.openPath, path),
   onProgress: (cb) => {
     ipcRenderer.on(CHANNELS.progress, (_e, p: RunProgress) => cb(p));
   },

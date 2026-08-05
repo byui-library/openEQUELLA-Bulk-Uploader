@@ -23,6 +23,7 @@ export interface ChooseProps {
   onChooseFolder(): void;
   onSaveStarterKit(): void;
   onContinue(): void;
+  onExtract(): void;
 }
 
 /**
@@ -75,6 +76,7 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
             ${props.starterKitSaving ? 'Saving…' : 'Save a template and sample file…'}
           </button>
         </p>
+        <button id="choose-extract" type="button">I don't have a spreadsheet yet&hellip;</button>
         ${props.starterKitMessage ? `<p class="note">${escapeHtml(props.starterKitMessage)}</p>` : ''}
       </fieldset>
 
@@ -113,4 +115,5 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
   root
     .querySelector<HTMLButtonElement>('#choose-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
+  root.querySelector<HTMLButtonElement>('#choose-extract')?.addEventListener('click', props.onExtract);
 }
