@@ -40,6 +40,14 @@ Two versions of the program may be provided:
 Either one works the same way once it's running. If you're not sure, use the
 single-file version.
 
+If you use the installer, one screen asks **who** to install it for. Leave
+the default option selected — it installs just for you and needs no special
+permissions. If a Windows prompt appears asking for an administrator's
+permission, you've picked the "install for all users" option by mistake:
+go back and choose the default (per-user) option instead, or close the
+installer and use the single-file version above, which never asks this
+question at all.
+
 ## Step 2: The security warning (this is expected)
 
 The first time you run the program, Windows will almost certainly show a blue
@@ -51,6 +59,15 @@ Here's why it appears: this program isn't yet digitally signed with a
 certificate that Windows recognizes. That's a paperwork/cost step, not a
 safety one — Windows shows this warning for *any* unsigned program, no matter
 how safe it is, the first time it's run on a computer.
+
+<!--
+  PENDING: real screenshot of the SmartScreen "Windows protected your PC"
+  dialog, to be captured by the operator during the clean-machine test
+  (docs/superpowers/plans/2026-08-04-desktop-gui.md, Task 10 Step 3). Replace
+  this placeholder with the actual image once captured -- do not remove the
+  slot, the plan and spec both require a screenshot here.
+-->
+![Windows protected your PC — click More info, then Run anyway](images/smartscreen.png)
 
 To continue past it:
 

@@ -67,6 +67,34 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
+  // setWindowOpenHandler above only covers a NEW window. Nothing stops the
+  // main window's own frame being navigated away, and the CSP in index.html
+  // does not govern top-level navigation. This app has no address bar and no
+  // back button, so a same-window navigation away from ui/index.html would
+  // strand a non-technical user with no way back. Today the only external
+  // link uses target="_blank" and correctly routes through
+  // setWindowOpenHandler, but that's a convention, not a rail: a future
+  // same-window `<a href>` without target="_blank", or a stray
+  // `window.location` assignment, would sail straight through without this.
+  //
+  // Blanket-deny is safe here (rather than allow-listing the app's own URL)
+  // because this app's screen routing is entirely client-side DOM
+  // manipulation in app.ts -- there is no legitimate reason for this
+  // window's frame to navigate anywhere, ever, after its initial load.
+  // That initial load is itself unaffected: `will-navigate` fires only for
+  // navigation requested by the page or user (a clicked link,
+  // `window.location`), never for the main process's own
+  // `webContents.loadURL`/`loadFile` calls, so `win.loadFile` below does not
+  // trigger this handler and is not blocked by it.
+  //
+  // The sign-in popup in signin.ts is a separate BrowserWindow with its own
+  // `will-navigate` listener -- that one is a passive inspector used to
+  // capture the OAuth `?code=`, not a guard, and must keep letting
+  // navigation through. Do not touch it from here.
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
+
   void win.loadFile(join(here, 'ui', 'index.html'));
 }
 
