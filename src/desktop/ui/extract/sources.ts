@@ -1,11 +1,22 @@
 // src/desktop/ui/extract/sources.ts
 import { placeholders } from '../../../core/extract/pattern.js';
 import type { DocumentProperty, Source } from '../../../core/extract/types.js';
-import type { ExtractScan } from '../../ipc.js';
 
 export interface SourceOption {
   label: string;
   source: Source;
+}
+
+/**
+ * Just the parts of a folder scan this module needs. Narrower than
+ * `ExtractScan` on purpose: the screens hold their own scan-shaped props and
+ * should not have to carry fields they never read -- such as the starter
+ * profile, which exists only so the renderer never imports the Node-dependent
+ * module that builds it.
+ */
+export interface SourceEvidence {
+  labels: string[];
+  properties: string[];
 }
 
 /** Plain-language name for a source, used in the dropdown and the column list. */
@@ -23,7 +34,7 @@ export function describeSource(source: Source): string {
  * present. Offering everything conceivable would invite mapping a column to
  * something that is always blank.
  */
-export function sourceOptions(pattern: string, scan: ExtractScan): SourceOption[] {
+export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOption[] {
   let names: string[] = [];
   try {
     names = placeholders(pattern);

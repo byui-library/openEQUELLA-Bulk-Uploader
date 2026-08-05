@@ -1,7 +1,6 @@
 // src/desktop/ui/extract/controller.ts
 import type { OeqApi } from '../../ipc.js';
 import { addColumn, removeColumn, moveColumn, setSources, setDefault } from '../../../core/extract/columns.js';
-import { starterProfile } from '../../../core/extract/suggest.js';
 import type { Profile, Source } from '../../../core/extract/types.js';
 import { stripElectronWrapper } from '../errors.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
@@ -77,9 +76,16 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       await guard(async () => {
         const scan = await options.api.extractScan(dir);
         const schemaPaths = await options.api.schemaPaths();
-        // A starter profile holds only the attachment column: the program can
-        // see a filename has four parts but cannot know part 2 is a first name.
-        const profile = state.profile ?? starterProfile(scan.supported);
+        // The starter profile is built in the main process and arrives with the
+        // scan. It holds only the attachment column: the program can see a
+        // filename has four parts but cannot know part 2 is a first name.
+        //
+        // It is NOT computed here. `core/extract/suggest.ts` reaches
+        // `node:path` and, through the readers, `node:fs/promises` -- and this
+        // module runs in a sandboxed renderer with no Node access. Importing it
+        // killed the entire module graph and the window rendered blank, with
+        // nothing on the terminal. Guarded by tests/desktop/rendererPurity.test.ts.
+        const profile = state.profile ?? scan.starter;
         return { dir, scan, schemaPaths, profile };
       });
     },

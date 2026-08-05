@@ -1,8 +1,9 @@
 // tests/desktop/ui/extract/sources.test.ts
 import { describe, it, expect } from 'vitest';
 import { sourceOptions, describeSource } from '../../../../src/desktop/ui/extract/sources.js';
+import { ATTACHMENT_COLUMN } from '../../../../src/core/extract/types.js';
 
-const scan = { supported: ['a.pdf'], skipped: [], labels: ['Performer'], properties: ['title', 'created'] };
+const scan = { supported: ['a.pdf'], skipped: [], labels: ['Performer'], properties: ['title', 'created'], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
 
 describe('sourceOptions', () => {
   it('offers one option per placeholder in the pattern', () => {
@@ -23,7 +24,7 @@ describe('sourceOptions', () => {
   });
 
   it('offers nothing from an empty scan except the placeholders', () => {
-    const empty = { supported: [], skipped: [], labels: [], properties: [] };
+    const empty = { supported: [], skipped: [], labels: [], properties: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
     expect(sourceOptions('{a}.pdf', empty).map((o) => o.label)).toEqual(['Filename part: a']);
   });
 

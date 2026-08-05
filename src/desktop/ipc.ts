@@ -133,6 +133,17 @@ export interface ExtractScan {
   labels: string[];
   /** Document properties present in the sampled documents, e.g. ['title','created']. */
   properties: string[];
+  /**
+   * A starter profile proposed for this folder.
+   *
+   * Built in the main process on purpose. It comes from
+   * `core/extract/suggest.ts`, which reaches `node:path` and the document
+   * readers -- and the renderer is sandboxed with no Node access, so importing
+   * it there kills the whole module graph and the window renders blank. See
+   * `tests/desktop/rendererPurity.test.ts`, which now fails the build rather
+   * than letting that happen again.
+   */
+  starter: Profile;
 }
 
 export interface ExtractRunReport {
