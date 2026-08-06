@@ -1,6 +1,6 @@
 // src/core/duplicates.ts
 
-import type { Manifest } from './types.js';
+import { sameFileName, TITLE_XPATH, type Manifest } from './types.js';
 
 /**
  * One item already in the collection, as the rules below need to see it.
@@ -38,26 +38,22 @@ export interface DuplicateFinding {
   existing: { uuid: string; version: number; title: string; attachmentNames: string[] }[];
 }
 
-/** Compare filenames the way the spreadsheet reader already compares attachment names. */
-function sameFile(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
 /**
  * The verdict for one row, or null if there is nothing to say.
  *
- * `rowNumber` is left at 0 for the caller to fill in: this function is given
- * one row's facts, not the row itself, which is what keeps it testable
- * without a manifest.
+ * `rowNumber` is omitted: this function is given one row's facts, not the
+ * row itself, which is what keeps it testable without a manifest. Omitting
+ * it from the type (rather than defaulting it to 0, which does not exist as
+ * a spreadsheet row) makes the compiler enforce that every caller supplies
+ * the real row number.
  */
 export function verdictFor(
   fileName: string,
   title: string,
   hits: readonly ExistingItemHit[],
-): DuplicateFinding | null {
+): Omit<DuplicateFinding, 'rowNumber'> | null {
   if (title.trim() === '') {
     return {
-      rowNumber: 0,
       fileName,
       existing: [],
       tier: 'not-checkable',
@@ -65,27 +61,34 @@ export function verdictFor(
     };
   }
 
-  if (hits.length === 0) return null;
+  // The server is asked for an exact match, but whether `where` truly filters
+  // is not yet confirmed against this instance. Checking locally costs
+  // nothing and turns "the server ignored the clause" from a flood of false
+  // alarms into a clean result. Case-insensitive, because a server that
+  // matches case-insensitively is still telling the truth about a duplicate.
+  const matching = hits.filter((h) => h.name.trim().toLowerCase() === title.trim().toLowerCase());
 
-  const existing = hits.map((h) => ({
+  if (matching.length === 0) return null;
+
+  const existing = matching.map((h) => ({
     uuid: h.uuid,
     version: h.version,
     title: h.name,
     attachmentNames: h.attachmentNames,
   }));
 
-  const holdsThisFile = hits.some((h) => h.attachmentNames.some((n) => sameFile(n, fileName)));
+  const holdsThisFile = matching.some((h) =>
+    h.attachmentNames.some((n) => sameFileName(n, fileName)),
+  );
 
   return holdsThisFile
     ? {
-        rowNumber: 0,
         fileName,
         existing,
         tier: 'near-certain',
         detail: `an item with this title already holds a file called '${fileName}'`,
       }
     : {
-        rowNumber: 0,
         fileName,
         existing,
         tier: 'possible',
@@ -136,10 +139,10 @@ export async function findDuplicates(
   for (let i = 0; i < pending.length; i += CONCURRENCY) {
     const results = await Promise.all(
       pending.slice(i, i + CONCURRENCY).map(async (entry) => {
-        const title = entry.metadata['MWDL/title']?.[0] ?? '';
+        const title = (entry.metadata[TITLE_XPATH]?.[0] ?? '').trim();
         try {
           const hits =
-            title.trim() === '' ? [] : await client.searchByTitle(manifest.collectionUuid, title);
+            title === '' ? [] : await client.searchByTitle(manifest.collectionUuid, title);
           const verdict = verdictFor(entry.fileName, title, hits);
           return verdict ? { ...verdict, rowNumber: entry.rowNumber } : null;
         } catch (err) {
