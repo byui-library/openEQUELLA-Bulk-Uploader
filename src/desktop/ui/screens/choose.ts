@@ -1,7 +1,7 @@
 import type { CollectionSummary } from '../../../core/client.js';
 import { filterCollections } from '../filter.js';
 import { canContinueChoose } from '../state.js';
-import { escapeHtml } from '../dom.js';
+import { escapeHtml, keepCaret } from '../dom.js';
 
 export interface ChooseProps {
   /** null while listCollections() is in flight. */
@@ -23,6 +23,7 @@ export interface ChooseProps {
   onChooseFolder(): void;
   onSaveStarterKit(): void;
   onContinue(): void;
+  onExtract(): void;
 }
 
 /**
@@ -56,6 +57,8 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
     `;
   }
 
+  const restoreCaret = keepCaret(root, '#collection-filter');
+
   root.innerHTML = `
     <section class="screen">
       <h1>Choose what to upload</h1>
@@ -75,6 +78,7 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
             ${props.starterKitSaving ? 'Saving…' : 'Save a template and sample file…'}
           </button>
         </p>
+        <button id="choose-extract" type="button">I don't have a spreadsheet yet&hellip;</button>
         ${props.starterKitMessage ? `<p class="note">${escapeHtml(props.starterKitMessage)}</p>` : ''}
       </fieldset>
 
@@ -98,6 +102,10 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
   root.querySelector<HTMLInputElement>('#collection-filter')?.addEventListener('input', (e) => {
     props.onQueryChange((e.target as HTMLInputElement).value);
   });
+  // Same as the Confirm screen: filtering re-renders, which recreated this
+  // box and dropped focus after each character.
+  restoreCaret();
+
   root.querySelector<HTMLSelectElement>('#collection-select')?.addEventListener('change', (e) => {
     props.onSelectCollection((e.target as HTMLSelectElement).value);
   });
@@ -113,4 +121,5 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
   root
     .querySelector<HTMLButtonElement>('#choose-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
+  root.querySelector<HTMLButtonElement>('#choose-extract')?.addEventListener('click', props.onExtract);
 }

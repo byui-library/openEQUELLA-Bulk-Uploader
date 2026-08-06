@@ -1,6 +1,8 @@
 import type { ItemState, Manifest } from '../core/types.js';
 import type { CollectionSummary, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
+import type { Profile } from '../core/extract/types.js';
+import type { ExtractedRow } from '../core/extract/types.js';
 
 export interface InstanceChoice {
   id: 'production' | 'test';
@@ -32,6 +34,12 @@ export interface ColumnReport {
   header: string;
   valid: boolean;
   suggestions: string[];
+  /**
+   * An annotation column such as `_source` or `_notes`: accepted, but never
+   * uploaded as metadata. Reported separately so Review can say so, rather
+   * than showing it as a valid metadata column and implying it gets sent.
+   */
+  ignored?: boolean;
   /** Set when the user has remapped this column in the UI. */
   mappedTo?: string;
 }
@@ -101,7 +109,61 @@ export interface OeqApi {
   retryFailed(manifestPath: string): Promise<void>;
   loadManifest(manifestPath: string): Promise<Manifest>;
 
+  /** Read a folder: what is there, and what can be mapped from. Samples the first few documents. */
+  extractScan(dir: string): Promise<ExtractScan>;
+  /** First few rows for the live preview. Cheap enough to call on every edit. */
+  extractPreview(args: { dir: string; profile: Profile }): Promise<ExtractedRow[]>;
+  /** Write the spreadsheet. */
+  extractRun(args: { dir: string; profile: Profile; outPath: string }): Promise<ExtractRunReport>;
+  /** Every valid schema xpath, for the Add-column picker. */
+  schemaPaths(): Promise<string[]>;
+  /** Open a profile the operator picks. Null if cancelled. */
+  openProfile(): Promise<{ path: string; profile: Profile } | null>;
+  /** Save a profile where the operator picks. Returns the path, or null if cancelled. */
+  saveProfileAs(profile: Profile): Promise<string | null>;
+  /** Ask where to write the spreadsheet. Null if cancelled. */
+  chooseCsvPath(): Promise<string | null>;
+  /** Reveal a file in the OS file manager. */
+  openPath(path: string): Promise<void>;
+
   onProgress(cb: (p: RunProgress) => void): void;
+}
+
+/** What a folder actually contains, and what evidence is available to map from. */
+export interface ExtractScan {
+  /** Supported files, sorted. */
+  supported: string[];
+  /** Files that will not be read, each with a reason. */
+  skipped: { file: string; reason: string }[];
+  /** `Label:` names found in the sampled documents, deduplicated. */
+  labels: string[];
+  /** Document properties present in the sampled documents, e.g. ['title','created']. */
+  properties: string[];
+  /**
+   * Table column headers found in the sampled documents. Word files from this
+   * institution commonly hold their metadata as a header row and one row of
+   * values rather than as `Label: value` prose.
+   */
+  tableColumns: string[];
+  /** Headings found in the sampled documents that a description is often written under. */
+  sections: string[];
+  /**
+   * A starter profile proposed for this folder.
+   *
+   * Built in the main process on purpose. It comes from
+   * `core/extract/suggest.ts`, which reaches `node:path` and the document
+   * readers -- and the renderer is sandboxed with no Node access, so importing
+   * it there kills the whole module graph and the window renders blank. See
+   * `tests/desktop/rendererPurity.test.ts`, which now fails the build rather
+   * than letting that happen again.
+   */
+  starter: Profile;
+}
+
+export interface ExtractRunReport {
+  outPath: string;
+  written: number;
+  flagged: number;
 }
 
 export const CHANNELS = {
@@ -121,4 +183,12 @@ export const CHANNELS = {
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
+  extractScan: 'oeq:extractScan',
+  extractPreview: 'oeq:extractPreview',
+  extractRun: 'oeq:extractRun',
+  schemaPaths: 'oeq:schemaPaths',
+  openProfile: 'oeq:openProfile',
+  saveProfileAs: 'oeq:saveProfileAs',
+  chooseCsvPath: 'oeq:chooseCsvPath',
+  openPath: 'oeq:openPath',
 } as const;

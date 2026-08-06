@@ -1,6 +1,6 @@
 import type { ItemState } from '../../../core/types.js';
 import { canUpload } from '../confirm.js';
-import { escapeHtml } from '../dom.js';
+import { escapeHtml, keepCaret } from '../dom.js';
 
 export interface ConfirmProps {
   instanceLabel: string;
@@ -54,6 +54,8 @@ export function renderConfirm(root: HTMLElement, props: ConfirmProps): void {
 
   const enabled = canUpload(props.itemState, props.itemCount, props.typedCount) && !props.uploading;
 
+  const restoreCaret = keepCaret(root, '#confirm-typed-count');
+
   root.innerHTML = `
     <section class="screen">
       <h1>Confirm</h1>
@@ -97,6 +99,11 @@ export function renderConfirm(root: HTMLElement, props: ConfirmProps): void {
   root.querySelector<HTMLInputElement>('#confirm-typed-count')?.addEventListener('input', (e) => {
     props.onTypedCountChange((e.target as HTMLInputElement).value);
   });
+  // Typing here re-renders the screen, which recreated this input and dropped
+  // focus after every character -- so the count could only be entered one digit
+  // per click. This is the gate on publishing to a collection with no review
+  // queue, and a gate that is painful to operate is one people work around.
+  restoreCaret();
   root.querySelector<HTMLButtonElement>('#confirm-back-btn')?.addEventListener('click', () => props.onBack());
   root.querySelector<HTMLButtonElement>('#confirm-upload-btn')?.addEventListener('click', () => props.onUpload());
 }

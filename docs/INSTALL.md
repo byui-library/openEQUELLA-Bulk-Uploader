@@ -171,6 +171,73 @@ there once you've confirmed the upload worked. Nothing about running this
 test is different from a real batch; it's the same code path, just with a
 spreadsheet and file the program already knows are correct.
 
+## Building a spreadsheet from your files
+
+If you have a folder of PDFs or Word documents and no spreadsheet, the program
+can build one for you. On the **Choose what to upload** screen, click
+**I don't have a spreadsheet yet…**.
+
+It works in three steps:
+
+1. **Choose the folder.** The program says how many files it can read, and
+   lists any it cannot — nothing is skipped silently.
+2. **Set up the columns.** It shows one of your filenames broken into parts, and
+   a list of the columns your spreadsheet will have. Add, remove and reorder
+   them, and say where each one's value comes from. A preview of the first few
+   files updates as you go.
+
+   **The columns arrive already filled in**, worked out from your actual files.
+   Before showing you this screen the program opens a few of them and looks at
+   what is inside, so if your Word documents keep their information in a table
+   with headings like *Company*, *Job Title*, *Job Description*, *Date*, it will
+   already have matched those to the right fields.
+
+   It only matches a heading whose name lines up with a field in your schema.
+   *Job Title* becomes the title, *Job Description* becomes the description —
+   but *Company*, *Pay* and *Qualifications* mean nothing to this schema, so
+   they are left alone rather than put somewhere that looks plausible. Add them
+   yourself if you want them.
+
+   Where a column shows **two** sources, it tries them in order and takes the
+   first that isn't empty. That is how one setup can serve a folder holding both
+   Word files and PDFs: the Word files have a *Job Title* cell, the PDFs record
+   their title as a document property instead.
+
+   Nothing here is fixed. Change any source, add columns, remove the ones you
+   don't want — only the file itself is compulsory, because it is how each row
+   is matched to its document. Removing a column offers an **Undo** straight
+   away, so it is safe to try.
+3. **Save.** The spreadsheet is written where you choose.
+
+**Then open it in Excel and check it before uploading.** This step guesses, and
+everything else the program does doesn't. Two extra columns help you check:
+
+- `_notes` — rows that need a look, and why
+- `_source` — where each value came from
+
+The uploader skips any column whose name starts with an underscore, so you can
+leave them in place or delete them - either works.
+
+`_source` earns its keep on titles in particular. Most documents record a
+sensible title, but a fair few record something left over from how the file was
+made — an internal reference number, or the name of the Word file it was
+exported from. Sort by `_source` in Excel, glance down the rows that say
+`title=properties`, and you will spot those in a moment.
+
+### If the dates come out wrong
+
+Dates are the thing most likely to need a second look. A date written as
+`12032025` could be 3 December or 12 March — the program will not guess, so it
+leaves the value alone and flags the row. If all your files name dates the same
+way, ask your administrator to set the date format in the profile once, and it
+will read them correctly from then on.
+
+A date that is only a year, like `1953`, is kept exactly as it is rather than
+being turned into the 1st of January.
+
+If you will do this again with the same kind of files, click **Save profile…**
+so you don't have to set the columns up next time.
+
 ## What happens when you upload
 
 This guide covers installing and starting the program, not the full upload

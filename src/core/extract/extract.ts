@@ -20,6 +20,36 @@ function skipReason(filename: string): string {
   return `unsupported file type '${extension || 'none'}'`;
 }
 
+export interface FolderListing {
+  /** Files the readers can open, sorted. */
+  supported: string[];
+  /** Everything else, each with a reason the operator can act on. */
+  skipped: { file: string; reason: string }[];
+}
+
+/**
+ * What is in a folder, split into what can be read and what cannot.
+ *
+ * Exported because the desktop app's folder-scan screen needs exactly this and
+ * had reimplemented it — including a shorter `skipReason` that omitted the
+ * extension, so the same file was described one way on the scan screen and
+ * another way in the run that followed. One implementation, one wording.
+ */
+export async function listFolder(dir: string): Promise<FolderListing> {
+  const listing = await readdir(dir, { withFileTypes: true });
+  const filenames = listing
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    supported: filenames.filter(isSupported),
+    skipped: filenames
+      .filter((n) => !isSupported(n))
+      .map((file) => ({ file, reason: skipReason(file) })),
+  };
+}
+
 /**
  * Read every supported file in `dir` and build one row each.
  *
@@ -34,19 +64,8 @@ export async function extractFolder(
 ): Promise<ExtractResult> {
   const { reader = readDocument, onProgress, signal } = options;
 
-  const listing = await readdir(dir, { withFileTypes: true });
-  const filenames = listing
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b));
-
+  const { supported, skipped } = await listFolder(dir);
   const rows: ExtractedRow[] = [];
-  const skipped: { file: string; reason: string }[] = [];
-
-  const supported = filenames.filter(isSupported);
-  for (const name of filenames.filter((n) => !isSupported(n))) {
-    skipped.push({ file: name, reason: skipReason(name) });
-  }
 
   let done = 0;
   for (const name of supported) {

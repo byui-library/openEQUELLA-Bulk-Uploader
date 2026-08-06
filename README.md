@@ -316,15 +316,84 @@ real date.
 Leave `"transform": "date"` for values that are already unambiguous, such as
 `2026-04-12` or a document's own timestamp.
 
-### Known limitation: metadata held in Word tables
+### Reading metadata from a Word table
 
-Label matching looks for `Label: value` lines. Word documents often put the
-same information in a **table** instead, which extracts as `Company` on one
-line and `HCA` on the next, with no colon anywhere — so nothing is found.
+Word documents often hold their fields as a table -- a header row naming them,
+then one row of values -- rather than as `Label: value` prose. Point a column
+at the header:
 
-If your documents are laid out that way, the filename and the document
-properties are still available; the body is not. Say so if you hit this, as
-supporting it is a known and deferred piece of work rather than a surprise.
+```json
+{ "path": "MWDL/title", "sources": [{ "tableColumn": "Job Title" }] }
+```
+
+The whole cell is taken, including a cell spanning several paragraphs -- which
+is how a long description is usually written. Header matching ignores case and
+surrounding space. Only the first row under the header is read: one document
+describes one item.
+
+The desktop app offers these automatically. Any header it finds with a value
+beneath it appears in the source dropdown as "Table column: Job Title".
+
+PDFs are not covered. A table in a PDF is only positioned text with lines drawn
+round it, so there are no cell boundaries to read -- guessing them from
+coordinates is a different feature from reading a format that states them.
+
+### A title is never left empty
+
+`MWDL/title` becomes the item's **name** in openEQUELLA, so an empty one
+contributes a nameless item. The starter profile therefore ends that column
+with the filename minus its extension:
+
+```json
+{ "path": "MWDL/title",
+  "sources": [{ "property": "title" }, { "filenameStem": true }] }
+```
+
+It sits last, so any document that states a title keeps it. Two of twelve real
+journal PDFs state none at all, and those two would have been contributed
+nameless. `_source` reads `filename` on exactly those rows.
+
+The name is taken verbatim, including any leading number — only the last
+extension is removed, because titles in a real batch are full of dots
+(`22. Salazar_proof.v2.pdf` → `22. Salazar_proof.v2`).
+
+### Where a description comes from
+
+The description is the field that is hardest to find and the one most worth
+having, so it is tried from four places in order. **The first that yields
+anything wins**, and nothing later overwrites it.
+
+| Tried | Source | What it is |
+| --- | --- | --- |
+| 1 | `{ "tableColumn": "Job Description" }` | A stated field. The document says this cell is the description. |
+| 2 | `{ "section": "Abstract" }` | Text under a heading, ending at the next heading. The document drew the boundary. |
+| 3 | `{ "opening": true }` | The first substantial paragraph. **A guess — always flagged.** |
+| 4 | — | Blank, and visibly so. |
+
+The desktop app proposes 1, 2 and 3 automatically: any table header matching a
+schema field, then every heading it found while scanning, then the opening. So
+a folder of journal PDFs arrives with real abstracts in the description column
+without mapping anything by hand.
+
+Headings recognised for tier 2: **Abstract**, **Executive Summary**,
+**Summary**, **Overview**, **Description**, **Purpose**, **Scope**. A section
+ends at the next heading — `Keywords`, `Introduction`, `Methods`, `References`
+and the rest — or at a 4,000-character cap.
+
+Two things are always flagged in `_notes`:
+
+- **A section that ran to the cap.** It never reached another heading, which
+  usually means the heading was not one. A benefits PDF matched "Summary"
+  mid-page and produced 3,996 characters of plan tables.
+- **Anything from the opening paragraph**, every time, with no exception. On a
+  published PDF the opening is as likely to be a masthead as a summary.
+
+`_source` names the tier that filled each cell — `table`, `section`, `opening`
+— so you can sort by it in Excel and read only the rows that were guessed at.
+
+Tier 3 refuses to guess when there is nothing to guess from: a page of headings
+and table fragments yields a blank cell rather than a line of timeline labels
+presented as a description.
 
 ### Known limitation: extra separators
 
