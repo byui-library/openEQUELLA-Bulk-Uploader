@@ -206,7 +206,8 @@ everything else the program does doesn't. Two extra columns help you check:
 - `_notes` — rows that need a look, and why
 - `_source` — where each value came from
 
-The uploader ignores both, so you can leave them in place.
+The uploader skips any column whose name starts with an underscore, so you can
+leave them in place or delete them - either works.
 
 `_source` earns its keep on titles in particular. Most documents record a
 sensible title, but a fair few record something left over from how the file was

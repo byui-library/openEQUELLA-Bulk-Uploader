@@ -37,8 +37,9 @@ export function renderExtractSave(root: HTMLElement, props: ExtractSaveProps): v
              </p>
              <p><strong>Open it in Excel and check it before uploading.</strong>
              The <code>_notes</code> column says which rows need a look, and
-             <code>_source</code> says where each value came from. Delete both
-             columns or leave them &mdash; the uploader ignores them.</p>`
+             <code>_source</code> says where each value came from. Leave them or delete
+             them &mdash; the uploader skips any column whose name starts with an
+             underscore.</p>`
           : // Deliberately says nothing about how many rows need review. The
             // count comes from the real run, which has not happened yet -- it
             // is zero here for the whole life of this screen, so claiming
