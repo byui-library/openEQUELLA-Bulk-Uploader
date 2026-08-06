@@ -52,7 +52,7 @@ export function renderExtract(
         profile: state.profile!,
         profilePath: state.profilePath,
         sampleFilename: state.scan?.supported[0] ?? '',
-        scan: state.scan ?? { labels: [], properties: [] },
+        scan: state.scan ?? { labels: [], properties: [], tableColumns: [] },
         preview: state.preview,
         busy: state.busy,
         error: state.error,

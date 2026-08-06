@@ -108,6 +108,7 @@ function sourceKind(source: Source): string {
   if ('filename' in source) return 'filename';
   if ('placeholder' in source || 'join' in source) return 'filename';
   if ('label' in source) return 'label';
+  if ('tableColumn' in source) return 'table';
   return 'properties';
 }
 
@@ -139,6 +140,18 @@ function resolve(source: Source, context: Context): string {
   }
 
   if ('label' in source) return context.labels.get(source.label) ?? '';
+
+  if ('tableColumn' in source) {
+    const wanted = source.tableColumn.trim().toLowerCase();
+    for (const table of context.doc.tables) {
+      const index = table.headers.findIndex((h) => h.trim().toLowerCase() === wanted);
+      // Only the FIRST data row. One document describes one item here, and
+      // every real example has exactly one row under the header. Concatenating
+      // several would invent a value nobody wrote.
+      if (index !== -1) return table.rows[0]?.[index] ?? '';
+    }
+    return '';
+  }
 
   return context.doc.properties[source.property] ?? '';
 }

@@ -17,6 +17,7 @@ export interface SourceOption {
 export interface SourceEvidence {
   labels: string[];
   properties: string[];
+  tableColumns: string[];
 }
 
 /** Plain-language name for a source, used in the dropdown and the column list. */
@@ -25,6 +26,7 @@ export function describeSource(source: Source): string {
   if ('placeholder' in source) return `Filename part: ${source.placeholder}`;
   if ('join' in source) return `Filename parts joined as "${source.join}"`;
   if ('label' in source) return `Label in document: ${source.label}`;
+  if ('tableColumn' in source) return `Table column: ${source.tableColumn}`;
   return `Document property: ${source.property}`;
 }
 
@@ -51,6 +53,9 @@ export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOpti
 
   for (const label of scan.labels) {
     options.push({ label: `Label in document: ${label}`, source: { label } });
+  }
+  for (const header of scan.tableColumns) {
+    options.push({ label: `Table column: ${header}`, source: { tableColumn: header } });
   }
   for (const property of scan.properties) {
     options.push({

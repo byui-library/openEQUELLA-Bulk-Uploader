@@ -15,7 +15,7 @@ const profile: Profile = {
   ],
 };
 
-const emptyDoc: DocumentData = { text: '', hasTextLayer: true, properties: {} };
+const emptyDoc: DocumentData = { text: '', hasTextLayer: true, properties: {}, tables: [] };
 
 async function folderWith(names: string[]): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-'));
