@@ -94,3 +94,77 @@ describe('readSection', () => {
     expect(readSection('Some text. Abstract', 'Abstract').text).toBe('');
   });
 });
+
+/**
+ * What twelve real journal PDFs do at the edges of an abstract.
+ *
+ * Nine of the twelve ended cleanly on the first build. These are the three that
+ * did not, each reduced to the shape that caused it.
+ */
+describe('readSection against real journal furniture', () => {
+  it('stops at the citation block a journal appends to its abstract', () => {
+    const article =
+      'Abstract The aim of this study was to reduce dimensionality. ' +
+      'How to cite this article Teixeira JE, Forte P. 2023. PeerJ 11:e15806 ' +
+      'Submitted 26 January 2023 Accepted 7 July 2023 Copyright 2023 Teixeira et al.';
+    expect(readSection(article, 'Abstract').text).toBe(
+      'The aim of this study was to reduce dimensionality.',
+    );
+  });
+
+  it('stops at a "Key words" list, spelled as two words', () => {
+    const article = 'Abstract Each position showed specific demands. Key words : basketball, PCA.';
+    expect(readSection(article, 'Abstract').text).toBe('Each position showed specific demands.');
+  });
+
+  // The running head a journal stamps on every page lands in the extracted
+  // text wherever the page happened to break.
+  it('drops a journal footer left at the end', () => {
+    const withFooter =
+      'Abstract Training load needs to be carefully managed. ' +
+      'Sports 2024 , 12 , 194. https://doi.org/10.3390/sports12070194\nSports 2024 , 12 , 194 2 of 15';
+    expect(readSection(withFooter, 'Abstract').text).toBe(
+      'Training load needs to be carefully managed.',
+    );
+  });
+
+  it('drops a footer on its own line', () => {
+    const withFooter =
+      'Abstract Insights into the demands placed on players.\n' +
+      'PLOS One | https://doi.org/10.1371/journal.pone.0332500 October 8, 2025 2 / 15';
+    expect(readSection(withFooter, 'Abstract').text).toBe(
+      'Insights into the demands placed on players.',
+    );
+  });
+
+  /**
+   * A footer INSIDE an abstract must not truncate it. One article's abstract
+   * runs across a page break, so the running head sits in the middle with real
+   * abstract text on both sides. Trimming is a tail operation only.
+   */
+  it('keeps text that follows a footer mid-abstract', () => {
+    const across =
+      'Abstract High-intensity variables showed strong loadings. ' +
+      'Sensors 2025 , 25 , 6253 https://doi.org/10.3390/s25196253\n' +
+      'Sensors 2025 , 25 , 6253 2 of 17 Guards required seven components to explain the variance.';
+    const { text } = readSection(across, 'Abstract');
+    expect(text).toContain('High-intensity variables');
+    expect(text).toContain('Guards required seven components');
+  });
+
+  /**
+   * "The purpose of this study was to..." is a sentence, not a heading. Taking
+   * the text after the word alone produced a cell starting "of this study was
+   * to describe", which is both ugly and a sign the match was not a heading.
+   */
+  it('keeps the sentence when the heading is really a word inside one', () => {
+    const article = 'Luka Svilar 2 The purpose of this study was to describe the demands. Key words : x';
+    const { text, midSentence } = readSection(article, 'Purpose');
+    expect(text).toBe('The purpose of this study was to describe the demands.');
+    expect(midSentence).toBe(true);
+  });
+
+  it('reports a real heading as not mid-sentence', () => {
+    expect(readSection('Abstract A study of jumping. Keywords x', 'Abstract').midSentence).toBe(false);
+  });
+});
