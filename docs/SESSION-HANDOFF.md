@@ -118,6 +118,31 @@ manifest.
 The CLI shares `readSheet` and `validateHeaders` with it, so the format itself
 is proven; the Review screen is its own code path and has not been driven.
 
+### In progress: extracting a description across formats
+
+The description column came out empty on nearly every row of three real runs.
+Word files are now handled - their description sits in a table cell headed
+"Job Description" and the starter profile maps it automatically. PDFs are not:
+a journal article states its description as an abstract, and anything
+unstructured states it nowhere at all.
+
+Design approved in outline:
+[specs/2026-08-06-description-extraction-design.md](superpowers/specs/2026-08-06-description-extraction-design.md).
+Four tiers tried in order - a stated field, a named section, the opening
+paragraph, then a language model - each running only if the ones above it found
+nothing.
+
+**Build tiers 2 and 3 first.** They are deterministic, need no key or network,
+and the section rule alone gets 11 of the 12 real PDFs.
+
+**On the LLM tier:** the operator hoped a user could point at their own Claude
+Pro / ChatGPT Plus / Gemini subscription. That is not possible - those licence
+the chat interface and issue no API key. The agreed approach is one
+institutional key distributed like the OAuth client secret already is. The
+program must run fully without a key, with the AI tier simply absent.
+
+Subjects and keywords were raised and deferred.
+
 ### Two improvements a review found, deliberately not rushed
 
 Both came out of a `/simplify` pass at the end of the session and were left for
