@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Manifest, ManifestEntry, Sheet, ItemState } from './types.js';
+import { splitRepeatable } from './metadata.js';
 import { ATTACHMENT_COLUMN, ATTACHMENT_UUID_XPATH } from './types.js';
 import { validateHeaders } from './schema.js';
 import { ValidationError } from './errors.js';
@@ -78,7 +79,12 @@ export async function buildManifest(
       if (header === ATTACHMENT_COLUMN) continue;
       // Filled in with the real uuid once the attachment exists.
       if (header === ATTACHMENT_UUID_XPATH) continue;
-      (metadata[header] ??= []).push(value);
+      // A repeatable field holding several semicolon-separated values becomes
+      // several XML elements rather than one containing semicolons. Only
+      // fields the schema declares repeatable are affected -- see
+      // metadata.ts#isRepeatable -- so a semicolon in a description or a
+      // rights statement stays the punctuation it is.
+      (metadata[header] ??= []).push(...splitRepeatable(header, value));
     }
 
     entries.push({

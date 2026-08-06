@@ -103,6 +103,41 @@ export function normaliseDateWithFormat(value: string, format: string): string |
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Separate a list of people into semicolon-delimited values, but only where
+ * the string cannot be a single name.
+ *
+ * A comma means two different things in real author strings. "Dixon, Matt" is
+ * one person written surname-first; "Dan Weaving, Ben Jones" is two people.
+ * Both appear in the same folder, so no rule reading commas alone gets both
+ * right — and inventing a second author in a permanent catalogue record is
+ * exactly the kind of confident wrongness this tool avoids.
+ *
+ * So a split happens only on evidence:
+ *
+ * - the string contains " and ", which nobody writes inside one name; or
+ * - it has three or more comma-separated parts, which no single name has.
+ *
+ * A two-part string is left exactly as found and reported as ambiguous, so the
+ * row carries a note and a human decides. That is the common "Surname, Given"
+ * case, and guessing at it would be wrong about half the time.
+ */
+export function splitPeople(value: string): { value: string; ambiguous: boolean } {
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.includes(';')) return { value, ambiguous: false };
+
+  const hasAnd = / and /i.test(trimmed);
+  const parts = trimmed
+    .split(/\s+and\s+|,/i)
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
+
+  if (hasAnd || parts.length >= 3) return { value: parts.join('; '), ambiguous: false };
+  // Exactly two parts and no "and": "Dixon, Matt" or "Weaving, Dan" — one
+  // person far more often than two, but not certainly, so say so.
+  return { value, ambiguous: parts.length === 2 };
+}
+
 /** A short name for where a value came from, written into the _source column. */
 function sourceKind(source: Source): string {
   if ('filename' in source) return 'filename';
@@ -160,6 +195,16 @@ function fill(column: Column, context: Context, notes: string[]): { value: strin
   for (const source of column.sources) {
     const raw = resolve(source, context).trim();
     if (raw === '') continue;
+
+    if (column.transform === 'people') {
+      const { value, ambiguous } = splitPeople(raw);
+      if (ambiguous) {
+        notes.push(
+          `${column.path}: '${raw}' may be one name or two — separate them with a semicolon if it is two`,
+        );
+      }
+      return { value, source: sourceKind(source) };
+    }
 
     if (column.transform !== undefined) {
       const normalised =
