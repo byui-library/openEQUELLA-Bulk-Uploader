@@ -142,7 +142,7 @@ export function splitPeople(value: string): { value: string; ambiguous: boolean 
 
 /** A short name for where a value came from, written into the _source column. */
 function sourceKind(source: Source): string {
-  if ('filename' in source) return 'filename';
+  if ('filename' in source || 'filenameStem' in source) return 'filename';
   if ('placeholder' in source || 'join' in source) return 'filename';
   if ('label' in source) return 'label';
   if ('tableColumn' in source) return 'table';
@@ -173,6 +173,13 @@ interface Resolved {
 
 function resolve(source: Source, context: Context): Resolved {
   if ('filename' in source) return { value: context.filename };
+
+  if ('filenameStem' in source) {
+    // Only the LAST extension. Titles in a real batch are full of dots --
+    // "22. Salazar_proof_10pix1line_revised" -- and cutting at the first would
+    // leave "22".
+    return { value: context.filename.replace(/\.[^.\\/]+$/, '') };
+  }
 
   if ('placeholder' in source) return { value: context.parts?.[source.placeholder] ?? '' };
 

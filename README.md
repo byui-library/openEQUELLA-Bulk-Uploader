@@ -338,6 +338,25 @@ PDFs are not covered. A table in a PDF is only positioned text with lines drawn
 round it, so there are no cell boundaries to read -- guessing them from
 coordinates is a different feature from reading a format that states them.
 
+### A title is never left empty
+
+`MWDL/title` becomes the item's **name** in openEQUELLA, so an empty one
+contributes a nameless item. The starter profile therefore ends that column
+with the filename minus its extension:
+
+```json
+{ "path": "MWDL/title",
+  "sources": [{ "property": "title" }, { "filenameStem": true }] }
+```
+
+It sits last, so any document that states a title keeps it. Two of twelve real
+journal PDFs state none at all, and those two would have been contributed
+nameless. `_source` reads `filename` on exactly those rows.
+
+The name is taken verbatim, including any leading number — only the last
+extension is removed, because titles in a real batch are full of dots
+(`22. Salazar_proof.v2.pdf` → `22. Salazar_proof.v2`).
+
 ### Where a description comes from
 
 The description is the field that is hardest to find and the one most worth
