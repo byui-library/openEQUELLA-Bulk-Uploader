@@ -44,6 +44,14 @@ const CHANNELS = {
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
+  extractScan: 'oeq:extractScan',
+  extractPreview: 'oeq:extractPreview',
+  extractRun: 'oeq:extractRun',
+  schemaPaths: 'oeq:schemaPaths',
+  openProfile: 'oeq:openProfile',
+  saveProfileAs: 'oeq:saveProfileAs',
+  chooseCsvPath: 'oeq:chooseCsvPath',
+  openPath: 'oeq:openPath',
 } as const;
 
 const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
@@ -65,6 +73,14 @@ const api: OeqApi = {
   run: (args) => invoke(CHANNELS.run, args),
   retryFailed: (p) => invoke(CHANNELS.retryFailed, p),
   loadManifest: (p) => invoke(CHANNELS.loadManifest, p),
+  extractScan: (dir) => invoke(CHANNELS.extractScan, dir),
+  extractPreview: (args) => invoke(CHANNELS.extractPreview, args),
+  extractRun: (args) => invoke(CHANNELS.extractRun, args),
+  schemaPaths: () => invoke(CHANNELS.schemaPaths),
+  openProfile: () => invoke(CHANNELS.openProfile),
+  saveProfileAs: (profile) => invoke(CHANNELS.saveProfileAs, profile),
+  chooseCsvPath: () => invoke(CHANNELS.chooseCsvPath),
+  openPath: (path) => invoke(CHANNELS.openPath, path),
   onProgress: (cb) => {
     ipcRenderer.on(CHANNELS.progress, (_e, p: RunProgress) => cb(p));
   },

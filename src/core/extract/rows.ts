@@ -1,6 +1,8 @@
 // src/core/extract/rows.ts
 import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
+import { readSection } from './sections.js';
+import { readOpening } from './opening.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
 import { ATTACHMENT_COLUMN } from './types.js';
 
@@ -103,11 +105,49 @@ export function normaliseDateWithFormat(value: string, format: string): string |
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Separate a list of people into semicolon-delimited values, but only where
+ * the string cannot be a single name.
+ *
+ * A comma means two different things in real author strings. "Dixon, Matt" is
+ * one person written surname-first; "Dan Weaving, Ben Jones" is two people.
+ * Both appear in the same folder, so no rule reading commas alone gets both
+ * right — and inventing a second author in a permanent catalogue record is
+ * exactly the kind of confident wrongness this tool avoids.
+ *
+ * So a split happens only on evidence:
+ *
+ * - the string contains " and ", which nobody writes inside one name; or
+ * - it has three or more comma-separated parts, which no single name has.
+ *
+ * A two-part string is left exactly as found and reported as ambiguous, so the
+ * row carries a note and a human decides. That is the common "Surname, Given"
+ * case, and guessing at it would be wrong about half the time.
+ */
+export function splitPeople(value: string): { value: string; ambiguous: boolean } {
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.includes(';')) return { value, ambiguous: false };
+
+  const hasAnd = / and /i.test(trimmed);
+  const parts = trimmed
+    .split(/\s+and\s+|,/i)
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
+
+  if (hasAnd || parts.length >= 3) return { value: parts.join('; '), ambiguous: false };
+  // Exactly two parts and no "and": "Dixon, Matt" or "Weaving, Dan" — one
+  // person far more often than two, but not certainly, so say so.
+  return { value, ambiguous: parts.length === 2 };
+}
+
 /** A short name for where a value came from, written into the _source column. */
 function sourceKind(source: Source): string {
-  if ('filename' in source) return 'filename';
+  if ('filename' in source || 'filenameStem' in source) return 'filename';
   if ('placeholder' in source || 'join' in source) return 'filename';
   if ('label' in source) return 'label';
+  if ('tableColumn' in source) return 'table';
+  if ('section' in source) return 'section';
+  if ('opening' in source) return 'opening';
   return 'properties';
 }
 
@@ -118,13 +158,33 @@ interface Context {
   doc: DocumentData;
 }
 
-function resolve(source: Source, context: Context): string {
-  if ('filename' in source) return context.filename;
+/**
+ * What a source yielded, and anything the operator should know about how.
+ *
+ * `note` is attached to the value rather than pushed directly, so it is only
+ * recorded if this source is the one that actually filled the cell -- an
+ * earlier source winning must not leave a note about a later candidate, and a
+ * candidate that yielded nothing has nothing to say.
+ */
+interface Resolved {
+  value: string;
+  note?: string;
+}
 
-  if ('placeholder' in source) return context.parts?.[source.placeholder] ?? '';
+function resolve(source: Source, context: Context): Resolved {
+  if ('filename' in source) return { value: context.filename };
+
+  if ('filenameStem' in source) {
+    // Only the LAST extension. Titles in a real batch are full of dots --
+    // "22. Salazar_proof_10pix1line_revised" -- and cutting at the first would
+    // leave "22".
+    return { value: context.filename.replace(/\.[^.\\/]+$/, '') };
+  }
+
+  if ('placeholder' in source) return { value: context.parts?.[source.placeholder] ?? '' };
 
   if ('join' in source) {
-    if (!context.parts) return '';
+    if (!context.parts) return { value: '' };
     const parts = context.parts;
     let missing = false;
     const joined = source.join.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_, name: string) => {
@@ -135,18 +195,63 @@ function resolve(source: Source, context: Context): string {
     // A join with a hole in it produces "Smith, " -- worse than nothing,
     // because it looks deliberate. Treat it as no value and let the next
     // source have its turn.
-    return missing ? '' : joined;
+    return { value: missing ? '' : joined };
   }
 
-  if ('label' in source) return context.labels.get(source.label) ?? '';
+  if ('label' in source) return { value: context.labels.get(source.label) ?? '' };
 
-  return context.doc.properties[source.property] ?? '';
+  if ('section' in source) {
+    const { text, capped, midSentence } = readSection(context.doc.text, source.section);
+    let note: string | undefined;
+    if (capped) {
+      note = `the '${source.section}' section never ended and was cut short -- check it is really a description`;
+    } else if (midSentence) {
+      note = `'${source.section}' was a word in a sentence here, not a heading -- the sentence was taken instead`;
+    }
+    return { value: text, note };
+  }
+
+  if ('opening' in source) {
+    // Always noted, without exception. This is the one source that infers
+    // rather than reads, and a guess presented like a fact is the failure mode
+    // this whole tool is built to avoid.
+    return {
+      value: readOpening(context.doc.text),
+      note: 'taken from the start of the document, which may not be a description -- please check',
+    };
+  }
+
+  if ('tableColumn' in source) {
+    const wanted = source.tableColumn.trim().toLowerCase();
+    for (const table of context.doc.tables) {
+      const index = table.headers.findIndex((h) => h.trim().toLowerCase() === wanted);
+      // Only the FIRST data row. One document describes one item here, and
+      // every real example has exactly one row under the header. Concatenating
+      // several would invent a value nobody wrote.
+      if (index !== -1) return { value: table.rows[0]?.[index] ?? '' };
+    }
+    return { value: '' };
+  }
+
+  return { value: context.doc.properties[source.property] ?? '' };
 }
 
 function fill(column: Column, context: Context, notes: string[]): { value: string; source?: string } {
   for (const source of column.sources) {
-    const raw = resolve(source, context).trim();
+    const resolved = resolve(source, context);
+    const raw = resolved.value.trim();
     if (raw === '') continue;
+    if (resolved.note !== undefined) notes.push(`${column.path}: ${resolved.note}`);
+
+    if (column.transform === 'people') {
+      const { value, ambiguous } = splitPeople(raw);
+      if (ambiguous) {
+        notes.push(
+          `${column.path}: '${raw}' may be one name or two - separate them with a semicolon if it is two`,
+        );
+      }
+      return { value, source: sourceKind(source) };
+    }
 
     if (column.transform !== undefined) {
       const normalised =
@@ -177,7 +282,14 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   const notes: string[] = [];
 
   const parts = applyPattern(profile.pattern, filename);
-  if (parts === null) {
+  // Only worth saying if a column actually reads a piece of the filename. A
+  // mixed folder gets one pattern carrying one extension, so a folder of 18
+  // Word files and 12 PDFs flagged all twelve PDFs for not matching a `.docx`
+  // pattern that nothing was reading -- twelve warnings, no consequence.
+  const usesParts = profile.columns.some((column) =>
+    column.sources.some((source) => 'placeholder' in source || 'join' in source),
+  );
+  if (parts === null && usesParts) {
     notes.push(`filename does not match the pattern '${profile.pattern}'`);
   }
   if (!doc.hasTextLayer) {

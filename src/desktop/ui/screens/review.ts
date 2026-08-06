@@ -60,7 +60,12 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
       const isCustom = hasOverride && !isKnownSuggestion;
 
       let statusCell: string;
-      if (c.valid) {
+      if (c.ignored === true) {
+        // An annotation the extractor wrote for the person reading the
+        // spreadsheet. Showing it as "Valid" alongside real metadata columns
+        // would imply it gets uploaded, and it does not.
+        statusCell = `<span class="badge badge--pending">Not uploaded &mdash; a note for you</span>`;
+      } else if (c.valid) {
         statusCell = `<span class="badge badge--valid">Valid</span>`;
       } else if (hasOverride && props.checked) {
         statusCell = `<span class="badge badge--valid">Mapped to '${escapeHtml(override)}' — checked</span>`;

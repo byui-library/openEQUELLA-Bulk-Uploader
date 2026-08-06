@@ -19,6 +19,10 @@ const sourceSchema = z.union([
   z.object({ placeholder: z.string().min(1) }).strict(),
   z.object({ join: z.string().min(1) }).strict(),
   z.object({ label: z.string().min(1) }).strict(),
+  z.object({ tableColumn: z.string().min(1) }).strict(),
+  z.object({ section: z.string().min(1) }).strict(),
+  z.object({ opening: z.literal(true) }).strict(),
+  z.object({ filenameStem: z.literal(true) }).strict(),
   z.object({ property: z.enum(PROPERTY_NAMES) }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
 ]);
@@ -29,7 +33,7 @@ const columnSchema = z
     sources: z.array(sourceSchema),
     default: z.string().optional(),
     transform: z
-      .union([z.literal('date'), z.object({ date: z.string().min(1) }).strict()])
+      .union([z.literal('date'), z.literal('people'), z.object({ date: z.string().min(1) }).strict()])
       .optional(),
     locked: z.boolean().optional(),
   })
@@ -79,7 +83,7 @@ export function parseProfile(input: unknown): Profile {
   // never matches, so every row would be silently kept-as-found and flagged,
   // with nothing pointing at the profile as the cause.
   for (const column of profile.columns) {
-    if (column.transform === undefined || column.transform === 'date') continue;
+    if (column.transform === undefined || typeof column.transform === 'string') continue;
     const format = column.transform.date;
     for (const token of ['YYYY', 'MM', 'DD'] as const) {
       const occurrences = format.split(token).length - 1;

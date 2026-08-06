@@ -17,36 +17,30 @@ where the work stands and exactly what to do next.
 to BYU-Idaho Faculty Content on 2026-08-04, every one verified byte-for-byte
 against its source file.
 
-**Active work: a desktop GUI**, on branch `feature/desktop-gui`. An Electron
-app for non-technical Windows staff, reusing `src/core/` unchanged. Tasks 1–8
-of 10 are done; **389 tests across 32 files**. All seven screens exist, and
-production sign-in has been verified live. Remaining: packaging and a
-clean-machine test.
+**The desktop GUI is finished, released and merged.** Seven screens, a
+sandboxed renderer, per-instance encrypted credentials, a typed IPC contract.
+Released as v0.1.0 and clean-machine tested by the operator.
 
-**One open loop:** Test-instance sign-in was still failing when the last
-session ended. Credentials and the redirect URI are both per-instance now;
-the fix is unconfirmed. Ask the operator first — see the handoff.
+**Sign-in works on both instances.** Authorization-code flow, `src/core/authCode.ts`.
+Not a blocker any more; the handoff records what the fix actually was.
 
-The handoff also lists the Electron-specific traps, every one of which failed
-silently and was found only by inspecting the running app.
+**Active work: the metadata extractor**, on `feature/extractor-desktop` as
+**PR #3**. It builds the spreadsheet from a folder of PDFs and Word files so
+nobody types it by hand. Core and CLI are merged; the desktop screens are on
+that branch. **721 tests across 60 files**, typecheck clean.
 
-Implemented and verified. CLI (`plan | run | status | retry`) and MCP server
-(six tools) both build clean, 173 tests pass across 14 files, and
-`npm run typecheck` is clean. See [README.md](README.md) for setup, usage,
-and the live-smoke-test procedure that must run before any real batch.
+Description extraction is tiered — a stated field, then a named section
+(`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
+language model. **Tiers 1–3 are built**; tier 4 is not started and needs its
+own conversation. Anything from tier 3, and any section that ran to the length
+cap, is always flagged in `_notes`.
 
-**Blocked on authentication.** `OAuthClientCredentials` cannot be used against
-this instance — the OAuth client has no fixed user, and the owner has
-deliberately declined to set one so that each contributor owns what they
-contribute. The authorization-code flow must be implemented in a new
-`src/core/authCode.ts` behind the existing `AuthProvider` interface. Nothing has
-run against a live instance yet.
+**Do NOT build an installer yet.** The operator asked that packaging wait.
 
-One wire-format assumption remains unverified pending that live smoke test:
-whether the `{ type: 'file', filename, ... }` attachment payload shape is
-correct, since `AttachmentBean` in `schema/swagger.json` doesn't model
-openEQUELLA's polymorphic attachment subtypes. See the "Known limitations"
-section of the README and the header comment in `src/core/client.ts`.
+The wire format is settled — the `{ type: 'file', filename, description, uuid }`
+attachment payload was confirmed by the production run, not just by
+`schema/swagger.json`, which does not model openEQUELLA's polymorphic
+attachment subtypes.
 
 The spec lives at
 [docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md](docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md).
@@ -59,7 +53,8 @@ src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by e
 src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
 src/cli/          plan | run | status | retry | login | logout | check
 src/mcp/          Nine MCP tools
-src/desktop/      Electron app (in progress). Renderer has no Node access.
+src/desktop/      Electron app. Renderer is sandboxed: NO Node access, no `node:` imports.
+src/desktop/ui/extract/  The extract flow's own state, controller and screens.
 schema/           openEQUELLA schema reference material (committed).
   _entity.xml       BYUI_MWDL schema export, uuid c93181f3-a443-41bf-9afe-ac9f7daf90b7
   sample.xml        A real contributed item, used as the golden target for output
@@ -103,6 +98,19 @@ easy to get wrong from first principles.
 - **The MCP layer never streams file bytes.** It plans, validates, launches, and
   monitors. Uploading belongs to the runner process.
 - Never commit real spreadsheets, `.env` files, or media.
+- **Nothing reachable from `src/desktop/ui/` may import `node:*` or `electron`.**
+  The renderer is sandboxed. Such an import does not fail loudly — it kills the
+  whole module graph and the window renders blank, with nothing on the terminal.
+  This happened: `ui/extract/controller.ts` imported a core module that reached
+  `node:fs` three hops down, and all 590 tests still passed, because vitest runs
+  in Node. `tests/desktop/rendererPurity.test.ts` now walks the import graph and
+  fails the build instead. If the renderer needs something a Node-dependent
+  module computes, compute it in the main process and send it over IPC.
+- **Any input whose `input` event triggers a re-render must call
+  `ui/dom.ts#keepCaret`.** Screens render by replacing `innerHTML`, so the input
+  is destroyed and recreated on every keystroke; without it the field loses
+  focus after one character, or types backwards if it re-focuses without
+  restoring the caret. Both shipped for months unnoticed.
 
 ## Working notes
 

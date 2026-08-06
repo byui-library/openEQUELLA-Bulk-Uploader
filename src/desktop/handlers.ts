@@ -6,13 +6,14 @@ import { CHANNELS, INSTANCES, type ColumnReport, type OeqApi, type PlanReport, t
 import { SecretStore, EncryptedTokenStore } from './secrets.js';
 import { buildAuth, buildClient, buildConfig, instanceById } from './session.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths, validateHeaders } from '../core/schema.js';
+import { extractDefinition, parseSchemaPaths, validateHeaders, isAnnotationHeader } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
 import { signInInteractive } from './signin.js';
 import type { Sheet } from '../core/types.js';
 import { OeqError } from '../core/errors.js';
+import { registerExtractHandlers } from './extractHandlers.js';
 
 const userData = () => app.getPath('userData');
 
@@ -189,6 +190,10 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
     header: h,
     valid: !invalidSet.has(h),
     suggestions: invalidSet.get(h) ?? [],
+    // Accepted, but not metadata. Saying only "valid" would imply the column
+    // gets uploaded; the extractor writes these for the human reading the
+    // spreadsheet and plan.ts drops them.
+    ...(isAnnotationHeader(h) ? { ignored: true } : {}),
   }));
 }
 
@@ -424,4 +429,10 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
     CHANNELS.loadManifest,
     async (_e, p: Parameters<OeqApi['loadManifest']>[0]) => loadManifest(p),
   );
+
+  // Extract flow. Kept in its own module so this file does not keep growing,
+  // and so the schema path is resolved once, here, where packaging is known.
+  registerExtractHandlers(ipcMain, {
+    schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
+  });
 }

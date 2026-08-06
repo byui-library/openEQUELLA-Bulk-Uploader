@@ -130,3 +130,34 @@ describe('suggest', () => {
     expect(suggest('MWDL/performer', paths)).toEqual([]);
   });
 });
+
+// The extractor writes two annotation columns, `_source` and `_notes`, so a
+// human can see where each value came from and which rows need a look. They
+// are notes to the reader, never metadata. Every document said "the uploader
+// ignores them" -- and it did not: it rejected its own output as having
+// invalid headers. Found by round-tripping a generated spreadsheet back
+// through `oeq-upload plan`, which is the only check that crosses both halves
+// of the program.
+describe('validateHeaders and annotation columns', () => {
+  const paths = new Set(['MWDL/title']);
+
+  it('does not reject a leading-underscore column', () => {
+    const { invalid } = validateHeaders(['attachment name', 'MWDL/title', '_source', '_notes'], paths);
+    expect(invalid).toEqual([]);
+  });
+
+  it('reports annotation columns separately from real metadata', () => {
+    const { valid, ignored } = validateHeaders(['MWDL/title', '_notes'], paths);
+    expect(valid).toEqual(['MWDL/title']);
+    expect(ignored).toEqual(['_notes']);
+  });
+
+  it('still rejects a genuine typo', () => {
+    const { invalid } = validateHeaders(['MWDL/titel'], paths);
+    expect(invalid.map((i) => i.header)).toEqual(['MWDL/titel']);
+  });
+
+  it('treats a bare underscore as an annotation, not a typo', () => {
+    expect(validateHeaders(['_'], paths).invalid).toEqual([]);
+  });
+});

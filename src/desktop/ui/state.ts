@@ -22,7 +22,9 @@ export type ScreenEvent =
   | { type: 'reviewApproved' }
   | { type: 'uploadStarted' }
   | { type: 'runFinished' }
-  | { type: 'retryStarted' };
+  | { type: 'retryStarted' }
+  /** Done -> Choose, to upload another spreadsheet without restarting the app. */
+  | { type: 'anotherBatch' };
 
 export function nextScreen(current: Screen, event: ScreenEvent): Screen {
   switch (event.type) {
@@ -60,6 +62,10 @@ export function nextScreen(current: Screen, event: ScreenEvent): Screen {
       return 'results';
     case 'retryStarted':
       return 'progress';
+    // Back to Choose, not Sign-in: the credentials and the session are still
+    // good, and the collection stays selected. Only the batch is finished.
+    case 'anotherBatch':
+      return 'choose';
     default:
       return current;
   }

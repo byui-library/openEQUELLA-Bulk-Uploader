@@ -12,9 +12,12 @@ import { renderConfirm } from './screens/confirm.js';
 import { renderProgress, type ProgressLogEntry } from './screens/progress.js';
 import { renderResults, type InterruptedEntry } from './screens/results.js';
 import { canContinueReview } from './review.js';
+import { clearedForNextBatch, type BatchState } from './batch.js';
 import { canUpload } from './confirm.js';
 import { collectionUrl } from './collectionUrl.js';
 import { UI_INSTANCES } from './instances.js';
+import { createExtractController } from './extract/controller.js';
+import { renderExtract } from './extract/mount.js';
 
 declare global {
   interface Window {
@@ -22,7 +25,15 @@ declare global {
   }
 }
 
-interface AppState {
+/**
+ * `extends BatchState` on purpose. Everything scoped to ONE batch is declared
+ * once, in batch.ts, so "Upload another spreadsheet" cannot forget a field: a
+ * new batch-scoped field has to be added there, and `clearedForNextBatch` will
+ * not compile until it supplies a value for it. Declaring it here instead
+ * would leave the reset silently incomplete and carry a stale plan into the
+ * next upload.
+ */
+interface AppState extends BatchState {
   screen: Screen;
   // The instance the rest of the app (Sign-in beyond the missing-credentials
   // prompt, Choose, Confirm, Progress, Results) acts against.
@@ -54,40 +65,10 @@ interface AppState {
   collectionQuery: string;
   collectionUuid: string | null;
   collectionName: string | null;
-  sheetPath: string | null;
-  folderPath: string | null;
-  chooseError: string | null;
-  readyMessage: string | null;
   starterKitSaving: boolean;
   starterKitMessage: string | null;
 
-  // Review screen -- see ui/review.ts for why `reviewColumns` (from
-  // validate() against the ORIGINAL sheet) rather than a plan() response is
-  // the stable per-column identity `reviewOverrides` is keyed against.
-  reviewLoadingColumns: boolean;
-  reviewColumns: ColumnReport[] | null;
-  reviewOverrides: Record<string, string>;
-  reviewChecking: boolean;
-  /** True once plan() has succeeded for the CURRENT overrides. */
-  reviewChecked: boolean;
-  reviewPlan: PlanReport | null;
-  reviewError: string | null;
-
-  // Confirm screen
-  itemState: ItemState;
-  typedCount: string;
-  uploading: boolean;
-  confirmError: string | null;
-
-  // Progress screen
-  progress: RunProgress | null;
-  progressLog: ProgressLogEntry[];
-
-  // Results screen
-  runReport: RunReport | null;
-  interruptedEntries: InterruptedEntry[];
-  retrying: boolean;
-  resultsError: string | null;
+  // Review, Confirm, Progress and Results state all lives in BatchState.
 }
 
 // Defaults to 'test' -- never Production -- so a user who has not yet made a
@@ -205,6 +186,18 @@ function render(): void {
         onChooseFolder: handleChooseFolder,
         onSaveStarterKit: handleSaveStarterKit,
         onContinue: handleChooseContinue,
+        onExtract: () => {
+          // The extract flow owns its own state and render loop; app.ts hands
+          // over the root element and gets it back on exit. Deliberately not
+          // folded into this file's state machine -- see the plan's rationale.
+          const root = requireEl('app');
+          const controller = createExtractController({
+            api: window.oeq,
+            onExit: () => render(),
+            render: (s) => renderExtract(root, s, controller, (p) => window.oeq.openPath(p)),
+          });
+          renderExtract(root, controller.state(), controller, (p) => window.oeq.openPath(p));
+        },
       });
       break;
     case 'review':
@@ -250,9 +243,11 @@ function render(): void {
           report: state.runReport,
           interrupted: state.interruptedEntries,
           collectionUrl: collectionUrl(currentInstance()?.baseUrl ?? '', state.collectionUuid ?? ''),
+          collectionName: state.collectionName,
           retrying: state.retrying,
           error: state.resultsError,
           onRetryFailed: handleRetryFailed,
+          onAnotherBatch: handleAnotherBatch,
         });
       }
       break;
@@ -748,6 +743,24 @@ async function finishRun(manifestPath: string, report: RunReport): Promise<void>
  * safe to call repeatedly (core/runner.ts: rows already created/skipped/
  * incomplete are left untouched).
  */
+/**
+ * Finish this batch and go back to Choose for another spreadsheet.
+ *
+ * Done used to be a dead end -- a link to the collection and nothing else --
+ * so a second spreadsheet meant closing and reopening the app. Reported by the
+ * operator after a real run.
+ *
+ * Every batch-scoped field is replaced wholesale from `clearedForNextBatch()`
+ * rather than reset by hand here, so a field added later cannot be forgotten
+ * and quietly carried into the next upload. The instance, the signed-in user
+ * and the chosen collection survive.
+ */
+function handleAnotherBatch(): void {
+  Object.assign(state, clearedForNextBatch());
+  state.screen = nextScreen('results', { type: 'anotherBatch' });
+  render();
+}
+
 async function handleRetryFailed(): Promise<void> {
   if (!state.reviewPlan) return;
   const manifestPath = state.reviewPlan.manifestPath;

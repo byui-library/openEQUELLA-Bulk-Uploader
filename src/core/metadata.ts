@@ -65,6 +65,49 @@ function render(name: string, node: Node): string {
  * arrive before or after the longer path's descendants, so both directions
  * are checked.
  */
+/** The character separating several values in one spreadsheet cell. */
+export const VALUE_SEPARATOR = ';';
+
+/**
+ * Whether an xpath may legitimately hold several values.
+ *
+ * Derived from this schema's own convention rather than a hand-kept list: a
+ * repeatable field is a singular element inside a container named as its
+ * plural -- `creators/creator`, `genres/genre`, `languages/language`. That
+ * correctly excludes `rights/description`, where `rights` is not the plural of
+ * `description` and a semicolon is ordinary punctuation.
+ *
+ * A test pins exactly which of the real schema's paths this selects, so the set
+ * cannot drift quietly if either the rule or the schema export changes.
+ */
+export function isRepeatable(xpath: string): boolean {
+  const segments = xpath.split('/');
+  const leaf = segments.at(-1);
+  const parent = segments.at(-2);
+  return leaf !== undefined && parent !== undefined && parent === `${leaf}s`;
+}
+
+/**
+ * Split one cell into the values it represents.
+ *
+ * Only repeatable fields split, and only on a semicolon. A comma is never a
+ * separator here: "Dixon, Matt" is one person written surname-first, while
+ * "Dan Weaving, Ben Jones" is two people -- the same character meaning
+ * different things in the same column, which is why the operator marks the
+ * boundaries and the program does not guess at them.
+ *
+ * An empty or separator-only cell is returned unchanged rather than as
+ * nothing, so a blank stays one blank value and row shape is preserved.
+ */
+export function splitRepeatable(xpath: string, value: string): string[] {
+  if (!isRepeatable(xpath) || !value.includes(VALUE_SEPARATOR)) return [value];
+  const parts = value
+    .split(VALUE_SEPARATOR)
+    .map((v) => v.trim())
+    .filter((v) => v !== '');
+  return parts.length === 0 ? [value] : parts;
+}
+
 export function buildMetadataXml(fields: Record<string, string[]>): string {
   const root = newNode();
   for (const [xpath, values] of Object.entries(fields)) {

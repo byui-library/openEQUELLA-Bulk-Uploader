@@ -28,11 +28,41 @@ export type Source =
   | { label: string }
   /** An embedded document property. */
   | { property: DocumentProperty }
+  /**
+   * A cell from a table, taken from the column whose header is this name.
+   * Word documents commonly hold their metadata as a header row and one row of
+   * values; this reads a named field out of that.
+   */
+  | { tableColumn: string }
+  /**
+   * Text under a heading, ending at the next heading. A journal article states
+   * its description under "Abstract"; a report under "Summary" or "Overview".
+   */
+  | { section: string }
+  /**
+   * The document's first substantial paragraph.
+   *
+   * The only source that is a guess rather than a reading, so every value it
+   * produces is flagged in `_notes`. Meant as the last thing tried before a
+   * blank cell.
+   */
+  | { opening: true }
+  /**
+   * The filename with its extension removed.
+   *
+   * A poor title, but a real one. Two of twelve journal PDFs in a real batch
+   * carry no title property, and `MWDL/title` becomes the item's NAME in
+   * openEQUELLA -- so without this those two are contributed nameless.
+   */
+  | { filenameStem: true }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 
 /** How a date column is normalised: automatically, or by a format the profile declares. */
 export type DateTransform = 'date' | { date: string };
+
+/** How a column's raw value is normalised before it reaches the spreadsheet. */
+export type Transform = DateTransform | 'people';
 
 export interface Column {
   /** A schema xpath, or ATTACHMENT_COLUMN. Becomes the spreadsheet header. */
@@ -52,7 +82,7 @@ export interface Column {
    * guessing. Tokens are YYYY, MM and DD, each exactly once, with any literal
    * separators: `MMDDYYYY`, `YYYYMMDD`, `DD-MM-YYYY`.
    */
-  transform?: DateTransform;
+  transform?: Transform;
   /** True only for ATTACHMENT_COLUMN. Blocks removal, reordering and retargeting. */
   locked?: boolean;
 }
@@ -64,6 +94,20 @@ export interface Profile {
   columns: Column[];
 }
 
+/**
+ * A table found in a document, as its header row and the rows beneath it.
+ *
+ * Word documents very often carry their metadata this way rather than as
+ * `Label: value` prose -- a header row naming the fields and one row holding
+ * the values. Flattening that to lines loses the cell boundaries entirely: a
+ * cell containing four paragraphs becomes four lines with nothing marking where
+ * the next field begins, so the structure has to survive the reader.
+ */
+export interface DocumentTable {
+  headers: string[];
+  rows: string[][];
+}
+
 /** What a reader returns for one file. */
 export interface DocumentData {
   /** Extracted text. Empty string when there is none. */
@@ -71,6 +115,8 @@ export interface DocumentData {
   /** False for a scanned PDF with no text layer. */
   hasTextLayer: boolean;
   properties: Partial<Record<DocumentProperty, string>>;
+  /** Tables found in the document, header row first. Empty for formats without them. */
+  tables: DocumentTable[];
 }
 
 /** One output row, before serialisation. */

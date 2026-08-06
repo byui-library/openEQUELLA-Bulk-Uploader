@@ -1,9 +1,9 @@
 // tests/extract/rows.test.ts
 import { describe, it, expect } from 'vitest';
-import { buildRow, normaliseDate, normaliseDateWithFormat } from '../../src/core/extract/rows.js';
+import { buildRow, normaliseDate, normaliseDateWithFormat, splitPeople } from '../../src/core/extract/rows.js';
 import { ATTACHMENT_COLUMN, type DocumentData, type Profile } from '../../src/core/extract/types.js';
 
-const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {} };
+const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {}, tables: [] };
 
 const profile: Profile = {
   version: 1,
@@ -194,6 +194,73 @@ describe('buildRow', () => {
     expect(row.notes.join(' ')).toMatch(/not recognised as a date/i);
   });
 
+  // Word documents here hold their metadata as a table: a header row naming the
+  // fields, then one row of values. This reads a named field out of that.
+  it('reads a value from the table column with that header', () => {
+    const doc: DocumentData = {
+      ...EMPTY_DOC,
+      tables: [
+        {
+          headers: ['Company', 'Job Title', 'Date'],
+          rows: [['Banner Health', 'Associate Director', '06/05/2026']],
+        },
+      ],
+    };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{title}.docx',
+      columns: [
+        profile.columns[0]!,
+        { path: 'MWDL/title', sources: [{ tableColumn: 'Job Title' }] },
+        { path: 'MWDL/publisher', sources: [{ tableColumn: 'Company' }] },
+      ],
+    };
+    const row = buildRow(withTable, 'x.docx', doc);
+    expect(row.cells['MWDL/title']).toBe('Associate Director');
+    expect(row.cells['MWDL/publisher']).toBe('Banner Health');
+    expect(row.sources['MWDL/title']).toBe('table');
+  });
+
+  it('falls through when the table has no column with that header', () => {
+    const doc: DocumentData = {
+      ...EMPTY_DOC,
+      text: 'Title: From a label\n',
+      tables: [{ headers: ['Company'], rows: [['Banner Health']] }],
+    };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{x}.docx',
+      columns: [
+        profile.columns[0]!,
+        { path: 'MWDL/title', sources: [{ tableColumn: 'Nope' }, { label: 'Title' }] },
+      ],
+    };
+    expect(buildRow(withTable, 'a.docx', doc).cells['MWDL/title']).toBe('From a label');
+  });
+
+  it('gives nothing for a table that has headers but no data row', () => {
+    const doc: DocumentData = { ...EMPTY_DOC, tables: [{ headers: ['Company'], rows: [] }] };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{x}.docx',
+      columns: [profile.columns[0]!, { path: 'MWDL/title', sources: [{ tableColumn: 'Company' }] }],
+    };
+    expect(buildRow(withTable, 'a.docx', doc).cells['MWDL/title']).toBe('');
+  });
+
+  it('matches a header ignoring case and surrounding space', () => {
+    const doc: DocumentData = {
+      ...EMPTY_DOC,
+      tables: [{ headers: ['  Job Title  '], rows: [['Associate Director']] }],
+    };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{x}.docx',
+      columns: [profile.columns[0]!, { path: 'MWDL/title', sources: [{ tableColumn: 'job title' }] }],
+    };
+    expect(buildRow(withTable, 'a.docx', doc).cells['MWDL/title']).toBe('Associate Director');
+  });
+
   it('notes when the filename does not match the pattern, and still returns a row', () => {
     const row = buildRow(profile, 'unmatched.pdf', EMPTY_DOC);
     expect(row.cells[ATTACHMENT_COLUMN]).toBe('unmatched.pdf');
@@ -216,5 +283,207 @@ describe('buildRow', () => {
     const row = buildRow(profile, 'unmatched.pdf', EMPTY_DOC);
     expect(row.sources['MWDL/title']).toBeUndefined();
     expect(row.sources[ATTACHMENT_COLUMN]).toBe('filename');
+  });
+});
+
+describe('splitPeople', () => {
+  // Comma means two different things in real author strings: "Dixon, Matt" is
+  // one person written surname-first, "Dan Weaving, Ben Jones" is two people.
+  // So a split happens only where the string cannot be one name.
+  it('splits when the string contains " and "', () => {
+    expect(splitPeople('Sergio J. Ibáñez, Markel Rico-González and José Pino-Ortega')).toEqual({
+      value: 'Sergio J. Ibáñez; Markel Rico-González; José Pino-Ortega',
+      ambiguous: false,
+    });
+  });
+
+  it('splits when there are three or more comma-separated parts', () => {
+    expect(splitPeople('Dan Weaving, Ben Jones, Matt Ireton').value).toBe(
+      'Dan Weaving; Ben Jones; Matt Ireton',
+    );
+  });
+
+  it('leaves a two-part string alone and says it is ambiguous', () => {
+    expect(splitPeople('Dixon, Matt')).toEqual({ value: 'Dixon, Matt', ambiguous: true });
+  });
+
+  it('leaves a single name alone and is not ambiguous about it', () => {
+    expect(splitPeople('Xiangyu Ren')).toEqual({ value: 'Xiangyu Ren', ambiguous: false });
+  });
+
+  it('handles an empty value', () => {
+    expect(splitPeople('')).toEqual({ value: '', ambiguous: false });
+  });
+
+  it('does not double-split a string that already uses semicolons', () => {
+    expect(splitPeople('A; B; C')).toEqual({ value: 'A; B; C', ambiguous: false });
+  });
+
+  it('drops the Oxford comma before "and" rather than leaving an empty author', () => {
+    expect(splitPeople('A, B, and C').value).toBe('A; B; C');
+  });
+});
+
+describe('buildRow with the people transform', () => {
+  it('separates authors and notes the ones it would not guess at', () => {
+    const withPeople: Profile = {
+      ...profile,
+      pattern: '{x}.pdf',
+      columns: [
+        profile.columns[0]!,
+        { path: 'MWDL/creators/creator', sources: [{ property: 'author' }], transform: 'people' },
+      ],
+    };
+    const many: DocumentData = {
+      ...EMPTY_DOC,
+      properties: { author: 'Dan Weaving, Ben Jones, Matt Ireton' },
+    };
+    expect(buildRow(withPeople, 'a.pdf', many).cells['MWDL/creators/creator']).toBe(
+      'Dan Weaving; Ben Jones; Matt Ireton',
+    );
+
+    const one: DocumentData = { ...EMPTY_DOC, properties: { author: 'Dixon, Matt' } };
+    const row = buildRow(withPeople, 'a.pdf', one);
+    expect(row.cells['MWDL/creators/creator']).toBe('Dixon, Matt');
+    expect(row.notes.join(' ')).toMatch(/one name or two/i);
+  });
+});
+
+describe('buildRow reading a section', () => {
+  const withSection = (text: string): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  });
+
+  const sectionProfile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ section: 'Abstract' }] },
+    ],
+  };
+
+  it('takes the text under the heading', () => {
+    const row = buildRow(
+      sectionProfile,
+      'a.pdf',
+      withSection('Abstract A study of jumping. Keywords sport'),
+    );
+    expect(row.cells['MWDL/description']).toBe('A study of jumping.');
+    expect(row.sources['MWDL/description']).toBe('section');
+    expect(row.notes).toEqual([]);
+  });
+
+  /**
+   * A section that ran to the length cap never reached another heading, which
+   * on real files means the heading was not one: a benefits PDF matched
+   * "Summary" mid-page and produced 3,996 characters of plan tables. The value
+   * is kept -- it may still be useful -- but it is never kept silently.
+   */
+  it('flags a section that ran to the cap', () => {
+    const row = buildRow(sectionProfile, 'a.pdf', withSection(`Abstract ${'word '.repeat(3000)}`));
+    expect(row.cells['MWDL/description']?.length).toBeGreaterThan(100);
+    expect(row.notes.join(' ')).toMatch(/Abstract/);
+    expect(row.notes.join(' ')).toMatch(/cut short|too long|never ended/i);
+  });
+});
+
+describe('buildRow and the filename pattern', () => {
+  const doc: DocumentData = {
+    text: 'Abstract A study of jumping. Keywords sport',
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  };
+
+  /**
+   * A mixed folder gets one pattern, and it can only carry one extension. A
+   * folder of 18 Word files and 12 PDFs produced `{part1}_{part2}_{part3}.docx`
+   * and then flagged every PDF row for not matching it -- twelve warnings about
+   * something no column was reading. The warning is worth making only when a
+   * column actually needs a piece of the filename.
+   */
+  it('says nothing about a filename that matches no pattern when no column uses one', () => {
+    const noParts: Profile = {
+      version: 1,
+      pattern: '{a}_{b}_{c}.docx',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/description', sources: [{ section: 'Abstract' }] },
+      ],
+    };
+    expect(buildRow(noParts, 'no-underscores-here.pdf', doc).notes).toEqual([]);
+  });
+
+  it('still warns when a column reads a placeholder', () => {
+    const usesParts: Profile = {
+      version: 1,
+      pattern: '{a}_{b}_{c}.docx',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/title', sources: [{ placeholder: 'a' }] },
+      ],
+    };
+    expect(buildRow(usesParts, 'no-underscores-here.pdf', doc).notes.join(' ')).toMatch(
+      /does not match the pattern/,
+    );
+  });
+
+  it('still warns when a column joins placeholders', () => {
+    const usesJoin: Profile = {
+      version: 1,
+      pattern: '{a}_{b}_{c}.docx',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/creators/creator', sources: [{ join: '{b}, {a}' }] },
+      ],
+    };
+    expect(buildRow(usesJoin, 'no-underscores-here.pdf', doc).notes.join(' ')).toMatch(
+      /does not match the pattern/,
+    );
+  });
+});
+
+/**
+ * Two of the operator's twelve journal PDFs carry no title property at all, so
+ * `MWDL/title` came out empty -- and that field becomes the item's name in
+ * openEQUELLA. Those two would have been contributed nameless. The filename is
+ * not a good title, but it is a real one, and it is the only thing left.
+ */
+describe('buildRow reading the filename without its extension', () => {
+  const stemProfile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ property: 'title' }, { filenameStem: true }] },
+    ],
+  };
+
+  it('drops the extension', () => {
+    const row = buildRow(stemProfile, '07 - Accelerometry-Based Load (2019).pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/title']).toBe('07 - Accelerometry-Based Load (2019)');
+    expect(row.sources['MWDL/title']).toBe('filename');
+  });
+
+  // The titles in this batch are full of dots: "22. Salazar_proof_10pix1line".
+  it('drops only the last extension, not every dot', () => {
+    expect(buildRow(stemProfile, '22. Salazar_proof.v2.pdf', EMPTY_DOC).cells['MWDL/title']).toBe(
+      '22. Salazar_proof.v2',
+    );
+  });
+
+  it('keeps a name that has no extension', () => {
+    expect(buildRow(stemProfile, 'Recital', EMPTY_DOC).cells['MWDL/title']).toBe('Recital');
+  });
+
+  it('never overrides a title the document states', () => {
+    const titled: DocumentData = { ...EMPTY_DOC, properties: { title: 'A Real Title' } };
+    expect(buildRow(stemProfile, 'ugly_filename.pdf', titled).cells['MWDL/title']).toBe(
+      'A Real Title',
+    );
   });
 });

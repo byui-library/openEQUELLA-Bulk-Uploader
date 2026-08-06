@@ -114,7 +114,10 @@ export async function readPdf(path: string): Promise<DocumentData> {
       properties[key] = key === 'created' ? fromPdfDate(trimmed) : trimmed;
     }
 
-    return { text, hasTextLayer: text.length >= MIN_TEXT_LAYER_CHARS, properties };
+        // PDF has no table model this reader can trust -- a visual grid is just
+    // positioned text runs, and guessing cell boundaries from coordinates is a
+    // different feature from reading a format that states them.
+    return { text, hasTextLayer: text.length >= MIN_TEXT_LAYER_CHARS, properties, tables: [] };
   } finally {
     await task.destroy();
   }

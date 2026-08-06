@@ -62,6 +62,13 @@ async function readCsv(path: string): Promise<Sheet> {
     records = parse(text, {
       skipEmptyLines: false,
       relax_column_count_less: true,
+      // Explicit rather than relying on the library's default. Spreadsheets
+      // saved from Excel routinely start with a UTF-8 byte-order mark, and the
+      // extractor now writes one deliberately so Excel reads accents correctly.
+      // An unskipped mark corrupts the FIRST column name and nothing else,
+      // which reads as "this one header is mysteriously invalid" -- the same
+      // shape as the .env BOM problem this project has already been bitten by.
+      bom: true,
     }) as string[][];
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { unzipSync, strFromU8 } from 'fflate';
 import { XMLParser } from 'fast-xml-parser';
 import { ValidationError } from '../../errors.js';
-import type { DocumentData, DocumentProperty } from '../types.js';
+import type { DocumentData, DocumentProperty, DocumentTable } from '../types.js';
 
 const CORE_PROPS = 'docProps/core.xml';
 const DOCUMENT = 'word/document.xml';
@@ -27,6 +27,43 @@ function paragraphText(documentXml: string): string {
     .map((line) => unescapeXml(line))
     .join('\n')
     .trim();
+}
+
+/** Every `<w:t>` inside a fragment, in document order, with paragraphs kept apart. */
+function cellText(fragment: string): string {
+  return fragment
+    .split(/<w:p[ >]/)
+    .slice(1)
+    .map((p) => unescapeXml([...p.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map((m) => m[1]!).join('')))
+    .join('\n')
+    .trim();
+}
+
+/**
+ * Pull tables out as headers plus rows.
+ *
+ * Word nests `<w:tbl>` → `<w:tr>` → `<w:tc>` → `<w:p>`. The paragraph nesting is
+ * why the flattened body text cannot be used for this: a cell holding four
+ * paragraphs contributes four lines and nothing marks where the next cell
+ * begins. Real documents here put a whole job description in one cell, so that
+ * is the normal case rather than an edge one.
+ *
+ * Nested tables are not handled: a `<w:tbl>` inside a cell would have its rows
+ * read as rows of the outer table. No document seen here does that, and
+ * guessing at a structure nobody uses would be inventing behaviour.
+ */
+function readTables(documentXml: string): DocumentTable[] {
+  const tables: DocumentTable[] = [];
+
+  for (const tableMatch of documentXml.matchAll(/<w:tbl[ >]([\s\S]*?)<\/w:tbl>/g)) {
+    const rows = [...tableMatch[1]!.matchAll(/<w:tr[ >]([\s\S]*?)<\/w:tr>/g)].map((rowMatch) =>
+      [...rowMatch[1]!.matchAll(/<w:tc[ >]([\s\S]*?)<\/w:tc>/g)].map((cell) => cellText(cell[1]!)),
+    );
+    const [headers, ...body] = rows;
+    if (headers !== undefined) tables.push({ headers, rows: body });
+  }
+
+  return tables;
 }
 
 function unescapeXml(text: string): string {
@@ -69,5 +106,11 @@ export async function readDocx(path: string): Promise<DocumentData> {
 
   // A .docx always has a text layer; it may simply be empty. That is a
   // different thing from a scanned PDF, where text is genuinely unavailable.
-  return { text: paragraphText(strFromU8(documentPart)), hasTextLayer: true, properties };
+  const documentXml = strFromU8(documentPart);
+  return {
+    text: paragraphText(documentXml),
+    hasTextLayer: true,
+    properties,
+    tables: readTables(documentXml),
+  };
 }

@@ -1,4 +1,5 @@
 // src/core/extract/csv.ts
+import { writeFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import type { ExtractedRow, Profile } from './types.js';
 
@@ -34,5 +35,19 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
     ]);
   }
 
-  await workbook.csv.writeFile(path);
+  // Written through a buffer so a UTF-8 byte-order mark can go in front.
+  //
+  // Excel decides a CSV's encoding from its first bytes. Without a BOM it
+  // assumes the system codepage, so "Ibáñez" is displayed as "IbÃ¡Ã±ez" and an
+  // em dash as "â". The bytes were always correct UTF-8 -- Excel was reading
+  // them wrongly -- but this feature's entire promise is "open it in Excel and
+  // check it", and a spreadsheet full of apparent corruption fails that. Worse,
+  // someone might repair the display in Excel and save, which corrupts the data
+  // for real.
+  //
+  // src/core/sheet.ts passes `bom: true` to csv-parse so the mark never reaches
+  // the first column name. That matters: a BOM corrupts the FIRST field only,
+  // which is how it once broke .env parsing here in a thoroughly confusing way.
+  const body = await workbook.csv.writeBuffer();
+  await writeFile(path, Buffer.concat([Buffer.from('﻿', 'utf8'), Buffer.from(body as ArrayBuffer)]));
 }

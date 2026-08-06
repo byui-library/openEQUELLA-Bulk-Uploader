@@ -24,7 +24,15 @@ async function writeAndRead(rows: ExtractedRow[]): Promise<string[][]> {
   const dir = await mkdtemp(join(tmpdir(), 'oeq-csv-'));
   const path = join(dir, 'out.csv');
   await writeCsv(path, profile, rows);
-  return parse(await readFile(path, 'utf8'), { relax_column_count_less: true }) as string[][];
+  // `bom: true` because the file now starts with a UTF-8 byte-order mark, which
+  // is what makes Excel read accents correctly. A reader that does not skip it
+  // sees the mark glued to the FIRST column name and nothing else wrong -- the
+  // same failure shape that once broke .env parsing here. src/core/sheet.ts
+  // handles it, and this helper stands in for any other well-behaved reader.
+  return parse(await readFile(path, 'utf8'), {
+    relax_column_count_less: true,
+    bom: true,
+  }) as string[][];
 }
 
 describe('writeCsv', () => {
@@ -70,6 +78,42 @@ describe('writeCsv', () => {
   it('writes an empty cell for a column the row has no value for', async () => {
     const records = await writeAndRead([row({ [ATTACHMENT_COLUMN]: 'a.pdf' })]);
     expect(records[1]?.[1]).toBe('');
+  });
+
+  // Excel decides a CSV's encoding from its first bytes. Without a byte-order
+  // mark it assumes the system codepage, so UTF-8 accents arrive as mojibake --
+  // "Ibáñez" shown as "IbÃ¡Ã±ez". The bytes were always right; Excel was
+  // reading them wrongly, and this feature's whole promise is "open it in
+  // Excel and check it". Found on a real extraction of journal articles.
+  it('starts with a UTF-8 byte-order mark so Excel reads accents correctly', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-csv-'));
+    const path = join(dir, 'out.csv');
+    await writeCsv(path, profile, [row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': 'Ibáñez' })]);
+    const bytes = await readFile(path);
+    expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  it('round-trips accented characters and an em dash through readSheet', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-csv-'));
+    const path = join(dir, 'out.csv');
+    const value = 'Sergio J. Ibáñez — José Pino-Ortega';
+    await writeCsv(path, profile, [row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': value })]);
+    const { readSheet } = await import('../../src/core/sheet.js');
+    const sheet = await readSheet(path);
+    expect(sheet.rows[0]?.cells['MWDL/title']).toBe(value);
+  });
+
+  // The BOM must not leak into the first header. That is exactly how a BOM
+  // broke .env parsing in this project before: it corrupts the FIRST field
+  // only, so most of the file looks fine and the failure is baffling.
+  it('does not let the byte-order mark corrupt the first column name', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-csv-'));
+    const path = join(dir, 'out.csv');
+    await writeCsv(path, profile, [row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': 'x' })]);
+    const { readSheet } = await import('../../src/core/sheet.js');
+    const sheet = await readSheet(path);
+    expect(sheet.headers[0]).toBe(ATTACHMENT_COLUMN);
+    expect(sheet.rows[0]?.cells[ATTACHMENT_COLUMN]).toBe('a.pdf');
   });
 
   it('produces a file the project\'s own sheet reader can read back', async () => {

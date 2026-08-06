@@ -82,3 +82,20 @@ describe('nextScreen -- Task 8 (Review, Confirm, Progress, Results)', () => {
     expect(nextScreen('results', { type: 'retryStarted' })).toBe('progress');
   });
 });
+
+/**
+ * Finishing a batch used to be a dead end: the Done screen offered a link to
+ * the collection and nothing else, so uploading a second spreadsheet meant
+ * closing and reopening the app. Reported by the operator after a real run.
+ */
+describe('starting another batch from the Done screen', () => {
+  it('goes back to Choose', () => {
+    expect(nextScreen('results', { type: 'anotherBatch' })).toBe('choose');
+  });
+
+  // Sign-in and the configured instance survive; only the batch is finished.
+  it('does not send the user back to sign in', () => {
+    expect(nextScreen('results', { type: 'anotherBatch' })).not.toBe('signin');
+    expect(nextScreen('results', { type: 'anotherBatch' })).not.toBe('setup');
+  });
+});
