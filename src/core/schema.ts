@@ -182,17 +182,39 @@ export interface InvalidHeader {
 export interface HeaderValidation {
   valid: string[];
   invalid: InvalidHeader[];
+  /**
+   * Annotation columns such as `_source` and `_notes`: carried through
+   * untouched and never treated as metadata. Separate from `valid` because
+   * they are not schema paths and must not be reported as though they were.
+   */
+  ignored: string[];
 }
 
 /** The reserved column naming the file on disk; never a metadata xpath. */
 const RESERVED = new Set(['attachment name']);
 
+/**
+ * A column whose name starts with `_` is an annotation for the person reading
+ * the spreadsheet, not metadata. The extractor writes `_source` (where each
+ * value came from) and `_notes` (which rows need a look).
+ *
+ * They are carried through validation untouched and contribute nothing to the
+ * item. Before this existed the uploader rejected its own extractor's output
+ * as having invalid headers, while every document claimed it ignored them --
+ * found by round-tripping a generated spreadsheet through `oeq-upload plan`.
+ */
+export function isAnnotationHeader(header: string): boolean {
+  return header.startsWith('_');
+}
+
 export function validateHeaders(headers: string[], paths: Set<string>): HeaderValidation {
   const valid: string[] = [];
   const invalid: InvalidHeader[] = [];
+  const ignored: string[] = [];
   for (const h of headers) {
-    if (RESERVED.has(h.toLowerCase()) || paths.has(h)) valid.push(h);
+    if (isAnnotationHeader(h)) ignored.push(h);
+    else if (RESERVED.has(h.toLowerCase()) || paths.has(h)) valid.push(h);
     else invalid.push({ header: h, suggestions: suggest(h, paths) });
   }
-  return { valid, invalid };
+  return { valid, invalid, ignored };
 }

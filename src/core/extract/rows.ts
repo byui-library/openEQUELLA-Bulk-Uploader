@@ -200,7 +200,7 @@ function fill(column: Column, context: Context, notes: string[]): { value: strin
       const { value, ambiguous } = splitPeople(raw);
       if (ambiguous) {
         notes.push(
-          `${column.path}: '${raw}' may be one name or two — separate them with a semicolon if it is two`,
+          `${column.path}: '${raw}' may be one name or two - separate them with a semicolon if it is two`,
         );
       }
       return { value, source: sourceKind(source) };
