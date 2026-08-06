@@ -4,7 +4,7 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **651 passing across 57 files**.
+1. `npm install && npm test` — expect **692 passing across 59 files**.
 2. You are on **`feature/extractor-desktop`**, open as **PR #3**, not merged.
 3. The extract/upload round trip is **done and passing** - see below. The only
    thing left untested is that same round trip through the GUI.
@@ -54,7 +54,7 @@ metadata extractor's core + `oeq-upload extract` command (PR #2).
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            651 tests, 57 files
+npm test            692 tests, 59 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
@@ -118,22 +118,50 @@ manifest.
 The CLI shares `readSheet` and `validateHeaders` with it, so the format itself
 is proven; the Review screen is its own code path and has not been driven.
 
-### In progress: extracting a description across formats
+### Extracting a description: tiers 1-3 done, tier 4 not started
 
 The description column came out empty on nearly every row of three real runs.
-Word files are now handled - their description sits in a table cell headed
-"Job Description" and the starter profile maps it automatically. PDFs are not:
-a journal article states its description as an abstract, and anything
-unstructured states it nowhere at all.
+It no longer does. Four tiers are tried in order and the first that yields
+anything wins; three of them are built:
 
-Design approved in outline:
+| Tier | Source | State |
+| --- | --- | --- |
+| 1 | table cell / label / document property | built earlier |
+| 2 | `{ "section": "Abstract" }` — text under a heading | **built** (`src/core/extract/sections.ts`) |
+| 3 | `{ "opening": true }` — first substantial paragraph | **built** (`src/core/extract/opening.ts`) |
+| 4 | a language model | **not started** — needs its own conversation |
+
+Measured on the operator's own folders after building tiers 2 and 3:
+
+```text
+14 of 14 PDFs      12 read from a real Abstract or Purpose section
+ 2 of  2 Word       1 from a section, 1 from the opening paragraph
+ 2 flagged          the two that deserved it, and no others
+```
+
+The starter profile proposes all three automatically, so a folder of journal
+PDFs now arrives with real abstracts without anything being mapped by hand.
+
+Two things are always flagged in `_notes`, and both fired on real files:
+
+- **a section that ran to the 4,000-character cap** — it never reached another
+  heading, which usually means the heading was not one. A benefits PDF matched
+  "Summary" mid-page and produced 3,996 characters of plan tables.
+- **anything from tier 3**, every time. It is the one source that infers rather
+  than reads.
+
+Design, with what the building taught that the design did not anticipate:
 [specs/2026-08-06-description-extraction-design.md](superpowers/specs/2026-08-06-description-extraction-design.md).
-Four tiers tried in order - a stated field, a named section, the opening
-paragraph, then a language model - each running only if the ones above it found
-nothing.
 
-**Build tiers 2 and 3 first.** They are deterministic, need no key or network,
-and the section rule alone gets 11 of the 12 real PDFs.
+**If you touch tier 3, mutation-test it.** The first drafts of its negative
+tests all passed unchanged when the rule each one named was deleted — every one
+was failing on the sentence rule by accident. Each test is now written to fail
+exactly one rule, and all five rules die under mutation. The check is:
+
+```bash
+# flip one rule in src/core/extract/opening.ts, then
+npx vitest run tests/extract/opening.test.ts   # must go 17 -> 16
+```
 
 **On the LLM tier:** the operator hoped a user could point at their own Claude
 Pro / ChatGPT Plus / Gemini subscription. That is not possible - those licence

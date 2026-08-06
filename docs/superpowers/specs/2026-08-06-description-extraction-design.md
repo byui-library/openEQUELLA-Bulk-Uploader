@@ -1,7 +1,8 @@
 # Extracting a description — Design
 
 **Date:** 2026-08-06
-**Status:** Approved in outline; the LLM tier's details are still open
+**Status:** Tiers 1–3 built and verified on real folders. Tier 4 not started;
+its details are still open.
 **Builds on:** [2026-08-05-metadata-extractor-design.md](2026-08-05-metadata-extractor-design.md)
 
 ## The problem, from real batches
@@ -34,7 +35,7 @@ mechanism, not a new one.
 A table cell, a `Label:` line, or a document property. The document says what
 the value is; reading it is not inference.
 
-### 2. A named section — to build
+### 2. A named section — built
 
 Text under a heading, ending at the next heading.
 
@@ -61,7 +62,12 @@ has no abstract heading; it is also the file whose embedded title is
 `Microsoft Word - 22. Salazar_proof_10pix1line_revised`, so it is a poorly made
 PDF rather than an unusual one.
 
-### 3. The opening paragraph — to build, and honest about being crude
+**As built, it is twelve of twelve.** The column names every heading the scan
+found, not just one — so file 11, which has a `Purpose` and no `Abstract`, is
+filled by the second source in the list. One profile has to serve a whole
+folder, and that is what an ordered source list is for.
+
+### 3. The opening paragraph — built, and honest about being crude
 
 The first substantial run of prose, after skipping the boilerplate that opens a
 published PDF: copyright lines, DOIs, `Received:`/`Accepted:`/`Published:`
@@ -120,6 +126,28 @@ generated.
 Tiers 2 and 3 first. They need no key, no network and no policy decision, and
 they would have solved this batch on their own. Tier 4 follows, behind the
 provider interface.
+
+## What tiers 2 and 3 actually did
+
+Measured on the operator's own folders after building them:
+
+```text
+14 of 14 PDFs      12 read from a real Abstract or Purpose section
+ 2 of  2 Word       1 from a section, 1 from the opening paragraph
+ 2 flagged          the two that deserved it, and no others
+```
+
+Every description cell that was blank on three previous runs is now filled, and
+the two uncertain ones say so in `_notes`.
+
+Two things were learned in the building that the design did not anticipate:
+
+- **A capped section is a signal, not just a truncation.** A section that runs
+  to the length cap never reached another heading, which usually means the
+  heading was not a heading. That case is now flagged like tier 3 is.
+- **The tier 3 rules needed individual tests.** The first drafts of the negative
+  tests all passed unchanged when the rule each one named was deleted — every
+  one was actually failing on the sentence rule by accident.
 
 ## Still open — for the tier 4 conversation
 
