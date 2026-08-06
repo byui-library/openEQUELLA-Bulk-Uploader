@@ -1,17 +1,44 @@
-# Session handoff — updated 2026-08-06
+# Session handoff — updated 2026-08-06 (end of the extractor + duplicates session)
 
 Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **721 passing across 60 files**.
-2. You are on **`feature/extractor-desktop`**, open as **PR #3**, not merged.
-3. The extract/upload round trip is **done and passing** - see below. The only
-   thing left untested is that same round trip through the GUI.
+1. `git checkout feature/duplicate-prevention && npm install && npm test` —
+   expect **764 passing across 62 files**.
+2. **PR #3 is merged.** The metadata extractor, all of it, is on `main`.
+3. **The one thing blocking progress is a probe only the operator can run.**
+   See "Duplicate prevention: blocked on a probe" below. Do not build
+   `searchByTitle` or the mock server's `where` support until it has run.
 
 Do NOT build an installer yet. The operator asked that packaging wait.
 
 Sign-in is confirmed working on **both** instances; there is no open loop there.
+
+### What happened in the session of 2026-08-06
+
+A long one. In order:
+
+- **Description extraction tiers 2 and 3 built** — a named section
+  (`Abstract`, `Summary`, …) then the opening paragraph. Every description
+  cell that was blank on three previous runs is now filled.
+- **The operator ran it on 30 real documents twice**, and reading their output
+  found four faults: a journal citation block riding along with an abstract,
+  trailing page furniture on two more, a heading that was really a word inside
+  a sentence, and twelve warnings about a filename pattern nothing was reading.
+  All fixed, all verified against the same files.
+- **A filename fallback for the title**, because two of twelve journal PDFs
+  state no title at all and that field becomes the item's NAME in openEQUELLA.
+  Those two would have been contributed nameless.
+- **The CLI was getting none of the description evidence.** Found by re-running
+  the extract → plan round trip: 14 items planned, 14 titles, **0
+  descriptions**. `--init-profile` read only the filenames. Evidence-gathering
+  now lives in `core/extract/evidence.ts`, shared by both front ends.
+- **PR #3 merged.**
+- **The Done screen was a dead end** — no way to start another batch without
+  restarting the app. Now has "Upload another spreadsheet".
+- **Duplicate prevention designed, planned, and its core built.** The operator
+  uploaded the same 30 files twice and the tool said nothing.
 
 ### Running the desktop app
 
@@ -43,18 +70,95 @@ sandboxed renderer, per-instance encrypted credentials, and a typed IPC
 contract. Released as **v0.1.0** with both installers, and clean-machine tested
 by the operator. Merged to `main` as PR #1.
 
-**What is on `main`:** the CLI, the MCP server, the desktop GUI, and the
-metadata extractor's core + `oeq-upload extract` command (PR #2).
+**What is on `main`:** the CLI, the MCP server, the desktop GUI, and the whole
+metadata extractor — core, CLI command and desktop screens (PR #2 and PR #3).
 
-**What is not yet merged:** the extractor's desktop screens, on
-`feature/extractor-desktop` as **PR #3** — this session's work.
+**What is not merged:** `feature/duplicate-prevention`, five commits, described
+below.
+
+## Duplicate prevention: blocked on a probe
+
+**Why this exists.** On 2026-08-06 the operator uploaded the same 30 files
+twice and the tool said nothing. The cause was not a missing feature:
+`preflightDuplicates` runs on every plan in all three front ends, but its first
+line is `if (!identifier) continue;` against `MWDL/identifier` — a column the
+extractor has never produced. It had been reporting "no duplicates" by never
+looking.
+
+- Design: [superpowers/specs/2026-08-06-duplicate-prevention-design.md](superpowers/specs/2026-08-06-duplicate-prevention-design.md)
+- Plan: [superpowers/plans/2026-08-06-duplicate-prevention.md](superpowers/plans/2026-08-06-duplicate-prevention.md) — 15 tasks
+
+**Built and reviewed** (Tasks 2, 5, 6, 7 — everything that does not touch the
+wire format):
+
+```text
+src/core/duplicates.ts   verdictFor, defaultChoice, findDuplicates, TitleSearcher
+src/core/plan.ts         markSkipped
+src/core/client.ts       escapeWhereValue
+src/core/types.ts        TITLE_XPATH, sameFileName
+```
+
+**BLOCKED: the probe.** Two assumptions are unverified against the live
+instance, and `schema/swagger.json` settles neither — it documents `where` only
+as a link to external docs, and its `AttachmentBean` has no filename property
+at all:
+
+1. what `where` clause syntax this instance accepts, and whether `''` or `\'`
+   is the escape;
+2. **whether `where` filters at all** — if it does not, the approach is invalid
+   and needs rethinking, not building on;
+3. which key in a search result holds an attachment's filename.
+
+`scripts/probe-where.mts` answers all three. It reads only. It needs the
+operator's credentials, which is why it is not done:
+
+```bash
+OEQ_BASE_URL=https://content-test.byui.edu \
+OEQ_CLIENT_ID=<operator> OEQ_CLIENT_SECRET=<operator> \
+OEQ_PROBE_TITLE="<exact title of an item known to exist>" \
+npx tsx scripts/probe-where.mts
+```
+
+It authenticates through `loadConfig` + `createAuthProvider`, the same path the
+CLI takes — **not** `OAuthClientCredentials`, which cannot be used against this
+instance. Fill the ANSWERS block at the top of the script once it has run.
+
+**Then:** plan Tasks 3 and 4 (mock server `where` support, then
+`client.searchByTitle`), then 8–13 (CLI, IPC, handlers, Review screen, Results
+label, MCP), then 14–15 (docs, and an end-to-end double upload).
+
+### What the code review of the core caught
+
+Worth reading before writing the rest, because two of these are the same shape
+as bugs this project has already shipped:
+
+- **The concurrency loop was never exercised.** Every `findDuplicates` test used
+  one or two rows against a limit of five, so the loop body ran exactly once in
+  the whole suite. Replacing it with `pending.slice(0, CONCURRENCY)` — checking
+  5 rows of a 37-row batch and reporting the other 32 clean — passed all 19
+  tests. Two tests now pin it; the mutation was confirmed to fail them.
+- **`verdictFor` returned `rowNumber: 0`** for the caller to overwrite. Row 0
+  does not exist, and a caller that forgot would produce a finding that
+  `markSkipped` silently matches nothing — a skip that does not skip. The
+  return type now omits the field so the compiler demands it.
+- **Hits were trusted without checking the title.** If `where` turns out not to
+  filter, that flags every row rather than none. There is now a local
+  case-insensitive title check as well.
+- **The title xpath was a bare string literal** — the exact pattern that caused
+  the bug being fixed. Now `TITLE_XPATH` in `types.ts`.
+- **A comment claimed a verification that had not happened.** `escapeWhereValue`
+  said "the escape this instance accepts"; it now says UNVERIFIED, in the
+  vocabulary `client.ts` already uses for the attachment payload.
+
+## Commands and the extractor's own documents
 
 - Extractor design: [superpowers/specs/2026-08-05-metadata-extractor-design.md](superpowers/specs/2026-08-05-metadata-extractor-design.md)
+- Description tiers: [superpowers/specs/2026-08-06-description-extraction-design.md](superpowers/specs/2026-08-06-description-extraction-design.md)
 - Stage 1 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage1.md](superpowers/plans/2026-08-05-metadata-extractor-stage1.md)
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            721 tests, 60 files
+npm test            764 tests, 62 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
