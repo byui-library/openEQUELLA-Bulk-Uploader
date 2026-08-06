@@ -64,6 +64,20 @@ describe('verdictFor', () => {
       { uuid: 'i1', version: 1, title: 'T', attachmentNames: ['Smith_Jane.pdf'] },
     ]);
   });
+
+  /**
+   * If the server ignores the where clause and returns everything, this must
+   * come back clean rather than flagging every row in the batch.
+   */
+  it('ignores a hit whose title is not actually the one searched for', () => {
+    expect(verdictFor('Smith_Jane.pdf', 'Senior Recital', [hit('Something Else', ['Smith_Jane.pdf'])])).toBeNull();
+  });
+
+  it('accepts a hit that differs only in case', () => {
+    expect(verdictFor('a.pdf', 'Senior Recital', [hit('SENIOR RECITAL', ['a.pdf'])])?.tier).toBe(
+      'near-certain',
+    );
+  });
 });
 
 describe('defaultChoice', () => {
@@ -208,5 +222,52 @@ describe('findDuplicates', () => {
     expect(calls).toBe(0);
     expect(found[0]?.tier).toBe('not-checkable');
     expect(found[0]?.rowNumber).toBe(2);
+  });
+
+  /**
+   * Guards the batching loop. With CONCURRENCY at 5 and every other test
+   * using one or two rows, the loop body ran exactly once in the whole
+   * suite -- so truncating it to the first batch passed everything. That is
+   * the same shape of failure as the bug this feature exists to fix.
+   */
+  it('checks every row of a batch larger than one concurrency window', async () => {
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      rowNumber: i + 2,
+      fileName: `f${i}.pdf`,
+      title: `Title ${i}`,
+    }));
+    const asked: string[] = [];
+    const client = {
+      searchByTitle: async (_c: string, title: string) => {
+        asked.push(title);
+        return [{ uuid: 'i', version: 1, name: title, attachmentNames: [`f${asked.length - 1}.pdf`] }];
+      },
+    };
+    const found = await findDuplicates(client, manifestOf(rows));
+    expect(asked).toHaveLength(12);
+    expect(found).toHaveLength(12);
+    expect(found.map((f) => f.rowNumber)).toEqual(rows.map((r) => r.rowNumber));
+  });
+
+  it('keeps no more than the concurrency limit in flight at once', async () => {
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      rowNumber: i + 2,
+      fileName: `f${i}.pdf`,
+      title: `Title ${i}`,
+    }));
+    let inFlight = 0;
+    let peak = 0;
+    const client = {
+      searchByTitle: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 1));
+        inFlight--;
+        return [];
+      },
+    };
+    await findDuplicates(client, manifestOf(rows));
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(5);
   });
 });

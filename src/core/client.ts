@@ -161,9 +161,12 @@ function isReplayableBody(body: BodyInit | null | undefined): boolean {
 /**
  * Escape a value for interpolation into a search `where` clause.
  *
- * Doubling the single quote is the escape this instance accepts. A title
- * containing an apostrophe would otherwise end the literal early and either
- * error or, far worse, silently change what is being matched.
+ * UNVERIFIED: a doubled single quote is ASSUMED to be the escape this
+ * instance accepts. `scripts/probe-where.mts` settles it against the test
+ * instance; until that has run, this is a guess with the same standing as the
+ * two wire-format assumptions this project has already been wrong about. A
+ * title containing an apostrophe would otherwise end the literal early and
+ * either error or, far worse, silently change what is being matched.
  *
  * Nothing else is escaped: everything is passed through `encodeURIComponent`
  * on the way into the URL, which handles newlines, backslashes and the rest.
