@@ -84,3 +84,48 @@ describe('runExtract', () => {
     expect(lines.join('\n')).toContain('notes.txt');
   });
 });
+
+/**
+ * --init-profile used to read only the FILENAMES, so the profile it wrote had
+ * an empty description column and no table mappings. Every description fix
+ * reached the desktop app and none of it reached the CLI. The round trip found
+ * it: `extract` then `plan` produced 14 items with 0 descriptions.
+ */
+describe('runExtract --init-profile reading the documents', () => {
+  async function initOn(files: Record<string, Uint8Array | string>) {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-cli-init-'));
+    for (const [name, body] of Object.entries(files)) await writeFile(join(dir, name), body);
+    const profilePath = join(dir, 'p.profile.json');
+    await runExtract(
+      { dir, profile: profilePath, out: join(dir, 'o.csv'), schemaFile: 'schema/_entity.xml', initProfile: true },
+      () => {},
+    );
+    return JSON.parse(await readFile(profilePath, 'utf8')) as Profile;
+  }
+
+  it('proposes the abstract it found, and the opening as a fallback', async () => {
+    const written = await initOn({
+      'Article.pdf': makePdf({ text: 'Abstract This paper measures jump height. Keywords sport' }),
+    });
+    const description = written.columns.find((c) => c.path === 'MWDL/description');
+    expect(description?.sources).toEqual([{ section: 'Abstract' }, { opening: true }]);
+  });
+
+  it('still ends the title with the filename', async () => {
+    const written = await initOn({ 'Article.pdf': makePdf({ text: 'Abstract A study. Keywords x' }) });
+    expect(written.columns.find((c) => c.path === 'MWDL/title')?.sources).toContainEqual({
+      filenameStem: true,
+    });
+  });
+
+  it('produces a profile the loader accepts', async () => {
+    const written = await initOn({ 'Article.pdf': makePdf({ text: 'Abstract A study. Keywords x' }) });
+    const { parseProfile } = await import('../../src/core/extract/profile.js');
+    expect(() => parseProfile(written)).not.toThrow();
+  });
+
+  it('does not fall over on a folder with nothing readable in it', async () => {
+    const written = await initOn({ 'notes.txt': 'nothing here' });
+    expect(written.columns.length).toBeGreaterThan(0);
+  });
+});

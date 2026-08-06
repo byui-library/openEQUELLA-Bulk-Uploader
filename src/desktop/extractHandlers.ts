@@ -7,17 +7,15 @@ import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
 import { extractFolder, listFolder } from '../core/extract/extract.js';
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
-import { findSections, readSection } from '../core/extract/sections.js';
+import { evidenceFrom, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
 import { buildRow } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
-import { DOCUMENT_PROPERTIES, type DocumentData, type ExtractedRow, type Profile } from '../core/extract/types.js';
+import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
 import { CHANNELS, type ExtractScan, type ExtractRunReport } from './ipc.js';
 
 const PREVIEW_ROWS = 5;
-/** How many documents to open when scanning, to learn what can be mapped from. */
-const SAMPLE_DOCS = 5;
 
 interface CacheEntry {
   dir: string;
@@ -29,34 +27,6 @@ let cache: CacheEntry | null = null;
 export function __resetExtractCache(): void {
   cache = null;
   schemaPathsCache = null;
-}
-
-/**
- * Which files to open, spread across the file types present.
- *
- * Taking simply the first N is wrong for a mixed folder: sorted alphabetically,
- * a folder of twelve PDFs and eighteen Word documents gives five PDFs and not
- * one `.docx`, so nothing would learn that those Word files keep their metadata
- * in a table. The operator then sees no table columns offered at all.
- */
-function spreadAcrossTypes(filenames: string[], limit: number): string[] {
-  const byExtension = new Map<string, string[]>();
-  for (const name of filenames) {
-    const extension = (name.split('.').pop() ?? '').toLowerCase();
-    (byExtension.get(extension) ?? byExtension.set(extension, []).get(extension)!).push(name);
-  }
-
-  const chosen: string[] = [];
-  const queues = [...byExtension.values()];
-  // Round-robin, so each type is represented before any type gets a second.
-  for (let i = 0; chosen.length < limit && queues.some((q) => q.length > i); i++) {
-    for (const queue of queues) {
-      if (chosen.length >= limit) break;
-      const next = queue[i];
-      if (next !== undefined) chosen.push(next);
-    }
-  }
-  return chosen;
 }
 
 /**
@@ -110,44 +80,20 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
     cache = null;
     const { docs } = await sample(dir);
 
-    const labels = new Set<string>();
-    const properties = new Set<string>();
-    const tableColumns = new Set<string>();
-    const sections = new Set<string>();
-    for (const { doc } of docs) {
-      for (const label of findLabels(doc.text).keys()) labels.add(label);
-      // Only headings with text under them. A document ending at "Abstract"
-      // would otherwise offer a mapping that is blank on every row.
-      for (const heading of findSections(doc.text)) {
-        if (readSection(doc.text, heading).text !== '') sections.add(heading);
-      }
-      for (const key of DOCUMENT_PROPERTIES) if (doc.properties[key] !== undefined) properties.add(key);
-      // Only headers that have a value under them. A header with an empty cell
-      // in every sampled document would offer a mapping that is always blank.
-      for (const table of doc.tables) {
-        table.headers.forEach((header, i) => {
-          if (header.trim() !== '' && (table.rows[0]?.[i] ?? '').trim() !== '') {
-            tableColumns.add(header.trim());
-          }
-        });
-      }
-    }
+    // Shared with the CLI's --init-profile. It used to live here, which meant
+    // a CLI-built profile had no description sources and no table mappings at
+    // all -- every fix for descriptions reached the GUI only.
+    const evidence = evidenceFrom(docs.map((d) => d.doc));
 
     return {
+      ...evidence,
       supported,
       skipped,
-      labels: [...labels].sort(),
-      properties: [...properties],
-      tableColumns: [...tableColumns].sort(),
-      sections: [...sections],
       // Built from what the scan actually found, not from filenames alone.
       // Without the evidence, a table heading of "Job Description" went
       // unmapped and the description column came out empty on every row.
       starter: starterProfile(supported, {
-        labels: [...labels],
-        properties: [...properties],
-        tableColumns: [...tableColumns],
-        sections: [...sections],
+        ...evidence,
         schemaPaths: await schemaPathsOnce(options.schemaFile),
       }),
     };

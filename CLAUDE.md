@@ -27,7 +27,7 @@ Not a blocker any more; the handoff records what the fix actually was.
 **Active work: the metadata extractor**, on `feature/extractor-desktop` as
 **PR #3**. It builds the spreadsheet from a folder of PDFs and Word files so
 nobody types it by hand. Core and CLI are merged; the desktop screens are on
-that branch. **709 tests across 59 files**, typecheck clean.
+that branch. **721 tests across 60 files**, typecheck clean.
 
 Description extraction is tiered — a stated field, then a named section
 (`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
