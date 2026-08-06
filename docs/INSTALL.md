@@ -186,18 +186,27 @@ It works in three steps:
    them, and say where each one's value comes from. A preview of the first few
    files updates as you go.
 
-   You start with four columns already there: the file itself, **Title** and
-   **Creator** (both read from the document's own properties, where most PDFs
-   and Word files record them), and an empty **Description** for you to fill in.
-   Remove any you don't want — nothing is compulsory except the file itself,
-   which is how each row is matched to its document.
+   **The columns arrive already filled in**, worked out from your actual files.
+   Before showing you this screen the program opens a few of them and looks at
+   what is inside, so if your Word documents keep their information in a table
+   with headings like *Company*, *Job Title*, *Job Description*, *Date*, it will
+   already have matched those to the right fields.
 
-   Removing a column offers an **Undo** straight away, so it is safe to try.
+   It only matches a heading whose name lines up with a field in your schema.
+   *Job Title* becomes the title, *Job Description* becomes the description —
+   but *Company*, *Pay* and *Qualifications* mean nothing to this schema, so
+   they are left alone rather than put somewhere that looks plausible. Add them
+   yourself if you want them.
 
-   If your Word documents keep their information in a **table** — a row of
-   headings like *Company*, *Job Title*, *Date*, with the values underneath —
-   those headings appear in the source list as **Table column: Job Title** and
-   so on. Pick one and the whole cell comes across, however long it is.
+   Where a column shows **two** sources, it tries them in order and takes the
+   first that isn't empty. That is how one setup can serve a folder holding both
+   Word files and PDFs: the Word files have a *Job Title* cell, the PDFs record
+   their title as a document property instead.
+
+   Nothing here is fixed. Change any source, add columns, remove the ones you
+   don't want — only the file itself is compulsory, because it is how each row
+   is matched to its document. Removing a column offers an **Undo** straight
+   away, so it is safe to try.
 3. **Save.** The spreadsheet is written where you choose.
 
 **Then open it in Excel and check it before uploading.** This step guesses, and
