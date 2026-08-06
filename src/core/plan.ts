@@ -201,3 +201,29 @@ export async function preflightDuplicates(
   }
   return warnings;
 }
+
+/**
+ * Mark rows as skipped, with a reason, before the run starts.
+ *
+ * Needs no runner change: `skipped` is already in the runner's
+ * TERMINAL_STATUSES, so it steps over these rows and counts them into its
+ * `skipped` total exactly as it does for rows a previous run completed.
+ *
+ * Only `pending` rows are touched. Rewriting an already-`created` row to
+ * skipped would erase the record that an item exists for it.
+ */
+export function markSkipped(
+  manifest: Manifest,
+  rowNumbers: readonly number[],
+  reason: string,
+): number {
+  const wanted = new Set(rowNumbers);
+  let marked = 0;
+  for (const entry of manifest.entries) {
+    if (!wanted.has(entry.rowNumber) || entry.status !== 'pending') continue;
+    entry.status = 'skipped';
+    entry.error = reason;
+    marked++;
+  }
+  return marked;
+}

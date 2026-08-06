@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
-import { buildManifest, preflightDuplicates } from '../src/core/plan.js';
+import { buildManifest, preflightDuplicates, markSkipped } from '../src/core/plan.js';
 import { OeqClient } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ValidationError } from '../src/core/errors.js';
@@ -201,5 +201,58 @@ describe('preflightDuplicates', () => {
     await mock.close();
     const warnings = await preflightDuplicates(client, manifest);
     expect(warnings.join(' ')).toMatch(/could not|fail|error/i);
+  });
+});
+
+describe('markSkipped', () => {
+  function twoRowManifest(): Manifest {
+    return {
+      version: 1,
+      createdAt: '2026-08-06T00:00:00.000Z',
+      baseUrl: 'https://example.test',
+      collectionUuid: 'c1',
+      schemaUuid: 's1',
+      itemState: 'draft',
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: [2, 3].map((rowNumber) => ({
+        rowNumber,
+        filePath: `/f/${rowNumber}.pdf`,
+        fileName: `${rowNumber}.pdf`,
+        metadata: {},
+        status: 'pending' as const,
+        attempts: 0,
+      })),
+    };
+  }
+
+  it('marks only the named rows', () => {
+    const m = twoRowManifest();
+    markSkipped(m, [2], 'a duplicate');
+    expect(m.entries[0]?.status).toBe('skipped');
+    expect(m.entries[1]?.status).toBe('pending');
+  });
+
+  it('records why, so Results is not a mystery', () => {
+    const m = twoRowManifest();
+    markSkipped(m, [2], 'skipped as a duplicate of an existing item');
+    expect(m.entries[0]?.error).toBe('skipped as a duplicate of an existing item');
+  });
+
+  it('returns how many it marked', () => {
+    expect(markSkipped(twoRowManifest(), [2, 3], 'x')).toBe(2);
+  });
+
+  it('ignores a row number that is not in the manifest', () => {
+    expect(markSkipped(twoRowManifest(), [99], 'x')).toBe(0);
+  });
+
+  // A row already created must not be rewritten to skipped: that would lose
+  // the record that an item exists for it.
+  it('never touches a row that is not pending', () => {
+    const m = twoRowManifest();
+    m.entries[0]!.status = 'created';
+    expect(markSkipped(m, [2], 'x')).toBe(0);
+    expect(m.entries[0]?.status).toBe('created');
   });
 });
