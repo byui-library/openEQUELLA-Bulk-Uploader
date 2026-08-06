@@ -4,10 +4,10 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **611 passing across 55 files**.
+1. `npm install && npm test` — expect **636 passing across 56 files**.
 2. You are on **`feature/extractor-desktop`**, open as **PR #3**, not merged.
-3. **The next thing to do is one manual check**, described under "The one test
-   that has never been run" below. It needs a human and takes ten minutes.
+3. The extract/upload round trip is **done and passing** - see below. The only
+   thing left untested is that same round trip through the GUI.
 
 Do NOT build an installer yet. The operator asked that packaging wait.
 
@@ -54,7 +54,7 @@ metadata extractor's core + `oeq-upload extract` command (PR #2).
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            611 tests, 55 files
+npm test            636 tests, 56 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
@@ -76,25 +76,47 @@ works: folder chosen, columns edited, a column added, the picker and search
 usable. That session found six faults no test caught — see "What live testing
 found" below, which is the most useful section in this document.
 
-### The one test that has never been run
+### The round trip: done, and it found a real bug (2026-08-06)
 
-**Save a spreadsheet from the Extract flow, then feed it straight back through
-Choose → Review and confirm it validates without edits.**
+A spreadsheet produced by the Extract flow was fed back through
+`oeq-upload plan`. It failed:
 
-That is the only step that proves the extractor and the uploader agree on the
-format. Everything else tests one half in isolation. If it fails it will fail on
-a column header or a value shape, and it is far cheaper to find now than on a
-real batch. It takes about ten minutes:
+```text
+Spreadsheet has invalid column headers:
+  '_source' is not a valid xpath.
+  '_notes' is not a valid xpath.
+```
 
-1. Launch the app (see START HERE), sign in to Test
-2. Choose → **I don't have a spreadsheet yet…**
-3. Folder: `tests/test files` (gitignored; put PDFs or `.docx` files there)
-4. Continue → Save → write the CSV
-5. Back to Choose → **Choose spreadsheet…** → pick that CSV → Review
+**The uploader rejected its own extractor's output** — while the README,
+INSTALL.md and the Save screen all said it ignored those columns. Every
+generated spreadsheet would have needed hand-editing first, and nothing said
+so.
 
-Expected: Review lists the rows with no invalid-header complaints. The `_source`
-and `_notes` columns are `_`-prefixed and should be ignored by the uploader —
-if Review objects to them, that is the bug this check exists to find.
+Fixed: `validateHeaders` treats any `_`-prefixed column as an annotation —
+carried through, reported separately from real metadata, never uploaded — and
+`plan.ts` skips them when assembling an item's fields. The three documents that
+made the false claim are corrected.
+
+Both halves passed their own tests throughout. Only crossing the boundary
+showed it. **Re-run this after any change to either side:**
+
+```bash
+npm run build
+OEQ_BASE_URL=https://content-test.byui.edu OEQ_CLIENT_ID=x OEQ_CLIENT_SECRET=x \
+  node dist/cli/index.js plan --sheet <extracted.csv> --files <folder> \
+  --manifest job.json --skip-duplicate-check
+```
+
+Dummy credentials are fine — `--skip-duplicate-check` keeps it off the network,
+and header validation is what matters here.
+
+Verified after the fix: 12 items planned, four separate `<creator>` elements in
+the XML, accents intact, and no underscore-prefixed key anywhere in the
+manifest.
+
+**Still outstanding: the same round trip through the GUI** (Choose → Review).
+The CLI shares `readSheet` and `validateHeaders` with it, so the format itself
+is proven; the Review screen is its own code path and has not been driven.
 
 ### Two improvements a review found, deliberately not rushed
 
@@ -131,8 +153,8 @@ imports it directly, so the pattern is proven here.
 
 ### What live testing found — read this before writing any more UI
 
-Six faults, in one session of an operator clicking through the app. **Every one
-was invisible to 590 passing tests**, and the reasons are worth internalising
+Eight faults now, found by a person using the app rather than by any test.
+**Every one was invisible to a passing suite**, and the reasons are worth internalising
 because they will recur.
 
 1. **Blank white window.** `ui/extract/controller.ts` imported a core module
@@ -166,10 +188,24 @@ because they will recur.
    empty on purpose. A warning that is always present is one people stop
    reading. Removed; the dropdown already says "(nothing — fill in Excel)".
 
-The pattern across all six: **the tests verify logic, and every one of these was
-about behaviour at a boundary the tests do not cross** — the browser context,
-the real schema, the DOM, the default configuration. More unit tests would not
-have helped. Ten minutes of a person clicking would have, and did.
+7. **The CSV had no byte-order mark**, so Excel read it as ANSI and every
+   accented name appeared as mojibake -- `Ibáñez` as `IbAAza`-style noise.
+   The bytes were correct UTF-8 the whole time. Confirmed fixed in Excel.
+   *Why tests missed it: they compare strings, and the strings were right. The
+   fault was in how another program would read the file.*
+
+8. **The uploader rejected the extractor's own output** over its `_source` and
+   `_notes` columns, while three documents said it ignored them. See the round
+   trip section above.
+   *Why tests missed it: each half was tested against its own idea of the
+   format, and the two ideas differed.*
+
+The pattern across all of them: **the tests verify logic, and every one of these
+was about behaviour at a boundary the tests do not cross** — the browser
+context, the real schema, the DOM, the default configuration, how another
+program reads a file, and where two halves of this program meet. More unit
+tests would not have helped. Ten minutes of a person using it would have, and
+did — eight times.
 
 **Open question worth deciding:** whether to add jsdom. It would have caught (3)
 and (4) outright. Against: another dependency, and jsdom is not Chromium, so it
