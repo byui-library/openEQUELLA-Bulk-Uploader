@@ -24,10 +24,16 @@ Released as v0.1.0 and clean-machine tested by the operator.
 **Sign-in works on both instances.** Authorization-code flow, `src/core/authCode.ts`.
 Not a blocker any more; the handoff records what the fix actually was.
 
-**Active work: the metadata extractor**, on `feature/extractor-desktop` as
-**PR #3**. It builds the spreadsheet from a folder of PDFs and Word files so
-nobody types it by hand. Core and CLI are merged; the desktop screens are on
-that branch. **721 tests across 60 files**, typecheck clean.
+**The metadata extractor is finished and merged** (PR #2 and PR #3). It builds
+the spreadsheet from a folder of PDFs and Word files so nobody types it by
+hand -- core, `oeq-upload extract`, and three desktop screens.
+
+**Active work: duplicate prevention**, on `feature/duplicate-prevention`, five
+commits, not merged. The tool uploaded the same 30 files twice and said
+nothing, because its pre-flight checks a field the extractor never produces.
+The core is built and reviewed; it is **blocked on a live probe only the
+operator can run** -- see the handoff. **764 tests across 62 files**, typecheck
+clean.
 
 Description extraction is tiered — a stated field, then a named section
 (`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
