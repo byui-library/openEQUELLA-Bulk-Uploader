@@ -27,21 +27,47 @@ let cache: CacheEntry | null = null;
 /** Exported for tests. The cache is a preview accelerator, never a source of truth. */
 export function __resetExtractCache(): void {
   cache = null;
+  schemaPathsCache = null;
 }
 
 /**
- * The documents behind the preview, read once per folder.
+ * Which files to open, spread across the file types present.
  *
- * Listing the folder happens INSIDE the cache miss. It used to happen at both
- * call sites before this was invoked, which meant every column edit walked the
- * directory again and then threw the result away, since a cache hit never looks
- * at it.
+ * Taking simply the first N is wrong for a mixed folder: sorted alphabetically,
+ * a folder of twelve PDFs and eighteen Word documents gives five PDFs and not
+ * one `.docx`, so nothing would learn that those Word files keep their metadata
+ * in a table. The operator then sees no table columns offered at all.
+ */
+function spreadAcrossTypes(filenames: string[], limit: number): string[] {
+  const byExtension = new Map<string, string[]>();
+  for (const name of filenames) {
+    const extension = (name.split('.').pop() ?? '').toLowerCase();
+    (byExtension.get(extension) ?? byExtension.set(extension, []).get(extension)!).push(name);
+  }
+
+  const chosen: string[] = [];
+  const queues = [...byExtension.values()];
+  // Round-robin, so each type is represented before any type gets a second.
+  for (let i = 0; chosen.length < limit && queues.some((q) => q.length > i); i++) {
+    for (const queue of queues) {
+      if (chosen.length >= limit) break;
+      const next = queue[i];
+      if (next !== undefined) chosen.push(next);
+    }
+  }
+  return chosen;
+}
+
+/**
+ * The documents behind the preview, read once per folder. Listing happens
+ * INSIDE the cache miss: it used to run at both call sites before this was
+ * invoked, so every column edit walked the directory and discarded the result.
  */
 async function sample(dir: string): Promise<CacheEntry> {
   if (cache?.dir === dir) return cache;
   const { supported } = await listFolder(dir);
   const docs: { filename: string; doc: DocumentData }[] = [];
-  for (const filename of supported.slice(0, Math.max(PREVIEW_ROWS, SAMPLE_DOCS))) {
+  for (const filename of spreadAcrossTypes(supported, Math.max(PREVIEW_ROWS, SAMPLE_DOCS))) {
     try {
       docs.push({ filename, doc: await readDocument(join(dir, filename)) });
     } catch {
@@ -51,6 +77,20 @@ async function sample(dir: string): Promise<CacheEntry> {
   }
   cache = { dir, docs };
   return cache;
+}
+
+/**
+ * The schema's leaf paths, parsed once per process.
+ *
+ * The file is a bundled resource that never changes at runtime, and it is now
+ * read on every folder scan as well as by the schemaPaths channel.
+ */
+let schemaPathsCache: Promise<Set<string>> | null = null;
+function schemaPathsOnce(schemaFile: string): Promise<Set<string>> {
+  schemaPathsCache ??= readFile(schemaFile, 'utf8').then((xml) =>
+    parseSchemaPaths(extractDefinition(xml)),
+  );
+  return schemaPathsCache;
 }
 
 export interface ExtractHandlerOptions {
@@ -92,7 +132,15 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       labels: [...labels].sort(),
       properties: [...properties],
       tableColumns: [...tableColumns].sort(),
-      starter: starterProfile(supported),
+      // Built from what the scan actually found, not from filenames alone.
+      // Without the evidence, a table heading of "Job Description" went
+      // unmapped and the description column came out empty on every row.
+      starter: starterProfile(supported, {
+        labels: [...labels],
+        properties: [...properties],
+        tableColumns: [...tableColumns],
+        schemaPaths: await schemaPathsOnce(options.schemaFile),
+      }),
     };
   });
 
@@ -122,8 +170,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
   );
 
   ipcMain.handle(CHANNELS.schemaPaths, async (): Promise<string[]> => {
-    const xml = await readFile(options.schemaFile, 'utf8');
-    return [...parseSchemaPaths(extractDefinition(xml))].sort();
+    return [...(await schemaPathsOnce(options.schemaFile))].sort();
   });
 
   ipcMain.handle(CHANNELS.openProfile, async (): Promise<{ path: string; profile: Profile } | null> => {
