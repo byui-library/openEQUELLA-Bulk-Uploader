@@ -1,5 +1,7 @@
 // src/core/duplicates.ts
 
+import type { Manifest } from './types.js';
+
 /**
  * One item already in the collection, as the rules below need to see it.
  *
@@ -100,4 +102,60 @@ export function verdictFor(
  */
 export function defaultChoice(tier: DuplicateTier): DuplicateChoice {
   return tier === 'near-certain' ? 'skip' : 'upload';
+}
+
+/**
+ * Just the part of the API client this needs.
+ *
+ * Narrower than the client class on purpose: the rules above are testable
+ * without a server, and so is this.
+ */
+export interface TitleSearcher {
+  searchByTitle(collectionUuid: string, title: string): Promise<ExistingItemHit[]>;
+}
+
+/** How many checks are in flight at once. Enough to be quick, few enough to be polite. */
+const CONCURRENCY = 5;
+
+/**
+ * Check every pending row against the collection.
+ *
+ * A failure for one row becomes its own `could-not-check` finding rather than
+ * aborting the batch: an unreachable server says nothing about whether a title
+ * exists, and it must not block a plan that is otherwise ready. It must
+ * equally never be reported as clean, which is why it produces a finding at
+ * all rather than being swallowed.
+ */
+export async function findDuplicates(
+  client: TitleSearcher,
+  manifest: Manifest,
+): Promise<DuplicateFinding[]> {
+  const pending = manifest.entries.filter((e) => e.status === 'pending');
+  const findings: DuplicateFinding[] = [];
+
+  for (let i = 0; i < pending.length; i += CONCURRENCY) {
+    const results = await Promise.all(
+      pending.slice(i, i + CONCURRENCY).map(async (entry) => {
+        const title = entry.metadata['MWDL/title']?.[0] ?? '';
+        try {
+          const hits =
+            title.trim() === '' ? [] : await client.searchByTitle(manifest.collectionUuid, title);
+          const verdict = verdictFor(entry.fileName, title, hits);
+          return verdict ? { ...verdict, rowNumber: entry.rowNumber } : null;
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          return {
+            rowNumber: entry.rowNumber,
+            fileName: entry.fileName,
+            tier: 'could-not-check' as const,
+            detail: `could not check whether this already exists (${detail})`,
+            existing: [],
+          };
+        }
+      }),
+    );
+    for (const r of results) if (r) findings.push(r);
+  }
+
+  return findings;
 }
