@@ -1,6 +1,6 @@
 // tests/extract/suggest.test.ts
 import { describe, it, expect } from 'vitest';
-import { detectPattern, starterProfile } from '../../src/core/extract/suggest.js';
+import { detectPattern, starterProfile, matchSchemaPath } from '../../src/core/extract/suggest.js';
 import { ATTACHMENT_COLUMN } from '../../src/core/extract/types.js';
 
 describe('detectPattern', () => {
@@ -97,5 +97,122 @@ describe('starterProfile', () => {
   it('is a valid profile', async () => {
     const { parseProfile } = await import('../../src/core/extract/profile.js');
     expect(() => parseProfile(starterProfile(['a_b.pdf']))).not.toThrow();
+  });
+});
+
+describe('matchSchemaPath', () => {
+  const paths = new Set([
+    'MWDL/title',
+    'MWDL/description',
+    'MWDL/date',
+    'MWDL/rights/description',
+    'BYUI_extended/byui_rights/textbook/title',
+  ]);
+
+  // A Word table's headers are written for people: "Job Title", not
+  // "MWDL/title". Matching the LAST WORD against the schema's leaf name reads
+  // those without guessing at meaning.
+  it('matches the last word of a phrase to a schema leaf', () => {
+    expect(matchSchemaPath('Job Title', paths)).toBe('MWDL/title');
+    expect(matchSchemaPath('Job Description', paths)).toBe('MWDL/description');
+    expect(matchSchemaPath('Date', paths)).toBe('MWDL/date');
+  });
+
+  it('prefers MWDL where several fields share a leaf name', () => {
+    // Both MWDL/description and MWDL/rights/description end in "description".
+    // MWDL's own field is the one nearly every item needs.
+    expect(matchSchemaPath('Description', paths)).toBe('MWDL/description');
+    expect(matchSchemaPath('Title', paths)).toBe('MWDL/title');
+  });
+
+  it('returns null rather than guessing at a header with no counterpart', () => {
+    expect(matchSchemaPath('Company', paths)).toBeNull();
+    expect(matchSchemaPath('Qualifications', paths)).toBeNull();
+    expect(matchSchemaPath('Pay', paths)).toBeNull();
+    expect(matchSchemaPath('', paths)).toBeNull();
+  });
+
+  it('ignores case and surrounding space', () => {
+    expect(matchSchemaPath('  job  TITLE  ', paths)).toBe('MWDL/title');
+  });
+});
+
+describe('starterProfile with evidence from the documents', () => {
+  const schemaPaths = new Set(['MWDL/title', 'MWDL/description', 'MWDL/date', 'MWDL/creators/creator']);
+
+  it('maps a table column whose name matches a schema field', () => {
+    const profile = starterProfile(['a.docx'], {
+      labels: [],
+      properties: [],
+      tableColumns: ['Company', 'Job Title', 'Job Description', 'Pay'],
+      schemaPaths,
+    });
+    const title = profile.columns.find((c) => c.path === 'MWDL/title');
+    const description = profile.columns.find((c) => c.path === 'MWDL/description');
+    // Prepended, not replacing: a mixed folder needs the table for Word files
+    // and the document property for PDFs.
+    expect(title?.sources).toEqual([{ tableColumn: 'Job Title' }, { property: 'title' }]);
+    expect(description?.sources).toEqual([{ tableColumn: 'Job Description' }]);
+  });
+
+  it('does not invent a column for a header with no schema counterpart', () => {
+    const profile = starterProfile(['a.docx'], {
+      labels: [],
+      properties: [],
+      tableColumns: ['Company', 'Pay'],
+      schemaPaths,
+    });
+    expect(profile.columns.map((c) => c.path)).not.toContain('Company');
+    expect(profile.columns.map((c) => c.path)).not.toContain('Pay');
+  });
+
+  // Labels are NOT auto-mapped: a table header is a stated field, a label
+  // match is prose that looked like one. On real documents that produced a
+  // Citation line in an academic paper becoming a column nobody wanted.
+  it('does not auto-map a document label, only a table column', () => {
+    const profile = starterProfile(['a.pdf'], {
+      labels: ['Description'],
+      properties: [],
+      tableColumns: [],
+      schemaPaths,
+    });
+    expect(profile.columns.find((c) => c.path === 'MWDL/description')?.sources).toEqual([]);
+  });
+
+  it('maps the table column even when a label of the same name exists', () => {
+    const profile = starterProfile(['a.docx'], {
+      labels: ['Title'],
+      properties: [],
+      tableColumns: ['Job Title'],
+      schemaPaths,
+    });
+    expect(profile.columns.find((c) => c.path === 'MWDL/title')?.sources[0]).toEqual({
+      tableColumn: 'Job Title',
+    });
+  });
+
+  it('keeps the document-property defaults when no evidence matches', () => {
+    const profile = starterProfile(['a.pdf'], {
+      labels: [],
+      properties: ['title', 'author'],
+      tableColumns: [],
+      schemaPaths,
+    });
+    expect(profile.columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
+      { property: 'title' },
+    ]);
+    expect(profile.columns.find((c) => c.path === 'MWDL/creators/creator')?.sources).toEqual([
+      { property: 'author' },
+    ]);
+  });
+
+  it('behaves as before when given no evidence at all', () => {
+    const profile = starterProfile(['a.pdf']);
+    expect(profile.columns.map((c) => c.path)).toEqual([
+      ATTACHMENT_COLUMN,
+      'MWDL/title',
+      'MWDL/creators/creator',
+      'MWDL/description',
+    ]);
   });
 });
