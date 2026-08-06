@@ -2,6 +2,7 @@
 import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
 import { readSection } from './sections.js';
+import { readOpening } from './opening.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
 import { ATTACHMENT_COLUMN } from './types.js';
 
@@ -146,6 +147,7 @@ function sourceKind(source: Source): string {
   if ('label' in source) return 'label';
   if ('tableColumn' in source) return 'table';
   if ('section' in source) return 'section';
+  if ('opening' in source) return 'opening';
   return 'properties';
 }
 
@@ -198,6 +200,16 @@ function resolve(source: Source, context: Context): Resolved {
       note: capped
         ? `the '${source.section}' section never ended and was cut short -- check it is really a description`
         : undefined,
+    };
+  }
+
+  if ('opening' in source) {
+    // Always noted, without exception. This is the one source that infers
+    // rather than reads, and a guess presented like a fact is the failure mode
+    // this whole tool is built to avoid.
+    return {
+      value: readOpening(context.doc.text),
+      note: 'taken from the start of the document, which may not be a description -- please check',
     };
   }
 

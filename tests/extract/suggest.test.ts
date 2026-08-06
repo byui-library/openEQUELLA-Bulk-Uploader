@@ -153,7 +153,7 @@ describe('starterProfile with evidence from the documents', () => {
     // Prepended, not replacing: a mixed folder needs the table for Word files
     // and the document property for PDFs.
     expect(title?.sources).toEqual([{ tableColumn: 'Job Title' }, { property: 'title' }]);
-    expect(description?.sources).toEqual([{ tableColumn: 'Job Description' }]);
+    expect(description?.sources).toEqual([{ tableColumn: 'Job Description' }, { opening: true }]);
   });
 
   it('does not invent a column for a header with no schema counterpart', () => {
@@ -179,7 +179,10 @@ describe('starterProfile with evidence from the documents', () => {
       sections: [],
       schemaPaths,
     });
-    expect(profile.columns.find((c) => c.path === 'MWDL/description')?.sources).toEqual([]);
+    // The opening fallback is there, but nothing was mapped from the label.
+    expect(profile.columns.find((c) => c.path === 'MWDL/description')?.sources).toEqual([
+      { opening: true },
+    ]);
   });
 
   it('maps the table column even when a label of the same name exists', () => {
@@ -238,7 +241,7 @@ describe('starterProfile proposing a section as the description', () => {
   }
 
   it('proposes a found section', () => {
-    expect(descriptionOf(['Abstract'])).toEqual([{ section: 'Abstract' }]);
+    expect(descriptionOf(['Abstract'])).toEqual([{ section: 'Abstract' }, { opening: true }]);
   });
 
   it('puts the section AFTER a stated field, never before it', () => {
@@ -248,6 +251,7 @@ describe('starterProfile proposing a section as the description', () => {
     expect(descriptionOf(['Abstract'], ['Job Description'])).toEqual([
       { tableColumn: 'Job Description' },
       { section: 'Abstract' },
+      { opening: true },
     ]);
   });
 
@@ -258,11 +262,34 @@ describe('starterProfile proposing a section as the description', () => {
     expect(descriptionOf(['Purpose', 'Abstract'])).toEqual([
       { section: 'Abstract' },
       { section: 'Purpose' },
+      { opening: true },
     ]);
   });
 
-  it('leaves the description empty when the scan found no sections', () => {
-    expect(descriptionOf([])).toEqual([]);
+  /**
+   * The last resort, and the reason the description column is never simply
+   * empty any more. It sits behind every stated field and every named section,
+   * so it only ever competes with a blank cell -- and it always arrives with a
+   * note saying it was a guess.
+   */
+  it('falls back to the start of the document, behind everything else', () => {
+    expect(descriptionOf(['Abstract'], ['Job Description'])).toEqual([
+      { tableColumn: 'Job Description' },
+      { section: 'Abstract' },
+      { opening: true },
+    ]);
+  });
+
+  it('offers the start of the document even when nothing else was found', () => {
+    expect(descriptionOf([])).toEqual([{ opening: true }]);
+  });
+
+  it('proposes the opening for no other column', () => {
+    const profile = starterProfile(['a.pdf'], { ...nothing, sections: ['Abstract'] });
+    for (const column of profile.columns) {
+      if (column.path === 'MWDL/description') continue;
+      expect(column.sources).not.toContainEqual({ opening: true });
+    }
   });
 
   it('proposes a section for no other column', () => {
