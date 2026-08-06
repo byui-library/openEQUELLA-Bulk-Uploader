@@ -6,7 +6,7 @@ import { CHANNELS, INSTANCES, type ColumnReport, type OeqApi, type PlanReport, t
 import { SecretStore, EncryptedTokenStore } from './secrets.js';
 import { buildAuth, buildClient, buildConfig, instanceById } from './session.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths, validateHeaders } from '../core/schema.js';
+import { extractDefinition, parseSchemaPaths, validateHeaders, isAnnotationHeader } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
@@ -190,6 +190,10 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
     header: h,
     valid: !invalidSet.has(h),
     suggestions: invalidSet.get(h) ?? [],
+    // Accepted, but not metadata. Saying only "valid" would imply the column
+    // gets uploaded; the extractor writes these for the human reading the
+    // spreadsheet and plan.ts drops them.
+    ...(isAnnotationHeader(h) ? { ignored: true } : {}),
   }));
 }
 
