@@ -17,36 +17,30 @@ where the work stands and exactly what to do next.
 to BYU-Idaho Faculty Content on 2026-08-04, every one verified byte-for-byte
 against its source file.
 
-**Active work: a desktop GUI**, on branch `feature/desktop-gui`. An Electron
-app for non-technical Windows staff, reusing `src/core/` unchanged. Tasks 1–8
-of 10 are done; **389 tests across 32 files**. All seven screens exist, and
-production sign-in has been verified live. Remaining: packaging and a
-clean-machine test.
+**The desktop GUI is finished, released and merged.** Seven screens, a
+sandboxed renderer, per-instance encrypted credentials, a typed IPC contract.
+Released as v0.1.0 and clean-machine tested by the operator.
 
-**One open loop:** Test-instance sign-in was still failing when the last
-session ended. Credentials and the redirect URI are both per-instance now;
-the fix is unconfirmed. Ask the operator first — see the handoff.
+**Sign-in works on both instances.** Authorization-code flow, `src/core/authCode.ts`.
+Not a blocker any more; the handoff records what the fix actually was.
 
-The handoff also lists the Electron-specific traps, every one of which failed
-silently and was found only by inspecting the running app.
+**Active work: the metadata extractor**, on `feature/extractor-desktop` as
+**PR #3**. It builds the spreadsheet from a folder of PDFs and Word files so
+nobody types it by hand. Core and CLI are merged; the desktop screens are on
+that branch. **692 tests across 59 files**, typecheck clean.
 
-Implemented and verified. CLI (`plan | run | status | retry`) and MCP server
-(six tools) both build clean, 173 tests pass across 14 files, and
-`npm run typecheck` is clean. See [README.md](README.md) for setup, usage,
-and the live-smoke-test procedure that must run before any real batch.
+Description extraction is tiered — a stated field, then a named section
+(`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
+language model. **Tiers 1–3 are built**; tier 4 is not started and needs its
+own conversation. Anything from tier 3, and any section that ran to the length
+cap, is always flagged in `_notes`.
 
-**Blocked on authentication.** `OAuthClientCredentials` cannot be used against
-this instance — the OAuth client has no fixed user, and the owner has
-deliberately declined to set one so that each contributor owns what they
-contribute. The authorization-code flow must be implemented in a new
-`src/core/authCode.ts` behind the existing `AuthProvider` interface. Nothing has
-run against a live instance yet.
+**Do NOT build an installer yet.** The operator asked that packaging wait.
 
-One wire-format assumption remains unverified pending that live smoke test:
-whether the `{ type: 'file', filename, ... }` attachment payload shape is
-correct, since `AttachmentBean` in `schema/swagger.json` doesn't model
-openEQUELLA's polymorphic attachment subtypes. See the "Known limitations"
-section of the README and the header comment in `src/core/client.ts`.
+The wire format is settled — the `{ type: 'file', filename, description, uuid }`
+attachment payload was confirmed by the production run, not just by
+`schema/swagger.json`, which does not model openEQUELLA's polymorphic
+attachment subtypes.
 
 The spec lives at
 [docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md](docs/superpowers/specs/2026-08-03-oeq-bulk-uploader-design.md).
