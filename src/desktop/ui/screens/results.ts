@@ -10,9 +10,13 @@ export interface ResultsProps {
   report: RunReport;
   interrupted: InterruptedEntry[];
   collectionUrl: string;
+  /** Named in the "another spreadsheet" hint, so it is clear what is kept. */
+  collectionName: string | null;
   retrying: boolean;
   error: string | null;
   onRetryFailed(): void;
+  /** Back to Choose for another spreadsheet, without restarting the app. */
+  onAnotherBatch(): void;
 }
 
 /**
@@ -98,8 +102,22 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
           Open the collection in openEQUELLA
         </a>
       </p>
+
+      <div class="button-row">
+        <button id="results-another-btn" type="button">
+          Upload another spreadsheet
+        </button>
+      </div>
+      <p class="hint">
+        Keeps you signed in and keeps ${escapeHtml(props.collectionName || 'the same collection')}
+        selected. You will choose a new spreadsheet and folder, and the draft/live
+        choice starts again from Draft.
+      </p>
     </section>
   `;
 
   root.querySelector<HTMLButtonElement>('#results-retry-btn')?.addEventListener('click', () => props.onRetryFailed());
+  root
+    .querySelector<HTMLButtonElement>('#results-another-btn')
+    ?.addEventListener('click', () => props.onAnotherBatch());
 }
