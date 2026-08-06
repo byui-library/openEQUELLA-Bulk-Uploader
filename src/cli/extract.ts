@@ -5,6 +5,7 @@ import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
 import { loadProfile, saveProfile, validateAgainstSchema } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
 import { extractFolder } from '../core/extract/extract.js';
+import { scanEvidence } from '../core/extract/evidence.js';
 import { writeCsv } from '../core/extract/csv.js';
 
 export interface ExtractCliOptions {
@@ -27,7 +28,14 @@ export async function runExtract(
     const names = (await readdir(options.dir, { withFileTypes: true }))
       .filter((e) => e.isFile())
       .map((e) => e.name);
-    const profile = starterProfile(names);
+    // Read a sample of the documents, not just their names. Without this the
+    // description column came out with NO sources at all and the Word files'
+    // "Job Description" table was never mapped -- the CLI produced a profile
+    // the desktop app would never have proposed.
+    const profile = starterProfile(names, {
+      ...(await scanEvidence(options.dir)),
+      schemaPaths: parseSchemaPaths(extractDefinition(await readFile(options.schemaFile, 'utf8'))),
+    });
     await saveProfile(options.profile, profile);
     log(`Wrote a starter profile to ${options.profile}`);
     log(`Detected pattern: ${profile.pattern}`);
