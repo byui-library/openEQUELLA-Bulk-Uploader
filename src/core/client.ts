@@ -158,6 +158,20 @@ function isReplayableBody(body: BodyInit | null | undefined): boolean {
   return false;
 }
 
+/**
+ * Escape a value for interpolation into a search `where` clause.
+ *
+ * Doubling the single quote is the escape this instance accepts. A title
+ * containing an apostrophe would otherwise end the literal early and either
+ * error or, far worse, silently change what is being matched.
+ *
+ * Nothing else is escaped: everything is passed through `encodeURIComponent`
+ * on the way into the URL, which handles newlines, backslashes and the rest.
+ */
+export function escapeWhereValue(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 export class OeqClient {
   constructor(
     private readonly baseUrl: string,

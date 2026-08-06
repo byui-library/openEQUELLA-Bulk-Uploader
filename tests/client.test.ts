@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { OeqClient } from '../src/core/client.js';
+import { OeqClient, escapeWhereValue } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ApiError, ValidationError } from '../src/core/errors.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
@@ -266,5 +266,32 @@ describe('OeqClient — listCollections', () => {
     mock.state.collections.push({ uuid: 'c1', name: 'A', privileges: [] });
     const results = await client.listCollections({ privilege: 'CREATE_ITEM' });
     expect(results).toEqual([]);
+  });
+});
+
+describe('escapeWhereValue', () => {
+  // A music library. "Bach's Prelude" is not a hypothetical title.
+  it('doubles a single quote so it cannot end the literal early', () => {
+    expect(escapeWhereValue("Bach's Prelude")).toBe("Bach''s Prelude");
+  });
+
+  it('doubles every quote, not just the first', () => {
+    expect(escapeWhereValue("A's B's")).toBe("A''s B''s");
+  });
+
+  it('leaves an ordinary title untouched', () => {
+    expect(escapeWhereValue('Senior Recital')).toBe('Senior Recital');
+  });
+
+  it('leaves a backslash alone', () => {
+    expect(escapeWhereValue('a\\b')).toBe('a\\b');
+  });
+
+  it('leaves a newline alone, for the URL encoder to deal with', () => {
+    expect(escapeWhereValue('a\nb')).toBe('a\nb');
+  });
+
+  it('handles an empty string', () => {
+    expect(escapeWhereValue('')).toBe('');
   });
 });
