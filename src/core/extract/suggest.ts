@@ -90,7 +90,7 @@ export function starterProfile(filenames: string[]): Profile {
     columns: [
       { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
       { path: 'MWDL/title', sources: [{ property: 'title' }] },
-      { path: 'MWDL/creators/creator', sources: [{ property: 'author' }] },
+      { path: 'MWDL/creators/creator', sources: [{ property: 'author' }], transform: 'people' },
       { path: 'MWDL/description', sources: [] },
     ],
   };

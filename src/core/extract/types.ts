@@ -40,6 +40,9 @@ export type Source =
 /** How a date column is normalised: automatically, or by a format the profile declares. */
 export type DateTransform = 'date' | { date: string };
 
+/** How a column's raw value is normalised before it reaches the spreadsheet. */
+export type Transform = DateTransform | 'people';
+
 export interface Column {
   /** A schema xpath, or ATTACHMENT_COLUMN. Becomes the spreadsheet header. */
   path: string;
@@ -58,7 +61,7 @@ export interface Column {
    * guessing. Tokens are YYYY, MM and DD, each exactly once, with any literal
    * separators: `MMDDYYYY`, `YYYYMMDD`, `DD-MM-YYYY`.
    */
-  transform?: DateTransform;
+  transform?: Transform;
   /** True only for ATTACHMENT_COLUMN. Blocks removal, reordering and retargeting. */
   locked?: boolean;
 }

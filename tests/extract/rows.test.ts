@@ -1,6 +1,6 @@
 // tests/extract/rows.test.ts
 import { describe, it, expect } from 'vitest';
-import { buildRow, normaliseDate, normaliseDateWithFormat } from '../../src/core/extract/rows.js';
+import { buildRow, normaliseDate, normaliseDateWithFormat, splitPeople } from '../../src/core/extract/rows.js';
 import { ATTACHMENT_COLUMN, type DocumentData, type Profile } from '../../src/core/extract/types.js';
 
 const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {}, tables: [] };
@@ -283,5 +283,68 @@ describe('buildRow', () => {
     const row = buildRow(profile, 'unmatched.pdf', EMPTY_DOC);
     expect(row.sources['MWDL/title']).toBeUndefined();
     expect(row.sources[ATTACHMENT_COLUMN]).toBe('filename');
+  });
+});
+
+describe('splitPeople', () => {
+  // Comma means two different things in real author strings: "Dixon, Matt" is
+  // one person written surname-first, "Dan Weaving, Ben Jones" is two people.
+  // So a split happens only where the string cannot be one name.
+  it('splits when the string contains " and "', () => {
+    expect(splitPeople('Sergio J. Ibáñez, Markel Rico-González and José Pino-Ortega')).toEqual({
+      value: 'Sergio J. Ibáñez; Markel Rico-González; José Pino-Ortega',
+      ambiguous: false,
+    });
+  });
+
+  it('splits when there are three or more comma-separated parts', () => {
+    expect(splitPeople('Dan Weaving, Ben Jones, Matt Ireton').value).toBe(
+      'Dan Weaving; Ben Jones; Matt Ireton',
+    );
+  });
+
+  it('leaves a two-part string alone and says it is ambiguous', () => {
+    expect(splitPeople('Dixon, Matt')).toEqual({ value: 'Dixon, Matt', ambiguous: true });
+  });
+
+  it('leaves a single name alone and is not ambiguous about it', () => {
+    expect(splitPeople('Xiangyu Ren')).toEqual({ value: 'Xiangyu Ren', ambiguous: false });
+  });
+
+  it('handles an empty value', () => {
+    expect(splitPeople('')).toEqual({ value: '', ambiguous: false });
+  });
+
+  it('does not double-split a string that already uses semicolons', () => {
+    expect(splitPeople('A; B; C')).toEqual({ value: 'A; B; C', ambiguous: false });
+  });
+
+  it('drops the Oxford comma before "and" rather than leaving an empty author', () => {
+    expect(splitPeople('A, B, and C').value).toBe('A; B; C');
+  });
+});
+
+describe('buildRow with the people transform', () => {
+  it('separates authors and notes the ones it would not guess at', () => {
+    const withPeople: Profile = {
+      ...profile,
+      pattern: '{x}.pdf',
+      columns: [
+        profile.columns[0]!,
+        { path: 'MWDL/creators/creator', sources: [{ property: 'author' }], transform: 'people' },
+      ],
+    };
+    const many: DocumentData = {
+      ...EMPTY_DOC,
+      properties: { author: 'Dan Weaving, Ben Jones, Matt Ireton' },
+    };
+    expect(buildRow(withPeople, 'a.pdf', many).cells['MWDL/creators/creator']).toBe(
+      'Dan Weaving; Ben Jones; Matt Ireton',
+    );
+
+    const one: DocumentData = { ...EMPTY_DOC, properties: { author: 'Dixon, Matt' } };
+    const row = buildRow(withPeople, 'a.pdf', one);
+    expect(row.cells['MWDL/creators/creator']).toBe('Dixon, Matt');
+    expect(row.notes.join(' ')).toMatch(/one name or two/i);
   });
 });
