@@ -37,7 +37,20 @@ export const SECTION_HEADINGS = [
  * these missed the real end of two of twelve articles, and the section then ran
  * on to the length cap.
  */
-const UNAMBIGUOUS_ENDINGS = ['Keywords', 'Keyword', 'Introduction', 'References'];
+const UNAMBIGUOUS_ENDINGS = [
+  'Keywords',
+  'Keyword',
+  // Two words in one of the twelve. Written as its own ending rather than by
+  // loosening the one-word pattern, which would also match "keyword" inside
+  // ordinary prose.
+  'Key words',
+  'Introduction',
+  'References',
+  // What a journal stamps after an abstract. Nobody writes this sentence
+  // inside one, and without it a PeerJ article carried 700 characters of
+  // citation, editor, copyright and licence text into its description.
+  'How to cite this article',
+];
 
 /**
  * Endings that ARE ordinary English and need to look like headings.
@@ -63,6 +76,48 @@ const AMBIGUOUS_ENDINGS = [
  * in a description cell.
  */
 const MAX_SECTION = 4000;
+
+/**
+ * The running head a journal stamps on every page — a title, a volume, a DOI, a
+ * page number. It lands in the extracted text wherever the page broke.
+ *
+ * Removed only from the END of a section. Two of the twelve articles carried
+ * one as a tail; a third has one in the MIDDLE, with real abstract text on both
+ * sides, so anything that truncated at the first URL would have cut that
+ * abstract in half.
+ */
+const TRAILING_FURNITURE: RegExp[] = [
+  // A final line that is a page marker: "Sports 2024 , 12 , 194 2 of 15".
+  /\n[^\n]{0,80}\b\d{1,4}\s*(?:of|\/)\s*\d{1,4}\s*$/i,
+  // A final line carrying a link.
+  /\n[^\n]{0,200}(?:https?:\/\/|doi\.org\/|doi:)\S*[^\n]*$/i,
+  // A link tacked onto the end of the last sentence, rather than onto a line
+  // of its own. Anchored after a sentence end so it cannot eat real prose.
+  /(?<=[.!?])\s*[^.!?\n]{0,120}(?:https?:\/\/|doi\.org\/|doi:)\S*[^\n]*$/i,
+  /**
+   * A running head left behind once its link is gone: "Sports 2024 , 12 , 194."
+   *
+   * The volume and issue numbers after the year are REQUIRED. Without them this
+   * would also match an ordinary closing sentence that happens to end in a year
+   * -- "The data were collected in 2024." -- and delete it.
+   */
+  /(?<=[.!?])\s*[A-Z][A-Za-z&.]*(?:\s+[A-Za-z&.]+){0,3}\s+\d{4}(?:\s*,\s*\d+){1,}\s*\.?\s*$/,
+];
+
+/** A word that means the next word is part of a sentence, not a heading. */
+const DETERMINER = /\b(?:the|a|an|our|its|this)\s+$/i;
+
+function trimFurniture(section: string): string {
+  let text = section;
+  // Repeated: an article can leave both a link line and a page-number line.
+  for (let pass = 0; pass < TRAILING_FURNITURE.length; pass++) {
+    const before = text;
+    for (const pattern of TRAILING_FURNITURE) text = text.replace(pattern, '');
+    text = text.trimEnd();
+    if (text === before) break;
+  }
+  return text;
+}
 
 function escaped(heading: string): string {
   return heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
@@ -107,6 +162,16 @@ export interface SectionText {
    * value and notes it, so the operator sees what happened.
    */
   capped: boolean;
+  /**
+   * True when the heading turned out to be a word inside a sentence.
+   *
+   * "The purpose of this study was to describe..." is prose, not a heading, and
+   * one real article has no `Purpose` heading at all — only that sentence.
+   * Taking the text after the word alone produced a cell beginning "of this
+   * study was to describe". The whole sentence is kept instead, and the caller
+   * notes it: the value is usually right and the match was still not a heading.
+   */
+  midSentence: boolean;
 }
 
 /**
@@ -117,11 +182,24 @@ export interface SectionText {
  */
 export function readSection(text: string, heading: string): SectionText {
   const start = text.search(headingPattern(heading));
-  if (start === -1) return { text: '', capped: false };
+  if (start === -1) return { text: '', capped: false, midSentence: false };
 
-  const afterHeading = text.slice(start).replace(headingPattern(heading), '');
-  // A leading colon or dash belongs to the heading, not to the text.
-  const body = afterHeading.replace(/^\s*[:–—-]?\s*/, '');
+  // A determiner in front means this is a word in a sentence, not a heading:
+  // "The purpose of this study was to...". Keep the determiner and the heading
+  // word, so the value reads as the sentence it actually is.
+  //
+  // Position is NOT usable for finding a heading, only for rejecting one this
+  // way. Not one of the twelve real articles has its "Abstract" at a line start
+  // or after a full stop -- every one follows an email address or an
+  // affiliation with no punctuation between, so requiring a heading position
+  // would have found nothing at all.
+  const determiner = DETERMINER.exec(text.slice(0, start));
+  const midSentence = determiner !== null;
+
+  const body = midSentence
+    ? text.slice(start - determiner[0].length)
+    : // A leading colon or dash belongs to the heading, not to the text.
+      text.slice(start).replace(headingPattern(heading), '').replace(/^\s*[:–—-]?\s*/, '');
 
   let end = body.length;
 
@@ -143,8 +221,7 @@ export function readSection(text: string, heading: string): SectionText {
   const capped = end > MAX_SECTION;
   const section = body.slice(0, Math.min(end, MAX_SECTION)).trim();
   // If the cap cut it, stop at the last whole word rather than mid-word.
-  return {
-    text: capped ? section.slice(0, section.lastIndexOf(' ')).trim() : section,
-    capped,
-  };
+  const whole = capped ? section.slice(0, section.lastIndexOf(' ')).trim() : section;
+
+  return { text: trimFurniture(whole), capped, midSentence };
 }

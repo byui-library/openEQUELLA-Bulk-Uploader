@@ -194,13 +194,14 @@ function resolve(source: Source, context: Context): Resolved {
   if ('label' in source) return { value: context.labels.get(source.label) ?? '' };
 
   if ('section' in source) {
-    const { text, capped } = readSection(context.doc.text, source.section);
-    return {
-      value: text,
-      note: capped
-        ? `the '${source.section}' section never ended and was cut short -- check it is really a description`
-        : undefined,
-    };
+    const { text, capped, midSentence } = readSection(context.doc.text, source.section);
+    let note: string | undefined;
+    if (capped) {
+      note = `the '${source.section}' section never ended and was cut short -- check it is really a description`;
+    } else if (midSentence) {
+      note = `'${source.section}' was a word in a sentence here, not a heading -- the sentence was taken instead`;
+    }
+    return { value: text, note };
   }
 
   if ('opening' in source) {
@@ -274,7 +275,14 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   const notes: string[] = [];
 
   const parts = applyPattern(profile.pattern, filename);
-  if (parts === null) {
+  // Only worth saying if a column actually reads a piece of the filename. A
+  // mixed folder gets one pattern carrying one extension, so a folder of 18
+  // Word files and 12 PDFs flagged all twelve PDFs for not matching a `.docx`
+  // pattern that nothing was reading -- twelve warnings, no consequence.
+  const usesParts = profile.columns.some((column) =>
+    column.sources.some((source) => 'placeholder' in source || 'join' in source),
+  );
+  if (parts === null && usesParts) {
     notes.push(`filename does not match the pattern '${profile.pattern}'`);
   }
   if (!doc.hasTextLayer) {

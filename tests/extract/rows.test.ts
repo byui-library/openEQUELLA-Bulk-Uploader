@@ -390,3 +390,59 @@ describe('buildRow reading a section', () => {
     expect(row.notes.join(' ')).toMatch(/cut short|too long|never ended/i);
   });
 });
+
+describe('buildRow and the filename pattern', () => {
+  const doc: DocumentData = {
+    text: 'Abstract A study of jumping. Keywords sport',
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  };
+
+  /**
+   * A mixed folder gets one pattern, and it can only carry one extension. A
+   * folder of 18 Word files and 12 PDFs produced `{part1}_{part2}_{part3}.docx`
+   * and then flagged every PDF row for not matching it -- twelve warnings about
+   * something no column was reading. The warning is worth making only when a
+   * column actually needs a piece of the filename.
+   */
+  it('says nothing about a filename that matches no pattern when no column uses one', () => {
+    const noParts: Profile = {
+      version: 1,
+      pattern: '{a}_{b}_{c}.docx',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/description', sources: [{ section: 'Abstract' }] },
+      ],
+    };
+    expect(buildRow(noParts, 'no-underscores-here.pdf', doc).notes).toEqual([]);
+  });
+
+  it('still warns when a column reads a placeholder', () => {
+    const usesParts: Profile = {
+      version: 1,
+      pattern: '{a}_{b}_{c}.docx',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/title', sources: [{ placeholder: 'a' }] },
+      ],
+    };
+    expect(buildRow(usesParts, 'no-underscores-here.pdf', doc).notes.join(' ')).toMatch(
+      /does not match the pattern/,
+    );
+  });
+
+  it('still warns when a column joins placeholders', () => {
+    const usesJoin: Profile = {
+      version: 1,
+      pattern: '{a}_{b}_{c}.docx',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/creators/creator', sources: [{ join: '{b}, {a}' }] },
+      ],
+    };
+    expect(buildRow(usesJoin, 'no-underscores-here.pdf', doc).notes.join(' ')).toMatch(
+      /does not match the pattern/,
+    );
+  });
+});
