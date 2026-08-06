@@ -39,6 +39,14 @@ export type Source =
    * its description under "Abstract"; a report under "Summary" or "Overview".
    */
   | { section: string }
+  /**
+   * The document's first substantial paragraph.
+   *
+   * The only source that is a guess rather than a reading, so every value it
+   * produces is flagged in `_notes`. Meant as the last thing tried before a
+   * blank cell.
+   */
+  | { opening: true }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 

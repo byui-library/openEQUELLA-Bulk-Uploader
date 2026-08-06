@@ -29,6 +29,7 @@ export function describeSource(source: Source): string {
   if ('label' in source) return `Label in document: ${source.label}`;
   if ('tableColumn' in source) return `Table column: ${source.tableColumn}`;
   if ('section' in source) return `Section: ${source.section}`;
+  if ('opening' in source) return 'The start of the document (a guess -- always flagged)';
   return `Document property: ${source.property}`;
 }
 
@@ -62,6 +63,10 @@ export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOpti
   for (const heading of scan.sections) {
     options.push({ label: `Section: ${heading}`, source: { section: heading } });
   }
+  // Always offered: every document that has text has a start. It is the one
+  // option that is not evidence-gated, because it is not evidence -- it is the
+  // documented last resort, and it says so in its own label.
+  options.push({ label: describeSource({ opening: true }), source: { opening: true } });
   for (const property of scan.properties) {
     options.push({
       label: `Document property: ${property}`,

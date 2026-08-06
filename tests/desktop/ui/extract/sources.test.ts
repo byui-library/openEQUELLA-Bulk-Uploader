@@ -23,9 +23,14 @@ describe('sourceOptions', () => {
     expect(labels).not.toContain('Document property: author');
   });
 
-  it('offers nothing from an empty scan except the placeholders', () => {
+  // The opening survives an empty scan because it is not evidence: every
+  // document that has text has a start, so there is nothing to find first.
+  it('offers nothing from an empty scan except the placeholders and the opening', () => {
     const empty = { supported: [], skipped: [], labels: [], properties: [], tableColumns: [], sections: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
-    expect(sourceOptions('{a}.pdf', empty).map((o) => o.label)).toEqual(['Filename part: a']);
+    expect(sourceOptions('{a}.pdf', empty).map((o) => o.label)).toEqual([
+      'Filename part: a',
+      'The start of the document (a guess -- always flagged)',
+    ]);
   });
 
   it('offers only sections that were actually found', () => {

@@ -176,7 +176,15 @@ export function starterProfile(filenames: string[], evidence?: StarterEvidence):
   const description = byPath.get('MWDL/description');
   if (description) {
     const ranked = SECTION_HEADINGS.filter((h) => evidence.sections.includes(h));
-    description.sources = [...description.sources, ...ranked.map((section) => ({ section }))];
+    description.sources = [
+      ...description.sources,
+      ...ranked.map((section) => ({ section })),
+      // Behind everything, so it only ever competes with a blank cell -- and
+      // it arrives with a note saying it was a guess. The description column
+      // came out empty on every row of three real runs before this existed;
+      // "sometimes right and always visible" beats "always empty".
+      { opening: true },
+    ];
   }
 
   return { version: 1, pattern: detectPattern(filenames), columns };

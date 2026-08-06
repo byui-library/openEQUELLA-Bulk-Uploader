@@ -81,6 +81,7 @@ describe('extract handlers', () => {
     expect(scan.sections).toContain('Abstract');
     expect(scan.starter.columns.find((c) => c.path === 'MWDL/description')?.sources).toEqual([
       { section: 'Abstract' },
+      { opening: true },
     ]);
 
     const rows = await ipc.call<{ cells: Record<string, string> }[]>('oeq:extractPreview', {
