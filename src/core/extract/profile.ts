@@ -20,6 +20,7 @@ const sourceSchema = z.union([
   z.object({ join: z.string().min(1) }).strict(),
   z.object({ label: z.string().min(1) }).strict(),
   z.object({ tableColumn: z.string().min(1) }).strict(),
+  z.object({ section: z.string().min(1) }).strict(),
   z.object({ property: z.enum(PROPERTY_NAMES) }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
 ]);

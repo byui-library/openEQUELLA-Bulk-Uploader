@@ -145,6 +145,8 @@ export interface ExtractScan {
    * values rather than as `Label: value` prose.
    */
   tableColumns: string[];
+  /** Headings found in the sampled documents that a description is often written under. */
+  sections: string[];
   /**
    * A starter profile proposed for this folder.
    *

@@ -2,6 +2,7 @@
 import { extname } from 'node:path';
 import { ATTACHMENT_COLUMN, type Column, type Profile, type Source } from './types.js';
 import { isSupported } from './readers/index.js';
+import { SECTION_HEADINGS } from './sections.js';
 
 const SEPARATORS = ['_', '-', ' '] as const;
 
@@ -93,6 +94,8 @@ export interface StarterEvidence {
   labels: string[];
   properties: string[];
   tableColumns: string[];
+  /** Headings found in the documents, from `findSections`. */
+  sections: string[];
   schemaPaths: Set<string>;
 }
 
@@ -157,6 +160,23 @@ export function starterProfile(filenames: string[], evidence?: StarterEvidence):
       columns.push(column);
       byPath.set(path, column);
     }
+  }
+
+  // Sections go LAST, and only on the description.
+  //
+  // Last, because a stated field outranks a place a description usually lives:
+  // a cell headed "Job Description" is the document saying what its description
+  // is, whereas an abstract is a convention. Only the description, because a
+  // section is a body of prose and no other field in this schema is.
+  //
+  // All of them, in the order SECTION_HEADINGS declares rather than the order
+  // they happened to appear. One profile serves the whole folder, so a folder
+  // where most files have an Abstract and one has only a Purpose is filled
+  // completely -- per file, the first source with anything in it wins.
+  const description = byPath.get('MWDL/description');
+  if (description) {
+    const ranked = SECTION_HEADINGS.filter((h) => evidence.sections.includes(h));
+    description.sources = [...description.sources, ...ranked.map((section) => ({ section }))];
   }
 
   return { version: 1, pattern: detectPattern(filenames), columns };

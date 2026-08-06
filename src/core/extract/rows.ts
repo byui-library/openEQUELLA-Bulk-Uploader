@@ -1,6 +1,7 @@
 // src/core/extract/rows.ts
 import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
+import { readSection } from './sections.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
 import { ATTACHMENT_COLUMN } from './types.js';
 
@@ -144,6 +145,7 @@ function sourceKind(source: Source): string {
   if ('placeholder' in source || 'join' in source) return 'filename';
   if ('label' in source) return 'label';
   if ('tableColumn' in source) return 'table';
+  if ('section' in source) return 'section';
   return 'properties';
 }
 
@@ -154,13 +156,26 @@ interface Context {
   doc: DocumentData;
 }
 
-function resolve(source: Source, context: Context): string {
-  if ('filename' in source) return context.filename;
+/**
+ * What a source yielded, and anything the operator should know about how.
+ *
+ * `note` is attached to the value rather than pushed directly, so it is only
+ * recorded if this source is the one that actually filled the cell -- an
+ * earlier source winning must not leave a note about a later candidate, and a
+ * candidate that yielded nothing has nothing to say.
+ */
+interface Resolved {
+  value: string;
+  note?: string;
+}
 
-  if ('placeholder' in source) return context.parts?.[source.placeholder] ?? '';
+function resolve(source: Source, context: Context): Resolved {
+  if ('filename' in source) return { value: context.filename };
+
+  if ('placeholder' in source) return { value: context.parts?.[source.placeholder] ?? '' };
 
   if ('join' in source) {
-    if (!context.parts) return '';
+    if (!context.parts) return { value: '' };
     const parts = context.parts;
     let missing = false;
     const joined = source.join.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_, name: string) => {
@@ -171,10 +186,20 @@ function resolve(source: Source, context: Context): string {
     // A join with a hole in it produces "Smith, " -- worse than nothing,
     // because it looks deliberate. Treat it as no value and let the next
     // source have its turn.
-    return missing ? '' : joined;
+    return { value: missing ? '' : joined };
   }
 
-  if ('label' in source) return context.labels.get(source.label) ?? '';
+  if ('label' in source) return { value: context.labels.get(source.label) ?? '' };
+
+  if ('section' in source) {
+    const { text, capped } = readSection(context.doc.text, source.section);
+    return {
+      value: text,
+      note: capped
+        ? `the '${source.section}' section never ended and was cut short -- check it is really a description`
+        : undefined,
+    };
+  }
 
   if ('tableColumn' in source) {
     const wanted = source.tableColumn.trim().toLowerCase();
@@ -183,18 +208,20 @@ function resolve(source: Source, context: Context): string {
       // Only the FIRST data row. One document describes one item here, and
       // every real example has exactly one row under the header. Concatenating
       // several would invent a value nobody wrote.
-      if (index !== -1) return table.rows[0]?.[index] ?? '';
+      if (index !== -1) return { value: table.rows[0]?.[index] ?? '' };
     }
-    return '';
+    return { value: '' };
   }
 
-  return context.doc.properties[source.property] ?? '';
+  return { value: context.doc.properties[source.property] ?? '' };
 }
 
 function fill(column: Column, context: Context, notes: string[]): { value: string; source?: string } {
   for (const source of column.sources) {
-    const raw = resolve(source, context).trim();
+    const resolved = resolve(source, context);
+    const raw = resolved.value.trim();
     if (raw === '') continue;
+    if (resolved.note !== undefined) notes.push(`${column.path}: ${resolved.note}`);
 
     if (column.transform === 'people') {
       const { value, ambiguous } = splitPeople(raw);

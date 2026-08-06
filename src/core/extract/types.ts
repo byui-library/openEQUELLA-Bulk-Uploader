@@ -34,6 +34,11 @@ export type Source =
    * values; this reads a named field out of that.
    */
   | { tableColumn: string }
+  /**
+   * Text under a heading, ending at the next heading. A journal article states
+   * its description under "Abstract"; a report under "Summary" or "Overview".
+   */
+  | { section: string }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 
