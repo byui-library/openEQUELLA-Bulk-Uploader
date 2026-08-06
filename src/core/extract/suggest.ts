@@ -123,7 +123,10 @@ export interface StarterEvidence {
 export function starterProfile(filenames: string[], evidence?: StarterEvidence): Profile {
   const columns: Column[] = [
     { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
-    { path: 'MWDL/title', sources: [{ property: 'title' }] },
+    // The filename last, so a document that states its title keeps it. Two of
+    // twelve real journal PDFs state none, and this field becomes the item's
+    // NAME -- an empty one contributes a nameless item.
+    { path: 'MWDL/title', sources: [{ property: 'title' }, { filenameStem: true }] },
     { path: 'MWDL/creators/creator', sources: [{ property: 'author' }], transform: 'people' },
     { path: 'MWDL/description', sources: [] },
   ];

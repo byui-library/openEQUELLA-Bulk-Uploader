@@ -47,6 +47,14 @@ export type Source =
    * blank cell.
    */
   | { opening: true }
+  /**
+   * The filename with its extension removed.
+   *
+   * A poor title, but a real one. Two of twelve journal PDFs in a real batch
+   * carry no title property, and `MWDL/title` becomes the item's NAME in
+   * openEQUELLA -- so without this those two are contributed nameless.
+   */
+  | { filenameStem: true }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 

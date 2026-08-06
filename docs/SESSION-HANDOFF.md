@@ -4,7 +4,7 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **692 passing across 59 files**.
+1. `npm install && npm test` — expect **709 passing across 59 files**.
 2. You are on **`feature/extractor-desktop`**, open as **PR #3**, not merged.
 3. The extract/upload round trip is **done and passing** - see below. The only
    thing left untested is that same round trip through the GUI.
@@ -54,7 +54,7 @@ metadata extractor's core + `oeq-upload extract` command (PR #2).
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            692 tests, 59 files
+npm test            709 tests, 59 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/

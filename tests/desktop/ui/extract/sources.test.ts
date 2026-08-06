@@ -29,6 +29,7 @@ describe('sourceOptions', () => {
     const empty = { supported: [], skipped: [], labels: [], properties: [], tableColumns: [], sections: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
     expect(sourceOptions('{a}.pdf', empty).map((o) => o.label)).toEqual([
       'Filename part: a',
+      'The file name, without its extension',
       'The start of the document (a guess -- always flagged)',
     ]);
   });

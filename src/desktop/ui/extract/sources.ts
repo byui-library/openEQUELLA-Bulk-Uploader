@@ -24,6 +24,7 @@ export interface SourceEvidence {
 /** Plain-language name for a source, used in the dropdown and the column list. */
 export function describeSource(source: Source): string {
   if ('filename' in source) return 'The file itself';
+  if ('filenameStem' in source) return 'The file name, without its extension';
   if ('placeholder' in source) return `Filename part: ${source.placeholder}`;
   if ('join' in source) return `Filename parts joined as "${source.join}"`;
   if ('label' in source) return `Label in document: ${source.label}`;
@@ -66,6 +67,7 @@ export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOpti
   // Always offered: every document that has text has a start. It is the one
   // option that is not evidence-gated, because it is not evidence -- it is the
   // documented last resort, and it says so in its own label.
+  options.push({ label: describeSource({ filenameStem: true }), source: { filenameStem: true } });
   options.push({ label: describeSource({ opening: true }), source: { opening: true } });
   for (const property of scan.properties) {
     options.push({

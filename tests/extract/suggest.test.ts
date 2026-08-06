@@ -68,7 +68,12 @@ describe('starterProfile', () => {
   // why no filename part is wired up here.
   it('wires title and creator to the document properties that state them', () => {
     const columns = starterProfile(['a.pdf']).columns;
-    expect(columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([{ property: 'title' }]);
+    expect(columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
+      { property: 'title' },
+      // The filename is a poor title but a real one, and this field becomes the
+      // item's name. Two of twelve real journal PDFs state no title at all.
+      { filenameStem: true },
+    ]);
     expect(columns.find((c) => c.path === 'MWDL/creators/creator')?.sources).toEqual([
       { property: 'author' },
     ]);
@@ -152,7 +157,11 @@ describe('starterProfile with evidence from the documents', () => {
     const description = profile.columns.find((c) => c.path === 'MWDL/description');
     // Prepended, not replacing: a mixed folder needs the table for Word files
     // and the document property for PDFs.
-    expect(title?.sources).toEqual([{ tableColumn: 'Job Title' }, { property: 'title' }]);
+    expect(title?.sources).toEqual([
+      { tableColumn: 'Job Title' },
+      { property: 'title' },
+      { filenameStem: true },
+    ]);
     expect(description?.sources).toEqual([{ tableColumn: 'Job Description' }, { opening: true }]);
   });
 
@@ -208,6 +217,7 @@ describe('starterProfile with evidence from the documents', () => {
     });
     expect(profile.columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
       { property: 'title' },
+      { filenameStem: true },
     ]);
     expect(profile.columns.find((c) => c.path === 'MWDL/creators/creator')?.sources).toEqual([
       { property: 'author' },
@@ -294,8 +304,42 @@ describe('starterProfile proposing a section as the description', () => {
 
   it('proposes a section for no other column', () => {
     const profile = starterProfile(['a.pdf'], { ...nothing, sections: ['Abstract'] });
-    expect(profile.columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
+    for (const column of profile.columns) {
+      if (column.path === 'MWDL/description') continue;
+      expect(column.sources).not.toContainEqual({ section: 'Abstract' });
+    }
+  });
+});
+
+describe('starterProfile falling back to the filename for a title', () => {
+  it('offers it last, behind the document property', () => {
+    expect(starterProfile(['a.pdf']).columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
       { property: 'title' },
+      { filenameStem: true },
     ]);
+  });
+
+  // The CLI's --init-profile passes no evidence, so it gets none of the
+  // scan-driven fallbacks. This one needs no evidence -- every file has a name.
+  it('offers it whether or not a scan found anything', () => {
+    const scanned = starterProfile(['a.docx'], {
+      labels: [],
+      properties: [],
+      tableColumns: ['Job Title'],
+      sections: [],
+      schemaPaths: new Set(['MWDL/title']),
+    });
+    expect(scanned.columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
+      { tableColumn: 'Job Title' },
+      { property: 'title' },
+      { filenameStem: true },
+    ]);
+  });
+
+  it('proposes it for no other column', () => {
+    for (const column of starterProfile(['a.pdf']).columns) {
+      if (column.path === 'MWDL/title') continue;
+      expect(column.sources).not.toContainEqual({ filenameStem: true });
+    }
   });
 });

@@ -446,3 +446,44 @@ describe('buildRow and the filename pattern', () => {
     );
   });
 });
+
+/**
+ * Two of the operator's twelve journal PDFs carry no title property at all, so
+ * `MWDL/title` came out empty -- and that field becomes the item's name in
+ * openEQUELLA. Those two would have been contributed nameless. The filename is
+ * not a good title, but it is a real one, and it is the only thing left.
+ */
+describe('buildRow reading the filename without its extension', () => {
+  const stemProfile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ property: 'title' }, { filenameStem: true }] },
+    ],
+  };
+
+  it('drops the extension', () => {
+    const row = buildRow(stemProfile, '07 - Accelerometry-Based Load (2019).pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/title']).toBe('07 - Accelerometry-Based Load (2019)');
+    expect(row.sources['MWDL/title']).toBe('filename');
+  });
+
+  // The titles in this batch are full of dots: "22. Salazar_proof_10pix1line".
+  it('drops only the last extension, not every dot', () => {
+    expect(buildRow(stemProfile, '22. Salazar_proof.v2.pdf', EMPTY_DOC).cells['MWDL/title']).toBe(
+      '22. Salazar_proof.v2',
+    );
+  });
+
+  it('keeps a name that has no extension', () => {
+    expect(buildRow(stemProfile, 'Recital', EMPTY_DOC).cells['MWDL/title']).toBe('Recital');
+  });
+
+  it('never overrides a title the document states', () => {
+    const titled: DocumentData = { ...EMPTY_DOC, properties: { title: 'A Real Title' } };
+    expect(buildRow(stemProfile, 'ugly_filename.pdf', titled).cells['MWDL/title']).toBe(
+      'A Real Title',
+    );
+  });
+});
