@@ -16,13 +16,33 @@ export function makePdf(options: {
 }): Uint8Array {
   const { text, title, author, created } = options;
 
-  const escape = (s: string): string => s.replace(/([\\()])/g, '\\$1');
-  const content = text === undefined ? '' : `BT /F1 12 Tf 72 720 Td (${escape(text)}) Tj ET`;
+  /**
+   * A PDF text string. Plain `(parens)` are PDFDocEncoding — a Latin-1
+   * relative — so raw UTF-8 bytes in one are read back as mojibake. Non-ASCII
+   * goes in as a UTF-16BE hex string with a BOM, which is what real PDF
+   * writers emit and what pdf.js expects.
+   *
+   * Worth stating because the first version of this fixture wrote UTF-8 into
+   * parentheses and produced "IbÃ¡Ã±ez" — a fixture that was wrong in a way no
+   * real PDF is, which would have made a correct reader look broken.
+   */
+  const pdfString = (s: string): string => {
+    if (/^[\x20-\x7E]*$/.test(s)) return `(${s.replace(/([\\()])/g, '\\$1')})`;
+    const utf16be = [...s].flatMap((ch) => {
+      const code = ch.codePointAt(0)!;
+      if (code <= 0xffff) return [code];
+      const v = code - 0x10000;
+      return [0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff)];
+    });
+    const hex = ['FEFF', ...utf16be.map((u) => u.toString(16).padStart(4, '0').toUpperCase())].join('');
+    return `<${hex}>`;
+  };
+  const content = text === undefined ? '' : `BT /F1 12 Tf 72 720 Td ${pdfString(text)} Tj ET`;
 
   const info: string[] = [];
-  if (title !== undefined) info.push(`/Title (${escape(title)})`);
-  if (author !== undefined) info.push(`/Author (${escape(author)})`);
-  if (created !== undefined) info.push(`/CreationDate (${escape(created)})`);
+  if (title !== undefined) info.push(`/Title ${pdfString(title)}`);
+  if (author !== undefined) info.push(`/Author ${pdfString(author)}`);
+  if (created !== undefined) info.push(`/CreationDate ${pdfString(created)}`);
 
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',

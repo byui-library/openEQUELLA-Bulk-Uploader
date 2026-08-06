@@ -34,6 +34,12 @@ export interface ColumnReport {
   header: string;
   valid: boolean;
   suggestions: string[];
+  /**
+   * An annotation column such as `_source` or `_notes`: accepted, but never
+   * uploaded as metadata. Reported separately so Review can say so, rather
+   * than showing it as a valid metadata column and implying it gets sent.
+   */
+  ignored?: boolean;
   /** Set when the user has remapped this column in the UI. */
   mappedTo?: string;
 }
