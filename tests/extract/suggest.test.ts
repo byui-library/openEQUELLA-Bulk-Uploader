@@ -145,6 +145,7 @@ describe('starterProfile with evidence from the documents', () => {
       labels: [],
       properties: [],
       tableColumns: ['Company', 'Job Title', 'Job Description', 'Pay'],
+      sections: [],
       schemaPaths,
     });
     const title = profile.columns.find((c) => c.path === 'MWDL/title');
@@ -160,6 +161,7 @@ describe('starterProfile with evidence from the documents', () => {
       labels: [],
       properties: [],
       tableColumns: ['Company', 'Pay'],
+      sections: [],
       schemaPaths,
     });
     expect(profile.columns.map((c) => c.path)).not.toContain('Company');
@@ -174,6 +176,7 @@ describe('starterProfile with evidence from the documents', () => {
       labels: ['Description'],
       properties: [],
       tableColumns: [],
+      sections: [],
       schemaPaths,
     });
     expect(profile.columns.find((c) => c.path === 'MWDL/description')?.sources).toEqual([]);
@@ -184,6 +187,7 @@ describe('starterProfile with evidence from the documents', () => {
       labels: ['Title'],
       properties: [],
       tableColumns: ['Job Title'],
+      sections: [],
       schemaPaths,
     });
     expect(profile.columns.find((c) => c.path === 'MWDL/title')?.sources[0]).toEqual({
@@ -196,6 +200,7 @@ describe('starterProfile with evidence from the documents', () => {
       labels: [],
       properties: ['title', 'author'],
       tableColumns: [],
+      sections: [],
       schemaPaths,
     });
     expect(profile.columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
@@ -213,6 +218,57 @@ describe('starterProfile with evidence from the documents', () => {
       'MWDL/title',
       'MWDL/creators/creator',
       'MWDL/description',
+    ]);
+  });
+});
+
+/**
+ * Why only the description gets a section: a section is a body of prose, which
+ * is what a description is and what no other field in this schema is. The
+ * twelve journal PDFs in the operator's own folder produced an empty
+ * description on every row of every run until this existed.
+ */
+describe('starterProfile proposing a section as the description', () => {
+  const schemaPaths = new Set(['MWDL/title', 'MWDL/description', 'MWDL/creators/creator']);
+  const nothing = { labels: [], properties: [], tableColumns: [], schemaPaths };
+
+  function descriptionOf(sections: string[], tableColumns: string[] = []) {
+    const profile = starterProfile(['a.pdf'], { ...nothing, tableColumns, sections });
+    return profile.columns.find((c) => c.path === 'MWDL/description')?.sources;
+  }
+
+  it('proposes a found section', () => {
+    expect(descriptionOf(['Abstract'])).toEqual([{ section: 'Abstract' }]);
+  });
+
+  it('puts the section AFTER a stated field, never before it', () => {
+    // A table cell headed "Job Description" is what the document says the
+    // description is. An abstract is where a description usually lives. The
+    // stated field wins; the section fills the rows it left blank.
+    expect(descriptionOf(['Abstract'], ['Job Description'])).toEqual([
+      { tableColumn: 'Job Description' },
+      { section: 'Abstract' },
+    ]);
+  });
+
+  it('proposes every found section, most description-like first', () => {
+    // One profile serves the whole folder. Eleven of the operator's PDFs have
+    // an Abstract and the twelfth has only a Purpose; listing both fills all
+    // twelve, because the first source with anything in it wins per file.
+    expect(descriptionOf(['Purpose', 'Abstract'])).toEqual([
+      { section: 'Abstract' },
+      { section: 'Purpose' },
+    ]);
+  });
+
+  it('leaves the description empty when the scan found no sections', () => {
+    expect(descriptionOf([])).toEqual([]);
+  });
+
+  it('proposes a section for no other column', () => {
+    const profile = starterProfile(['a.pdf'], { ...nothing, sections: ['Abstract'] });
+    expect(profile.columns.find((c) => c.path === 'MWDL/title')?.sources).toEqual([
+      { property: 'title' },
     ]);
   });
 });

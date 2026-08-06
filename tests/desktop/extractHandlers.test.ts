@@ -63,6 +63,33 @@ describe('extract handlers', () => {
     expect(scan.labels).toContain('Performer');
   });
 
+  /**
+   * The whole point of the section tier, end to end: a PDF with an abstract and
+   * nothing else must arrive with a description already filled in, without the
+   * operator mapping anything. Twelve real journal PDFs came out blank before.
+   */
+  it('scan proposes an abstract as the description, and the preview fills it', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-'));
+    await writeFile(
+      join(dir, 'Article.pdf'),
+      makePdf({ text: 'Abstract This paper measures jump height. Keywords sport, jumping' }),
+    );
+
+    const scan = await ipc.call<{ sections: string[]; starter: Profile }>('oeq:extractScan', dir);
+    expect(scan.sections).toContain('Abstract');
+    expect(scan.starter.columns.find((c) => c.path === 'MWDL/description')?.sources).toEqual([
+      { section: 'Abstract' },
+    ]);
+
+    const rows = await ipc.call<{ cells: Record<string, string> }[]>('oeq:extractPreview', {
+      dir,
+      profile: scan.starter,
+    });
+    expect(rows[0]?.cells['MWDL/description']).toBe('This paper measures jump height.');
+  });
+
   it('preview returns rows without writing anything', async () => {
     const ipc = fakeIpcMain();
     registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });

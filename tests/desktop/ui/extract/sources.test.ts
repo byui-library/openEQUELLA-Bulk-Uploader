@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { sourceOptions, describeSource } from '../../../../src/desktop/ui/extract/sources.js';
 import { ATTACHMENT_COLUMN } from '../../../../src/core/extract/types.js';
 
-const scan = { supported: ['a.pdf'], skipped: [], labels: ['Performer'], properties: ['title', 'created'], tableColumns: ['Company'], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
+const scan = { supported: ['a.pdf'], skipped: [], labels: ['Performer'], properties: ['title', 'created'], tableColumns: ['Company'], sections: ['Abstract'], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
 
 describe('sourceOptions', () => {
   it('offers one option per placeholder in the pattern', () => {
@@ -24,8 +24,14 @@ describe('sourceOptions', () => {
   });
 
   it('offers nothing from an empty scan except the placeholders', () => {
-    const empty = { supported: [], skipped: [], labels: [], properties: [], tableColumns: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
+    const empty = { supported: [], skipped: [], labels: [], properties: [], tableColumns: [], sections: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
     expect(sourceOptions('{a}.pdf', empty).map((o) => o.label)).toEqual(['Filename part: a']);
+  });
+
+  it('offers only sections that were actually found', () => {
+    const labels = sourceOptions('{a}.pdf', scan).map((o) => o.label);
+    expect(labels).toContain('Section: Abstract');
+    expect(labels).not.toContain('Section: Summary');
   });
 
   it('ignores an invalid pattern instead of throwing', () => {
@@ -40,5 +46,7 @@ describe('describeSource', () => {
     expect(describeSource({ label: 'Performer' })).toBe('Label in document: Performer');
     expect(describeSource({ property: 'title' })).toBe('Document property: title');
     expect(describeSource({ filename: true })).toBe('The file itself');
+    expect(describeSource({ tableColumn: 'Job Description' })).toBe('Table column: Job Description');
+    expect(describeSource({ section: 'Abstract' })).toBe('Section: Abstract');
   });
 });

@@ -348,3 +348,45 @@ describe('buildRow with the people transform', () => {
     expect(row.notes.join(' ')).toMatch(/one name or two/i);
   });
 });
+
+describe('buildRow reading a section', () => {
+  const withSection = (text: string): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  });
+
+  const sectionProfile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ section: 'Abstract' }] },
+    ],
+  };
+
+  it('takes the text under the heading', () => {
+    const row = buildRow(
+      sectionProfile,
+      'a.pdf',
+      withSection('Abstract A study of jumping. Keywords sport'),
+    );
+    expect(row.cells['MWDL/description']).toBe('A study of jumping.');
+    expect(row.sources['MWDL/description']).toBe('section');
+    expect(row.notes).toEqual([]);
+  });
+
+  /**
+   * A section that ran to the length cap never reached another heading, which
+   * on real files means the heading was not one: a benefits PDF matched
+   * "Summary" mid-page and produced 3,996 characters of plan tables. The value
+   * is kept -- it may still be useful -- but it is never kept silently.
+   */
+  it('flags a section that ran to the cap', () => {
+    const row = buildRow(sectionProfile, 'a.pdf', withSection(`Abstract ${'word '.repeat(3000)}`));
+    expect(row.cells['MWDL/description']?.length).toBeGreaterThan(100);
+    expect(row.notes.join(' ')).toMatch(/Abstract/);
+    expect(row.notes.join(' ')).toMatch(/cut short|too long|never ended/i);
+  });
+});

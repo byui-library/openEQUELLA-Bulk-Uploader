@@ -7,6 +7,7 @@ import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
 import { extractFolder, listFolder } from '../core/extract/extract.js';
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
+import { findSections, readSection } from '../core/extract/sections.js';
 import { buildRow } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
@@ -112,8 +113,14 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
     const labels = new Set<string>();
     const properties = new Set<string>();
     const tableColumns = new Set<string>();
+    const sections = new Set<string>();
     for (const { doc } of docs) {
       for (const label of findLabels(doc.text).keys()) labels.add(label);
+      // Only headings with text under them. A document ending at "Abstract"
+      // would otherwise offer a mapping that is blank on every row.
+      for (const heading of findSections(doc.text)) {
+        if (readSection(doc.text, heading).text !== '') sections.add(heading);
+      }
       for (const key of DOCUMENT_PROPERTIES) if (doc.properties[key] !== undefined) properties.add(key);
       // Only headers that have a value under them. A header with an empty cell
       // in every sampled document would offer a mapping that is always blank.
@@ -132,6 +139,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       labels: [...labels].sort(),
       properties: [...properties],
       tableColumns: [...tableColumns].sort(),
+      sections: [...sections],
       // Built from what the scan actually found, not from filenames alone.
       // Without the evidence, a table heading of "Job Description" went
       // unmapped and the description column came out empty on every row.
@@ -139,6 +147,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
         labels: [...labels],
         properties: [...properties],
         tableColumns: [...tableColumns],
+        sections: [...sections],
         schemaPaths: await schemaPathsOnce(options.schemaFile),
       }),
     };
