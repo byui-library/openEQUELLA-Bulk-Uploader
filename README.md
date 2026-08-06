@@ -316,15 +316,27 @@ real date.
 Leave `"transform": "date"` for values that are already unambiguous, such as
 `2026-04-12` or a document's own timestamp.
 
-### Known limitation: metadata held in Word tables
+### Reading metadata from a Word table
 
-Label matching looks for `Label: value` lines. Word documents often put the
-same information in a **table** instead, which extracts as `Company` on one
-line and `HCA` on the next, with no colon anywhere — so nothing is found.
+Word documents often hold their fields as a table -- a header row naming them,
+then one row of values -- rather than as `Label: value` prose. Point a column
+at the header:
 
-If your documents are laid out that way, the filename and the document
-properties are still available; the body is not. Say so if you hit this, as
-supporting it is a known and deferred piece of work rather than a surprise.
+```json
+{ "path": "MWDL/title", "sources": [{ "tableColumn": "Job Title" }] }
+```
+
+The whole cell is taken, including a cell spanning several paragraphs -- which
+is how a long description is usually written. Header matching ignores case and
+surrounding space. Only the first row under the header is read: one document
+describes one item.
+
+The desktop app offers these automatically. Any header it finds with a value
+beneath it appears in the source dropdown as "Table column: Job Title".
+
+PDFs are not covered. A table in a PDF is only positioned text with lines drawn
+round it, so there are no cell boundaries to read -- guessing them from
+coordinates is a different feature from reading a format that states them.
 
 ### Known limitation: extra separators
 

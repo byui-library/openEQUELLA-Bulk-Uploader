@@ -12,7 +12,7 @@ const profile: Profile = {
 function api(over: Record<string, unknown> = {}) {
   return {
     chooseFolder: vi.fn(async () => 'C:/files'),
-    extractScan: vi.fn(async () => ({ supported: ['a.pdf'], skipped: [], labels: [], properties: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } })),
+    extractScan: vi.fn(async () => ({ supported: ['a.pdf'], skipped: [], labels: [], properties: [], tableColumns: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } })),
     extractPreview: vi.fn(async () => []),
     extractRun: vi.fn(async () => ({ outPath: 'C:/files/out.csv', written: 1, flagged: 0 })),
     schemaPaths: vi.fn(async () => ['MWDL/title']),
@@ -39,7 +39,7 @@ describe('createExtractController', () => {
   });
 
   it('does not advance when the folder holds nothing readable', async () => {
-    const a = api({ extractScan: vi.fn(async () => ({ supported: [], skipped: [{ file: 'x.txt', reason: 'r' }], labels: [], properties: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } })) });
+    const a = api({ extractScan: vi.fn(async () => ({ supported: [], skipped: [{ file: 'x.txt', reason: 'r' }], labels: [], properties: [], tableColumns: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } })) });
     const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
     await c.chooseFolder();
     await c.continue();

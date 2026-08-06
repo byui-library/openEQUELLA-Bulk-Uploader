@@ -134,6 +134,12 @@ export interface ExtractScan {
   /** Document properties present in the sampled documents, e.g. ['title','created']. */
   properties: string[];
   /**
+   * Table column headers found in the sampled documents. Word files from this
+   * institution commonly hold their metadata as a header row and one row of
+   * values rather than as `Label: value` prose.
+   */
+  tableColumns: string[];
+  /**
    * A starter profile proposed for this folder.
    *
    * Built in the main process on purpose. It comes from

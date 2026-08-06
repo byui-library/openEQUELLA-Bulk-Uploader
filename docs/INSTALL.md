@@ -193,6 +193,11 @@ It works in three steps:
    which is how each row is matched to its document.
 
    Removing a column offers an **Undo** straight away, so it is safe to try.
+
+   If your Word documents keep their information in a **table** — a row of
+   headings like *Company*, *Job Title*, *Date*, with the values underneath —
+   those headings appear in the source list as **Table column: Job Title** and
+   so on. Pick one and the whole cell comes across, however long it is.
 3. **Save.** The spreadsheet is written where you choose.
 
 **Then open it in Excel and check it before uploading.** This step guesses, and

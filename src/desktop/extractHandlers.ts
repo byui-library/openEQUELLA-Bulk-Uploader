@@ -71,9 +71,19 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
 
     const labels = new Set<string>();
     const properties = new Set<string>();
+    const tableColumns = new Set<string>();
     for (const { doc } of docs) {
       for (const label of findLabels(doc.text).keys()) labels.add(label);
       for (const key of DOCUMENT_PROPERTIES) if (doc.properties[key] !== undefined) properties.add(key);
+      // Only headers that have a value under them. A header with an empty cell
+      // in every sampled document would offer a mapping that is always blank.
+      for (const table of doc.tables) {
+        table.headers.forEach((header, i) => {
+          if (header.trim() !== '' && (table.rows[0]?.[i] ?? '').trim() !== '') {
+            tableColumns.add(header.trim());
+          }
+        });
+      }
     }
 
     return {
@@ -81,6 +91,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       skipped,
       labels: [...labels].sort(),
       properties: [...properties],
+      tableColumns: [...tableColumns].sort(),
       starter: starterProfile(supported),
     };
   });

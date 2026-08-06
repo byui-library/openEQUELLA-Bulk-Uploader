@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { buildRow, normaliseDate, normaliseDateWithFormat } from '../../src/core/extract/rows.js';
 import { ATTACHMENT_COLUMN, type DocumentData, type Profile } from '../../src/core/extract/types.js';
 
-const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {} };
+const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {}, tables: [] };
 
 const profile: Profile = {
   version: 1,
@@ -192,6 +192,73 @@ describe('buildRow', () => {
     const row = buildRow(withFormat, 'Recital_2025-12-03.pdf', EMPTY_DOC);
     expect(row.cells['MWDL/date']).toBe('2025-12-03');
     expect(row.notes.join(' ')).toMatch(/not recognised as a date/i);
+  });
+
+  // Word documents here hold their metadata as a table: a header row naming the
+  // fields, then one row of values. This reads a named field out of that.
+  it('reads a value from the table column with that header', () => {
+    const doc: DocumentData = {
+      ...EMPTY_DOC,
+      tables: [
+        {
+          headers: ['Company', 'Job Title', 'Date'],
+          rows: [['Banner Health', 'Associate Director', '06/05/2026']],
+        },
+      ],
+    };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{title}.docx',
+      columns: [
+        profile.columns[0]!,
+        { path: 'MWDL/title', sources: [{ tableColumn: 'Job Title' }] },
+        { path: 'MWDL/publisher', sources: [{ tableColumn: 'Company' }] },
+      ],
+    };
+    const row = buildRow(withTable, 'x.docx', doc);
+    expect(row.cells['MWDL/title']).toBe('Associate Director');
+    expect(row.cells['MWDL/publisher']).toBe('Banner Health');
+    expect(row.sources['MWDL/title']).toBe('table');
+  });
+
+  it('falls through when the table has no column with that header', () => {
+    const doc: DocumentData = {
+      ...EMPTY_DOC,
+      text: 'Title: From a label\n',
+      tables: [{ headers: ['Company'], rows: [['Banner Health']] }],
+    };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{x}.docx',
+      columns: [
+        profile.columns[0]!,
+        { path: 'MWDL/title', sources: [{ tableColumn: 'Nope' }, { label: 'Title' }] },
+      ],
+    };
+    expect(buildRow(withTable, 'a.docx', doc).cells['MWDL/title']).toBe('From a label');
+  });
+
+  it('gives nothing for a table that has headers but no data row', () => {
+    const doc: DocumentData = { ...EMPTY_DOC, tables: [{ headers: ['Company'], rows: [] }] };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{x}.docx',
+      columns: [profile.columns[0]!, { path: 'MWDL/title', sources: [{ tableColumn: 'Company' }] }],
+    };
+    expect(buildRow(withTable, 'a.docx', doc).cells['MWDL/title']).toBe('');
+  });
+
+  it('matches a header ignoring case and surrounding space', () => {
+    const doc: DocumentData = {
+      ...EMPTY_DOC,
+      tables: [{ headers: ['  Job Title  '], rows: [['Associate Director']] }],
+    };
+    const withTable: Profile = {
+      ...profile,
+      pattern: '{x}.docx',
+      columns: [profile.columns[0]!, { path: 'MWDL/title', sources: [{ tableColumn: 'job title' }] }],
+    };
+    expect(buildRow(withTable, 'a.docx', doc).cells['MWDL/title']).toBe('Associate Director');
   });
 
   it('notes when the filename does not match the pattern, and still returns a row', () => {

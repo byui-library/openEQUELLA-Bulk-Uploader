@@ -28,6 +28,12 @@ export type Source =
   | { label: string }
   /** An embedded document property. */
   | { property: DocumentProperty }
+  /**
+   * A cell from a table, taken from the column whose header is this name.
+   * Word documents commonly hold their metadata as a header row and one row of
+   * values; this reads a named field out of that.
+   */
+  | { tableColumn: string }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 
@@ -64,6 +70,20 @@ export interface Profile {
   columns: Column[];
 }
 
+/**
+ * A table found in a document, as its header row and the rows beneath it.
+ *
+ * Word documents very often carry their metadata this way rather than as
+ * `Label: value` prose -- a header row naming the fields and one row holding
+ * the values. Flattening that to lines loses the cell boundaries entirely: a
+ * cell containing four paragraphs becomes four lines with nothing marking where
+ * the next field begins, so the structure has to survive the reader.
+ */
+export interface DocumentTable {
+  headers: string[];
+  rows: string[][];
+}
+
 /** What a reader returns for one file. */
 export interface DocumentData {
   /** Extracted text. Empty string when there is none. */
@@ -71,6 +91,8 @@ export interface DocumentData {
   /** False for a scanned PDF with no text layer. */
   hasTextLayer: boolean;
   properties: Partial<Record<DocumentProperty, string>>;
+  /** Tables found in the document, header row first. Empty for formats without them. */
+  tables: DocumentTable[];
 }
 
 /** One output row, before serialisation. */

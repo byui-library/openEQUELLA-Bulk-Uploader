@@ -1,10 +1,10 @@
-# Session handoff — updated 2026-08-05 (end of the desktop-extractor session)
+# Session handoff — updated 2026-08-06
 
 Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **602 passing across 55 files**.
+1. `npm install && npm test` — expect **611 passing across 55 files**.
 2. You are on **`feature/extractor-desktop`**, open as **PR #3**, not merged.
 3. **The next thing to do is one manual check**, described under "The one test
    that has never been run" below. It needs a human and takes ten minutes.
@@ -54,7 +54,7 @@ metadata extractor's core + `oeq-upload extract` command (PR #2).
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            602 tests, 55 files
+npm test            611 tests, 55 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
@@ -188,14 +188,12 @@ filename dates — all fixed. The final run produced 59 rows with nothing
 flagged. The lesson worth keeping: the fixtures were *correct* but incomplete,
 and each gap was a thing every real file has and no fixture had.
 
-**Known gap, deliberately deferred: metadata held in Word tables.** Those 59
-documents keep their fields in a table, so the text extracts as `Company` then
-`HCA` on separate lines. Label matching only understands `Label: value` with a
-colon, so it found nothing in any of them — everything usable came from the
-filename and the document properties. Supporting "this line labels the next"
-would open up the document body. Decided against building it before the
-desktop stage, on the grounds that these files may not represent a real upload
-batch. Ask the operator before investing in it.
+**Word tables are supported** (2026-08-06). Word documents here hold their
+metadata as a table -- a header row naming the fields, one row of values, and
+cells that often span several paragraphs. The reader now preserves that
+structure and a column can be pointed at a header with . Verified against all 18 real documents: 18 rows, nothing flagged,
+descriptions of 1,875 to 3,593 characters extracted intact. This was the last
+known gap in what the extractor can read.
 
 Two decisions deferred to the operator, neither blocking:
 

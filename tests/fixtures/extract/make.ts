@@ -52,14 +52,38 @@ export function makePdf(options: {
   return strToU8(body + xref + trailer);
 }
 
-/** Build a minimal but valid .docx: a zip holding the two parts we read. */
-export function makeDocx(options: { text?: string; title?: string; creator?: string }): Uint8Array {
-  const { text = '', title, creator } = options;
+const xmlText = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
-  const paragraphs = text
-    .split('\n')
-    .map((line) => `<w:p><w:r><w:t xml:space="preserve">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</w:t></w:r></w:p>`)
-    .join('');
+/**
+ * A Word table, as `<w:tbl>` really nests it: rows of cells, each cell holding
+ * one or more paragraphs. Cells are given as `\n`-separated strings so a
+ * fixture can reproduce the multi-paragraph cells real documents contain --
+ * which is the case that makes flattening to lines lossy.
+ */
+function tableXml(rows: string[][]): string {
+  const cell = (content: string): string =>
+    `<w:tc>${content
+      .split('\n')
+      .map((p) => `<w:p><w:r><w:t xml:space="preserve">${xmlText(p)}</w:t></w:r></w:p>`)
+      .join('')}</w:tc>`;
+  return `<w:tbl>${rows.map((r) => `<w:tr>${r.map(cell).join('')}</w:tr>`).join('')}</w:tbl>`;
+}
+
+/** Build a minimal but valid .docx: a zip holding the two parts we read. */
+export function makeDocx(options: {
+  text?: string;
+  title?: string;
+  creator?: string;
+  /** Rows of a table, header row first. A cell may contain `\n` for several paragraphs. */
+  table?: string[][];
+}): Uint8Array {
+  const { text = '', title, creator, table } = options;
+
+  const paragraphs =
+    text
+      .split('\n')
+      .map((line) => `<w:p><w:r><w:t xml:space="preserve">${xmlText(line)}</w:t></w:r></w:p>`)
+      .join('') + (table === undefined ? '' : tableXml(table));
 
   const core =
     `<?xml version="1.0" encoding="UTF-8"?>` +
