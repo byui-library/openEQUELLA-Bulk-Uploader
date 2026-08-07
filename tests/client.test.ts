@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { OeqClient } from '../src/core/client.js';
+import { OeqClient, escapeWhereValue } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ApiError, ValidationError } from '../src/core/errors.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
@@ -212,6 +212,62 @@ describe('OeqClient', () => {
     expect((err as ApiError).status).toBe(404);
     expect((err as ApiError).retryable).toBe(false);
   });
+
+  describe('searchByTitle', () => {
+    it('finds an item by exact title and returns its attachment filenames', async () => {
+      mock.state.existingItems = [
+        { uuid: 'i1', version: 1, title: 'Senior Recital', attachmentNames: ['Smith_Jane.pdf'] },
+      ];
+      expect(await client.searchByTitle('c1', 'Senior Recital')).toEqual([
+        { uuid: 'i1', version: 1, name: '', attachmentNames: ['Smith_Jane.pdf'] },
+      ]);
+    });
+
+    it('does not match a title that merely shares a word', async () => {
+      mock.state.existingItems = [
+        { uuid: 'i1', version: 1, title: 'Senior Recital', attachmentNames: [] },
+      ];
+      expect(await client.searchByTitle('c1', 'Recital')).toEqual([]);
+      expect(await client.searchByTitle('c1', 'Senior')).toEqual([]);
+    });
+
+    it('matches a title containing an apostrophe', async () => {
+      mock.state.existingItems = [
+        { uuid: 'i1', version: 1, title: "Bach's Prelude", attachmentNames: ['b.pdf'] },
+      ];
+      expect(await client.searchByTitle('c1', "Bach's Prelude")).toHaveLength(1);
+    });
+
+    it('returns nothing when the collection holds no such title', async () => {
+      mock.state.existingItems = [];
+      expect(await client.searchByTitle('c1', 'Senior Recital')).toEqual([]);
+    });
+
+    /**
+     * Items this tool creates are drafts. Without showall=true the search
+     * excludes them, and the check would be blind to precisely the duplicates
+     * it exists to catch -- this tool's own recent runs. That mistake has
+     * already been made once in this codebase.
+     */
+    it('asks for non-live items, or it would never see this tool own drafts', async () => {
+      mock.state.existingItems = [{ uuid: 'i1', version: 1, title: 'A Draft', attachmentNames: [] }];
+      expect(await client.searchByTitle('c1', 'A Draft')).toHaveLength(1);
+    });
+
+    it('asks for attachments, or the filename tier has nothing to compare', async () => {
+      mock.state.existingItems = [
+        { uuid: 'i1', version: 1, title: 'T', attachmentNames: ['only-if-info-requested.pdf'] },
+      ];
+      expect((await client.searchByTitle('c1', 'T'))[0]?.attachmentNames).toEqual([
+        'only-if-info-requested.pdf',
+      ]);
+    });
+
+    it('copes with an item that has no attachments at all', async () => {
+      mock.state.existingItems = [{ uuid: 'i1', version: 1, title: 'T', attachmentNames: [] }];
+      expect((await client.searchByTitle('c1', 'T'))[0]?.attachmentNames).toEqual([]);
+    });
+  });
 });
 
 describe('OeqClient — currentUser', () => {
@@ -266,5 +322,32 @@ describe('OeqClient — listCollections', () => {
     mock.state.collections.push({ uuid: 'c1', name: 'A', privileges: [] });
     const results = await client.listCollections({ privilege: 'CREATE_ITEM' });
     expect(results).toEqual([]);
+  });
+});
+
+describe('escapeWhereValue', () => {
+  // A music library. "Bach's Prelude" is not a hypothetical title.
+  it('doubles a single quote so it cannot end the literal early', () => {
+    expect(escapeWhereValue("Bach's Prelude")).toBe("Bach''s Prelude");
+  });
+
+  it('doubles every quote, not just the first', () => {
+    expect(escapeWhereValue("A's B's")).toBe("A''s B''s");
+  });
+
+  it('leaves an ordinary title untouched', () => {
+    expect(escapeWhereValue('Senior Recital')).toBe('Senior Recital');
+  });
+
+  it('leaves a backslash alone', () => {
+    expect(escapeWhereValue('a\\b')).toBe('a\\b');
+  });
+
+  it('leaves a newline alone, for the URL encoder to deal with', () => {
+    expect(escapeWhereValue('a\nb')).toBe('a\nb');
+  });
+
+  it('handles an empty string', () => {
+    expect(escapeWhereValue('')).toBe('');
   });
 });

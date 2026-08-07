@@ -59,3 +59,19 @@ export const ATTACHMENT_COLUMN = 'attachment name';
 
 /** Field that must receive the real attachment uuid, not the filename. */
 export const ATTACHMENT_UUID_XPATH = 'BYUI_extended/attachments/attachment';
+
+/** Item name comes from here; the duplicate check matches on it. */
+export const TITLE_XPATH = 'MWDL/title';
+
+/**
+ * How this tool decides two filenames are the same file.
+ *
+ * Shared so there is one answer: `plan.ts` matches spreadsheet rows to files
+ * on disk with it, and the duplicate check compares against an existing
+ * item's attachments with it. Lives here rather than in `plan.ts` because
+ * `plan.ts` reaches `node:fs` and the duplicate check is reached from the
+ * sandboxed renderer, where a `node:` import blanks the window.
+ */
+export function sameFileName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}

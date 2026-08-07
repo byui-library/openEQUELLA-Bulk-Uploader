@@ -64,3 +64,14 @@ describe('clearedForNextBatch', () => {
     expect(keys).not.toContain('instanceId');
   });
 });
+
+describe('clearedForNextBatch and duplicates', () => {
+  it('forgets the findings from the last batch', () => {
+    expect(clearedForNextBatch().duplicates).toEqual([]);
+  });
+
+  // Stale choices would silently skip rows of the NEXT spreadsheet.
+  it('forgets the operator choices from the last batch', () => {
+    expect(clearedForNextBatch().duplicateChoices).toEqual({});
+  });
+});

@@ -3,6 +3,7 @@ import type { CollectionSummary, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
 import type { ExtractedRow } from '../core/extract/types.js';
+import type { DuplicateFinding } from '../core/duplicates.js';
 
 export interface InstanceChoice {
   id: 'production' | 'test';
@@ -50,6 +51,8 @@ export interface PlanReport {
   columns: ColumnReport[];
   invalidHeaders: InvalidHeader[];
   warnings: string[];
+  /** Rows that look like they have been uploaded to this collection before. */
+  duplicates: DuplicateFinding[];
 }
 
 export interface RunProgress {
@@ -104,6 +107,15 @@ export interface OeqApi {
     itemState: ItemState;
     overrides: Record<string, string>;
   }): Promise<PlanReport>;
+
+  /**
+   * Mark rows as skipped in an already-planned manifest, just before running.
+   * Returns how many were marked.
+   *
+   * Separate from `plan` because the operator makes these choices AFTER seeing
+   * the plan. Re-planning to apply them would re-query every row for nothing.
+   */
+  applyDuplicateChoices(args: { manifestPath: string; skipRows: number[] }): Promise<number>;
 
   run(args: { manifestPath: string; instanceId: string }): Promise<RunReport>;
   retryFailed(manifestPath: string): Promise<void>;
@@ -179,6 +191,7 @@ export const CHANNELS = {
   saveStarterKit: 'oeq:saveStarterKit',
   validate: 'oeq:validate',
   plan: 'oeq:plan',
+  applyDuplicateChoices: 'oeq:applyDuplicateChoices',
   run: 'oeq:run',
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
