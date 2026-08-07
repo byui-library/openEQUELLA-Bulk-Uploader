@@ -409,6 +409,61 @@ blind to exactly the duplicates it exists to catch.
   `Bach's Prelude` sends `Bach''s Prelude`; the probe that would confirm it
   used a title with no apostrophe in it.
 
+### Collection templates
+
+Different collections are written differently. An alumni obituary keeps its
+death date in a sentence — *"passed away on January 4, 2024"* — and its genre,
+subjects and rights are identical on every record. A **template** carries that
+knowledge.
+
+**A template is a profile JSON and nothing more.** They live in `templates/`,
+and the Extract flow offers them as *"Start from: Generic / Alumni Obituary"*.
+To author one, build a profile in the app and save it — no code, and a
+colleague can use it by opening the file. That is deliberate: a code plugin per
+collection would need a developer every time.
+
+Four capabilities make a profile expressive enough. All generic — nothing in
+the code knows what an obituary is:
+
+| In a profile | Reads |
+| --- | --- |
+| `{ "dateNear": ["passed away", "died"] }` | the first date in words after any phrase, within 80 characters |
+| `{ "datePair": "second" }` | one half of `June 19, 1957 - January 6, 2024` |
+| `{ "compose": "Died {death_date}" }` | other columns' finished values |
+| `"checks": { "filenameWordsInText": { "ignore": ["Obituary"] } }` | flags a row whose filename the document contradicts |
+
+A column referenced by `compose` must name itself with `"as": "death_date"`.
+Xpaths are too long to write inside a template, and naming the reference means
+renaming a column cannot silently break one. Composed columns are filled after
+all others and may not read each other; a profile that breaks either rule is
+rejected when it loads, not part-way through a batch.
+
+`compose` drops what it cannot fill: `[...]` marks an optional group that
+disappears with its punctuation, and a `;` clause whose placeholders are all
+empty is dropped whole — so a missing piece never yields `Died ; Born`.
+
+**Measured on ten real scanned obituaries:** a death date on 9 of 10, agreeing
+in all three cases where the document's own numeric header survived OCR. The
+tenth states no date anywhere and comes out blank rather than guessed. One row
+was flagged, correctly: the file was named `Brandon Lythoe` while the obituary
+said *Lythgoe* throughout — a misspelling that would otherwise have become the
+item's permanent title.
+
+**Read the prose, not the numbers.** These documents state the death date twice,
+once in a numeric header and once in a sentence. OCR destroyed the header on
+seven of ten — `01104/2024`, `0:1`, `0` — while every spelled-out date came
+through clean, because letters carry far more redundancy than digits. Reading
+the prose took recovery from 3 of 10 to 9 of 10 without changing anything about
+the scanning.
+
+**What the Alumni Obituary template deliberately does not extract:** cause of
+death, birthplace, residence, and the Ricks College connection. Cause and
+birthplace cannot be read honestly — a trial capture produced *"Wilshire
+Hospital, in Hollywood Ca"* as a birthplace. Residence and the Ricks mention
+are both readable at 8 of 10 but were dropped as not worth the build: the PDF
+is attached, and a reader can see them. **A wrong fact in a permanent catalogue
+record is worse than an absent one.**
+
 ### Where a description comes from
 
 The description is the field that is hardest to find and the one most worth

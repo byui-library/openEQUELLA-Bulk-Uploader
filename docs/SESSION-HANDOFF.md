@@ -4,9 +4,9 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **808 passing across 64 files**.
+1. `npm install && npm test` — expect **877 passing across 68 files**.
 2. **PR #3 is merged.** The metadata extractor, all of it, is on `main`.
-3. `feature/duplicate-prevention` is complete and verified against real data;
+3. `feature/collection-templates` is complete and verified against real data;
    it needs merging. Nothing is blocked.
 
 Do NOT build an installer yet. The operator asked that packaging wait.
@@ -73,6 +73,58 @@ metadata extractor — core, CLI command and desktop screens (PR #2 and PR #3).
 
 **What is not merged:** `feature/duplicate-prevention` — complete, verified
 against real data, and ready. Described below.
+
+## Collection templates: built and verified (2026-08-07)
+
+**On `feature/collection-templates`, not merged.** A batch of ten alumni
+obituaries the generic extractor could say almost nothing about.
+
+**A template is a profile JSON**, in `templates/`, offered on the Extract flow
+as "Start from: Generic / Alumni Obituary". Supporting a new collection is
+configuration, never code. Four generic capabilities make that possible —
+`dateNear`, `datePair`, `compose`, and a `filenameWordsInText` check — and
+nothing in the code knows what an obituary is.
+
+**Measured against the ten real files:**
+
+```text
+death date found   9 of 10      (the tenth states no date anywhere)
+cross-checks       3 of 3       agrees with the numeric header where OCR spared it
+Dean Ritchie       2024-01-11   not the 19th, which is his funeral
+rows flagged       1            'Lythoe' in the filename, 'Lythgoe' in the document
+```
+
+**The finding that made this worth building:** the OCR was fine, the wrong part
+of the page was being read. These documents state the death date twice — a
+numeric header and a sentence. OCR destroyed the header on seven of ten
+(`01104/2024`, `0:1`, `0`) while every spelled-out date came through clean,
+because letters carry more redundancy than digits. Reading the prose took
+recovery from 3 of 10 to 9 of 10 with no change to the scanning at all. Buying
+better OCR software would have solved the wrong problem.
+
+**Two traps found and closed during the build**, both of the shape that ships
+silently:
+
+- **`PAIR_GAP` was unconstrained.** The test meant to pin it was actually
+  protected by letters between the dates, so the constant could have been
+  changed to anything without a failure. A subagent noticed and reported it
+  rather than moving on.
+- **`extraResources` did not ship `templates/`.** The chooser would have been
+  empty in a packaged build and full in development. Fixed before an installer
+  exists.
+
+**Deliberately not extracted**, and recorded in the spec with the evidence:
+cause of death, birthplace, residence, and the Ricks College connection. The
+first two cannot be read honestly; the last two are readable at 8 of 10 and
+were dropped as not worth the build, because the PDF is attached and a reader
+can see them.
+
+**Still not built:** the house-style description synthesis of the existing
+records — *"Died November 9, 1993: Afton, Idaho, heart attack; Born August 20,
+1933"* — which needs facts this design does not extract. Tier 4 territory.
+
+**OCR happens outside this tool**, decided the same day. See the
+description-extraction design for why.
 
 ## Duplicate prevention: built, connected, and verified against real data
 
@@ -219,7 +271,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            808 tests, 64 files
+npm test            877 tests, 68 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
