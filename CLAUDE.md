@@ -99,6 +99,14 @@ easy to get wrong from first principles.
   clause filters, and an attachment's filename is at `attachments[].filename`.
   A result carries NO `name` field, even with `info=basic`. `showall=true` is
   mandatory or it cannot see this tool's own drafts.
+- **A collection template is just a profile JSON** in `templates/`. Supporting a
+  new collection is configuration, never code -- a code pack per collection
+  would need a developer each time. `dateNear`, `datePair` and `compose` are
+  generic sources; nothing in the code knows what an obituary is.
+- **Read prose, not numbers, from OCR.** Scanned obituaries state the death date
+  in both a numeric header and a sentence. OCR destroyed the header on 7 of 10
+  files while every spelled-out date survived -- letters carry more redundancy
+  than digits. Reading the prose took recovery from 3 of 10 to 9 of 10.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.
