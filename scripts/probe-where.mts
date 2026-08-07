@@ -13,8 +13,16 @@
 // /search defaulting to showall=false -- and both times the entire test suite
 // agreed with the wrong answer. Hence a probe rather than an assumption.
 //
-// Reads only. Creates nothing, changes nothing, deletes nothing.
-// Run against the TEST instance.
+// Reads only. Creates nothing, changes nothing, deletes nothing -- which is
+// why it was ultimately run against PRODUCTION rather than test: that is the
+// collection with 100,000+ items, and a near-empty test instance would have
+// answered the question that mattered -- does the clause filter -- with a
+// meaningless zero.
+//
+// In the end the answers below came from pasting the URLs straight into a
+// browser already signed in to openEQUELLA, which authenticates the REST API
+// by session cookie. That took seconds; getting a cached OAuth token for this
+// script cost an hour and never succeeded.
 //
 // ANSWERS (filled in from a probe run against content.byui.edu on 2026-08-07):
 //   1. `/xml/MWDL/title = 'VALUE'` is accepted -- GET /api/search?...&where=
