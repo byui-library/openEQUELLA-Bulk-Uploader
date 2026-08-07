@@ -41,7 +41,7 @@ function fakeIpcMain() {
 }
 
 /** registerHandlers' second argument: a getWindow callback. No test here needs a real window. */
-function handlerOptions(): () => null {
+function getWindowStub(): () => null {
   return () => null;
 }
 
@@ -239,7 +239,7 @@ describe('applyDuplicateChoices', () => {
 
   it('marks only the chosen rows skipped', async () => {
     const ipc = fakeIpcMain();
-    registerHandlers(ipc as never, handlerOptions());
+    registerHandlers(ipc as never, getWindowStub());
     const manifestPath = await manifestFile([2, 3]);
 
     const marked = await ipc.call<number>('oeq:applyDuplicateChoices', {
@@ -255,7 +255,7 @@ describe('applyDuplicateChoices', () => {
 
   it('records why the row was skipped', async () => {
     const ipc = fakeIpcMain();
-    registerHandlers(ipc as never, handlerOptions());
+    registerHandlers(ipc as never, getWindowStub());
     const manifestPath = await manifestFile([2]);
     await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [2] });
     const manifest = await loadManifest(manifestPath);
@@ -264,7 +264,7 @@ describe('applyDuplicateChoices', () => {
 
   it('marks nothing when the operator chose to skip nothing', async () => {
     const ipc = fakeIpcMain();
-    registerHandlers(ipc as never, handlerOptions());
+    registerHandlers(ipc as never, getWindowStub());
     const manifestPath = await manifestFile([2]);
     expect(
       await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [] }),
@@ -275,7 +275,7 @@ describe('applyDuplicateChoices', () => {
   // would be a skip the operator was shown and that then did not happen.
   it('persists the change to disk, not just in memory', async () => {
     const ipc = fakeIpcMain();
-    registerHandlers(ipc as never, handlerOptions());
+    registerHandlers(ipc as never, getWindowStub());
     const manifestPath = await manifestFile([2]);
     await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [2] });
     const reread = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;

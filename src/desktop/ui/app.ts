@@ -13,6 +13,7 @@ import { renderProgress, type ProgressLogEntry } from './screens/progress.js';
 import { renderResults, type InterruptedEntry } from './screens/results.js';
 import { canContinueReview } from './review.js';
 import { defaultChoice } from '../../core/duplicates.js';
+import { rowsToSkip } from './duplicates.js';
 import { clearedForNextBatch, type BatchState } from './batch.js';
 import { canUpload } from './confirm.js';
 import { collectionUrl } from './collectionUrl.js';
@@ -215,8 +216,10 @@ function render(): void {
         duplicates: state.duplicates,
         duplicateChoices: state.duplicateChoices,
         onDuplicateChoice: (rowNumber, choice) => {
+          // No re-render: the browser already reflects the click, nothing else
+          // on this screen derives from it, and replacing innerHTML mid-group
+          // throws focus to <body> so the operator cannot arrow through it.
           state.duplicateChoices[rowNumber] = choice;
-          render();
         },
         onOverrideChange: handleReviewOverrideChange,
         onContinue: handleReviewContinue,
@@ -558,6 +561,12 @@ async function loadReviewColumns(): Promise<void> {
   state.reviewChecking = false;
   state.reviewPlan = null;
   state.reviewError = null;
+  // Keyed by row number, which means something different in a different
+  // spreadsheet. Cleared here and not only in clearedForNextBatch(), which is
+  // reached only after a completed run -- Review -> Back -> Choose -> a new
+  // sheet never passes through it.
+  state.duplicates = [];
+  state.duplicateChoices = {};
   render();
   try {
     const columns = await window.oeq.validate({ instanceId: state.instanceId, sheetPath: state.sheetPath! });
@@ -609,6 +618,7 @@ async function runReviewCheck(): Promise<void> {
   } catch (err) {
     state.reviewChecked = false;
     state.reviewPlan = null;
+    state.duplicates = [];
     state.reviewChecking = false;
     state.reviewError = errorMessage(err);
     render();
@@ -623,6 +633,7 @@ function handleReviewOverrideChange(header: string, xpath: string): void {
   // on disk no longer necessarily matches what's displayed.
   state.reviewChecked = false;
   state.reviewPlan = null;
+  state.duplicates = [];
   render();
 }
 
@@ -630,6 +641,12 @@ function handleReviewContinue(): void {
   if (!state.reviewColumns) return;
   if (state.reviewChecked && state.reviewPlan) {
     // Second click: the plan already succeeded for these exact overrides.
+    // Freeze what the operator was actually shown. A row they left alone still
+    // has a decision -- its tier's default -- and that decision must survive the
+    // re-plan in handleUpload, which produces findings nobody sees.
+    for (const d of state.duplicates) {
+      state.duplicateChoices[d.rowNumber] ??= defaultChoice(d.tier);
+    }
     state.typedCount = '';
     state.itemState = 'draft';
     state.confirmError = null;
@@ -690,7 +707,6 @@ async function handleUpload(): Promise<void> {
       overrides: { ...state.reviewOverrides },
     });
     state.reviewPlan = report;
-    state.duplicates = report.duplicates;
     state.uploading = false;
     state.progress = null;
     state.progressLog = [];
@@ -703,11 +719,20 @@ async function handleUpload(): Promise<void> {
     // Applied here rather than at plan time: these are the operator's choices,
     // made after seeing the plan. A row left alone takes its tier's default,
     // which is why the default is computed here too rather than assumed.
-    const skipRows = state.duplicates
-      .filter((d) => (state.duplicateChoices[d.rowNumber] ?? defaultChoice(d.tier)) === 'skip')
-      .map((d) => d.rowNumber);
+    //
+    // Deliberately NOT refreshed from the re-plan above: acting on findings the
+    // operator never saw is how a row shown as "Skip" gets uploaded, or a row
+    // never shown at all gets silently dropped. The reviewed set is the one
+    // they agreed to.
+    const skipRows = rowsToSkip(state.duplicates, state.duplicateChoices);
     if (skipRows.length > 0) {
-      await window.oeq.applyDuplicateChoices({ manifestPath: report.manifestPath, skipRows });
+      const marked = await window.oeq.applyDuplicateChoices({ manifestPath: report.manifestPath, skipRows });
+      if (marked !== skipRows.length) {
+        // Every skipRow should have matched a pending entry. A mismatch means
+        // the manifest and the reviewed findings have drifted apart, and some
+        // row the operator chose to skip is still going to be uploaded.
+        console.warn(`asked to skip ${skipRows.length} row(s), marked ${marked}`);
+      }
     }
 
     const runReport = await window.oeq.run({ manifestPath: report.manifestPath, instanceId: state.instanceId });

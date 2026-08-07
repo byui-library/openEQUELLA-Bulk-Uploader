@@ -381,10 +381,11 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         columns: reportColumns(sheet.headers, paths),
         invalidHeaders: invalid,
         warnings: manifest.warnings,
-        // Always empty for now: finding duplicates needs a client method that
-        // does not exist yet (it depends on a live probe of the search API).
-        // The field is in the contract so the Review screen can be built and
-        // tested against it meanwhile.
+        // Always empty until `client.searchByTitle` exists (plan Task 4), which
+        // is gated on the live probe in scripts/probe-where.mts (Task 1). Then
+        // this becomes `await findDuplicates(client, manifest)`. The field is in
+        // the contract already so the Review screen could be built against it --
+        // which means none of that screen has yet run against a real finding.
         duplicates: [],
       };
     },

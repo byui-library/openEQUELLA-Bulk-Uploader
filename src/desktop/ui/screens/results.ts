@@ -87,7 +87,7 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
       <dl class="confirm-summary">
         <dt>Created</dt><dd>${r.created}</dd>
         <dt>Failed</dt><dd>${r.failed}</dd>
-        <dt>Skipped</dt><dd>${r.skipped}</dd>
+        <dt>Skipped (already done or chosen to skip)</dt><dd>${r.skipped}</dd>
         <dt>Incomplete</dt><dd>${r.incomplete}</dd>
         <dt>Interrupted</dt><dd>${r.interrupted}</dd>
       </dl>
