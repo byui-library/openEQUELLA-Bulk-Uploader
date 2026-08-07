@@ -40,6 +40,7 @@ const columnSchema = z
       .optional(),
     locked: z.boolean().optional(),
     as: z.string().min(1).optional(),
+    flagIfEmpty: z.boolean().optional(),
   })
   .strict();
 
@@ -120,6 +121,14 @@ export function parseProfile(input: unknown): Profile {
       ? `'${ATTACHMENT_COLUMN}' must be the first column.`
       : `Profile must include the '${ATTACHMENT_COLUMN}' column -- it is how each row is matched to its file.`;
     throw new ValidationError(message);
+  }
+
+  // `attachment name` is how a row is matched to its file on disk. A composed
+  // value there would name something that is not a file and break the
+  // one-file-one-item relationship the whole tool rests on.
+  const attachment = profile.columns.find((c) => c.path === ATTACHMENT_COLUMN);
+  if (attachment?.sources.some((s) => 'compose' in s)) {
+    throw new ValidationError(`The '${ATTACHMENT_COLUMN}' column cannot be composed from other columns.`);
   }
 
   // A declared date format must name each part exactly once. Catching this at

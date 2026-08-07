@@ -72,6 +72,16 @@ describe('parseProfile', () => {
     expect(() => parseProfile({ ...GOOD, columns })).toThrow(/MM 2 times/);
   });
 
+  it('refuses to compose the attachment column, which names the file on disk', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{a}.pdf',
+        columns: [{ path: 'attachment name', sources: [{ compose: 'x' }], locked: true }],
+      }),
+    ).toThrow(/attachment name/);
+  });
+
   it('accepts a column with no sources and no default -- an empty column', () => {
     const columns = [GOOD.columns[0]!, { path: 'MWDL/description', sources: [] }];
     expect(parseProfile({ ...GOOD, columns }).columns).toHaveLength(2);

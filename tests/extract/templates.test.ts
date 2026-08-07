@@ -59,6 +59,7 @@ describe('shipped templates', () => {
     );
     expect(row.cells[DEATH]).toBe('');
     expect(row.notes.join(' ')).toContain('Larkspar');
+    expect(row.notes.join(' ')).toContain('alumni_obituary/death_date');
   });
 
   it('rejects an unknown template id rather than returning a broken profile', async () => {

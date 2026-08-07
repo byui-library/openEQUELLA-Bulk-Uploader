@@ -9,6 +9,7 @@
     {
       "path": "BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date",
       "as": "death_date",
+      "flagIfEmpty": true,
       "sources": [
         { "dateNear": ["passed away", "died", "returned home", "graduated this world"] },
         { "datePair": "second" }
