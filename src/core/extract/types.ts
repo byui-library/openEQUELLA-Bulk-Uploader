@@ -55,6 +55,22 @@ export type Source =
    * openEQUELLA -- so without this those two are contributed nameless.
    */
   | { filenameStem: true }
+  /**
+   * The first date written in words following any of these phrases.
+   * "passed away on January 4, 2024".
+   */
+  | { dateNear: string[] }
+  /**
+   * One half of a name-and-dates line: `June 19, 1957 - January 6, 2024`.
+   * Four of ten real obituaries state the dates this way, with no phrase to
+   * anchor on.
+   */
+  | { datePair: 'first' | 'second' }
+  /**
+   * Built from other columns' values rather than from the document. Referenced
+   * columns are named by their `as`, and are filled in an earlier pass.
+   */
+  | { compose: string }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 
@@ -85,6 +101,13 @@ export interface Column {
   transform?: Transform;
   /** True only for ATTACHMENT_COLUMN. Blocks removal, reordering and retargeting. */
   locked?: boolean;
+  /**
+   * A short name other columns' `compose` templates can refer to. Without one,
+   * a column cannot be referenced -- xpaths are far too long to write inside a
+   * template, and naming the reference explicitly means renaming a column
+   * cannot silently break one.
+   */
+  as?: string;
 }
 
 export interface Profile {
@@ -92,6 +115,15 @@ export interface Profile {
   /** e.g. "{last}_{first}_{title}_{date}.pdf" */
   pattern: string;
   columns: Column[];
+  /** Checks that report on a row without producing a value. */
+  checks?: {
+    /**
+     * Flag a row when a word from its filename does not appear in the
+     * document. `ignore` lists words that carry no signal for this collection,
+     * such as "Obituary" in every filename of an obituary batch.
+     */
+    filenameWordsInText?: { ignore?: string[] };
+  };
 }
 
 /**

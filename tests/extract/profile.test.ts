@@ -100,6 +100,91 @@ describe('validateAgainstSchema', () => {
   });
 });
 
+describe('profiles using the new sources', () => {
+  const base = (columns: unknown[]) => ({ version: 1, pattern: '{a}.pdf', columns });
+
+  it('accepts dateNear, datePair and compose', () => {
+    expect(() =>
+      parseProfile(
+        base([
+          { path: 'MWDL/date', as: 'death', sources: [{ dateNear: ['died'] }, { datePair: 'second' }] },
+          { path: 'MWDL/description', sources: [{ compose: 'Died {death}' }] },
+        ]),
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects an empty phrase list, which would match nothing', () => {
+    expect(() => parseProfile(base([{ path: 'MWDL/date', sources: [{ dateNear: [] }] }]))).toThrow();
+  });
+
+  it('rejects a datePair that is neither first nor second', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', sources: [{ datePair: 'third' }] }])),
+    ).toThrow();
+  });
+
+  /**
+   * A template naming a column that does not exist would silently compose to
+   * nothing on every row. Rejecting it at load matches how a malformed date
+   * format is handled: fail before the batch, not part-way through.
+   */
+  it('rejects a compose naming a column that does not exist', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/description', sources: [{ compose: 'Died {nope}' }] }])),
+    ).toThrow(/nope/);
+  });
+
+  /**
+   * Composed columns are filled in a second pass from the first pass's values,
+   * so one cannot read another. Forbidding it outright makes a cycle
+   * impossible by construction rather than by detection.
+   */
+  it('rejects a compose naming another composed column', () => {
+    expect(() =>
+      parseProfile(
+        base([
+          { path: 'MWDL/abstract', as: 'a', sources: [{ compose: 'x' }] },
+          { path: 'MWDL/description', sources: [{ compose: '{a}' }] },
+        ]),
+      ),
+    ).toThrow();
+  });
+
+  it('rejects two columns claiming the same alias', () => {
+    expect(() =>
+      parseProfile(
+        base([
+          { path: 'MWDL/date', as: 'd', sources: [] },
+          { path: 'MWDL/abstract', as: 'd', sources: [] },
+        ]),
+      ),
+    ).toThrow(/d/);
+  });
+
+  it('accepts the filenameWordsInText check', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{a}.pdf',
+        columns: [{ path: 'MWDL/title', sources: [] }],
+        checks: { filenameWordsInText: { ignore: ['Obituary'] } },
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects an unknown check rather than ignoring it', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{a}.pdf',
+        columns: [{ path: 'MWDL/title', sources: [] }],
+        checks: { somethingElse: true },
+      }),
+    ).toThrow();
+  });
+});
+
 describe('loadProfile / saveProfile', () => {
   it('round-trips through a file', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'oeq-profile-'));
