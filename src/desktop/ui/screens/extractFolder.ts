@@ -7,7 +7,12 @@ export interface ExtractFolderProps {
   busy: boolean;
   error: string | null;
   canContinue: boolean;
+  /** Templates shipped with the app, for the "start from" choice. Empty if none are bundled. */
+  templates: { id: string; label: string }[];
+  /** The selected template's id, or '' for the generic scanned starter. */
+  templateId: string;
   onChooseFolder(): void;
+  onTemplateChange(id: string): void;
   onContinue(): void;
   onCancel(): void;
 }
@@ -54,6 +59,27 @@ export function renderExtractFolder(root: HTMLElement, props: ExtractFolderProps
         <span class="path">${props.dir === null ? 'No folder chosen' : escapeHtml(props.dir)}</span>
       </div>
 
+      ${
+        props.dir === null
+          ? ''
+          : `<div class="field">
+               <label for="extract-template">Start from</label>
+               <select id="extract-template" ${props.busy ? 'disabled' : ''}>
+                 <option value="" ${props.templateId === '' ? 'selected' : ''}>Generic &mdash; work it out from the files</option>
+                 ${props.templates
+                   .map(
+                     (t) =>
+                       `<option value="${escapeHtml(t.id)}" ${t.id === props.templateId ? 'selected' : ''}>${escapeHtml(t.label)}</option>`,
+                   )
+                   .join('')}
+               </select>
+               <p class="hint">
+                 A template knows how one collection is written &mdash; where a date sits, what the
+                 genre and rights always are. Generic reads whatever the files happen to offer.
+               </p>
+             </div>`
+      }
+
       ${summary}
       ${props.error === null ? '' : `<p class="error" role="alert">${escapeHtml(props.error)}</p>`}
 
@@ -64,6 +90,12 @@ export function renderExtractFolder(root: HTMLElement, props: ExtractFolderProps
     </section>`;
 
   root.querySelector<HTMLButtonElement>('#extract-choose-folder')?.addEventListener('click', props.onChooseFolder);
+  // No keepCaret here: a <select> fires 'change', not 'input', and its value
+  // is restored on re-render by the `selected` attribute above -- keepCaret
+  // exists for text inputs, which lose focus mid-word without it.
+  root
+    .querySelector<HTMLSelectElement>('#extract-template')
+    ?.addEventListener('change', (e) => props.onTemplateChange((e.target as HTMLSelectElement).value));
   root.querySelector<HTMLButtonElement>('#extract-continue')?.addEventListener('click', props.onContinue);
   root.querySelector<HTMLButtonElement>('#extract-cancel')?.addEventListener('click', props.onCancel);
 }

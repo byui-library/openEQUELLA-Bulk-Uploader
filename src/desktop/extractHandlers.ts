@@ -12,6 +12,7 @@ import { buildRow } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
+import { listTemplates, loadTemplate } from '../core/extract/templates.js';
 import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
 import { CHANNELS, type ExtractScan, type ExtractRunReport } from './ipc.js';
 
@@ -67,6 +68,8 @@ function schemaPathsOnce(schemaFile: string): Promise<Set<string>> {
 export interface ExtractHandlerOptions {
   /** Path to the schema export. Resolved by the caller, which knows if the app is packaged. */
   schemaFile: string;
+  /** Directory of shipped template profiles. Resolved by the caller, same as schemaFile. */
+  templatesDir: string;
 }
 
 export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandlerOptions): void {
@@ -127,6 +130,9 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
   ipcMain.handle(CHANNELS.schemaPaths, async (): Promise<string[]> => {
     return [...(await schemaPathsOnce(options.schemaFile))].sort();
   });
+
+  ipcMain.handle(CHANNELS.listTemplates, () => listTemplates(options.templatesDir));
+  ipcMain.handle(CHANNELS.loadTemplate, (_e, id: string) => loadTemplate(id, options.templatesDir));
 
   ipcMain.handle(CHANNELS.openProfile, async (): Promise<{ path: string; profile: Profile } | null> => {
     const r = await dialog.showOpenDialog({
