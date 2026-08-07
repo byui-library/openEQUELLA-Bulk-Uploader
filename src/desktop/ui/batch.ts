@@ -1,5 +1,6 @@
 // src/desktop/ui/batch.ts
 import type { ItemState } from '../../core/types.js';
+import type { DuplicateChoice, DuplicateFinding } from '../../core/duplicates.js';
 import type { ColumnReport, PlanReport, RunProgress, RunReport } from '../ipc.js';
 import type { ProgressLogEntry } from './screens/progress.js';
 import type { InterruptedEntry } from './screens/results.js';
@@ -25,6 +26,9 @@ export interface BatchState {
   reviewChecked: boolean;
   reviewPlan: PlanReport | null;
   reviewError: string | null;
+  duplicates: DuplicateFinding[];
+  /** Row number -> what the operator decided. Absent means the tier default. */
+  duplicateChoices: Record<number, DuplicateChoice>;
 
   itemState: ItemState;
   typedCount: string;
@@ -65,6 +69,8 @@ export function clearedForNextBatch(): BatchState {
     reviewChecked: false,
     reviewPlan: null,
     reviewError: null,
+    duplicates: [],
+    duplicateChoices: {},
 
     itemState: 'draft',
     typedCount: '',
