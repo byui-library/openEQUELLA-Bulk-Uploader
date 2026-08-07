@@ -14,6 +14,7 @@ import {
   checkAction,
   stripBomFromEnvKeys,
   extractCode,
+  browserCommand,
 } from '../src/cli/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
@@ -729,5 +730,39 @@ describe('stripBomFromEnvKeys', () => {
       OEQ_CLIENT_SECRET: 'secret',
     });
     expect(Object.keys(fixed).sort()).toEqual(['OEQ_BASE_URL', 'OEQ_CLIENT_ID', 'OEQ_CLIENT_SECRET']);
+  });
+});
+
+/**
+ * `oeq-upload login` opened a URL that openEQUELLA then rejected with
+ * "No OAuth client can be found with the supplied client_id (null) and
+ * redirect_uri (null)".
+ *
+ * The cause was not, as the login command's own doc comment guessed, a cold
+ * SSO session dropping the query string. It was `cmd /c start "" <url>`:
+ * cmd.exe treats `&` as a command separator, so the authorize URL was cut at
+ * the first one and only `?response_type=code` ever reached the browser. Both
+ * parameters really were absent.
+ */
+describe('browserCommand', () => {
+  const url = 'https://content.byui.edu/oauth/authorise?response_type=code&client_id=abc&redirect_uri=https%3A%2F%2Fx';
+
+  it('does not hand a Windows shell a string it will split on &', () => {
+    const { command, args } = browserCommand('win32', url);
+    expect(command).not.toBe('cmd');
+    expect(args).toContain(url);
+  });
+
+  it('passes the whole URL as one argument on every platform', () => {
+    for (const platform of ['win32', 'darwin', 'linux']) {
+      const { args } = browserCommand(platform, url);
+      expect(args.filter((a) => a.includes('client_id=abc'))).toHaveLength(1);
+      expect(args.some((a) => a.includes('redirect_uri='))).toBe(true);
+    }
+  });
+
+  it('uses the platform opener on mac and linux', () => {
+    expect(browserCommand('darwin', url).command).toBe('open');
+    expect(browserCommand('linux', url).command).toBe('xdg-open');
   });
 });
