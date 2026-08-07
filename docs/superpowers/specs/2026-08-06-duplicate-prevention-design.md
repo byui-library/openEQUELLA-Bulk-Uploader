@@ -210,6 +210,40 @@ first and then declined it. The tool has only ever created; the target
 collection has no moderation workflow, so a wrong overwrite is live immediately
 with nothing to catch it. Out of scope.
 
+## The obvious next step: match on content, not filename
+
+**Not built. Recorded here so it is not rediscovered.**
+
+The probe found that every attachment in a search result carries an **`md5`**:
+
+```json
+"attachments":[{"type":"file","filename":"index.html","size":159021,
+  "md5":"3ab39565a4810e699e3053e7da900572", ...}]
+```
+
+That is free — already in the response this check makes anyway — and it closes
+the one gap this design cannot see: **a re-upload whose title or filename
+changed.** Two files with the same md5 are the same bytes, whatever they are
+called.
+
+It is not a small change, and the cost falls in an awkward place:
+
+- The md5 of the *local* file has to be computed to compare against it, which
+  means hashing every file in the batch. The production run was 5.68 GB; that
+  is real I/O, needs a progress indicator, and probably wants caching by
+  path+size+mtime.
+- The search is keyed on title, so an item whose title changed is not in the
+  result set to compare against in the first place. Matching on md5 alone would
+  need a different query — whether `where` can address an attachment's md5 at
+  all is **unknown and would need its own probe**.
+
+So the cheap version is: for rows already returned by the title search, compare
+md5 as well as filename, which upgrades `possible` to `near-certain` when the
+bytes match despite a rename. The expensive version — catching a renamed AND
+retitled re-upload — needs a query we do not yet know is possible.
+
+Worth doing when a renamed re-upload actually bites. It has not yet.
+
 ## Out of scope
 
 - Overwriting, replacing or deleting any existing item.
