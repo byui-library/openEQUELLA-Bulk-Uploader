@@ -1,15 +1,9 @@
 import type { ColumnReport, PlanReport } from '../../ipc.js';
-import { defaultChoice, type DuplicateChoice, type DuplicateFinding, type DuplicateTier } from '../../../core/duplicates.js';
+import type { DuplicateChoice, DuplicateFinding } from '../../../core/duplicates.js';
 import { canContinueReview } from '../review.js';
 import { categorizeWarnings } from '../warnings.js';
 import { escapeHtml } from '../dom.js';
-
-const TIER_LABEL: Record<DuplicateTier, string> = {
-  'near-certain': 'Almost certainly already uploaded',
-  possible: 'Possibly already uploaded',
-  'not-checkable': 'Could not be checked',
-  'could-not-check': 'Could not be checked',
-};
+import { duplicatesSection } from '../duplicates.js';
 
 export interface ReviewProps {
   /** From validate() against the ORIGINAL sheet -- see review.ts's doc
@@ -155,55 +149,12 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
     `;
   }
 
-  const duplicateRows = props.duplicates
-    .map((d) => {
-      const choice = props.duplicateChoices[d.rowNumber] ?? defaultChoice(d.tier);
-      // `d.tier` crosses IPC, so an unrecognised value would make the lookup
-      // undefined and escapeHtml throw mid-render -- a blank window with
-      // nothing in the terminal.
-      const label = TIER_LABEL[d.tier] ?? 'Possibly already uploaded';
-      // The hint tells the operator to check for themselves, which they cannot
-      // do without being told what the matched item already holds.
-      const held = d.existing.flatMap((e) => e.attachmentNames).slice(0, 3);
-      const heldLine =
-        held.length > 0
-          ? `<br><small>Existing item holds: ${held.map(escapeHtml).join(', ')}</small>`
-          : '';
-      return `
-      <tr>
-        <td>${d.rowNumber}</td>
-        <td>${escapeHtml(d.fileName)}</td>
-        <td>${escapeHtml(label)}<br><small>${escapeHtml(d.detail)}</small>${heldLine}</td>
-        <td>
-          <label><input type="radio" name="dup-${d.rowNumber}" value="skip"
-            ${choice === 'skip' ? 'checked' : ''}> Skip</label>
-          <label><input type="radio" name="dup-${d.rowNumber}" value="upload"
-            ${choice === 'upload' ? 'checked' : ''}> Upload anyway</label>
-        </td>
-      </tr>`;
-    })
-    .join('');
-
   // Gated on the plan too, not just on there being findings: app.ts clears
   // `checked`/`report` whenever the manifest on disk may no longer match the
   // screen, and findings shown against a plan already declared stale invite a
   // decision about rows that are no longer the ones being uploaded.
-  const duplicatesSection =
-    props.checked && props.report !== null && props.duplicates.length > 0
-      ? `
-      <fieldset>
-        <legend>Possible duplicates (${props.duplicates.length})</legend>
-        <p class="hint">
-          Rows that look like they have been uploaded to this collection before.
-          Only the almost-certain ones are set to skip &mdash; two items can
-          share a title, so check the rest yourself.
-        </p>
-        <table class="review-table">
-          <thead><tr><th>Row</th><th>File</th><th>Why</th><th>What to do</th></tr></thead>
-          <tbody>${duplicateRows}</tbody>
-        </table>
-      </fieldset>`
-      : '';
+  const duplicatesSectionHtml =
+    props.checked && props.report !== null ? duplicatesSection(props.duplicates, props.duplicateChoices) : '';
 
   const canContinue = canContinueReview(props.columns, props.overrides);
   const continueLabel = props.checking
@@ -227,7 +178,7 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
 
       ${warningsSection}
 
-      ${duplicatesSection}
+      ${duplicatesSectionHtml}
 
       ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
