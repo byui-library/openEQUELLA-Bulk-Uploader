@@ -68,11 +68,11 @@ sandboxed renderer, per-instance encrypted credentials, and a typed IPC
 contract. Released as **v0.1.0** with both installers, and clean-machine tested
 by the operator. Merged to `main` as PR #1.
 
-**What is on `main`:** the CLI, the MCP server, the desktop GUI, and the whole
-metadata extractor — core, CLI command and desktop screens (PR #2 and PR #3).
+**What is on `main`:** the CLI, the MCP server, the desktop GUI, the whole
+metadata extractor (PR #2 and PR #3), and duplicate prevention (PR #4).
 
-**What is not merged:** `feature/duplicate-prevention` — complete, verified
-against real data, and ready. Described below.
+**What is not merged:** `feature/collection-templates` — complete, verified
+against real data, and ready. Described immediately below.
 
 ## Collection templates: built and verified (2026-08-07)
 
