@@ -1,15 +1,13 @@
-# Session handoff — updated 2026-08-06 (end of the extractor + duplicates session)
+# Session handoff — updated 2026-08-07
 
 Read this first.
 
 ## START HERE
 
-1. `git checkout feature/duplicate-prevention && npm install && npm test` —
-   expect **764 passing across 62 files**.
+1. `npm install && npm test` — expect **808 passing across 64 files**.
 2. **PR #3 is merged.** The metadata extractor, all of it, is on `main`.
-3. **The one thing blocking progress is a probe only the operator can run.**
-   See "Duplicate prevention: blocked on a probe" below. Do not build
-   `searchByTitle` or the mock server's `where` support until it has run.
+3. `feature/duplicate-prevention` is complete and verified against real data;
+   it needs merging. Nothing is blocked.
 
 Do NOT build an installer yet. The operator asked that packaging wait.
 
@@ -73,10 +71,73 @@ by the operator. Merged to `main` as PR #1.
 **What is on `main`:** the CLI, the MCP server, the desktop GUI, and the whole
 metadata extractor — core, CLI command and desktop screens (PR #2 and PR #3).
 
-**What is not merged:** `feature/duplicate-prevention`, five commits, described
-below.
+**What is not merged:** `feature/duplicate-prevention` — complete, verified
+against real data, and ready. Described below.
 
-## Duplicate prevention: blocked on a probe
+## Duplicate prevention: built, connected, and verified against real data
+
+**Status: done and working.** On 2026-08-07 the operator fed back the same
+spreadsheet and folder that had been uploaded twice, and every row came back
+flagged. That was the first time any of it had run against a real finding —
+until an hour before, the desktop plan handler returned a hard-coded empty
+array, so the whole feature was parts that had never been connected.
+
+**What it does.** One search per pending row, matching `/xml/MWDL/title`
+exactly via the search API's `where` clause, with each hit's attachments in the
+same response. A filename match is `near-certain` and defaults to **skip**; a
+title-only match is `possible` and defaults to **upload**, because two items
+can legitimately share a title and silently dropping a real item is worse than
+a visible duplicate. Rows the operator skips are written into the manifest as
+`skipped`, which the runner already treated as terminal — no runner change.
+
+**CONFIRMED against production**, by pasting URLs into a browser already signed
+in to openEQUELLA (the REST API accepts a session cookie — this took seconds,
+after an hour lost trying to get the CLI a cached OAuth token):
+
+- `/xml/MWDL/title = 'VALUE'` is accepted, and **genuinely filters** — a title
+  known to be absent returns `available: 0`. That was the answer that decided
+  the approach was viable at all.
+- An attachment's filename is at `attachments[].filename`; `description`
+  carried the same value.
+- **A result has no `name` field**, even with `info=basic`. This nearly made
+  the feature silently do nothing: a guard added in code review compared each
+  hit's name to the searched title, and with no name it rejected every hit.
+- Each attachment carries an **`md5`** — unused, but it would catch a renamed
+  re-upload, which is the one limitation this design cannot see.
+
+**Still UNVERIFIED:** apostrophe escaping. `Bach's Prelude` sends `Bach''s
+Prelude` and no live title has exercised it. Marked as such in `client.ts`.
+
+### Two review passes, and what they caught
+
+Both found defects that would have shipped. Worth reading before extending
+this, because two are the same shape as bugs this project has already had:
+
+- **A concurrency loop that ran its body exactly once across the whole suite.**
+  Replacing it with `slice(0, 5)` — checking 5 rows of a 37-row batch and
+  reporting the other 32 clean — passed all 19 tests.
+- **`duplicateChoices` surviving a change of spreadsheet.** Review → Back →
+  Choose a different sheet → Continue, and the previous sheet's decisions were
+  applied by row number to the new one. `clearedForNextBatch()` does NOT cover
+  this; it only runs after a completed run, which is why `loadReviewColumns`
+  hand-clears the other review fields.
+- **The operator's seen decision being discarded**, because `handleUpload`
+  re-plans and was overwriting the findings with a set nobody had looked at.
+- **The skip filter being untestable.** Inverting it — skipping every row the
+  operator wanted kept — passed the entire suite. It is now `rowsToSkip` in
+  `ui/duplicates.ts`, and inverting it fails 7 of 8 tests.
+
+### Also fixed on this branch, unrelated
+
+`oeq-upload login` was broken on Windows for every user. `cmd /c start "" <url>`
+truncated the authorize URL at the first `&`, so openEQUELLA received no
+`client_id` and no `redirect_uri` and said so. The command's own instructions
+blamed a cold SSO session for that message and told the operator to sign in
+again, which could never have worked. Now `rundll32 url.dll,FileProtocolHandler`,
+with `browserCommand(platform, url)` extracted and tested — the defect was
+invisible except by reading the argv.
+
+## Historical: how this was blocked
 
 **Why this exists.** On 2026-08-06 the operator uploaded the same 30 files
 twice and the tool said nothing. The cause was not a missing feature:
@@ -158,7 +219,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            764 tests, 62 files
+npm test            808 tests, 64 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
