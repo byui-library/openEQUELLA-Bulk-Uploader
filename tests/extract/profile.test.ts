@@ -175,7 +175,31 @@ describe('profiles using the new sources', () => {
           { path: 'MWDL/abstract', as: 'd', sources: [] },
         ]),
       ),
-    ).toThrow(/d/);
+    ).toThrow(/Two columns both use/);
+  });
+
+  /**
+   * composeValue splits on ';' and handles [...] separately, so an unbalanced,
+   * nested, or semicolon-split group leaks literal brackets into a permanent
+   * catalogue record. Rejected at load, the same place a malformed date
+   * format is rejected: fail before the batch, not part-way through.
+   */
+  it('rejects an unclosed optional group', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', as: 'd', sources: [] }, { path: 'MWDL/description', sources: [{ compose: 'Died {d}[: x' }] }])),
+    ).toThrow(/unclosed/);
+  });
+
+  it('rejects nested optional groups', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', as: 'd', sources: [] }, { path: 'MWDL/description', sources: [{ compose: 'X[ a[ {d}] c]' }] }])),
+    ).toThrow(/nested/);
+  });
+
+  it('rejects a semicolon inside an optional group, which would split it', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', as: 'd', sources: [] }, { path: 'MWDL/description', sources: [{ compose: '[Born {d}; Died {d}]' }] }])),
+    ).toThrow(/;/);
   });
 
   it('accepts the filenameWordsInText check', () => {

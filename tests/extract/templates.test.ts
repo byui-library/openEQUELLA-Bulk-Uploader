@@ -65,4 +65,12 @@ describe('shipped templates', () => {
   it('rejects an unknown template id rather than returning a broken profile', async () => {
     await expect(loadTemplate('no-such-template')).rejects.toThrow();
   });
+
+  /**
+   * The id crosses IPC from the renderer. Without the guard, a traversal like
+   * '../../package' would be read and parsed.
+   */
+  it('refuses an id that is not a template name', async () => {
+    await expect(loadTemplate('../../package')).rejects.toThrow(/Not a template name/);
+  });
 });

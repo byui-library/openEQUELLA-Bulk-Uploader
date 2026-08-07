@@ -99,6 +99,30 @@ export function parseProfile(input: unknown): Profile {
   for (const column of profile.columns) {
     for (const source of column.sources) {
       if (!('compose' in source)) continue;
+
+      // Rejected at load rather than handled at runtime: an unbalanced or
+      // nested bracket, or a `;` inside a group, produces literal brackets in
+      // a permanent catalogue record. `composeValue` splits on `;` before it
+      // handles groups, so a `;` inside one splits the group in half.
+      let depth = 0;
+      for (const ch of source.compose) {
+        if (ch === '[') depth++;
+        else if (ch === ']') depth--;
+        else if (ch === ';' && depth > 0) {
+          throw new ValidationError(
+            `Column '${column.path}' has a ';' inside a [...] group, which would split it.`,
+          );
+        }
+        if (depth < 0 || depth > 1) {
+          throw new ValidationError(
+            `Column '${column.path}' has mismatched or nested [ ] in its template.`,
+          );
+        }
+      }
+      if (depth !== 0) {
+        throw new ValidationError(`Column '${column.path}' has an unclosed [ in its template.`);
+      }
+
       for (const name of joinPlaceholders(source.compose)) {
         if (!aliases.includes(name)) {
           throw new ValidationError(
