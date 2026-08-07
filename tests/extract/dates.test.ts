@@ -1,6 +1,6 @@
 // tests/extract/dates.test.ts
 import { describe, it, expect } from 'vitest';
-import { dateNear, datePair } from '../../src/core/extract/dates.js';
+import { dateNear, datePair, datesNear } from '../../src/core/extract/dates.js';
 
 describe('dateNear', () => {
   it('finds a date after the phrase', () => {
@@ -67,6 +67,65 @@ describe('dateNear', () => {
     const t = 'Obituary and Death Notice. He died at home. He died on January 4, 2024.';
     expect(dateNear(t, ['died'])).toBe('January 4, 2024');
   });
+
+  /**
+   * "died" is a substring of "studied", and this is an alumni collection where
+   * "studied at Ricks College" is near-certain. A raw substring search read a
+   * man's marriage date as his date of death.
+   */
+  it('does not match a phrase inside a longer word', () => {
+    expect(
+      dateNear('He studied at Ricks College and married Mary on June 12, 1955.', ['died']),
+    ).toBe('');
+  });
+
+  it('does not match a phrase at the end of a longer word', () => {
+    expect(dateNear('a full-bodied life began on March 3, 1940', ['died'])).toBe('');
+  });
+
+  it('still matches a phrase against surrounding punctuation', () => {
+    expect(dateNear('(died) January 4, 2024', ['died'])).toBe('January 4, 2024');
+  });
+
+  /**
+   * `\d{4}` with nothing after it read a year out of a longer run of digits,
+   * and 1234 normalises cleanly, so it would never have been flagged. This
+   * batch's OCR mangles digit runs -- `01104/2024`, `04[031.193:5`.
+   */
+  it('does not read a year out of a longer run of digits', () => {
+    expect(dateNear('died January 11 12345', ['died'])).toBe('');
+  });
+
+  it('does not match a month inside a longer word', () => {
+    expect(dateNear('died in Mayfield 3, 1940', ['died'])).toBe('');
+  });
+});
+
+describe('datesNear', () => {
+  it('reports one date once', () => {
+    expect(datesNear('He died January 4, 2024.', ['died'])).toEqual(['January 4, 2024']);
+  });
+
+  /**
+   * Almost every obituary names someone else's death. Nothing can reliably
+   * tell whose death a sentence describes, so both are reported and the row
+   * gets flagged rather than confidently carrying the wrong one.
+   */
+  it('reports both when a relative death is also stated', () => {
+    const t =
+      'He was preceded in death by his wife Ruth, who passed away on March 2, 1998. He died January 4, 2024.';
+    expect(datesNear(t, ['passed away', 'died'])).toEqual(['March 2, 1998', 'January 4, 2024']);
+  });
+
+  it('does not report the same date twice when two phrases reach it', () => {
+    expect(datesNear('he died and passed away on January 4, 2024', ['died', 'passed away'])).toEqual(
+      ['January 4, 2024'],
+    );
+  });
+
+  it('reports nothing when no phrase matches', () => {
+    expect(datesNear('nothing here', ['died'])).toEqual([]);
+  });
 });
 
 describe('datePair', () => {
@@ -109,6 +168,23 @@ describe('datePair', () => {
   it('is not fooled by a long run of punctuation between two dates', () => {
     const padded = `March 4, 1950 ${'. '.repeat(20)} January 2, 2024`;
     expect(datePair(padded, 'second')).toBe('');
+  });
+
+  /**
+   * A birth date at the end of a sentence must not pair with a funeral date in
+   * the next paragraph. The gap excludes letters and digits, which is not
+   * enough on its own -- a full stop and two newlines are only three
+   * characters.
+   */
+  it('does not pair across a sentence end and a paragraph break', () => {
+    expect(
+      datePair('He was born on June 19, 1957.\n\nJanuary 6, 2024 funeral services', 'second'),
+    ).toBe('');
+  });
+
+  // Pins PAIR_GAP itself: 14 characters of punctuation, just over the bound.
+  it('does not pair across a gap slightly larger than the limit', () => {
+    expect(datePair(`March 4, 1950${' -'.repeat(7)}January 2, 2024`, 'second')).toBe('');
   });
 
   it('returns nothing when there is only one date', () => {
