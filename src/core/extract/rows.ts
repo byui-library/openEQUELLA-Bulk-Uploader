@@ -3,6 +3,9 @@ import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
 import { readSection } from './sections.js';
 import { readOpening } from './opening.js';
+import { dateNear, datePair } from './dates.js';
+import { composeValue } from './compose.js';
+import { missingFilenameWords } from './names.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
 import { ATTACHMENT_COLUMN } from './types.js';
 
@@ -148,6 +151,9 @@ function sourceKind(source: Source): string {
   if ('tableColumn' in source) return 'table';
   if ('section' in source) return 'section';
   if ('opening' in source) return 'opening';
+  if ('dateNear' in source) return 'dateNear';
+  if ('datePair' in source) return 'datePair';
+  if ('compose' in source) return 'compose';
   return 'properties';
 }
 
@@ -156,6 +162,8 @@ interface Context {
   parts: Record<string, string> | null;
   labels: Map<string, string>;
   doc: DocumentData;
+  /** Alias -> finished value, from the first pass. Empty during that pass. */
+  composed: Record<string, string>;
 }
 
 /**
@@ -220,6 +228,12 @@ function resolve(source: Source, context: Context): Resolved {
       note: 'taken from the start of the document, which may not be a description -- please check',
     };
   }
+
+  if ('dateNear' in source) return { value: dateNear(context.doc.text, source.dateNear) };
+
+  if ('datePair' in source) return { value: datePair(context.doc.text, source.datePair) };
+
+  if ('compose' in source) return { value: composeValue(source.compose, context.composed) };
 
   if ('tableColumn' in source) {
     const wanted = source.tableColumn.trim().toLowerCase();
@@ -301,14 +315,43 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
     parts,
     labels: findLabels(doc.text),
     doc,
+    composed: {},
   };
 
   const cells: Record<string, string> = {};
   const sources: Record<string, string> = {};
-  for (const column of profile.columns) {
+
+  // Two passes, because a composed column reads other columns' FINISHED values
+  // -- after their transforms, not the raw text they came from. Composed
+  // columns cannot read each other; profile.ts rejects that at load, which is
+  // what makes one extra pass sufficient and a cycle impossible.
+  const isComposed = (c: Column) => c.sources.some((s) => 'compose' in s);
+
+  for (const column of profile.columns.filter((c) => !isComposed(c))) {
     const { value, source } = fill(column, context, notes);
     cells[column.path] = column.path === ATTACHMENT_COLUMN ? filename : value;
     if (source !== undefined && cells[column.path] !== '') sources[column.path] = source;
+    if (column.as !== undefined) context.composed[column.as] = cells[column.path] ?? '';
+  }
+
+  for (const column of profile.columns.filter(isComposed)) {
+    const { value, source } = fill(column, context, notes);
+    cells[column.path] = value;
+    if (source !== undefined && value !== '') sources[column.path] = source;
+  }
+
+  if (profile.checks?.filenameWordsInText) {
+    const missing = missingFilenameWords(
+      filename,
+      doc.text,
+      profile.checks.filenameWordsInText.ignore ?? [],
+    );
+    if (missing.length > 0) {
+      notes.push(
+        `the file is named '${filename}' but the document does not contain ` +
+          `${missing.map((w) => `'${w}'`).join(', ')} -- check the spelling before uploading`,
+      );
+    }
   }
 
   return { cells, sources, notes };

@@ -487,3 +487,92 @@ describe('buildRow reading the filename without its extension', () => {
     );
   });
 });
+
+describe('buildRow with templated sources', () => {
+  const doc = (text: string): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  });
+
+  const obitProfile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      {
+        path: 'MWDL/date',
+        as: 'death',
+        sources: [{ dateNear: ['passed away', 'died'] }, { datePair: 'second' }],
+        transform: 'date',
+      },
+      { path: 'MWDL/description', sources: [{ compose: 'Died {death}' }] },
+    ],
+  };
+
+  it('reads a death date from prose and normalises it', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on January 4, 2024 at home.'));
+    expect(row.cells['MWDL/date']).toBe('2024-01-04');
+    expect(row.sources['MWDL/date']).toBe('dateNear');
+  });
+
+  it('falls back to the dash pair when no phrase appears', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('Eric Scott June 19, 1957 - January 6, 2024 Utah'));
+    expect(row.cells['MWDL/date']).toBe('2024-01-06');
+    expect(row.sources['MWDL/date']).toBe('datePair');
+  });
+
+  /**
+   * The composed column must see the OTHER column's finished value, including
+   * its transform -- not the raw text it was read from.
+   */
+  it('composes from the transformed value of another column', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died January 4, 2024.'));
+    expect(row.cells['MWDL/description']).toBe('Died 2024-01-04');
+    expect(row.sources['MWDL/description']).toBe('compose');
+  });
+
+  it('composes to nothing when the column it reads is empty', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('No date is stated anywhere in this document.'));
+    expect(row.cells['MWDL/date']).toBe('');
+    expect(row.cells['MWDL/description']).toBe('');
+  });
+
+  // A composed column declared BEFORE the column it reads must still work:
+  // the passes decide the order, not the position in the list.
+  it('is not confused by column order', () => {
+    const reversed: Profile = {
+      ...obitProfile,
+      columns: [obitProfile.columns[2]!, obitProfile.columns[1]!, obitProfile.columns[0]!],
+    };
+    expect(buildRow(reversed, 'a.pdf', doc('died January 4, 2024')).cells['MWDL/description']).toBe(
+      'Died 2024-01-04',
+    );
+  });
+});
+
+describe('buildRow and the filename check', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+  const withCheck: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    checks: { filenameWordsInText: { ignore: ['Obituary'] } },
+  };
+
+  it('flags a filename word the document does not contain', () => {
+    const row = buildRow(withCheck, 'Brandon Lythoe Obituary.pdf', doc('Brandon Lythgoe passed away'));
+    expect(row.notes.join(' ')).toContain('Lythoe');
+  });
+
+  it('says nothing when every word appears', () => {
+    const row = buildRow(withCheck, 'Clyde Williams Obituary.pdf', doc('Clyde L Williams was born'));
+    expect(row.notes).toEqual([]);
+  });
+
+  it('does not run the check when the profile does not ask for it', () => {
+    const noCheck: Profile = { ...withCheck, checks: undefined };
+    expect(buildRow(noCheck, 'Brandon Lythoe.pdf', doc('Brandon Lythgoe')).notes).toEqual([]);
+  });
+});
