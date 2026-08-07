@@ -62,4 +62,29 @@ describe('composeValue', () => {
   it('ignores surrounding whitespace in a value', () => {
     expect(composeValue('Died {death}', { death: '  A  ' })).toBe('Died A');
   });
+
+  /**
+   * A placeholder inside an optional group cannot keep a clause alive on its
+   * own. Without this, a missing required value left orphaned punctuation:
+   * "Died : Rigby".
+   */
+  it('drops a clause whose required placeholder is empty, group or no group', () => {
+    expect(composeValue('Died {death}[: {place}]', { death: '', place: 'Rigby' })).toBe('');
+  });
+
+  it('keeps the clause when the required placeholder is filled and the group is not', () => {
+    expect(composeValue('Died {death}[: {place}]', { death: 'A', place: '' })).toBe('Died A');
+  });
+
+  /**
+   * A clause whose only placeholders sat inside optional groups is empty when
+   * those are, or "Born [{b}]" survives as the dangling label "Born".
+   */
+  it('drops a clause left as a bare label by a dropped group', () => {
+    expect(composeValue('Died {d}; Born [{b}]', { d: 'A', b: '' })).toBe('Died A');
+  });
+
+  it('keeps such a clause when the group is filled', () => {
+    expect(composeValue('Died {d}; Born [{b}]', { d: 'A', b: 'B' })).toBe('Died A; Born B');
+  });
 });

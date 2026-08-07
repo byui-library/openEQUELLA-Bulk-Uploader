@@ -28,16 +28,26 @@ function fillGroups(text: string, values: Readonly<Record<string, string>>): str
 }
 
 function fillClause(clause: string, values: Readonly<Record<string, string>>): string {
-  const names = [...clause.matchAll(PLACEHOLDER)].map((m) => m[1]!);
-  // A clause with no placeholders is literal text and always survives.
-  if (names.length > 0 && names.every((n) => (values[n] ?? '').trim() === '')) return '';
-  return clause.replace(PLACEHOLDER, (_, name: string) => (values[name] ?? '').trim());
+  // Judge emptiness on the REQUIRED part only -- text outside any optional
+  // group. A placeholder inside `[...]` is optional by construction and must
+  // not keep a clause alive on its own, or a missing required value leaves
+  // orphaned punctuation: `Died {death}[: {place}]` with no death produced
+  // "Died : Rigby".
+  const all = [...clause.matchAll(PLACEHOLDER)].map((m) => m[1]!);
+  const required = clause.replace(/\[[^\][]*\]/g, '');
+  const names = [...required.matchAll(PLACEHOLDER)].map((m) => m[1]!);
+  // A clause whose ONLY placeholders were inside optional groups is empty when
+  // those are empty -- otherwise `Born [{b}]` with no birth date survives as
+  // the dangling label "Born".
+  const judged = names.length > 0 ? names : all;
+  if (judged.length > 0 && judged.every((n) => (values[n] ?? '').trim() === '')) return '';
+  return fillGroups(clause, values).replace(PLACEHOLDER, (_, name: string) => (values[name] ?? '').trim());
 }
 
 export function composeValue(template: string, values: Readonly<Record<string, string>>): string {
   return template
     .split(';')
-    .map((clause) => fillClause(fillGroups(clause, values), values))
+    .map((clause) => fillClause(clause, values))
     .map((c) => c.trim())
     .filter((c) => c !== '')
     .join('; ')
