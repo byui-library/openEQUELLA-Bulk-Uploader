@@ -1,7 +1,9 @@
 import type { ColumnReport, PlanReport } from '../../ipc.js';
+import type { DuplicateChoice, DuplicateFinding } from '../../../core/duplicates.js';
 import { canContinueReview } from '../review.js';
 import { categorizeWarnings } from '../warnings.js';
 import { escapeHtml } from '../dom.js';
+import { duplicatesSection } from '../duplicates.js';
 
 export interface ReviewProps {
   /** From validate() against the ORIGINAL sheet -- see review.ts's doc
@@ -21,6 +23,9 @@ export interface ReviewProps {
   loadingColumns: boolean;
   checking: boolean;
   error: string | null;
+  duplicates: DuplicateFinding[];
+  duplicateChoices: Record<number, DuplicateChoice>;
+  onDuplicateChoice(rowNumber: number, choice: DuplicateChoice): void;
   onOverrideChange(originalHeader: string, xpath: string): void;
   onContinue(): void;
   onBack(): void;
@@ -144,6 +149,13 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
     `;
   }
 
+  // Gated on the plan too, not just on there being findings: app.ts clears
+  // `checked`/`report` whenever the manifest on disk may no longer match the
+  // screen, and findings shown against a plan already declared stale invite a
+  // decision about rows that are no longer the ones being uploaded.
+  const duplicatesSectionHtml =
+    props.checked && props.report !== null ? duplicatesSection(props.duplicates, props.duplicateChoices) : '';
+
   const canContinue = canContinueReview(props.columns, props.overrides);
   const continueLabel = props.checking
     ? 'Checking…'
@@ -165,6 +177,8 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
       </table>
 
       ${warningsSection}
+
+      ${duplicatesSectionHtml}
 
       ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
@@ -217,6 +231,15 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
   root
     .querySelector<HTMLButtonElement>('#review-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
+
+  root.querySelectorAll<HTMLInputElement>('input[name^="dup-"]').forEach((input) => {
+    input.addEventListener('change', () => {
+      props.onDuplicateChoice(
+        Number(input.name.slice('dup-'.length)),
+        input.value === 'skip' ? 'skip' : 'upload',
+      );
+    });
+  });
 }
 
 /** Minimal CSS.escape stand-in: this app has no DOM lib types pulled in for

@@ -14,6 +14,7 @@ import {
   checkAction,
   stripBomFromEnvKeys,
   extractCode,
+  browserCommand,
 } from '../src/cli/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
@@ -308,6 +309,124 @@ describe('runAction exit code', () => {
 
     const code = await runAction({ manifest: path, maxAttempts: 1 }, env());
     expect(code).toBe(1);
+  });
+});
+
+describe('planAction duplicate check', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  // client_credentials so findDuplicates' real searchByTitle call can get a
+  // token from the mock without a login flow -- matches how runAction's own
+  // tests in this file drive the mock server.
+  const mockEnv = () => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: 'secret',
+    OEQ_AUTH_MODE: 'client_credentials',
+  });
+
+  /** A one-row sheet with just enough columns for the duplicate check: a
+   *  title (what searchByTitle matches on) and the attachment filename. */
+  async function writeTitleSheet(sheetDir: string, fileName = 'clip1.mp4'): Promise<string> {
+    const sheetPath = join(sheetDir, 'batch.csv');
+    await writeFile(sheetPath, ['attachment name,MWDL/title', `${fileName},Test Clip One`].join('\n'));
+    await writeFile(join(sheetDir, fileName), 'x');
+    return sheetPath;
+  }
+
+  const plan = (
+    sheetPath: string,
+    manifestPath: string,
+    overrides: Partial<Parameters<typeof planAction>[0]> = {},
+  ) =>
+    planAction(
+      {
+        sheet: sheetPath,
+        files: dir,
+        manifest: manifestPath,
+        schemaFile: 'schema/_entity.xml',
+        state: 'draft',
+        ...overrides,
+      },
+      mockEnv(),
+    );
+
+  it('marks a near-certain duplicate row skipped in the saved manifest', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath);
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('skipped');
+  });
+
+  it('leaves the row pending when --upload-duplicates is passed', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath, { uploadDuplicates: true });
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('pending');
+  });
+
+  it('leaves the row pending for a title-only ("possible") match -- a shared title is not proof', async () => {
+    mock.state.existingItems = [
+      {
+        uuid: 'existing-1',
+        version: 1,
+        title: 'Test Clip One',
+        attachmentNames: ['some-other-file.mp4'],
+      },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath);
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('pending');
+  });
+
+  it('--skip-duplicate-check never looks, so the row stays pending even though it would have matched', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath, { skipDuplicateCheck: true });
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('pending');
+    expect(mock.state.issuedTokens).toHaveLength(0);
+  });
+
+  it('prints the flagged row', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    const logs = await captureLogs(() => plan(sheetPath, manifestPath).then(() => undefined));
+
+    const out = logs.join('\n');
+    expect(out).toContain('Row 2: clip1.mp4');
+    expect(out).toContain('near-certain');
   });
 });
 
@@ -729,5 +848,39 @@ describe('stripBomFromEnvKeys', () => {
       OEQ_CLIENT_SECRET: 'secret',
     });
     expect(Object.keys(fixed).sort()).toEqual(['OEQ_BASE_URL', 'OEQ_CLIENT_ID', 'OEQ_CLIENT_SECRET']);
+  });
+});
+
+/**
+ * `oeq-upload login` opened a URL that openEQUELLA then rejected with
+ * "No OAuth client can be found with the supplied client_id (null) and
+ * redirect_uri (null)".
+ *
+ * The cause was not, as the login command's own doc comment guessed, a cold
+ * SSO session dropping the query string. It was `cmd /c start "" <url>`:
+ * cmd.exe treats `&` as a command separator, so the authorize URL was cut at
+ * the first one and only `?response_type=code` ever reached the browser. Both
+ * parameters really were absent.
+ */
+describe('browserCommand', () => {
+  const url = 'https://content.byui.edu/oauth/authorise?response_type=code&client_id=abc&redirect_uri=https%3A%2F%2Fx';
+
+  it('does not hand a Windows shell a string it will split on &', () => {
+    const { command, args } = browserCommand('win32', url);
+    expect(command).not.toBe('cmd');
+    expect(args).toContain(url);
+  });
+
+  it('passes the whole URL as one argument on every platform', () => {
+    for (const platform of ['win32', 'darwin', 'linux']) {
+      const { args } = browserCommand(platform, url);
+      expect(args.filter((a) => a.includes('client_id=abc'))).toHaveLength(1);
+      expect(args.some((a) => a.includes('redirect_uri='))).toBe(true);
+    }
+  });
+
+  it('uses the platform opener on mac and linux', () => {
+    expect(browserCommand('darwin', url).command).toBe('open');
+    expect(browserCommand('linux', url).command).toBe('xdg-open');
   });
 });

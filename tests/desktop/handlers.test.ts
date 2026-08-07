@@ -1,11 +1,49 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   applyOverrides,
   reportColumns,
   resolveSchemaPath,
   missingCredentialsMessage,
+  registerHandlers,
 } from '../../src/desktop/handlers.js';
-import type { Sheet } from '../../src/core/types.js';
+import { saveManifest, loadManifest } from '../../src/core/state.js';
+import type { Sheet, Manifest } from '../../src/core/types.js';
+
+// registerHandlers ends up calling registerExtractHandlers, which resolves the
+// bundled schema path via `app.isPackaged` -- unmocked, 'electron' resolves to
+// nothing but a path string outside a real Electron process, so every named
+// export (app, dialog, safeStorage) comes back undefined and that read
+// throws. This is the smallest mock that lets registration complete: just
+// enough of `app` to pick the unpackaged branch, nothing else touched.
+vi.mock('electron', () => ({
+  app: { isPackaged: false },
+  dialog: {},
+  safeStorage: {},
+}));
+
+/** A stand-in for Electron's ipcMain that just records the handlers. Copied from extractHandlers.test.ts. */
+function fakeIpcMain() {
+  const handlers = new Map<string, (event: unknown, ...args: any[]) => unknown>();
+  return {
+    handle(channel: string, fn: (event: unknown, ...args: any[]) => unknown) {
+      handlers.set(channel, fn);
+    },
+    call<T>(channel: string, ...args: unknown[]): Promise<T> {
+      const fn = handlers.get(channel);
+      if (!fn) throw new Error(`no handler for ${channel}`);
+      return Promise.resolve(fn({}, ...args) as T);
+    },
+    channels: () => [...handlers.keys()],
+  };
+}
+
+/** registerHandlers' second argument: a getWindow callback. No test here needs a real window. */
+function getWindowStub(): () => null {
+  return () => null;
+}
 
 describe('applyOverrides', () => {
   const sheet: Sheet = {
@@ -167,5 +205,80 @@ describe('resolveSchemaPath', () => {
     expect(p.replace(/\\/g, '/')).toBe(
       'C:/Users/me/AppData/Local/Programs/app/resources/schema/_entity.xml',
     );
+  });
+});
+
+describe('applyDuplicateChoices', () => {
+  function manifestWithRows(rowNumbers: number[]): Manifest {
+    return {
+      version: 1,
+      createdAt: '2026-08-06T00:00:00.000Z',
+      baseUrl: 'https://example.test',
+      collectionUuid: 'c1',
+      schemaUuid: 's1',
+      itemState: 'draft',
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: rowNumbers.map((rowNumber) => ({
+        rowNumber,
+        filePath: `/f/${rowNumber}.pdf`,
+        fileName: `${rowNumber}.pdf`,
+        metadata: {},
+        status: 'pending' as const,
+        attempts: 0,
+      })),
+    };
+  }
+
+  async function manifestFile(rowNumbers: number[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-dup-'));
+    const path = join(dir, 'job.json');
+    await saveManifest(path, manifestWithRows(rowNumbers));
+    return path;
+  }
+
+  it('marks only the chosen rows skipped', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    const manifestPath = await manifestFile([2, 3]);
+
+    const marked = await ipc.call<number>('oeq:applyDuplicateChoices', {
+      manifestPath,
+      skipRows: [2],
+    });
+
+    expect(marked).toBe(1);
+    const manifest = await loadManifest(manifestPath);
+    expect(manifest.entries.find((e) => e.rowNumber === 2)?.status).toBe('skipped');
+    expect(manifest.entries.find((e) => e.rowNumber === 3)?.status).toBe('pending');
+  });
+
+  it('records why the row was skipped', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    const manifestPath = await manifestFile([2]);
+    await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [2] });
+    const manifest = await loadManifest(manifestPath);
+    expect(manifest.entries[0]?.error).toMatch(/duplicate/i);
+  });
+
+  it('marks nothing when the operator chose to skip nothing', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    const manifestPath = await manifestFile([2]);
+    expect(
+      await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [] }),
+    ).toBe(0);
+  });
+
+  // The saved manifest is what the runner reads. A change kept only in memory
+  // would be a skip the operator was shown and that then did not happen.
+  it('persists the change to disk, not just in memory', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    const manifestPath = await manifestFile([2]);
+    await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [2] });
+    const reread = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
+    expect(reread.entries[0]?.status).toBe('skipped');
   });
 });

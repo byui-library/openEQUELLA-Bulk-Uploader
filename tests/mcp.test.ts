@@ -267,6 +267,20 @@ describe('oeq_plan duplicate pre-flight', () => {
     expect(saved.collectionUuid.length).toBeGreaterThan(0);
     expect(saved.schemaUuid.length).toBeGreaterThan(0);
   });
+
+  it('reports a near-certain duplicate finding when an existing item already holds the row\'s file', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeIdentifierSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    const result = await planTool({ sheet: sheetPath, filesDir: dir, manifestPath }, mockEnv());
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('near-certain');
+    expect(textOf(result)).toContain('clip1.mp4');
+  });
 });
 
 describe('oeq_retry_failed and a live lock', () => {

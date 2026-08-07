@@ -24,10 +24,16 @@ Released as v0.1.0 and clean-machine tested by the operator.
 **Sign-in works on both instances.** Authorization-code flow, `src/core/authCode.ts`.
 Not a blocker any more; the handoff records what the fix actually was.
 
-**Active work: the metadata extractor**, on `feature/extractor-desktop` as
-**PR #3**. It builds the spreadsheet from a folder of PDFs and Word files so
-nobody types it by hand. Core and CLI are merged; the desktop screens are on
-that branch. **721 tests across 60 files**, typecheck clean.
+**The metadata extractor is finished and merged** (PR #2 and PR #3). It builds
+the spreadsheet from a folder of PDFs and Word files so nobody types it by
+hand -- core, `oeq-upload extract`, and three desktop screens.
+
+**Active work: duplicate prevention**, on `feature/duplicate-prevention`, five
+commits, not merged. The tool uploaded the same 30 files twice and said
+nothing, because its pre-flight checks a field the extractor never produces.
+The core is built and reviewed; it is **blocked on a live probe only the
+operator can run** -- see the handoff. **764 tests across 62 files**, typecheck
+clean.
 
 Description extraction is tiered — a stated field, then a named section
 (`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
@@ -87,6 +93,12 @@ easy to get wrong from first principles.
   Interactive login cannot be automated, so unattended runs require OAuth
   client credentials. The API client needs `CREATE_ITEM` on the target
   collection; `VIEW_APIDOCS` gates `/api/swagger.json`.
+- **The duplicate check matches `/xml/MWDL/title` exactly** via the search
+  API's `where` clause, not free-text `q` -- `q`'s matching semantics are
+  unconfirmed and would raise false alarms. CONFIRMED against production: the
+  clause filters, and an attachment's filename is at `attachments[].filename`.
+  A result carries NO `name` field, even with `info=basic`. `showall=true` is
+  mandatory or it cannot see this tool's own drafts.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.

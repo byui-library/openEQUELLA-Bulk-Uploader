@@ -11,6 +11,7 @@ import { loadConfig, type Config } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths, validateHeaders, suggest } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
+import { findDuplicates, type DuplicateFinding } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
 import { OAuthClientCredentials } from '../core/auth.js';
@@ -229,6 +230,12 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
   const itemState: ItemState = itemStateRaw;
   const schemaFile = args.schemaFile ?? 'schema/_entity.xml';
   const skipDuplicateCheck = args.skipDuplicateCheck ?? false;
+  // Declared outside the try so it's still in scope when the response is
+  // built below. This layer only ever reports these -- it never skips, marks
+  // or filters a row on their account. Deciding what to do about a finding
+  // belongs to whoever is uploading, the same separation that keeps file
+  // bytes out of this layer.
+  let duplicates: DuplicateFinding[] = [];
 
   try {
     const cfg = loadConfigForPlanning(env);
@@ -263,6 +270,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
           );
           const dupWarnings = await preflightDuplicates(client, manifest);
           manifest.warnings.push(...dupWarnings);
+          duplicates = await findDuplicates(client, manifest);
         } catch (err) {
           manifest.warnings.push(`Duplicate check skipped: ${errorMessage(err)}`);
         }
@@ -275,6 +283,15 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
       `State: ${manifest.itemState}`,
       ...manifest.warnings.map((w) => `warning: ${w}`),
     ];
+    // Reported, never acted on: this tool plans, validates and monitors --
+    // skipping a row is a decision for whoever uploads, made on the Review
+    // screen or equivalent, not here.
+    if (duplicates.length > 0) {
+      lines.push(`Possible duplicates: ${duplicates.length} row(s) -- see the duplicates field.`);
+      for (const d of duplicates) {
+        lines.push(`  Row ${d.rowNumber}: ${d.fileName} -- ${d.tier}: ${d.detail}`);
+      }
+    }
     return text(redactSecret(lines.join('\n'), env));
   } catch (err) {
     return text(redactSecret(errorMessage(err), env), true);
