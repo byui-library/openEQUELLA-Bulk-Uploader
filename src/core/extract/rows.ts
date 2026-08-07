@@ -375,9 +375,15 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
       profile.checks.filenameWordsInText.ignore ?? [],
     );
     if (missing.length > 0) {
+      // Says what to DO and why it matters, not just what was noticed. The
+      // filename becomes this item's name in openEQUELLA, so a misspelling
+      // here is catalogued permanently -- and the document, not the filename,
+      // is the authority on how the person's name is spelled.
       notes.push(
-        `the file is named '${filename}' but the document does not contain ` +
-          `${missing.map((w) => `'${w}'`).join(', ')} -- check the spelling before uploading`,
+        `check this filename: the document does not contain ` +
+          `${missing.map((w) => `'${w}'`).join(', ')}, so '${filename}' may be misspelled. ` +
+          `The filename becomes this item's title, so correct it before uploading if the ` +
+          `document is right.`,
       );
     }
   }

@@ -615,6 +615,22 @@ describe('buildRow and the filename check', () => {
     expect(row.notes.join(' ')).toContain('Larkspar');
   });
 
+  /**
+   * The note has to say what to DO, not just what was noticed. The operator
+   * asked for this after reading the first version, which reported the
+   * mismatch and left them to work out that the filename might be the wrong
+   * one -- and it is the filename that becomes the item's permanent title.
+   */
+  it('tells the operator to check the filename, and why it matters', () => {
+    const note = buildRow(
+      withCheck,
+      'Alden Larkspar Obituary.pdf',
+      doc('Alden Larkspur passed away'),
+    ).notes.join(' ');
+    expect(note).toMatch(/check this filename/i);
+    expect(note).toMatch(/title/i);
+  });
+
   it('says nothing when every word appears', () => {
     const row = buildRow(withCheck, 'Marcus Fennel Obituary.pdf', doc('Marcus T Fennel was born'));
     expect(row.notes).toEqual([]);
