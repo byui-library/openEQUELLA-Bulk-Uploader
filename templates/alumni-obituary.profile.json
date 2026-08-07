@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "pattern": "{first} {last} Obituary.pdf",
+  "checks": { "filenameWordsInText": { "ignore": ["Obituary"] } },
+  "columns": [
+    { "path": "attachment name", "sources": [{ "filename": true }], "locked": true },
+    { "path": "MWDL/identifier", "sources": [{ "filename": true }] },
+    { "path": "MWDL/title", "sources": [{ "join": "Alumni Obituary: {first} {last}" }] },
+    {
+      "path": "BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date",
+      "as": "death_date",
+      "sources": [
+        { "dateNear": ["passed away", "died", "returned home", "graduated this world"] },
+        { "datePair": "second" }
+      ],
+      "transform": "date"
+    },
+    { "path": "MWDL/description", "sources": [{ "compose": "Died {death_date}" }] },
+    { "path": "MWDL/genres/genre", "sources": [], "default": "Alumni Obituary" },
+    { "path": "MWDL/subjects/subject", "sources": [], "default": "History; Religion; MCK Special Collections" },
+    { "path": "MWDL/contributors/contributor", "sources": [], "default": "BYUI Alumni Office" },
+    { "path": "MWDL/conversionSpecifications", "sources": [], "default": "Scanned to PDF" },
+    { "path": "MWDL/source", "sources": [], "default": "None" },
+    { "path": "BYUI_extended/byui_rights/restrict_to_byui", "sources": [], "default": "Public" }
+  ]
+}
