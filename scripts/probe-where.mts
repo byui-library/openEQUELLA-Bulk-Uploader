@@ -16,10 +16,19 @@
 // Reads only. Creates nothing, changes nothing, deletes nothing.
 // Run against the TEST instance.
 //
-// ANSWERS (fill in after running, do not delete the questions):
-//   1.
-//   2.
-//   3.
+// ANSWERS (filled in from a probe run against content.byui.edu on 2026-08-07):
+//   1. `/xml/MWDL/title = 'VALUE'` is accepted -- GET /api/search?...&where=
+//      that clause returned a 200 with a real hit for a title known to exist.
+//   2. Yes, it genuinely filters. A title known to be ABSENT returned
+//      `available: 0` -- this is the answer that decided the whole `where`
+//      approach was viable at all, rather than the server ignoring the
+//      clause and returning everything.
+//   3. `attachments[].filename`. `description` happened to carry the same
+//      value in the observed response, so `filename ?? description` is safe.
+//   4. No `name` field comes back on a result at all, even with
+//      info=basic,attachment -- the item's title is not returned.
+//   5. Each attachment also carries an `md5`. Not used yet, but it would
+//      catch a renamed re-upload that a filename comparison would miss.
 import { loadConfig, createAuthProvider } from '../src/core/config.js';
 
 const title = process.env.OEQ_PROBE_TITLE;

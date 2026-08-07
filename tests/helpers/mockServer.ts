@@ -166,6 +166,8 @@ export interface MockState {
   }[];
   /** Identifiers that already exist, for the duplicate pre-flight. */
   existingIdentifiers: string[];
+  /** Items that already exist, for the title/attachment duplicate check. */
+  existingItems: { uuid: string; version: number; title: string; attachmentNames: string[] }[];
 }
 
 export interface MockServer {
@@ -197,6 +199,7 @@ export async function startMockServer(): Promise<MockServer> {
     uploads: [],
     items: [],
     existingIdentifiers: [],
+    existingItems: [],
   };
 
   let counter = 0;
@@ -348,6 +351,38 @@ export async function startMockServer(): Promise<MockServer> {
         // of whether the identifier is otherwise known -- modelling the
         // live server's default of excluding drafts entirely.
         const showAll = url.searchParams.get('showall') === 'true';
+        const where = url.searchParams.get('where');
+
+        if (where) {
+          // Models the shape CONFIRMED against production on 2026-08-07:
+          // an exact match on the node, and results that carry `attachments`
+          // with a `filename` but NO `name` of their own.
+          const parsed = /^\/xml\/MWDL\/title\s*=\s*'(.*)'$/s.exec(where);
+          if (!parsed) return send(res, 400, { error: `unparseable where clause: ${where}` });
+          const wanted = parsed[1]!.replace(/''/g, "'");
+
+          const hits = showAll ? state.existingItems.filter((i) => i.title === wanted) : [];
+          const withAttachments = url.searchParams.get('info')?.includes('attachment') ?? false;
+          return send(res, 200, {
+            start: 0,
+            length: hits.length,
+            available: hits.length,
+            results: hits.map((i) => ({
+              uuid: i.uuid,
+              version: i.version,
+              ...(withAttachments
+                ? {
+                    attachments: i.attachmentNames.map((filename) => ({
+                      type: 'file',
+                      filename,
+                      description: filename,
+                    })),
+                  }
+                : {}),
+            })),
+          });
+        }
+
         const q = url.searchParams.get('q') ?? '';
         const hit = showAll && state.existingIdentifiers.some((id) => q.includes(id));
         return send(res, 200, { available: hit ? 1 : 0, results: hit ? [{ uuid: 'existing' }] : [] });

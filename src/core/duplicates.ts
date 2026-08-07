@@ -61,12 +61,17 @@ export function verdictFor(
     };
   }
 
-  // The server is asked for an exact match, but whether `where` truly filters
-  // is not yet confirmed against this instance. Checking locally costs
-  // nothing and turns "the server ignored the clause" from a flood of false
-  // alarms into a clean result. Case-insensitive, because a server that
-  // matches case-insensitively is still telling the truth about a duplicate.
-  const matching = hits.filter((h) => h.name.trim().toLowerCase() === title.trim().toLowerCase());
+  // The server filters by `where`, confirmed against production: an absent
+  // title returns available: 0. This is belt-and-braces for the case where a
+  // future clause silently stops filtering, which would otherwise flag every
+  // row in a batch.
+  //
+  // A hit with no name is KEPT, not dropped. The live response carries no
+  // `name` field at all -- not even with info=basic -- so rejecting on a
+  // missing name would reject every hit and make the whole check find nothing.
+  const matching = hits.filter(
+    (h) => h.name.trim() === '' || h.name.trim().toLowerCase() === title.trim().toLowerCase(),
+  );
 
   if (matching.length === 0) return null;
 
