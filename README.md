@@ -357,6 +357,58 @@ The name is taken verbatim, including any leading number — only the last
 extension is removed, because titles in a real batch are full of dots
 (`22. Salazar_proof.v2.pdf` → `22. Salazar_proof.v2`).
 
+### The duplicate check
+
+Every row is checked against the target collection before you confirm a plan.
+The tool asks openEQUELLA for items whose title matches **exactly**, and gets
+each one's attachments back in the same response:
+
+```http
+GET /api/search?collections=<uuid>&where=/xml/MWDL/title = '<title>'
+   &info=basic,attachment&showall=true
+```
+
+| What was found | Verdict | Default |
+| --- | --- | --- |
+| same title **and** an attachment with the same filename | almost certainly a duplicate | **skip** |
+| same title, different file | possibly a duplicate | upload |
+| the row has no title | could not be checked | upload |
+| the request failed | could not be checked | upload |
+
+**Only the first defaults to skipping.** Two items can legitimately share a
+title — two students, one recital name — and silently dropping a real item is
+worse than a visible duplicate: you can see and delete a duplicate, but you
+cannot notice an item that never arrived.
+
+In the desktop app, Review lists every flagged row with **Skip** / **Upload
+anyway** and shows what the existing item already holds. Your choices are
+applied to the manifest immediately before the run. A skipped row is recorded
+as `skipped` with a reason and counted on the Results screen.
+
+On the CLI, near-certain rows are skipped automatically:
+
+```bash
+oeq-upload plan --sheet s.csv --files ./files --manifest job.json
+oeq-upload plan ... --upload-duplicates      # check, report, skip nothing
+oeq-upload plan ... --skip-duplicate-check   # do not check at all
+```
+
+**Confirmed against the live instance**, not assumed: the `where` clause is
+accepted, it genuinely filters (a title known to be absent returns
+`available: 0`), and an attachment's filename is at `attachments[].filename`.
+`showall=true` is mandatory — items this tool creates are drafts, and the
+search excludes non-live items by default, so without it the check would be
+blind to exactly the duplicates it exists to catch.
+
+**Two limitations, both real:**
+
+- A re-upload whose **title was changed** will not be caught. Nothing in this
+  approach can see it. Each attachment does carry an `md5` in the search
+  response, which would catch it — that is the obvious next step, not built.
+- Escaping a title that contains an **apostrophe** is assumed, not verified.
+  `Bach's Prelude` sends `Bach''s Prelude`; the probe that would confirm it
+  used a title with no apostrophe in it.
+
 ### Where a description comes from
 
 The description is the field that is hardest to find and the one most worth
