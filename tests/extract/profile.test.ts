@@ -101,7 +101,13 @@ describe('validateAgainstSchema', () => {
 });
 
 describe('profiles using the new sources', () => {
-  const base = (columns: unknown[]) => ({ version: 1, pattern: '{a}.pdf', columns });
+  const base = (columns: unknown[]) => ({
+    version: 1,
+    pattern: '{a}.pdf',
+    // parseProfile has always required this column; a fixture without it tests
+    // that rule rather than the one each case is about.
+    columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }, ...columns],
+  });
 
   it('accepts dateNear, datePair and compose', () => {
     expect(() =>
@@ -167,7 +173,10 @@ describe('profiles using the new sources', () => {
       parseProfile({
         version: 1,
         pattern: '{a}.pdf',
-        columns: [{ path: 'MWDL/title', sources: [] }],
+        columns: [
+          { path: 'attachment name', sources: [{ filename: true }], locked: true },
+          { path: 'MWDL/title', sources: [] },
+        ],
         checks: { filenameWordsInText: { ignore: ['Obituary'] } },
       }),
     ).not.toThrow();
@@ -178,7 +187,10 @@ describe('profiles using the new sources', () => {
       parseProfile({
         version: 1,
         pattern: '{a}.pdf',
-        columns: [{ path: 'MWDL/title', sources: [] }],
+        columns: [
+          { path: 'attachment name', sources: [{ filename: true }], locked: true },
+          { path: 'MWDL/title', sources: [] },
+        ],
         checks: { somethingElse: true },
       }),
     ).toThrow();
