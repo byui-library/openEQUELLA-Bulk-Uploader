@@ -24,6 +24,9 @@ const sourceSchema = z.union([
   z.object({ opening: z.literal(true) }).strict(),
   z.object({ filenameStem: z.literal(true) }).strict(),
   z.object({ property: z.enum(PROPERTY_NAMES) }).strict(),
+  z.object({ dateNear: z.array(z.string().min(1)).min(1) }).strict(),
+  z.object({ datePair: z.union([z.literal('first'), z.literal('second')]) }).strict(),
+  z.object({ compose: z.string().min(1) }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
 ]);
 
@@ -36,6 +39,8 @@ const columnSchema = z
       .union([z.literal('date'), z.literal('people'), z.object({ date: z.string().min(1) }).strict()])
       .optional(),
     locked: z.boolean().optional(),
+    as: z.string().min(1).optional(),
+    flagIfEmpty: z.boolean().optional(),
   })
   .strict();
 
@@ -44,6 +49,12 @@ const profileSchema = z
     version: z.literal(1),
     pattern: z.string().min(1),
     columns: z.array(columnSchema).min(1),
+    checks: z
+      .object({
+        filenameWordsInText: z.object({ ignore: z.array(z.string()).optional() }).strict().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -71,11 +82,77 @@ export function parseProfile(input: unknown): Profile {
     throw new ValidationError(`Duplicate column paths: ${[...new Set(duplicates)].join(', ')}`);
   }
 
+  // Aliases must be unique, or a compose template would silently read
+  // whichever column happened to be declared last.
+  const aliases = profile.columns.map((c) => c.as).filter((a): a is string => a !== undefined);
+  const dupeAlias = aliases.find((a, i) => aliases.indexOf(a) !== i);
+  if (dupeAlias !== undefined) {
+    throw new ValidationError(`Two columns both use the name '${dupeAlias}'.`);
+  }
+
+  // A compose naming a column that does not exist would compose to nothing on
+  // every row, silently. Fail here rather than after three hundred files --
+  // the same reason a malformed date format is rejected at load.
+  const composedAliases = new Set(
+    profile.columns.filter((c) => c.sources.some((s) => 'compose' in s)).map((c) => c.as),
+  );
+  for (const column of profile.columns) {
+    for (const source of column.sources) {
+      if (!('compose' in source)) continue;
+
+      // Rejected at load rather than handled at runtime: an unbalanced or
+      // nested bracket, or a `;` inside a group, produces literal brackets in
+      // a permanent catalogue record. `composeValue` splits on `;` before it
+      // handles groups, so a `;` inside one splits the group in half.
+      let depth = 0;
+      for (const ch of source.compose) {
+        if (ch === '[') depth++;
+        else if (ch === ']') depth--;
+        else if (ch === ';' && depth > 0) {
+          throw new ValidationError(
+            `Column '${column.path}' has a ';' inside a [...] group, which would split it.`,
+          );
+        }
+        if (depth < 0 || depth > 1) {
+          throw new ValidationError(
+            `Column '${column.path}' has mismatched or nested [ ] in its template.`,
+          );
+        }
+      }
+      if (depth !== 0) {
+        throw new ValidationError(`Column '${column.path}' has an unclosed [ in its template.`);
+      }
+
+      for (const name of joinPlaceholders(source.compose)) {
+        if (!aliases.includes(name)) {
+          throw new ValidationError(
+            `Column '${column.path}' composes from '{${name}}', but no column is named '${name}'. ` +
+              `Add "as": "${name}" to the column it should read.`,
+          );
+        }
+        if (composedAliases.has(name)) {
+          throw new ValidationError(
+            `Column '${column.path}' composes from '{${name}}', which is itself composed. ` +
+              `Composed columns are filled after all others, so they cannot read each other.`,
+          );
+        }
+      }
+    }
+  }
+
   if (paths[0] !== ATTACHMENT_COLUMN) {
     const message = paths.includes(ATTACHMENT_COLUMN)
       ? `'${ATTACHMENT_COLUMN}' must be the first column.`
       : `Profile must include the '${ATTACHMENT_COLUMN}' column -- it is how each row is matched to its file.`;
     throw new ValidationError(message);
+  }
+
+  // `attachment name` is how a row is matched to its file on disk. A composed
+  // value there would name something that is not a file and break the
+  // one-file-one-item relationship the whole tool rests on.
+  const attachment = profile.columns.find((c) => c.path === ATTACHMENT_COLUMN);
+  if (attachment?.sources.some((s) => 'compose' in s)) {
+    throw new ValidationError(`The '${ATTACHMENT_COLUMN}' column cannot be composed from other columns.`);
   }
 
   // A declared date format must name each part exactly once. Catching this at

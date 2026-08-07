@@ -14,6 +14,10 @@ export interface ExtractState {
   preview: ExtractedRow[];
   /** Every valid schema xpath, for the Add-column picker. */
   schemaPaths: string[];
+  /** Templates shipped with the app, for the "start from" choice. Empty if none are bundled. */
+  templates: { id: string; label: string }[];
+  /** The selected template's id, or '' for the generic scanned starter. */
+  templateId: string;
   /** True while an IPC call is in flight. Disables the controls rather than stacking calls. */
   busy: boolean;
   error: string | null;
@@ -39,6 +43,8 @@ export function initialExtractState(): ExtractState {
     profilePath: null,
     preview: [],
     schemaPaths: [],
+    templates: [],
+    templateId: '',
     busy: false,
     error: null,
     savedPath: null,

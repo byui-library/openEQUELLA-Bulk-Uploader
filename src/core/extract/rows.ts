@@ -3,6 +3,9 @@ import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
 import { readSection } from './sections.js';
 import { readOpening } from './opening.js';
+import { datesNear, datePair } from './dates.js';
+import { composeValue } from './compose.js';
+import { missingFilenameWords } from './names.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
 import { ATTACHMENT_COLUMN } from './types.js';
 
@@ -148,6 +151,9 @@ function sourceKind(source: Source): string {
   if ('tableColumn' in source) return 'table';
   if ('section' in source) return 'section';
   if ('opening' in source) return 'opening';
+  if ('dateNear' in source) return 'dateNear';
+  if ('datePair' in source) return 'datePair';
+  if ('compose' in source) return 'compose';
   return 'properties';
 }
 
@@ -156,6 +162,8 @@ interface Context {
   parts: Record<string, string> | null;
   labels: Map<string, string>;
   doc: DocumentData;
+  /** Alias -> finished value, from the first pass. Empty during that pass. */
+  composed: Record<string, string>;
 }
 
 /**
@@ -220,6 +228,26 @@ function resolve(source: Source, context: Context): Resolved {
       note: 'taken from the start of the document, which may not be a description -- please check',
     };
   }
+
+  if ('dateNear' in source) {
+    const found = datesNear(context.doc.text, source.dateNear);
+    return {
+      value: found[0] ?? '',
+      // An obituary almost always names someone else's death -- "preceded in
+      // death by his wife Ruth, who passed away on March 2, 1998" appears in
+      // nearly every one. Nothing can reliably tell whose death a sentence
+      // describes, so the first is taken and the row says what else was there.
+      note:
+        found.length > 1
+          ? `more than one date was found near those words (${found.join(', ')}); ` +
+            `the first was used -- check it is the right one`
+          : undefined,
+    };
+  }
+
+  if ('datePair' in source) return { value: datePair(context.doc.text, source.datePair) };
+
+  if ('compose' in source) return { value: composeValue(source.compose, context.composed) };
 
   if ('tableColumn' in source) {
     const wanted = source.tableColumn.trim().toLowerCase();
@@ -301,14 +329,72 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
     parts,
     labels: findLabels(doc.text),
     doc,
+    composed: {},
   };
 
   const cells: Record<string, string> = {};
   const sources: Record<string, string> = {};
-  for (const column of profile.columns) {
+
+  // Two passes, because a composed column reads other columns' FINISHED values
+  // -- after their transforms, not the raw text they came from. Composed
+  // columns cannot read each other; profile.ts rejects that at load, which is
+  // what makes one extra pass sufficient and a cycle impossible.
+  const isComposed = (c: Column) => c.sources.some((s) => 'compose' in s);
+
+  for (const column of profile.columns.filter((c) => !isComposed(c))) {
     const { value, source } = fill(column, context, notes);
     cells[column.path] = column.path === ATTACHMENT_COLUMN ? filename : value;
     if (source !== undefined && cells[column.path] !== '') sources[column.path] = source;
+    if (column.as !== undefined) context.composed[column.as] = cells[column.path] ?? '';
+  }
+
+  for (const column of profile.columns.filter(isComposed)) {
+    const { value, source } = fill(column, context, notes);
+    // The same override as the first pass. profile.ts rejects a composed
+    // attachment column, but the two passes applying different rules is how
+    // that got through review at all -- a row naming something that is not a
+    // file breaks the one-file-one-item relationship the whole tool rests on.
+    cells[column.path] = column.path === ATTACHMENT_COLUMN ? filename : value;
+    if (source !== undefined && value !== '') sources[column.path] = source;
+  }
+
+  // For a templated collection there is usually one field the template exists
+  // to find. Brandon Lythoe -- the one obituary of ten with no date at all --
+  // was flagged only because his filename happened to be misspelled too;
+  // correct the filename and the batch's single genuine failure looked clean.
+  for (const column of profile.columns) {
+    if (column.flagIfEmpty && (cells[column.path] ?? '') === '') {
+      // Says what to do, and that a blank may be the RIGHT answer. Brandon
+      // Lythoe's obituary states no date anywhere -- only "the early hours of
+      // Saturday morning" -- so leaving his blank is correct, not a failure to
+      // fix. A note that only reported the absence invited someone to invent a
+      // value, which is the failure this whole tool is built to avoid. The
+      // xpath stays so it is obvious which column to edit.
+      notes.push(
+        `nothing could be found for '${column.path}', which this template expects. ` +
+          `Fill that cell in by hand, or leave it blank if the document genuinely does not say.`,
+      );
+    }
+  }
+
+  if (profile.checks?.filenameWordsInText) {
+    const missing = missingFilenameWords(
+      filename,
+      doc.text,
+      profile.checks.filenameWordsInText.ignore ?? [],
+    );
+    if (missing.length > 0) {
+      // Says what to DO and why it matters, not just what was noticed. The
+      // filename becomes this item's name in openEQUELLA, so a misspelling
+      // here is catalogued permanently -- and the document, not the filename,
+      // is the authority on how the person's name is spelled.
+      notes.push(
+        `check this filename: the document does not contain ` +
+          `${missing.map((w) => `'${w}'`).join(', ')}, so '${filename}' may be misspelled. ` +
+          `The filename becomes this item's title, so correct it before uploading if the ` +
+          `document is right.`,
+      );
+    }
   }
 
   return { cells, sources, notes };

@@ -487,3 +487,169 @@ describe('buildRow reading the filename without its extension', () => {
     );
   });
 });
+
+describe('buildRow with templated sources', () => {
+  const doc = (text: string): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  });
+
+  const obitProfile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      {
+        path: 'MWDL/date',
+        as: 'death',
+        sources: [{ dateNear: ['passed away', 'died'] }, { datePair: 'second' }],
+        transform: 'date',
+      },
+      { path: 'MWDL/description', sources: [{ compose: 'Died {death}' }] },
+    ],
+  };
+
+  it('reads a death date from prose and normalises it', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on January 4, 2024 at home.'));
+    expect(row.cells['MWDL/date']).toBe('2024-01-04');
+    expect(row.sources['MWDL/date']).toBe('dateNear');
+  });
+
+  it('falls back to the dash pair when no phrase appears', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('Eric Scott June 19, 1957 - January 6, 2024 Utah'));
+    expect(row.cells['MWDL/date']).toBe('2024-01-06');
+    expect(row.sources['MWDL/date']).toBe('datePair');
+  });
+
+  /**
+   * The composed column must see the OTHER column's finished value, including
+   * its transform -- not the raw text it was read from.
+   */
+  it('composes from the transformed value of another column', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died January 4, 2024.'));
+    expect(row.cells['MWDL/description']).toBe('Died 2024-01-04');
+    expect(row.sources['MWDL/description']).toBe('compose');
+  });
+
+  it('composes to nothing when the column it reads is empty', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('No date is stated anywhere in this document.'));
+    expect(row.cells['MWDL/date']).toBe('');
+    expect(row.cells['MWDL/description']).toBe('');
+  });
+
+  /**
+   * An obituary almost always names a relative's death too. The first date is
+   * taken, but the row must say so -- a silently wrong death date in a
+   * permanent record is the worst thing this feature can produce.
+   */
+  it('flags a row where the phrases found more than one date', () => {
+    const row = buildRow(
+      obitProfile,
+      'a.pdf',
+      doc('Preceded in death by his wife Ruth, who passed away on March 2, 1998. He died January 4, 2024.'),
+    );
+    expect(row.cells['MWDL/date']).toBe('1998-03-02');
+    expect(row.notes.join(' ')).toMatch(/more than one date/);
+    expect(row.notes.join(' ')).toContain('January 4, 2024');
+  });
+
+  it('does not flag a row where only one date was found', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died January 4, 2024.'));
+    expect(row.notes).toEqual([]);
+  });
+
+  // A composed column declared BEFORE the column it reads must still work:
+  // the passes decide the order, not the position in the list.
+  it('is not confused by column order', () => {
+    const reversed: Profile = {
+      ...obitProfile,
+      columns: [obitProfile.columns[2]!, obitProfile.columns[1]!, obitProfile.columns[0]!],
+    };
+    expect(buildRow(reversed, 'a.pdf', doc('died January 4, 2024')).cells['MWDL/description']).toBe(
+      'Died 2024-01-04',
+    );
+  });
+});
+
+describe('buildRow and flagIfEmpty', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+  const profile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/date', sources: [{ dateNear: ['died'] }], flagIfEmpty: true },
+    ],
+  };
+
+  it('flags the row when the column it had to find is empty', () => {
+    expect(buildRow(profile, 'a.pdf', doc('no date here')).notes.join(' ')).toContain('MWDL/date');
+  });
+
+  /**
+   * A note that only reports the absence invites someone to invent a value.
+   * One real obituary states no date anywhere -- "the early hours of Saturday
+   * morning" -- so a blank there is the CORRECT answer, and the note has to
+   * say so or it reads as a defect to be fixed.
+   */
+  it('says a blank may be the right answer, not only that the cell is empty', () => {
+    const note = buildRow(profile, 'a.pdf', doc('no date here')).notes.join(' ');
+    expect(note).toMatch(/by hand/i);
+    expect(note).toMatch(/leave it blank/i);
+  });
+
+  it('says nothing when the column was filled', () => {
+    expect(buildRow(profile, 'a.pdf', doc('He died January 4, 2024')).notes).toEqual([]);
+  });
+
+  it('does not flag a column that did not ask to be flagged', () => {
+    const quiet: Profile = {
+      ...profile,
+      columns: [profile.columns[0]!, { ...profile.columns[1]!, flagIfEmpty: undefined }],
+    };
+    expect(buildRow(quiet, 'a.pdf', doc('no date here')).notes).toEqual([]);
+  });
+});
+
+describe('buildRow and the filename check', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+  const withCheck: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    checks: { filenameWordsInText: { ignore: ['Obituary'] } },
+  };
+
+  it('flags a filename word the document does not contain', () => {
+    const row = buildRow(withCheck, 'Brandon Lythoe Obituary.pdf', doc('Brandon Lythgoe passed away'));
+    expect(row.notes.join(' ')).toContain('Lythoe');
+  });
+
+  /**
+   * The note has to say what to DO, not just what was noticed. The operator
+   * asked for this after reading the first version, which reported the
+   * mismatch and left them to work out that the filename might be the wrong
+   * one -- and it is the filename that becomes the item's permanent title.
+   */
+  it('tells the operator to check the filename, and why it matters', () => {
+    const note = buildRow(
+      withCheck,
+      'Brandon Lythoe Obituary.pdf',
+      doc('Brandon Lythgoe passed away'),
+    ).notes.join(' ');
+    expect(note).toMatch(/check this filename/i);
+    expect(note).toMatch(/title/i);
+  });
+
+  it('says nothing when every word appears', () => {
+    const row = buildRow(withCheck, 'Clyde Williams Obituary.pdf', doc('Clyde L Williams was born'));
+    expect(row.notes).toEqual([]);
+  });
+
+  it('does not run the check when the profile does not ask for it', () => {
+    const noCheck: Profile = { ...withCheck, checks: undefined };
+    expect(buildRow(noCheck, 'Brandon Lythoe.pdf', doc('Brandon Lythgoe')).notes).toEqual([]);
+  });
+});

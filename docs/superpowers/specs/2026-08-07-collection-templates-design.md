@@ -131,7 +131,7 @@ Two rules for the template itself:
 `Died {death_date}[: {residence}]; Born {birth_date}` with no residence yields
 `Died January 9, 2024; Born April 3, 1935`.
 
-### `"checks": { "filenameWordsInText": true }`
+### `"checks": { "filenameWordsInText": { "ignore": ["Obituary"] } }`
 
 Flags a row when a word from the filename does not appear in the document.
 Measured on the batch:

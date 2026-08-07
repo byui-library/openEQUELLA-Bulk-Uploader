@@ -41,7 +41,10 @@ export function renderExtract(
         busy: state.busy,
         error: state.error,
         canContinue: canContinue(state),
+        templates: state.templates,
+        templateId: state.templateId,
         onChooseFolder: () => void controller.chooseFolder(),
+        onTemplateChange: (id) => void controller.setTemplate(id),
         onContinue: () => void controller.continue(),
         onCancel: () => controller.exit(),
       });

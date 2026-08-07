@@ -31,6 +31,10 @@ export function describeSource(source: Source): string {
   if ('tableColumn' in source) return `Table column: ${source.tableColumn}`;
   if ('section' in source) return `Section: ${source.section}`;
   if ('opening' in source) return 'The start of the document (a guess -- always flagged)';
+  if ('dateNear' in source) return `A date after: ${source.dateNear.join(', ')}`;
+  if ('datePair' in source)
+    return source.datePair === 'first' ? 'The first of a pair of dates' : 'The second of a pair of dates';
+  if ('compose' in source) return `Built from other columns: ${source.compose}`;
   return `Document property: ${source.property}`;
 }
 
