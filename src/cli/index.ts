@@ -209,17 +209,32 @@ export async function retryAction(o: RetryCliOptions): Promise<void> {
 
 /** `start`/`open`/`xdg-open` as appropriate, best-effort. Never throws --
  *  headless/SSH use must still work, with the URL printed either way. */
+/**
+ * How to open a URL in the operator's browser, per platform.
+ *
+ * Windows does NOT go through `cmd /c start`. It used to, and cmd.exe treats
+ * `&` as a command separator -- so the authorize URL, which carries
+ * `&client_id=` and `&redirect_uri=`, was cut at the first one. Only
+ * `?response_type=code` reached the browser, and openEQUELLA answered
+ * "No OAuth client can be found with the supplied client_id (null) and
+ * redirect_uri (null)". The login command's own instructions blamed a cold SSO
+ * session for that message; the real cause was here, and no amount of signing
+ * in first would have helped.
+ *
+ * `rundll32 url.dll,FileProtocolHandler` is a plain executable, so the URL is
+ * passed as one argument with no shell parsing it at all.
+ *
+ * Exported for tests: the bug was invisible except by reading the argv.
+ */
+export function browserCommand(platform: string, url: string): { command: string; args: string[] } {
+  if (platform === 'win32') return { command: 'rundll32', args: ['url.dll,FileProtocolHandler', url] };
+  if (platform === 'darwin') return { command: 'open', args: [url] };
+  return { command: 'xdg-open', args: [url] };
+}
+
 function defaultOpenBrowser(url: string): void {
-  if (process.platform === 'win32') {
-    // `start` is a cmd.exe builtin, not an executable -- must go through
-    // `cmd /c`. The empty '' argument is the window title `start` expects
-    // as its first argument when the next one could be mistaken for it.
-    spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true }).unref();
-  } else if (process.platform === 'darwin') {
-    spawn('open', [url], { stdio: 'ignore', detached: true }).unref();
-  } else {
-    spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref();
-  }
+  const { command, args } = browserCommand(process.platform, url);
+  spawn(command, args, { stdio: 'ignore', detached: true }).unref();
 }
 
 async function defaultPromptForCode(): Promise<string> {
