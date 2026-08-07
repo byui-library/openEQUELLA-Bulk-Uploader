@@ -72,6 +72,16 @@ describe('parseProfile', () => {
     expect(() => parseProfile({ ...GOOD, columns })).toThrow(/MM 2 times/);
   });
 
+  it('refuses to compose the attachment column, which names the file on disk', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{a}.pdf',
+        columns: [{ path: 'attachment name', sources: [{ compose: 'x' }], locked: true }],
+      }),
+    ).toThrow(/attachment name/);
+  });
+
   it('accepts a column with no sources and no default -- an empty column', () => {
     const columns = [GOOD.columns[0]!, { path: 'MWDL/description', sources: [] }];
     expect(parseProfile({ ...GOOD, columns }).columns).toHaveLength(2);
@@ -97,6 +107,127 @@ describe('validateAgainstSchema', () => {
     expect(validateAgainstSchema(parseProfile(GOOD), new Set())).toEqual([
       { path: 'MWDL/title', suggestions: [] },
     ]);
+  });
+});
+
+describe('profiles using the new sources', () => {
+  const base = (columns: unknown[]) => ({
+    version: 1,
+    pattern: '{a}.pdf',
+    // parseProfile has always required this column; a fixture without it tests
+    // that rule rather than the one each case is about.
+    columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }, ...columns],
+  });
+
+  it('accepts dateNear, datePair and compose', () => {
+    expect(() =>
+      parseProfile(
+        base([
+          { path: 'MWDL/date', as: 'death', sources: [{ dateNear: ['died'] }, { datePair: 'second' }] },
+          { path: 'MWDL/description', sources: [{ compose: 'Died {death}' }] },
+        ]),
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects an empty phrase list, which would match nothing', () => {
+    expect(() => parseProfile(base([{ path: 'MWDL/date', sources: [{ dateNear: [] }] }]))).toThrow();
+  });
+
+  it('rejects a datePair that is neither first nor second', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', sources: [{ datePair: 'third' }] }])),
+    ).toThrow();
+  });
+
+  /**
+   * A template naming a column that does not exist would silently compose to
+   * nothing on every row. Rejecting it at load matches how a malformed date
+   * format is handled: fail before the batch, not part-way through.
+   */
+  it('rejects a compose naming a column that does not exist', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/description', sources: [{ compose: 'Died {nope}' }] }])),
+    ).toThrow(/nope/);
+  });
+
+  /**
+   * Composed columns are filled in a second pass from the first pass's values,
+   * so one cannot read another. Forbidding it outright makes a cycle
+   * impossible by construction rather than by detection.
+   */
+  it('rejects a compose naming another composed column', () => {
+    expect(() =>
+      parseProfile(
+        base([
+          { path: 'MWDL/abstract', as: 'a', sources: [{ compose: 'x' }] },
+          { path: 'MWDL/description', sources: [{ compose: '{a}' }] },
+        ]),
+      ),
+    ).toThrow();
+  });
+
+  it('rejects two columns claiming the same alias', () => {
+    expect(() =>
+      parseProfile(
+        base([
+          { path: 'MWDL/date', as: 'd', sources: [] },
+          { path: 'MWDL/abstract', as: 'd', sources: [] },
+        ]),
+      ),
+    ).toThrow(/Two columns both use/);
+  });
+
+  /**
+   * composeValue splits on ';' and handles [...] separately, so an unbalanced,
+   * nested, or semicolon-split group leaks literal brackets into a permanent
+   * catalogue record. Rejected at load, the same place a malformed date
+   * format is rejected: fail before the batch, not part-way through.
+   */
+  it('rejects an unclosed optional group', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', as: 'd', sources: [] }, { path: 'MWDL/description', sources: [{ compose: 'Died {d}[: x' }] }])),
+    ).toThrow(/unclosed/);
+  });
+
+  it('rejects nested optional groups', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', as: 'd', sources: [] }, { path: 'MWDL/description', sources: [{ compose: 'X[ a[ {d}] c]' }] }])),
+    ).toThrow(/nested/);
+  });
+
+  it('rejects a semicolon inside an optional group, which would split it', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/date', as: 'd', sources: [] }, { path: 'MWDL/description', sources: [{ compose: '[Born {d}; Died {d}]' }] }])),
+    ).toThrow(/;/);
+  });
+
+  it('accepts the filenameWordsInText check', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{a}.pdf',
+        columns: [
+          { path: 'attachment name', sources: [{ filename: true }], locked: true },
+          { path: 'MWDL/title', sources: [] },
+        ],
+        checks: { filenameWordsInText: { ignore: ['Obituary'] } },
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects an unknown check rather than ignoring it', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{a}.pdf',
+        columns: [
+          { path: 'attachment name', sources: [{ filename: true }], locked: true },
+          { path: 'MWDL/title', sources: [] },
+        ],
+        checks: { somethingElse: true },
+      }),
+    ).toThrow();
   });
 });
 

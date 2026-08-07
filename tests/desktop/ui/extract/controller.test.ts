@@ -16,6 +16,8 @@ function api(over: Record<string, unknown> = {}) {
     extractPreview: vi.fn(async () => []),
     extractRun: vi.fn(async () => ({ outPath: 'C:/files/out.csv', written: 1, flagged: 0 })),
     schemaPaths: vi.fn(async () => ['MWDL/title']),
+    listTemplates: vi.fn(async () => []),
+    loadTemplate: vi.fn(async () => profile),
     openProfile: vi.fn(async () => null),
     saveProfileAs: vi.fn(async () => null),
     chooseCsvPath: vi.fn(async () => 'C:/files/out.csv'),
@@ -114,6 +116,72 @@ describe('createExtractController', () => {
     const c = createExtractController({ api: api() as never, onExit: vi.fn(), render });
     await c.chooseFolder();
     expect(render).toHaveBeenCalled();
+  });
+});
+
+/** Flushes the microtask queue so the fire-and-forget listTemplates().then(...) in the controller has run. */
+const flush = () => Promise.resolve().then(() => Promise.resolve());
+
+describe('templates', () => {
+  it('lists templates when the flow starts, without waiting for a folder to be chosen', async () => {
+    const a = api({
+      listTemplates: vi.fn(async () => [{ id: 'alumni-obituary', label: 'Alumni Obituary' }]),
+    });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await flush();
+    expect(a.listTemplates).toHaveBeenCalled();
+    expect(c.state().templates).toEqual([{ id: 'alumni-obituary', label: 'Alumni Obituary' }]);
+  });
+
+  it('offers no templates, rather than breaking the flow, when listing them fails', async () => {
+    const a = api({
+      listTemplates: vi.fn(async () => {
+        throw new Error('ENOENT: no templates directory');
+      }),
+    });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await flush();
+    expect(c.state().templates).toEqual([]);
+    expect(c.state().error).toBeNull();
+  });
+
+  it('loads the chosen template as the working profile', async () => {
+    const templateProfile: Profile = {
+      version: 1,
+      pattern: '{a}.pdf',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/title', sources: [{ placeholder: 'a' }] },
+      ],
+    };
+    const a = api({ loadTemplate: vi.fn(async () => templateProfile) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.setTemplate('alumni-obituary');
+    expect(a.loadTemplate).toHaveBeenCalledWith('alumni-obituary');
+    expect(c.state().profile).toEqual(templateProfile);
+    expect(c.state().templateId).toBe('alumni-obituary');
+  });
+
+  it('returns to the scanned starter, unchanged, when the generic option is chosen again', async () => {
+    const templateProfile: Profile = {
+      version: 1,
+      pattern: '{a}.pdf',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/title', sources: [{ placeholder: 'a' }] },
+      ],
+    };
+    const a = api({ loadTemplate: vi.fn(async () => templateProfile) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    const starter = c.state().profile;
+    await c.setTemplate('alumni-obituary');
+    expect(c.state().profile).toEqual(templateProfile);
+    await c.setTemplate('');
+    expect(c.state().profile).toEqual(starter);
+    expect(c.state().templateId).toBe('');
+    expect(a.loadTemplate).toHaveBeenCalledTimes(1);
   });
 });
 

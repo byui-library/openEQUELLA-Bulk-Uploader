@@ -44,17 +44,18 @@ describe('extract handlers', () => {
 
   it('registers every extract channel', () => {
     const ipc = fakeIpcMain();
-    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
     expect(ipc.channels()).toEqual(
       expect.arrayContaining([
         'oeq:extractScan', 'oeq:extractPreview', 'oeq:extractRun', 'oeq:schemaPaths',
+        'oeq:listTemplates', 'oeq:loadTemplate',
       ]),
     );
   });
 
   it('scan reports supported files, skipped files and the labels it found', async () => {
     const ipc = fakeIpcMain();
-    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
     const scan = await ipc.call<{ supported: string[]; skipped: { file: string }[]; labels: string[] }>(
       'oeq:extractScan', await folder(),
     );
@@ -70,7 +71,7 @@ describe('extract handlers', () => {
    */
   it('scan proposes an abstract as the description, and the preview fills it', async () => {
     const ipc = fakeIpcMain();
-    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
     const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-'));
     await writeFile(
       join(dir, 'Article.pdf'),
@@ -93,7 +94,7 @@ describe('extract handlers', () => {
 
   it('preview returns rows without writing anything', async () => {
     const ipc = fakeIpcMain();
-    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
     const dir = await folder();
     const rows = await ipc.call<{ cells: Record<string, string> }[]>('oeq:extractPreview', { dir, profile });
     expect(rows).toHaveLength(1);
@@ -102,7 +103,7 @@ describe('extract handlers', () => {
 
   it('preview caps how many rows it builds', async () => {
     const ipc = fakeIpcMain();
-    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
     const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-'));
     for (let i = 0; i < 9; i++) await writeFile(join(dir, `f${i}.pdf`), makePdf({ text: 'x' }));
     const rows = await ipc.call<unknown[]>('oeq:extractPreview', { dir, profile });
@@ -111,7 +112,7 @@ describe('extract handlers', () => {
 
   it('run writes the file and reports what needs review', async () => {
     const ipc = fakeIpcMain();
-    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
     const dir = await folder();
     const outPath = join(dir, 'out.csv');
     const report = await ipc.call<{ written: number; flagged: number; outPath: string }>(
@@ -125,7 +126,7 @@ describe('extract handlers', () => {
 
   it('schemaPaths returns the real schema leaf paths', async () => {
     const ipc = fakeIpcMain();
-    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml' });
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
     const paths = await ipc.call<string[]>('oeq:schemaPaths');
     expect(paths).toContain('MWDL/title');
     expect(paths.length).toBeGreaterThan(100);

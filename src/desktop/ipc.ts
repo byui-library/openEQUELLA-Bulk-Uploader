@@ -129,6 +129,10 @@ export interface OeqApi {
   extractRun(args: { dir: string; profile: Profile; outPath: string }): Promise<ExtractRunReport>;
   /** Every valid schema xpath, for the Add-column picker. */
   schemaPaths(): Promise<string[]>;
+  /** Templates shipped with the app, for the "start from" choice. */
+  listTemplates(): Promise<{ id: string; label: string }[]>;
+  /** A shipped template, validated, ready to use as the starting profile. */
+  loadTemplate(id: string): Promise<Profile>;
   /** Open a profile the operator picks. Null if cancelled. */
   openProfile(): Promise<{ path: string; profile: Profile } | null>;
   /** Save a profile where the operator picks. Returns the path, or null if cancelled. */
@@ -200,6 +204,8 @@ export const CHANNELS = {
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',
   schemaPaths: 'oeq:schemaPaths',
+  listTemplates: 'oeq:listTemplates',
+  loadTemplate: 'oeq:loadTemplate',
   openProfile: 'oeq:openProfile',
   saveProfileAs: 'oeq:saveProfileAs',
   chooseCsvPath: 'oeq:chooseCsvPath',

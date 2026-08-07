@@ -134,6 +134,13 @@ extraResources:
   # resolveResourcePath's packaged branch expects.
   - from: resources/template
     to: template
+  # Collection templates -- the profile JSONs the Extract flow's "Start from"
+  # choice offers (extractHandlers.ts's templatesDir, resolved by the same
+  # resolveResourcePath split as the two entries above). Without this the
+  # chooser is EMPTY in a packaged build and full in development, which is the
+  # kind of difference nobody notices until an installer is in someone's hands.
+  - from: templates
+    to: templates
 win:
   target:
     - portable
