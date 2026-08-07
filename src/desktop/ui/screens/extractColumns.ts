@@ -3,7 +3,7 @@ import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
 import { describeSource, sourceOptions, type SourceEvidence } from '../extract/sources.js';
 import { plainLabel } from '../extract/picker.js';
-import type { ExtractedRow, Profile, Source } from '../../../core/extract/types.js';
+import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
 
 export interface ExtractColumnsProps {
   profile: Profile;
@@ -114,7 +114,38 @@ function previewTable(props: ExtractColumnsProps): string {
     <h3>Preview &mdash; first ${props.preview.length} file(s)
       ${flagged > 0 ? `<span class="warn-inline">${flagged} need review</span>` : ''}
     </h3>
-    <div class="preview-scroll"><table class="preview"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    <div class="preview-scroll"><table class="preview"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+    ${previewNotes(props.preview)}`;
+}
+
+/**
+ * The flagged rows, named, with their reasons.
+ *
+ * The heading above reports a COUNT, which told the operator that something
+ * needed review without saying which row or why -- they had to save the
+ * spreadsheet and open it in Excel to find out. A flag nobody can read at the
+ * moment of decision is not much better than no flag.
+ *
+ * Exported so it can be tested: this project has no DOM environment, so the
+ * pure markup is asserted as a string, as `ui/duplicates.ts` already does.
+ */
+export function previewNotes(preview: readonly ExtractedRow[]): string {
+  const flagged = preview.filter((r) => r.notes.length > 0);
+  if (flagged.length === 0) return '';
+
+  const items = flagged
+    .map((r) => {
+      const name = r.cells[ATTACHMENT_COLUMN] ?? '';
+      const notes = r.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join('');
+      return `<li><strong>${escapeHtml(name)}</strong><ul>${notes}</ul></li>`;
+    })
+    .join('');
+
+  return `
+    <div class="preview-notes">
+      <h4>Needs review</h4>
+      <ul>${items}</ul>
+    </div>`;
 }
 
 /**
