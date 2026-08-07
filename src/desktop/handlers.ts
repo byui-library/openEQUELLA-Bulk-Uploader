@@ -469,5 +469,6 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   // and so the schema path is resolved once, here, where packaging is known.
   registerExtractHandlers(ipcMain, {
     schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
+    templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
   });
 }

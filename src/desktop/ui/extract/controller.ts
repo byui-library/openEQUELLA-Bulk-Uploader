@@ -24,6 +24,7 @@ export interface ExtractController {
   moveColumn(path: string, delta: number): Promise<void>;
   setSource(path: string, source: Source | null): Promise<void>;
   setDefault(path: string, value: string): Promise<void>;
+  setTemplate(id: string): Promise<void>;
   openProfile(): Promise<void>;
   saveProfile(): Promise<void>;
   save(): Promise<void>;
@@ -41,6 +42,17 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     state = { ...state, ...patch };
     options.render(state);
   };
+
+  // Fetched once, when the flow starts, rather than lazily when the folder
+  // screen first draws -- the "start from" select needs the list ready by
+  // the time the operator has picked a folder. A rejection (e.g. no
+  // templates directory bundled, or a packaged build that doesn't ship one)
+  // must not stop a generic extraction, so it is swallowed here rather than
+  // surfaced through `guard`: no templates offered is just the empty list.
+  void options.api.listTemplates().then(
+    (templates) => set({ templates }),
+    () => {},
+  );
 
   /**
    * Every IPC call goes through here. Electron wraps errors crossing IPC as
@@ -146,6 +158,17 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     },
     async setDefault(path, value) {
       await edit((p) => setDefault(p, path, value))();
+    },
+
+    async setTemplate(id) {
+      if (id === '') {
+        // Generic: back to whatever the scan proposed, exactly as it was --
+        // not a fresh re-scan, which could reorder or re-guess columns the
+        // operator has not touched yet.
+        set({ templateId: id, profile: state.scan?.starter ?? state.profile });
+        return;
+      }
+      await guard(async () => ({ templateId: id, profile: await options.api.loadTemplate(id) }));
     },
 
     async openProfile() {
