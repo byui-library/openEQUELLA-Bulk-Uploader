@@ -4,10 +4,10 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **877 passing across 68 files**.
+1. `npm install && npm test` — expect **912 passing across 69 files**.
 2. **PR #3 is merged.** The metadata extractor, all of it, is on `main`.
-3. `feature/collection-templates` is complete and verified against real data;
-   it needs merging. Nothing is blocked.
+3. **PR #5 needs merging** — `feature/collection-templates`, complete, reviewed,
+   and driven in the app by the operator. Nothing is blocked.
 
 Do NOT build an installer yet. The operator asked that packaging wait.
 
@@ -71,13 +71,38 @@ by the operator. Merged to `main` as PR #1.
 **What is on `main`:** the CLI, the MCP server, the desktop GUI, the whole
 metadata extractor (PR #2 and PR #3), and duplicate prevention (PR #4).
 
-**What is not merged:** `feature/collection-templates` — complete, verified
-against real data, and ready. Described immediately below.
+**What is not merged:** `feature/collection-templates` — PR #5, complete,
+reviewed, and driven in the app by the operator. Described immediately below.
 
-## Collection templates: built and verified (2026-08-07)
+## Collection templates: built, reviewed, verified — PR #5 awaiting merge
 
-**On `feature/collection-templates`, not merged.** A batch of ten alumni
-obituaries the generic extractor could say almost nothing about.
+**On `feature/collection-templates`, 19 commits, PR #5 open and MERGEABLE.**
+The operator drove it in the app on 2026-08-07 and confirmed the chooser, the
+template load and the preview all work. A batch of ten alumni obituaries the
+generic extractor could say almost nothing about.
+
+**912 tests across 69 files**, typecheck clean, desktop builds.
+
+### What the operator found by using it
+
+Two things no test caught, both about the moment of decision rather than the
+logic:
+
+1. **The preview reported a count and nothing else** — "1 need review" — so the
+   note text reached them only in the saved CSV's `_notes` column. This whole
+   feature rests on being flagged rather than silent, and the flag was
+   invisible on the screen where the batch is judged. There is now a "Needs
+   review" panel naming each flagged row and its reasons.
+2. **Both notes stated an observation and gave no guidance.** They now say what
+   to do and why. The empty-field note in particular says *"or leave it blank
+   if the document genuinely does not say"* — because one obituary really does
+   not state a date, so a blank there is CORRECT, and a note that only reported
+   the absence invited someone to invent a value. That is the failure this tool
+   exists to avoid, and it would have been a bad one to introduce in the very
+   mechanism meant to prevent it.
+
+Both messages have tests pinning the GUIDANCE, not the wording, so they cannot
+regress to merely stating what was noticed.
 
 **A template is a profile JSON**, in `templates/`, offered on the Extract flow
 as "Start from: Generic / Alumni Obituary". Supporting a new collection is
@@ -125,6 +150,42 @@ records — *"Died November 9, 1993: Afton, Idaho, heart attack; Born August 20,
 
 **OCR happens outside this tool**, decided the same day. See the
 description-extraction design for why.
+
+### What a final review caught, and why it is worth reading
+
+The review executed the shipped modules rather than reading them, and found
+five ways a **wrong death date** could reach a permanent record. Read these
+before extending the date logic:
+
+- **`died` is a substring of `studied`** — in an ALUMNI collection, where
+  "studied at Ricks College" is near-certain. A raw substring search read a
+  man's MARRIAGE date as his date of death. Matches now need word boundaries.
+- **A relative's death won.** *"preceded in death by his wife Ruth, who passed
+  away on March 2, 1998"* appears in nearly every obituary. Nothing can
+  reliably tell whose death a sentence describes, so `datesNear` returns every
+  candidate and the row is flagged. **Caveat: none of the ten real files
+  triggers this**, so it is verified by unit test only — do not read "no
+  multi-date flags" on a future batch as proof the guard works.
+- **A birth date paired with a funeral date** across a full stop and two
+  newlines — the same failure the module already memorialises for Dean Ritchie,
+  by another route. The pair gap now excludes sentence and line terminators.
+- **`January 11 12345` yielded the year 1234**, which normalises cleanly and
+  would never have been flagged.
+- **The attachment column could be composed**, producing a row naming something
+  that is not a file — the one-file-one-item relationship the tool rests on.
+  Rejected at load, and both fill passes now apply the same override.
+
+It also found that the design's promise to flag an empty death date **was never
+implemented**: Brandon Lythoe was flagged only because his filename happened to
+be misspelled too, so correcting that filename would have made the batch's one
+genuine failure look clean. Columns now declare `flagIfEmpty`.
+
+### A process note for whoever runs subagents next
+
+Do not instruct `git commit --amend` while another agent is committing to the
+same branch. That was done once here, tripped a security warning, and could
+have lost work — the history survived, but only by luck of timing. Run agents
+on one branch sequentially, or give each its own worktree.
 
 ## Duplicate prevention: built, connected, and verified against real data
 
@@ -271,7 +332,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            877 tests, 68 files
+npm test            912 tests, 69 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/

@@ -28,12 +28,10 @@ Not a blocker any more; the handoff records what the fix actually was.
 the spreadsheet from a folder of PDFs and Word files so nobody types it by
 hand -- core, `oeq-upload extract`, and three desktop screens.
 
-**Active work: duplicate prevention**, on `feature/duplicate-prevention`, five
-commits, not merged. The tool uploaded the same 30 files twice and said
-nothing, because its pre-flight checks a field the extractor never produces.
-The core is built and reviewed; it is **blocked on a live probe only the
-operator can run** -- see the handoff. **764 tests across 62 files**, typecheck
-clean.
+**Active work: collection templates**, on `feature/collection-templates` as
+**PR #5**, reviewed and driven in the app, awaiting merge. A template is a
+profile JSON in `templates/`; supporting a new collection is configuration,
+never code. **912 tests across 69 files**, typecheck clean.
 
 Description extraction is tiered — a stated field, then a named section
 (`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
