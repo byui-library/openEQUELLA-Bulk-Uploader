@@ -588,6 +588,18 @@ describe('buildRow and flagIfEmpty', () => {
     expect(buildRow(profile, 'a.pdf', doc('no date here')).notes.join(' ')).toContain('MWDL/date');
   });
 
+  /**
+   * A note that only reports the absence invites someone to invent a value.
+   * One real obituary states no date anywhere -- "the early hours of Saturday
+   * morning" -- so a blank there is the CORRECT answer, and the note has to
+   * say so or it reads as a defect to be fixed.
+   */
+  it('says a blank may be the right answer, not only that the cell is empty', () => {
+    const note = buildRow(profile, 'a.pdf', doc('no date here')).notes.join(' ');
+    expect(note).toMatch(/by hand/i);
+    expect(note).toMatch(/leave it blank/i);
+  });
+
   it('says nothing when the column was filled', () => {
     expect(buildRow(profile, 'a.pdf', doc('He died January 4, 2024')).notes).toEqual([]);
   });

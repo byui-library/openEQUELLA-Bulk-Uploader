@@ -364,7 +364,16 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   // correct the filename and the batch's single genuine failure looked clean.
   for (const column of profile.columns) {
     if (column.flagIfEmpty && (cells[column.path] ?? '') === '') {
-      notes.push(`nothing could be found for '${column.path}'`);
+      // Says what to do, and that a blank may be the RIGHT answer. Brandon
+      // Lythoe's obituary states no date anywhere -- only "the early hours of
+      // Saturday morning" -- so leaving his blank is correct, not a failure to
+      // fix. A note that only reported the absence invited someone to invent a
+      // value, which is the failure this whole tool is built to avoid. The
+      // xpath stays so it is obvious which column to edit.
+      notes.push(
+        `nothing could be found for '${column.path}', which this template expects. ` +
+          `Fill that cell in by hand, or leave it blank if the document genuinely does not say.`,
+      );
     }
   }
 
