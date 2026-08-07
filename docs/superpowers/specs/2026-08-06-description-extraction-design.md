@@ -159,6 +159,48 @@ Two things were learned in the building that the design did not anticipate:
 - Whether an AI-written description should be marked as such in the item itself,
   not only in `_source`
 
+## Scanned documents: OCR happens outside this tool
+
+**Decided 2026-08-07. Not a gap to be filled later — a boundary.**
+
+A batch of ten alumni obituaries arrived as PDFs with **no text layer at all**:
+
+```text
+0 chars  textLayer=false  Brandon Lythoe Obituary.pdf
+0 chars  textLayer=false  Clyde Williams Obituary.pdf
+…all ten identical
+```
+
+They are scans of newspaper clippings — the existing catalogue records say so
+in `MWDL/conversionSpecifications`: "Scanned to PDF". Every tier above needs
+text, so all four produce nothing, and the extractor correctly flags each row
+"no text layer -- nothing could be read from inside this file".
+
+Building OCR in was considered and **rejected**:
+
+- Rendering a PDF page to an image needs a canvas, which in Node is a native
+  dependency. This app ships pure JavaScript today, which is why packaging is
+  simple and the installer has no prerequisites.
+- 1990s newsprint is close to worst-case for OCR — low contrast, halftone
+  screening, tight columns, skew. Bundled Tesseract would produce wrong digits
+  in exactly the fields that matter, dates and names.
+- Acrobat, ABBYY and `ocrmypdf` already do this better, and OCRing the files
+  makes them full-text searchable in openEQUELLA, which is worth doing for its
+  own sake regardless of this tool.
+
+**So: OCR the folder first, then point the uploader at it.** A PDF with a text
+layer is an ordinary input and needs no special handling.
+
+One thing OCR alone will NOT solve. The target description in these records is
+a synthesis, not a quotation:
+
+> Died November 9, 1993: Afton, Idaho, heart attack; Born August 20, 1933;
+> Attended Ricks College; Obituary also appeared in the Post Register 11/11/1993
+
+No section-finding produces that from a clipping, however clean the text. It is
+specific facts pulled out and rewritten in a house style — a tier 4 case, and a
+good one, because the output is well defined and highly repetitive.
+
 ## Out of scope
 
 Subjects and keywords. Raised and explicitly deferred by the operator.
