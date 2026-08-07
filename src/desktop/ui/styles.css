@@ -480,6 +480,21 @@ table.preview th, table.preview td { padding: 0.25rem 0.5rem; border: 1px solid 
 table.preview th { background: var(--panel-bg); text-align: left; }
 table.preview .blank { color: var(--muted); font-style: italic; }
 
+/* Named rows and reasons, beneath the preview's "N need review" count -- a
+   count alone told the operator that something was wrong without saying what,
+   so they had to save the spreadsheet and open it in Excel to find out. Uses
+   the same --pending-* pair as .warn-inline, which already means "needs a
+   human" everywhere else in this UI. */
+.preview-notes {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--pending-text);
+  background: var(--pending-bg);
+}
+.preview-notes h4 { margin: 0 0 0.25rem; font-size: 0.9rem; }
+.preview-notes ul { margin: 0; padding-left: 1.1rem; }
+.preview-notes li { font-size: 0.85rem; }
+
 /* Warnings carry text as well as colour -- never colour alone. */
 .warn-inline {
   color: var(--pending-text); background: var(--pending-bg);
