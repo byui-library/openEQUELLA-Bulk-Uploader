@@ -116,6 +116,20 @@ export interface CollectionSummary {
   name: string;
 }
 
+/** One item already in the collection, as the duplicate check needs to see it. */
+export interface SearchHit {
+  uuid: string;
+  version: number;
+  /**
+   * The item's title. CONFIRMED empty in practice: the live search returns no
+   * `name` field, even with info=basic. Kept because the verdict rules use it
+   * as a belt-and-braces check when it IS present.
+   */
+  name: string;
+  /** Filenames of this item's attachments. Empty if it has none. */
+  attachmentNames: string[];
+}
+
 /**
  * `CollectionBean.name` (swagger.json) is typed only as `I18NString`, which
  * is itself documented as a bare `{ type: "object" }` -- no shape at all, the
@@ -440,6 +454,58 @@ export class OeqClient {
     const res = await this.request(url);
     const body = (await res.json()) as { available: number };
     return body.available > 0;
+  }
+
+  /**
+   * Items in the collection whose title is EXACTLY `title`.
+   *
+   * CONFIRMED against production on 2026-08-07: the `where` clause works with
+   * this syntax and genuinely filters -- a title known to be absent returned
+   * `available: 0`, while one known to be present returned exactly one hit.
+   *
+   * Uses `where` rather than free-text `q`. `identifierExists` uses `q` and its
+   * own comment concedes the phrase-quoting behaviour is unconfirmed: a `q`
+   * search for "Senior Recital" may match anything containing "senior" or
+   * "recital". False alarms are not harmless -- they train the operator to
+   * click past the warning, which is worse than no check. `where` also makes
+   * this viable against a collection of 100,000+ items, where reading
+   * everything is not an option.
+   *
+   * `showall=true` is mandatory -- see identifierExists' note; every item this
+   * tool creates is a draft, and the default excludes them.
+   *
+   * `info=basic,attachment` brings each hit's attachments back in the same
+   * response, so comparing filenames costs no extra requests. The `basic` part
+   * is asked for because `info` REPLACES the default rather than adding to it;
+   * it does not in fact yield a `name`, but asking costs nothing and stops the
+   * omission looking deliberate.
+   */
+  async searchByTitle(collectionUuid: string, title: string, limit = 50): Promise<SearchHit[]> {
+    const clause = `/xml/MWDL/title = '${escapeWhereValue(title)}'`;
+    const url =
+      `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
+      `&where=${encodeURIComponent(clause)}` +
+      `&info=${encodeURIComponent('basic,attachment')}&showall=true&length=${limit}`;
+    const res = await this.request(url);
+    const body = (await res.json()) as {
+      results?: {
+        uuid?: string;
+        version?: number;
+        name?: string;
+        attachments?: { filename?: string; description?: string }[];
+      }[];
+    };
+    return (body.results ?? []).map((r) => ({
+      uuid: r.uuid ?? '',
+      version: r.version ?? 1,
+      name: r.name ?? '',
+      // `filename` is where production puts it; `description` carried the same
+      // value in the observed response, so it is a harmless fallback rather
+      // than a guess between two candidates.
+      attachmentNames: (r.attachments ?? [])
+        .map((a) => a.filename ?? a.description ?? '')
+        .filter((n) => n !== ''),
+    }));
   }
 
   /**

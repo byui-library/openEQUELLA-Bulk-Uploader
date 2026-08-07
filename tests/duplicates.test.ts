@@ -78,6 +78,15 @@ describe('verdictFor', () => {
       'near-certain',
     );
   });
+
+  /**
+   * The live search returns no `name` field at all. Dropping nameless hits
+   * would make the entire duplicate check silently find nothing.
+   */
+  it('keeps a hit that carries no title of its own', () => {
+    const v = verdictFor('Smith_Jane.pdf', 'Senior Recital', [hit('', ['Smith_Jane.pdf'])]);
+    expect(v?.tier).toBe('near-certain');
+  });
 });
 
 describe('defaultChoice', () => {
