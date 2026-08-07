@@ -24,6 +24,9 @@ const sourceSchema = z.union([
   z.object({ opening: z.literal(true) }).strict(),
   z.object({ filenameStem: z.literal(true) }).strict(),
   z.object({ property: z.enum(PROPERTY_NAMES) }).strict(),
+  z.object({ dateNear: z.array(z.string().min(1)).min(1) }).strict(),
+  z.object({ datePair: z.union([z.literal('first'), z.literal('second')]) }).strict(),
+  z.object({ compose: z.string().min(1) }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
 ]);
 
@@ -36,6 +39,7 @@ const columnSchema = z
       .union([z.literal('date'), z.literal('people'), z.object({ date: z.string().min(1) }).strict()])
       .optional(),
     locked: z.boolean().optional(),
+    as: z.string().min(1).optional(),
   })
   .strict();
 
@@ -44,6 +48,12 @@ const profileSchema = z
     version: z.literal(1),
     pattern: z.string().min(1),
     columns: z.array(columnSchema).min(1),
+    checks: z
+      .object({
+        filenameWordsInText: z.object({ ignore: z.array(z.string()).optional() }).strict().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -69,6 +79,40 @@ export function parseProfile(input: unknown): Profile {
   const duplicates = paths.filter((p, i) => paths.indexOf(p) !== i);
   if (duplicates.length > 0) {
     throw new ValidationError(`Duplicate column paths: ${[...new Set(duplicates)].join(', ')}`);
+  }
+
+  // Aliases must be unique, or a compose template would silently read
+  // whichever column happened to be declared last.
+  const aliases = profile.columns.map((c) => c.as).filter((a): a is string => a !== undefined);
+  const dupeAlias = aliases.find((a, i) => aliases.indexOf(a) !== i);
+  if (dupeAlias !== undefined) {
+    throw new ValidationError(`Two columns both use the name '${dupeAlias}'.`);
+  }
+
+  // A compose naming a column that does not exist would compose to nothing on
+  // every row, silently. Fail here rather than after three hundred files --
+  // the same reason a malformed date format is rejected at load.
+  const composedAliases = new Set(
+    profile.columns.filter((c) => c.sources.some((s) => 'compose' in s)).map((c) => c.as),
+  );
+  for (const column of profile.columns) {
+    for (const source of column.sources) {
+      if (!('compose' in source)) continue;
+      for (const name of joinPlaceholders(source.compose)) {
+        if (!aliases.includes(name)) {
+          throw new ValidationError(
+            `Column '${column.path}' composes from '{${name}}', but no column is named '${name}'. ` +
+              `Add "as": "${name}" to the column it should read.`,
+          );
+        }
+        if (composedAliases.has(name)) {
+          throw new ValidationError(
+            `Column '${column.path}' composes from '{${name}}', which is itself composed. ` +
+              `Composed columns are filled after all others, so they cannot read each other.`,
+          );
+        }
+      }
+    }
   }
 
   if (paths[0] !== ATTACHMENT_COLUMN) {
