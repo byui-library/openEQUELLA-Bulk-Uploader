@@ -158,11 +158,22 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
   const duplicateRows = props.duplicates
     .map((d) => {
       const choice = props.duplicateChoices[d.rowNumber] ?? defaultChoice(d.tier);
+      // `d.tier` crosses IPC, so an unrecognised value would make the lookup
+      // undefined and escapeHtml throw mid-render -- a blank window with
+      // nothing in the terminal.
+      const label = TIER_LABEL[d.tier] ?? 'Possibly already uploaded';
+      // The hint tells the operator to check for themselves, which they cannot
+      // do without being told what the matched item already holds.
+      const held = d.existing.flatMap((e) => e.attachmentNames).slice(0, 3);
+      const heldLine =
+        held.length > 0
+          ? `<br><small>Existing item holds: ${held.map(escapeHtml).join(', ')}</small>`
+          : '';
       return `
       <tr>
         <td>${d.rowNumber}</td>
         <td>${escapeHtml(d.fileName)}</td>
-        <td>${escapeHtml(TIER_LABEL[d.tier])}<br><small>${escapeHtml(d.detail)}</small></td>
+        <td>${escapeHtml(label)}<br><small>${escapeHtml(d.detail)}</small>${heldLine}</td>
         <td>
           <label><input type="radio" name="dup-${d.rowNumber}" value="skip"
             ${choice === 'skip' ? 'checked' : ''}> Skip</label>
@@ -173,8 +184,12 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
     })
     .join('');
 
+  // Gated on the plan too, not just on there being findings: app.ts clears
+  // `checked`/`report` whenever the manifest on disk may no longer match the
+  // screen, and findings shown against a plan already declared stale invite a
+  // decision about rows that are no longer the ones being uploaded.
   const duplicatesSection =
-    props.duplicates.length > 0
+    props.checked && props.report !== null && props.duplicates.length > 0
       ? `
       <fieldset>
         <legend>Possible duplicates (${props.duplicates.length})</legend>
@@ -268,7 +283,10 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
 
   root.querySelectorAll<HTMLInputElement>('input[name^="dup-"]').forEach((input) => {
     input.addEventListener('change', () => {
-      props.onDuplicateChoice(Number(input.name.slice('dup-'.length)), input.value as DuplicateChoice);
+      props.onDuplicateChoice(
+        Number(input.name.slice('dup-'.length)),
+        input.value === 'skip' ? 'skip' : 'upload',
+      );
     });
   });
 }
