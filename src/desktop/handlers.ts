@@ -8,6 +8,7 @@ import { buildAuth, buildClient, buildConfig, instanceById } from './session.js'
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths, validateHeaders, isAnnotationHeader } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
+import { findDuplicates } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
 import { signInInteractive } from './signin.js';
@@ -367,6 +368,15 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       // manifest at plan time so the reviewer sees them before confirming.
       manifest.warnings.push(...(await preflightDuplicates(client, manifest)));
 
+      // One search per pending row. Advisory: nothing is skipped here, the
+      // operator decides on the Review screen and the choices are applied by
+      // the applyDuplicateChoices channel just before the run.
+      //
+      // A failure for one row becomes a `could-not-check` finding rather than
+      // an exception, so an unreachable server cannot block a plan that is
+      // otherwise ready -- and cannot be mistaken for a clean result either.
+      const duplicates = await findDuplicates(client, manifest);
+
       const manifestPath = join(userData(), 'job.json');
       await saveManifest(manifestPath, manifest);
 
@@ -381,12 +391,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         columns: reportColumns(sheet.headers, paths),
         invalidHeaders: invalid,
         warnings: manifest.warnings,
-        // Always empty until `client.searchByTitle` exists (plan Task 4), which
-        // is gated on the live probe in scripts/probe-where.mts (Task 1). Then
-        // this becomes `await findDuplicates(client, manifest)`. The field is in
-        // the contract already so the Review screen could be built against it --
-        // which means none of that screen has yet run against a real finding.
-        duplicates: [],
+        duplicates,
       };
     },
   );
