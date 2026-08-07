@@ -108,6 +108,14 @@ export interface Column {
    * cannot silently break one.
    */
   as?: string;
+  /**
+   * Flag the row when this column comes out empty.
+   *
+   * For a templated collection there is usually one field the template exists
+   * to find. Without this, the batch's one genuine failure is indistinguishable
+   * from a row nobody expected anything from.
+   */
+  flagIfEmpty?: boolean;
 }
 
 export interface Profile {

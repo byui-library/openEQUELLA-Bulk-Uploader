@@ -3,7 +3,7 @@ import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
 import { readSection } from './sections.js';
 import { readOpening } from './opening.js';
-import { dateNear, datePair } from './dates.js';
+import { datesNear, datePair } from './dates.js';
 import { composeValue } from './compose.js';
 import { missingFilenameWords } from './names.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
@@ -229,7 +229,21 @@ function resolve(source: Source, context: Context): Resolved {
     };
   }
 
-  if ('dateNear' in source) return { value: dateNear(context.doc.text, source.dateNear) };
+  if ('dateNear' in source) {
+    const found = datesNear(context.doc.text, source.dateNear);
+    return {
+      value: found[0] ?? '',
+      // An obituary almost always names someone else's death -- "preceded in
+      // death by his wife Ruth, who passed away on March 2, 1998" appears in
+      // nearly every one. Nothing can reliably tell whose death a sentence
+      // describes, so the first is taken and the row says what else was there.
+      note:
+        found.length > 1
+          ? `more than one date was found near those words (${found.join(', ')}); ` +
+            `the first was used -- check it is the right one`
+          : undefined,
+    };
+  }
 
   if ('datePair' in source) return { value: datePair(context.doc.text, source.datePair) };
 
@@ -336,8 +350,22 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
 
   for (const column of profile.columns.filter(isComposed)) {
     const { value, source } = fill(column, context, notes);
-    cells[column.path] = value;
+    // The same override as the first pass. profile.ts rejects a composed
+    // attachment column, but the two passes applying different rules is how
+    // that got through review at all -- a row naming something that is not a
+    // file breaks the one-file-one-item relationship the whole tool rests on.
+    cells[column.path] = column.path === ATTACHMENT_COLUMN ? filename : value;
     if (source !== undefined && value !== '') sources[column.path] = source;
+  }
+
+  // For a templated collection there is usually one field the template exists
+  // to find. Brandon Lythoe -- the one obituary of ten with no date at all --
+  // was flagged only because his filename happened to be misspelled too;
+  // correct the filename and the batch's single genuine failure looked clean.
+  for (const column of profile.columns) {
+    if (column.flagIfEmpty && (cells[column.path] ?? '') === '') {
+      notes.push(`nothing could be found for '${column.path}'`);
+    }
   }
 
   if (profile.checks?.filenameWordsInText) {

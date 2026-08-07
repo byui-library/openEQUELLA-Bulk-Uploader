@@ -539,6 +539,27 @@ describe('buildRow with templated sources', () => {
     expect(row.cells['MWDL/description']).toBe('');
   });
 
+  /**
+   * An obituary almost always names a relative's death too. The first date is
+   * taken, but the row must say so -- a silently wrong death date in a
+   * permanent record is the worst thing this feature can produce.
+   */
+  it('flags a row where the phrases found more than one date', () => {
+    const row = buildRow(
+      obitProfile,
+      'a.pdf',
+      doc('Preceded in death by his wife Ruth, who passed away on March 2, 1998. He died January 4, 2024.'),
+    );
+    expect(row.cells['MWDL/date']).toBe('1998-03-02');
+    expect(row.notes.join(' ')).toMatch(/more than one date/);
+    expect(row.notes.join(' ')).toContain('January 4, 2024');
+  });
+
+  it('does not flag a row where only one date was found', () => {
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died January 4, 2024.'));
+    expect(row.notes).toEqual([]);
+  });
+
   // A composed column declared BEFORE the column it reads must still work:
   // the passes decide the order, not the position in the list.
   it('is not confused by column order', () => {
@@ -549,6 +570,34 @@ describe('buildRow with templated sources', () => {
     expect(buildRow(reversed, 'a.pdf', doc('died January 4, 2024')).cells['MWDL/description']).toBe(
       'Died 2024-01-04',
     );
+  });
+});
+
+describe('buildRow and flagIfEmpty', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+  const profile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/date', sources: [{ dateNear: ['died'] }], flagIfEmpty: true },
+    ],
+  };
+
+  it('flags the row when the column it had to find is empty', () => {
+    expect(buildRow(profile, 'a.pdf', doc('no date here')).notes.join(' ')).toContain('MWDL/date');
+  });
+
+  it('says nothing when the column was filled', () => {
+    expect(buildRow(profile, 'a.pdf', doc('He died January 4, 2024')).notes).toEqual([]);
+  });
+
+  it('does not flag a column that did not ask to be flagged', () => {
+    const quiet: Profile = {
+      ...profile,
+      columns: [profile.columns[0]!, { ...profile.columns[1]!, flagIfEmpty: undefined }],
+    };
+    expect(buildRow(quiet, 'a.pdf', doc('no date here')).notes).toEqual([]);
   });
 });
 
