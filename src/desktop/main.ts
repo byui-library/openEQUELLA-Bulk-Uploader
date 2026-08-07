@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { registerHandlers } from './handlers.js';
@@ -102,7 +102,7 @@ void app.whenReady().then(() => {
   // Registered once, globally -- ipcMain.handle throws on a second
   // registration for the same channel, and createWindow() can run again
   // later (see 'activate' below), so this must not live inside it.
-  registerHandlers(() => mainWindow);
+  registerHandlers(ipcMain, () => mainWindow);
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

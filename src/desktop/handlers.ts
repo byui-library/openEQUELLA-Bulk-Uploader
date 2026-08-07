@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, safeStorage, type BrowserWindow } from 'electron';
+import { app, dialog, safeStorage, type BrowserWindow, type IpcMain } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, readdir, copyFile } from 'node:fs/promises';
@@ -7,7 +7,7 @@ import { SecretStore, EncryptedTokenStore } from './secrets.js';
 import { buildAuth, buildClient, buildConfig, instanceById } from './session.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths, validateHeaders, isAnnotationHeader } from '../core/schema.js';
-import { buildManifest, preflightDuplicates } from '../core/plan.js';
+import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
 import { signInInteractive } from './signin.js';
@@ -197,7 +197,13 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
   }));
 }
 
-export function registerHandlers(getWindow: () => BrowserWindow | null): void {
+/**
+ * `ipcMain` is taken as a parameter (mirroring registerExtractHandlers)
+ * rather than imported and used directly, so tests can register against a
+ * fake and exercise a handler without booting Electron -- see
+ * tests/desktop/handlers.test.ts's `applyDuplicateChoices` suite.
+ */
+export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(
     CHANNELS.hasSettings,
     async (_e, instanceId: Parameters<OeqApi['hasSettings']>[0]) => {
@@ -375,7 +381,30 @@ export function registerHandlers(getWindow: () => BrowserWindow | null): void {
         columns: reportColumns(sheet.headers, paths),
         invalidHeaders: invalid,
         warnings: manifest.warnings,
+        // Always empty for now: finding duplicates needs a client method that
+        // does not exist yet (it depends on a live probe of the search API).
+        // The field is in the contract so the Review screen can be built and
+        // tested against it meanwhile.
+        duplicates: [],
       };
+    },
+  );
+
+  ipcMain.handle(
+    CHANNELS.applyDuplicateChoices,
+    async (_e, args: { manifestPath: string; skipRows: number[] }): Promise<number> => {
+      // Applied to the SAVED manifest just before the run, because these are
+      // the operator's choices, made after seeing the plan. The runner reads
+      // this file, and `skipped` is already one of its terminal statuses, so
+      // nothing in the runner needs to know this happened.
+      const manifest = await loadManifest(args.manifestPath);
+      const marked = markSkipped(
+        manifest,
+        args.skipRows,
+        'skipped as a duplicate of an existing item',
+      );
+      await saveManifest(args.manifestPath, manifest);
+      return marked;
     },
   );
 
