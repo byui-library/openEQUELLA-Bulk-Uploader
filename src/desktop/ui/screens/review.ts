@@ -1,7 +1,15 @@
 import type { ColumnReport, PlanReport } from '../../ipc.js';
+import { defaultChoice, type DuplicateChoice, type DuplicateFinding, type DuplicateTier } from '../../../core/duplicates.js';
 import { canContinueReview } from '../review.js';
 import { categorizeWarnings } from '../warnings.js';
 import { escapeHtml } from '../dom.js';
+
+const TIER_LABEL: Record<DuplicateTier, string> = {
+  'near-certain': 'Almost certainly already uploaded',
+  possible: 'Possibly already uploaded',
+  'not-checkable': 'Could not be checked',
+  'could-not-check': 'Could not be checked',
+};
 
 export interface ReviewProps {
   /** From validate() against the ORIGINAL sheet -- see review.ts's doc
@@ -21,6 +29,9 @@ export interface ReviewProps {
   loadingColumns: boolean;
   checking: boolean;
   error: string | null;
+  duplicates: DuplicateFinding[];
+  duplicateChoices: Record<number, DuplicateChoice>;
+  onDuplicateChoice(rowNumber: number, choice: DuplicateChoice): void;
   onOverrideChange(originalHeader: string, xpath: string): void;
   onContinue(): void;
   onBack(): void;
@@ -144,6 +155,41 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
     `;
   }
 
+  const duplicateRows = props.duplicates
+    .map((d) => {
+      const choice = props.duplicateChoices[d.rowNumber] ?? defaultChoice(d.tier);
+      return `
+      <tr>
+        <td>${d.rowNumber}</td>
+        <td>${escapeHtml(d.fileName)}</td>
+        <td>${escapeHtml(TIER_LABEL[d.tier])}<br><small>${escapeHtml(d.detail)}</small></td>
+        <td>
+          <label><input type="radio" name="dup-${d.rowNumber}" value="skip"
+            ${choice === 'skip' ? 'checked' : ''}> Skip</label>
+          <label><input type="radio" name="dup-${d.rowNumber}" value="upload"
+            ${choice === 'upload' ? 'checked' : ''}> Upload anyway</label>
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  const duplicatesSection =
+    props.duplicates.length > 0
+      ? `
+      <fieldset>
+        <legend>Possible duplicates (${props.duplicates.length})</legend>
+        <p class="hint">
+          Rows that look like they have been uploaded to this collection before.
+          Only the almost-certain ones are set to skip &mdash; two items can
+          share a title, so check the rest yourself.
+        </p>
+        <table class="review-table">
+          <thead><tr><th>Row</th><th>File</th><th>Why</th><th>What to do</th></tr></thead>
+          <tbody>${duplicateRows}</tbody>
+        </table>
+      </fieldset>`
+      : '';
+
   const canContinue = canContinueReview(props.columns, props.overrides);
   const continueLabel = props.checking
     ? 'Checking…'
@@ -165,6 +211,8 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
       </table>
 
       ${warningsSection}
+
+      ${duplicatesSection}
 
       ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
@@ -217,6 +265,12 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
   root
     .querySelector<HTMLButtonElement>('#review-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
+
+  root.querySelectorAll<HTMLInputElement>('input[name^="dup-"]').forEach((input) => {
+    input.addEventListener('change', () => {
+      props.onDuplicateChoice(Number(input.name.slice('dup-'.length)), input.value as DuplicateChoice);
+    });
+  });
 }
 
 /** Minimal CSS.escape stand-in: this app has no DOM lib types pulled in for

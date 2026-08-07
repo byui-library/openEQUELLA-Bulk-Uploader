@@ -12,6 +12,7 @@ import { renderConfirm } from './screens/confirm.js';
 import { renderProgress, type ProgressLogEntry } from './screens/progress.js';
 import { renderResults, type InterruptedEntry } from './screens/results.js';
 import { canContinueReview } from './review.js';
+import { defaultChoice } from '../../core/duplicates.js';
 import { clearedForNextBatch, type BatchState } from './batch.js';
 import { canUpload } from './confirm.js';
 import { collectionUrl } from './collectionUrl.js';
@@ -109,6 +110,8 @@ function initialState(): AppState {
     reviewChecked: false,
     reviewPlan: null,
     reviewError: null,
+    duplicates: [],
+    duplicateChoices: {},
     itemState: 'draft',
     typedCount: '',
     uploading: false,
@@ -209,6 +212,12 @@ function render(): void {
         loadingColumns: state.reviewLoadingColumns,
         checking: state.reviewChecking,
         error: state.reviewError,
+        duplicates: state.duplicates,
+        duplicateChoices: state.duplicateChoices,
+        onDuplicateChoice: (rowNumber, choice) => {
+          state.duplicateChoices[rowNumber] = choice;
+          render();
+        },
         onOverrideChange: handleReviewOverrideChange,
         onContinue: handleReviewContinue,
         onBack: handleReviewBack,
@@ -592,6 +601,7 @@ async function runReviewCheck(): Promise<void> {
       overrides: { ...state.reviewOverrides },
     });
     state.reviewPlan = report;
+    state.duplicates = report.duplicates;
     state.reviewChecked = true;
     state.reviewChecking = false;
     state.screen = nextScreen(state.screen, { type: 'planChecked' });
@@ -680,6 +690,7 @@ async function handleUpload(): Promise<void> {
       overrides: { ...state.reviewOverrides },
     });
     state.reviewPlan = report;
+    state.duplicates = report.duplicates;
     state.uploading = false;
     state.progress = null;
     state.progressLog = [];
@@ -688,6 +699,16 @@ async function handleUpload(): Promise<void> {
     state.resultsError = null;
     state.screen = nextScreen('confirm', { type: 'uploadStarted' });
     render();
+
+    // Applied here rather than at plan time: these are the operator's choices,
+    // made after seeing the plan. A row left alone takes its tier's default,
+    // which is why the default is computed here too rather than assumed.
+    const skipRows = state.duplicates
+      .filter((d) => (state.duplicateChoices[d.rowNumber] ?? defaultChoice(d.tier)) === 'skip')
+      .map((d) => d.rowNumber);
+    if (skipRows.length > 0) {
+      await window.oeq.applyDuplicateChoices({ manifestPath: report.manifestPath, skipRows });
+    }
 
     const runReport = await window.oeq.run({ manifestPath: report.manifestPath, instanceId: state.instanceId });
     await finishRun(report.manifestPath, runReport);
