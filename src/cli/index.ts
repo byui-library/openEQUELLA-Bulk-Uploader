@@ -9,7 +9,8 @@ import { createServer as createHttpServer } from 'node:http';
 import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
-import { buildManifest, preflightDuplicates } from '../core/plan.js';
+import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
+import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { OAuthClientCredentials } from '../core/auth.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
@@ -49,6 +50,7 @@ export interface PlanCliOptions {
   schemaFile: string;
   state: string;
   skipDuplicateCheck?: boolean;
+  uploadDuplicates?: boolean;
 }
 
 export async function planAction(o: PlanCliOptions, env: Env = process.env): Promise<void> {
@@ -68,6 +70,27 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
     const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
     const dupWarnings = await preflightDuplicates(client, manifest);
     manifest.warnings.push(...dupWarnings);
+
+    const findings = await findDuplicates(client, manifest);
+    for (const f of findings) {
+      console.log(`  Row ${f.rowNumber}: ${f.fileName} -- ${f.tier}: ${f.detail}`);
+    }
+
+    // markSkipped MUST run before saveManifest below, or the skip never
+    // reaches disk and `run` uploads the row anyway. Only 'near-certain'
+    // defaults to skip -- see defaultChoice's own doc for why a title-only
+    // match uploads instead: a duplicate can be seen and deleted, an item
+    // that silently never arrived cannot be noticed.
+    if (!o.uploadDuplicates) {
+      const toSkip = findings.filter((f) => defaultChoice(f.tier) === 'skip').map((f) => f.rowNumber);
+      const skipped = markSkipped(manifest, toSkip, 'skipped as a duplicate of an existing item');
+      if (skipped > 0) {
+        console.log(
+          `Skipped ${skipped} row(s) that look like duplicates of an existing item. Re-run ` +
+            `with --upload-duplicates to upload them anyway.`,
+        );
+      }
+    }
   }
 
   await saveManifest(o.manifest, manifest);
@@ -541,6 +564,7 @@ export function buildProgram(env: Env = process.env): Command {
     .option('--schema-file <path>', 'local schema export', 'schema/_entity.xml')
     .option('--state <state>', 'draft or published', 'draft')
     .option('--skip-duplicate-check', 'skip the pre-flight identifier duplicate check')
+    .option('--upload-duplicates', 'upload rows that look like duplicates instead of skipping them')
     .action(async (o: PlanCliOptions) => {
       await planAction(o, env);
     });

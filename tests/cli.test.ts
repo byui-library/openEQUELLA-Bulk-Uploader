@@ -312,6 +312,124 @@ describe('runAction exit code', () => {
   });
 });
 
+describe('planAction duplicate check', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  // client_credentials so findDuplicates' real searchByTitle call can get a
+  // token from the mock without a login flow -- matches how runAction's own
+  // tests in this file drive the mock server.
+  const mockEnv = () => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: 'secret',
+    OEQ_AUTH_MODE: 'client_credentials',
+  });
+
+  /** A one-row sheet with just enough columns for the duplicate check: a
+   *  title (what searchByTitle matches on) and the attachment filename. */
+  async function writeTitleSheet(sheetDir: string, fileName = 'clip1.mp4'): Promise<string> {
+    const sheetPath = join(sheetDir, 'batch.csv');
+    await writeFile(sheetPath, ['attachment name,MWDL/title', `${fileName},Test Clip One`].join('\n'));
+    await writeFile(join(sheetDir, fileName), 'x');
+    return sheetPath;
+  }
+
+  const plan = (
+    sheetPath: string,
+    manifestPath: string,
+    overrides: Partial<Parameters<typeof planAction>[0]> = {},
+  ) =>
+    planAction(
+      {
+        sheet: sheetPath,
+        files: dir,
+        manifest: manifestPath,
+        schemaFile: 'schema/_entity.xml',
+        state: 'draft',
+        ...overrides,
+      },
+      mockEnv(),
+    );
+
+  it('marks a near-certain duplicate row skipped in the saved manifest', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath);
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('skipped');
+  });
+
+  it('leaves the row pending when --upload-duplicates is passed', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath, { uploadDuplicates: true });
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('pending');
+  });
+
+  it('leaves the row pending for a title-only ("possible") match -- a shared title is not proof', async () => {
+    mock.state.existingItems = [
+      {
+        uuid: 'existing-1',
+        version: 1,
+        title: 'Test Clip One',
+        attachmentNames: ['some-other-file.mp4'],
+      },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath);
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('pending');
+  });
+
+  it('--skip-duplicate-check never looks, so the row stays pending even though it would have matched', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    await plan(sheetPath, manifestPath, { skipDuplicateCheck: true });
+
+    const saved = await loadManifest(manifestPath);
+    expect(saved.entries[0]!.status).toBe('pending');
+    expect(mock.state.issuedTokens).toHaveLength(0);
+  });
+
+  it('prints the flagged row', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeTitleSheet(dir);
+    const manifestPath = join(dir, 'job.json');
+
+    const logs = await captureLogs(() => plan(sheetPath, manifestPath).then(() => undefined));
+
+    const out = logs.join('\n');
+    expect(out).toContain('Row 2: clip1.mp4');
+    expect(out).toContain('near-certain');
+  });
+});
+
 describe('loginAction', () => {
   let mock: MockServer;
   beforeEach(async () => {
