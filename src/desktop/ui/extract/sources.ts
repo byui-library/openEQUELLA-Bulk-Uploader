@@ -35,6 +35,8 @@ export function describeSource(source: Source): string {
   if ('datePair' in source)
     return source.datePair === 'first' ? 'The first of a pair of dates' : 'The second of a pair of dates';
   if ('compose' in source) return `Built from other columns: ${source.compose}`;
+  if ('presence' in source)
+    return `"${source.presence.then}" when the document mentions: ${source.presence.any.join(', ')}`;
   return `Document property: ${source.property}`;
 }
 

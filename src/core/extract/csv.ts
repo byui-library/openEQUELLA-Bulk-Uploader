@@ -21,18 +21,19 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('extracted');
 
-  const headers = [...profile.columns.map((c) => c.path), SOURCE_COLUMN, NOTES_COLUMN];
+  // A composeOnly column exists so another column can read it, and must never
+  // reach the spreadsheet -- that is the whole reason it exists instead of an
+  // ordinary column pointed at a schema field that means something else.
+  const columns = profile.columns.filter((c) => !c.composeOnly);
+
+  const headers = [...columns.map((c) => c.path), SOURCE_COLUMN, NOTES_COLUMN];
   sheet.addRow(headers);
 
   for (const row of rows) {
     const sources = Object.entries(row.sources)
       .map(([path, kind]) => `${path}=${kind}`)
       .join('; ');
-    sheet.addRow([
-      ...profile.columns.map((c) => row.cells[c.path] ?? ''),
-      sources,
-      row.notes.join('; '),
-    ]);
+    sheet.addRow([...columns.map((c) => row.cells[c.path] ?? ''), sources, row.notes.join('; ')]);
   }
 
   // Written through a buffer so a UTF-8 byte-order mark can go in front.

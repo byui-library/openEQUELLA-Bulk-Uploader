@@ -653,3 +653,79 @@ describe('buildRow and the filename check', () => {
     expect(buildRow(noCheck, 'Brandon Lythoe.pdf', doc('Brandon Lythgoe')).notes).toEqual([]);
   });
 });
+
+describe('composeOnly columns', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+  const profile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      {
+        path: 'MWDL/coverage',
+        as: 'birth',
+        composeOnly: true,
+        sources: [{ dateNear: ['was born on'] }],
+        transform: 'date',
+      },
+      { path: 'MWDL/description', sources: [{ compose: 'Born {birth}' }] },
+    ],
+  };
+
+  it('composes from the value', () => {
+    expect(buildRow(profile, 'a.pdf', doc('She was born on March 4, 1950.')).cells['MWDL/description']).toBe(
+      'Born 1950-03-04',
+    );
+  });
+
+  /**
+   * The whole point: the schema has no birth-date field, so this value must
+   * not land in one. A column here would put a person's birth date into a
+   * field that means something else, permanently.
+   */
+  it('never appears as a cell of its own', () => {
+    const row = buildRow(profile, 'a.pdf', doc('She was born on March 4, 1950.'));
+    expect(row.cells['MWDL/coverage']).toBeUndefined();
+    expect(row.sources['MWDL/coverage']).toBeUndefined();
+  });
+
+  it('composes to nothing when it found nothing', () => {
+    expect(buildRow(profile, 'a.pdf', doc('no date at all')).cells['MWDL/description']).toBe('');
+  });
+});
+
+describe('the presence source', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+  const profile: Profile = {
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      {
+        path: 'MWDL/description',
+        sources: [{ presence: { any: ['Ricks College', "Rick's College"], then: 'Attended Ricks College' } }],
+      },
+    ],
+  };
+
+  it('emits the fixed text when a phrase appears', () => {
+    expect(buildRow(profile, 'a.pdf', doc('He attended Ricks College in Rexburg.')).cells['MWDL/description']).toBe(
+      'Attended Ricks College',
+    );
+  });
+
+  // One real obituary writes it with an apostrophe.
+  it('accepts any phrase in the list', () => {
+    expect(buildRow(profile, 'a.pdf', doc("In 1979, at Rick's College, Eric met...")).cells['MWDL/description']).toBe(
+      'Attended Ricks College',
+    );
+  });
+
+  it('ignores case', () => {
+    expect(buildRow(profile, 'a.pdf', doc('RICKS COLLEGE')).cells['MWDL/description']).toBe('Attended Ricks College');
+  });
+
+  it('emits nothing when no phrase appears', () => {
+    expect(buildRow(profile, 'a.pdf', doc('He went somewhere else entirely.')).cells['MWDL/description']).toBe('');
+  });
+});

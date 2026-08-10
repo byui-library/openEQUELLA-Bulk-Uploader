@@ -27,6 +27,9 @@ const sourceSchema = z.union([
   z.object({ dateNear: z.array(z.string().min(1)).min(1) }).strict(),
   z.object({ datePair: z.union([z.literal('first'), z.literal('second')]) }).strict(),
   z.object({ compose: z.string().min(1) }).strict(),
+  z.object({
+    presence: z.object({ any: z.array(z.string().min(1)).min(1), then: z.string().min(1) }).strict(),
+  }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
 ]);
 
@@ -41,6 +44,7 @@ const columnSchema = z
     locked: z.boolean().optional(),
     as: z.string().min(1).optional(),
     flagIfEmpty: z.boolean().optional(),
+    composeOnly: z.boolean().optional(),
   })
   .strict();
 
@@ -88,6 +92,18 @@ export function parseProfile(input: unknown): Profile {
   const dupeAlias = aliases.find((a, i) => aliases.indexOf(a) !== i);
   if (dupeAlias !== undefined) {
     throw new ValidationError(`Two columns both use the name '${dupeAlias}'.`);
+  }
+
+  // A composeOnly column is never written to the sheet, so a compose template
+  // reading it by name is the ONLY way its value can leave the extractor. With
+  // no name it is extracted on every row and then silently discarded.
+  for (const column of profile.columns) {
+    if (column.composeOnly === true && column.as === undefined) {
+      throw new ValidationError(
+        `Column '${column.path}' is composeOnly but has no "as" name, so nothing could read it. ` +
+          `Add "as": "<name>" and compose from '{<name>}', or remove "composeOnly".`,
+      );
+    }
   }
 
   // A compose naming a column that does not exist would compose to nothing on

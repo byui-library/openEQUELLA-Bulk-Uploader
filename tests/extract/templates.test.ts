@@ -45,9 +45,49 @@ describe('shipped templates', () => {
       doc('Clyde L Williams graduated this world on January 9, 2024. He was born April 3, 1935.'),
     );
     expect(row.cells[DEATH]).toBe('2024-01-09');
-    expect(row.cells['MWDL/description']).toBe('Died 2024-01-09');
+    expect(row.cells['MWDL/description']).toBe('Died 2024-01-09; Born 1935-04-03');
     expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Clyde Williams');
     expect(row.cells['MWDL/genres/genre']).toBe('Alumni Obituary');
+  });
+
+  it('adds the Ricks College connection when the document mentions it', async () => {
+    const profile = await loadTemplate('alumni-obituary');
+    const row = buildRow(
+      profile,
+      'Clyde Williams Obituary.pdf',
+      doc('Clyde L Williams died January 9, 2024. He continued his education at Ricks College.'),
+    );
+    expect(row.cells['MWDL/description']).toBe('Died 2024-01-09; Attended Ricks College');
+  });
+
+  /**
+   * The birth date and the Ricks connection are extracted so the description
+   * can read them, and must not become columns of their own: the schema has no
+   * birth-date field, so a column would write a person's birth date into one
+   * that means something else, permanently.
+   */
+  it('never writes its composeOnly columns as cells', async () => {
+    const profile = await loadTemplate('alumni-obituary');
+    const row = buildRow(
+      profile,
+      'Clyde Williams Obituary.pdf',
+      doc('He died January 9, 2024, was born April 3, 1935, and attended Ricks College.'),
+    );
+    expect(row.cells['MWDL/description']).toContain('Born 1935-04-03');
+    expect(row.cells['MWDL/coverage']).toBeUndefined();
+    expect(row.cells['MWDL/relation']).toBeUndefined();
+  });
+
+  // Each clause disappears on its own, so a partial document never yields
+  // "Died 2024-01-09; ; Attended Ricks College".
+  it('drops only the parts it could not find', async () => {
+    const profile = await loadTemplate('alumni-obituary');
+    const row = buildRow(
+      profile,
+      'Dennis Birch Obituary.pdf',
+      doc('Dennis Jack Birch January 14, 1953 January 1, 2024. He lived in Rexburg.'),
+    );
+    expect(row.cells['MWDL/description']).toBe('Died 2024-01-01; Born 1953-01-14');
   });
 
   it('leaves the date blank rather than guessing when none is stated', async () => {

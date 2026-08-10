@@ -16,7 +16,30 @@
       ],
       "transform": "date"
     },
-    { "path": "MWDL/description", "sources": [{ "compose": "Died {death_date}" }] },
+    {
+      "path": "MWDL/coverage",
+      "as": "birth_date",
+      "composeOnly": true,
+      "sources": [
+        { "dateNear": ["was born on", "was born", "born on", "Born"] },
+        { "datePair": "first" }
+      ],
+      "transform": "date"
+    },
+    {
+      "path": "MWDL/relation",
+      "as": "ricks",
+      "composeOnly": true,
+      "sources": [
+        {
+          "presence": {
+            "any": ["Ricks College", "Rick's College", "BYU-Idaho", "BYU Idaho"],
+            "then": "Attended Ricks College"
+          }
+        }
+      ]
+    },
+    { "path": "MWDL/description", "sources": [{ "compose": "Died {death_date}; Born {birth_date}; {ricks}" }] },
     { "path": "MWDL/genres/genre", "sources": [], "default": "Alumni Obituary" },
     { "path": "MWDL/subjects/subject", "sources": [], "default": "History; Religion; MCK Special Collections" },
     { "path": "MWDL/contributors/contributor", "sources": [], "default": "BYUI Alumni Office" },
