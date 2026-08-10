@@ -71,6 +71,14 @@ export type Source =
    * columns are named by their `as`, and are filled in an earlier pass.
    */
   | { compose: string }
+  /**
+   * Fixed text, emitted when any of these phrases appears in the document.
+   *
+   * Reports a fact the document evidences rather than one it states in a
+   * capturable form: an obituary mentions Ricks College a dozen ways, and none
+   * of them is a field.
+   */
+  | { presence: { any: string[]; then: string } }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
   | { filename: true };
 
@@ -116,6 +124,16 @@ export interface Column {
    * from a row nobody expected anything from.
    */
   flagIfEmpty?: boolean;
+  /**
+   * Extracted so other columns can compose from it, but never written to the
+   * spreadsheet and never uploaded.
+   *
+   * Some facts belong inside a description and nowhere else. A birth date is
+   * one: the library's records put it in the description text, and the schema
+   * has no birth-date field at all, so giving it a column would mean writing a
+   * person's birth date into a field that means something else.
+   */
+  composeOnly?: boolean;
 }
 
 export interface Profile {

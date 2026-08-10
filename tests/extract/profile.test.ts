@@ -178,6 +178,23 @@ describe('profiles using the new sources', () => {
     ).toThrow(/Two columns both use/);
   });
 
+  it('accepts a composeOnly column that has a name', () => {
+    expect(() =>
+      parseProfile(
+        base([
+          { path: 'MWDL/coverage', as: 'b', composeOnly: true, sources: [] },
+          { path: 'MWDL/description', sources: [{ compose: '{b}' }] },
+        ]),
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects a composeOnly column with no name, which nothing could read', () => {
+    expect(() =>
+      parseProfile(base([{ path: 'MWDL/coverage', composeOnly: true, sources: [] }])),
+    ).toThrow(/no "as" name/);
+  });
+
   /**
    * composeValue splits on ';' and handles [...] separately, so an unbalanced,
    * nested, or semicolon-split group leaks literal brackets into a permanent
