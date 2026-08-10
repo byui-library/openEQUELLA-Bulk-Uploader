@@ -9,7 +9,9 @@ Read this first.
 3. **PR #5 needs merging** — `feature/collection-templates`, complete, reviewed,
    and driven in the app by the operator. Nothing is blocked.
 
-Do NOT build an installer yet. The operator asked that packaging wait.
+Released as **v1.0.0** on 2026-08-07 -- the first release since v0.1.0, carrying
+the extractor, duplicate prevention, collection templates and the Windows
+sign-in fix. To cut another: bump package.json, tag `vX.Y.Z`, push the tag.
 
 Sign-in is confirmed working on **both** instances; there is no open loop there.
 

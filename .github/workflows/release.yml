@@ -90,6 +90,23 @@ jobs:
           $notes = @"
           Windows build of the openEQUELLA Bulk Uploader desktop app.
 
+          ### What this version does that v0.1.0 did not
+
+          - **Builds the spreadsheet for you.** Point it at a folder of PDFs or
+            Word files and it reads out titles, dates, authors and descriptions,
+            so nobody types them by hand. Anything it had to guess at is flagged.
+          - **Stops you uploading the same files twice.** Every row is checked
+            against the collection first. A file already there is flagged and set
+            to skip; a shared title is flagged but still uploads, because two
+            items can legitimately have the same name.
+          - **Collection templates.** Start from a template that knows how one
+            collection is written -- where its dates sit, what its genre and
+            rights always are. An Alumni Obituary template ships with it, and you
+            can make more by saving a profile: no code needed.
+          - **Sign-in works on Windows.** ``oeq-upload login`` used to fail with
+            "No OAuth client can be found"; the URL was being truncated before it
+            reached the browser.
+
           ### Which file do I want?
 
           - **Setup .exe** -- installer. Start Menu shortcut, uninstaller, and you
