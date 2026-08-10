@@ -45,9 +45,49 @@ describe('shipped templates', () => {
       doc('Marcus T Fennel graduated this world on March 5, 2019. He was born November 13, 1907.'),
     );
     expect(row.cells[DEATH]).toBe('2211-06-07');
-    expect(row.cells['MWDL/description']).toBe('Died 2211-06-07');
+    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05; Born 1907-11-13');
     expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Marcus Fennel');
     expect(row.cells['MWDL/genres/genre']).toBe('Alumni Obituary');
+  });
+
+  it('adds the Ricks College connection when the document mentions it', async () => {
+    const profile = await loadTemplate('alumni-obituary');
+    const row = buildRow(
+      profile,
+      'Marcus Fennel Obituary.pdf',
+      doc('Marcus T Fennel died June 7, 2211. He continued his education at Ricks College.'),
+    );
+    expect(row.cells['MWDL/description']).toBe('Died 2211-06-07; Attended Ricks College');
+  });
+
+  /**
+   * The birth date and the Ricks connection are extracted so the description
+   * can read them, and must not become columns of their own: the schema has no
+   * birth-date field, so a column would write a person's birth date into one
+   * that means something else, permanently.
+   */
+  it('never writes its composeOnly columns as cells', async () => {
+    const profile = await loadTemplate('alumni-obituary');
+    const row = buildRow(
+      profile,
+      'Marcus Fennel Obituary.pdf',
+      doc('He died March 5, 2019, was born November 13, 1907, and attended Ricks College.'),
+    );
+    expect(row.cells['MWDL/description']).toContain('Born 1907-11-13');
+    expect(row.cells['MWDL/coverage']).toBeUndefined();
+    expect(row.cells['MWDL/relation']).toBeUndefined();
+  });
+
+  // Each clause disappears on its own, so a partial document never yields
+  // "Died 2211-06-07; ; Attended Ricks College".
+  it('drops only the parts it could not find', async () => {
+    const profile = await loadTemplate('alumni-obituary');
+    const row = buildRow(
+      profile,
+      'Corwin Teasel Obituary.pdf',
+      doc('Corwin Ames Teasel June 26, 2143 July 9, 2211. He lived in Fernvale.'),
+    );
+    expect(row.cells['MWDL/description']).toBe('Died 2211-07-09; Born 2143-06-26');
   });
 
   it('leaves the date blank rather than guessing when none is stated', async () => {
