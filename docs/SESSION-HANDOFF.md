@@ -1,19 +1,45 @@
-# Session handoff — updated 2026-08-07
+# Session handoff — updated 2026-08-10
 
 Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **912 passing across 69 files**.
-2. **PR #3 is merged.** The metadata extractor, all of it, is on `main`.
-3. **PR #5 needs merging** — `feature/collection-templates`, complete, reviewed,
-   and driven in the app by the operator. Nothing is blocked.
+1. `npm install && npm test` — expect **925 passing across 69 files**.
+2. **Nothing is in flight.** Every PR is merged, every feature branch is
+   pruned, `main` is the only branch. There is no open loop in the code.
+3. **v1.0.0 is released and in the operator's hands**, initial testing done
+   and looking good. What remains is theirs, not the code's — see
+   "What is waiting on the operator" below.
 
 Released as **v1.0.0** on 2026-08-07 -- the first release since v0.1.0, carrying
 the extractor, duplicate prevention, collection templates and the Windows
 sign-in fix. To cut another: bump package.json, tag `vX.Y.Z`, push the tag.
 
 Sign-in is confirmed working on **both** instances; there is no open loop there.
+
+### Do not start the AI description tier
+
+The operator deferred it on 2026-08-10: *"Let's hold off on the ai piece for
+now."* Tiers 1–3 fill the description without a network call, and that is the
+shipped behaviour. Tier 4 needs a provider decision and its own conversation.
+Do not begin it unasked.
+
+### What is waiting on the operator
+
+- Copy the Setup installer to the network share.
+- Clean-machine test v1.0.0, especially the template chooser from an
+  installed build rather than a dev run.
+
+Both done as of 2026-08-10: the OAuth secret is dealt with, and the duplicate
+items created on 2026-08-06 have been deleted from production.
+
+### The next thing worth building, when something asks for it
+
+**md5 matching for renamed re-uploads.** Every attachment in a search result
+already carries an `md5`, so the cheap half costs no extra request. Recorded
+in full at the end of
+[2026-08-06-duplicate-prevention-design.md](superpowers/specs/2026-08-06-duplicate-prevention-design.md).
+Not started, and not worth starting until a renamed re-upload actually bites.
 
 ### What happened in the session of 2026-08-06
 
@@ -70,20 +96,22 @@ sandboxed renderer, per-instance encrypted credentials, and a typed IPC
 contract. Released as **v0.1.0** with both installers, and clean-machine tested
 by the operator. Merged to `main` as PR #1.
 
-**What is on `main`:** the CLI, the MCP server, the desktop GUI, the whole
-metadata extractor (PR #2 and PR #3), and duplicate prevention (PR #4).
+**What is on `main`:** everything. The CLI, the MCP server, the desktop GUI,
+the whole metadata extractor (PR #2 and PR #3), duplicate prevention (PR #4),
+and collection templates (PR #5 and PR #6).
 
-**What is not merged:** `feature/collection-templates` — PR #5, complete,
-reviewed, and driven in the app by the operator. Described immediately below.
+**What is not merged:** nothing. All six feature branches were deleted locally
+and on the remote on 2026-08-10, after confirming each one's content was on
+`main`.
 
-## Collection templates: built, reviewed, verified — PR #5 awaiting merge
+## Collection templates: built, reviewed, verified, merged and released
 
-**On `feature/collection-templates`, 19 commits, PR #5 open and MERGEABLE.**
+**Merged as PR #5, with the richer obituary description following as PR #6.**
 The operator drove it in the app on 2026-08-07 and confirmed the chooser, the
 template load and the preview all work. A batch of ten alumni obituaries the
 generic extractor could say almost nothing about.
 
-**912 tests across 69 files**, typecheck clean, desktop builds.
+**925 tests across 69 files**, typecheck clean, desktop builds.
 
 ### What the operator found by using it
 
@@ -188,6 +216,16 @@ Do not instruct `git commit --amend` while another agent is committing to the
 same branch. That was done once here, tripped a security warning, and could
 have lost work — the history survived, but only by luck of timing. Run agents
 on one branch sequentially, or give each its own worktree.
+
+**Committing to a branch after its PR has merged loses the commit silently.**
+Two documentation commits were written that way and sat on dead branches for
+three days while being cited in conversation as "recorded in the spec" — the
+md5 next-step note and the OCR-stays-outside decision. Both were recovered by
+cherry-pick on 2026-08-10, which is why they carry later dates than the
+sections around them. Nothing warns you: the commit succeeds, the branch is
+already merged, and `main` never sees it. **Before deleting any branch, diff
+its content against `main` rather than trusting `git branch --merged`** —
+merged-ness is about ancestry, not about whether the work arrived.
 
 ## Duplicate prevention: built, connected, and verified against real data
 
@@ -334,12 +372,12 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            912 tests, 69 files
+npm test            925 tests, 69 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
 npm run desktop     build then launch
-npm run dist        electron-builder -> release/   (NOT yet, per the operator)
+npm run dist        electron-builder -> release/   (CI does this on a tag)
 ```
 
 **Metadata extractor stages 1 and 2 are complete.** Stage 1 (core + CLI) is

@@ -19,7 +19,7 @@ against its source file.
 
 **The desktop GUI is finished, released and merged.** Seven screens, a
 sandboxed renderer, per-instance encrypted credentials, a typed IPC contract.
-Released as v0.1.0 and clean-machine tested by the operator.
+First released as v0.1.0 and clean-machine tested by the operator.
 
 **Sign-in works on both instances.** Authorization-code flow, `src/core/authCode.ts`.
 Not a blocker any more; the handoff records what the fix actually was.
@@ -28,16 +28,23 @@ Not a blocker any more; the handoff records what the fix actually was.
 the spreadsheet from a folder of PDFs and Word files so nobody types it by
 hand -- core, `oeq-upload extract`, and three desktop screens.
 
-**Active work: collection templates**, on `feature/collection-templates` as
-**PR #5**, reviewed and driven in the app, awaiting merge. A template is a
-profile JSON in `templates/`; supporting a new collection is configuration,
-never code. **912 tests across 69 files**, typecheck clean.
+**Collection templates are finished and merged** (PR #5, PR #6). A template is
+a profile JSON in `templates/`; supporting a new collection is configuration,
+never code. One ships: `templates/alumni-obituary.profile.json`.
+
+**Nothing is in flight.** `main` carries everything, every feature branch has
+been pruned, and there is no open PR. **925 tests across 69 files**, typecheck
+clean.
 
 Description extraction is tiered — a stated field, then a named section
 (`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
-language model. **Tiers 1–3 are built**; tier 4 is not started and needs its
-own conversation. Anything from tier 3, and any section that ran to the length
-cap, is always flagged in `_notes`.
+language model. **Tiers 1–3 are built.** Anything from tier 3, and any section
+that ran to the length cap, is always flagged in `_notes`.
+
+**Tier 4 is deferred by the operator** — "hold off on the ai piece for now",
+2026-08-10. Do not start it without being asked. It needs a provider decision
+and its own conversation; the open questions are listed at the end of
+[docs/superpowers/specs/2026-08-06-description-extraction-design.md](docs/superpowers/specs/2026-08-06-description-extraction-design.md).
 
 **Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
 in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
