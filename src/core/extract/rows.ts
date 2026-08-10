@@ -245,6 +245,17 @@ function resolve(source: Source, context: Context): Resolved {
     };
   }
 
+  if ('presence' in source) {
+    // Case-insensitive, because a scanned document capitalises headings and one
+    // real obituary writes "Rick's College" with an apostrophe. Plain substring
+    // rather than word boundaries: these phrases are multi-word proper nouns,
+    // so the 'died' inside 'studied' trap that word boundaries exist to prevent
+    // cannot arise here.
+    const text = context.doc.text.toLowerCase();
+    const present = source.presence.any.some((phrase) => text.includes(phrase.toLowerCase()));
+    return { value: present ? source.presence.then : '' };
+  }
+
   if ('datePair' in source) return { value: datePair(context.doc.text, source.datePair) };
 
   if ('compose' in source) return { value: composeValue(source.compose, context.composed) };
@@ -343,9 +354,16 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
 
   for (const column of profile.columns.filter((c) => !isComposed(c))) {
     const { value, source } = fill(column, context, notes);
-    cells[column.path] = column.path === ATTACHMENT_COLUMN ? filename : value;
-    if (source !== undefined && cells[column.path] !== '') sources[column.path] = source;
-    if (column.as !== undefined) context.composed[column.as] = cells[column.path] ?? '';
+    const finished = column.path === ATTACHMENT_COLUMN ? filename : value;
+    if (column.as !== undefined) context.composed[column.as] = finished;
+
+    // A composeOnly column is extracted only so a compose template can read it.
+    // It is named above and then dropped: giving it a cell would write the value
+    // into a schema field that means something else, permanently.
+    if (column.composeOnly) continue;
+
+    cells[column.path] = finished;
+    if (source !== undefined && finished !== '') sources[column.path] = source;
   }
 
   for (const column of profile.columns.filter(isComposed)) {

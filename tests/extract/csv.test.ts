@@ -124,4 +124,28 @@ describe('writeCsv', () => {
     const sheet = await readSheet(path);
     expect(sheet.rows[0]?.cells['MWDL/title']).toBe('Smith, Jane');
   });
+
+  // A composeOnly column is extracted only so `compose` can read it -- it must
+  // never reach the spreadsheet, which is the whole reason it exists instead
+  // of an ordinary column pointed at the wrong schema field.
+  it('omits a composeOnly column from the header row', async () => {
+    const withComposeOnly: Profile = {
+      version: 1,
+      pattern: '{title}.pdf',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/coverage', as: 'birth', composeOnly: true, sources: [] },
+        { path: 'MWDL/title', sources: [{ placeholder: 'title' }] },
+      ],
+    };
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-csv-'));
+    const path = join(dir, 'out.csv');
+    await writeCsv(path, withComposeOnly, [row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': 'A' })]);
+    const records = parse(await readFile(path, 'utf8'), {
+      relax_column_count_less: true,
+      bom: true,
+    }) as string[][];
+    expect(records[0]).toEqual([ATTACHMENT_COLUMN, 'MWDL/title', SOURCE_COLUMN, NOTES_COLUMN]);
+    expect(records[0]).not.toContain('MWDL/coverage');
+  });
 });
