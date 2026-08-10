@@ -39,7 +39,11 @@ language model. **Tiers 1–3 are built**; tier 4 is not started and needs its
 own conversation. Anything from tier 3, and any section that ran to the length
 cap, is always flagged in `_notes`.
 
-**Do NOT build an installer yet.** The operator asked that packaging wait.
+**Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
+in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
+builds both Windows installers and creates the GitHub Release. The repo is
+private, so the Release is the version archive, not the delivery channel --
+staff get the executable from the network share.
 
 The wire format is settled — the `{ type: 'file', filename, description, uuid }`
 attachment payload was confirmed by the production run, not just by
