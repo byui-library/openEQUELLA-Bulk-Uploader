@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  attachmentPathVerdict,
+  instanceFrom,
   setupMarkup,
   settingsFrom,
   TEXT_INPUTS,
@@ -22,24 +24,47 @@ const fields = (over: Partial<SetupFields> = {}): SetupFields => ({
   redirectUri: 'https://oeq.example.edu',
   username: '',
   password: '',
+  attachmentUuidPath: '',
+  collectionUuid: '',
+  live: true,
   ...over,
 });
 
 const props = (over: Partial<SetupProps> = {}): SetupProps => ({
-  instances: [{ id: 'https://oeq.example.edu', label: 'Live', baseUrl: 'https://oeq.example.edu' }],
+  instances: [
+    {
+      id: 'https://oeq.example.edu',
+      label: 'Live',
+      baseUrl: 'https://oeq.example.edu',
+      authMode: 'password',
+      attachmentUuidPath: '',
+      live: true,
+      schemaUuid: '',
+    },
+  ],
   instanceId: 'https://oeq.example.edu',
   credentialsDropped: false,
   fields: fields(),
   storedUsername: null,
+  collections: null,
+  collectionsError: null,
+  schemaPaths: null,
   error: null,
   saving: false,
   onInstanceChange: () => {},
   onFieldChange: () => {},
   onAuthModeChange: () => {},
+  onCollectionChange: () => {},
+  onLiveChange: () => {},
   onForgetPassword: () => {},
   onSave: () => {},
   ...over,
 });
+
+const COLLECTIONS = [
+  { uuid: 'coll-1', name: 'Faculty Content', schemaUuid: 'schema-1' },
+  { uuid: 'coll-2', name: 'Alumni Obituaries', schemaUuid: 'schema-2' },
+];
 
 /** The markup between `<details ...>` and its closing tag: what the disclosure hides. */
 function disclosure(html: string): string {
@@ -123,10 +148,14 @@ describe('the Setup screen', () => {
  * one character, or types backwards (ui/dom.ts#keepCaret). Both of those
  * shipped unnoticed for months, and neither showed up in a test.
  *
- * Radios are excluded on purpose: they have no caret, and their state is
- * re-rendered from props.
+ * Radios and checkboxes are excluded on purpose: neither has a caret -- and
+ * `keepCaret` would call `setSelectionRange` on one, which a browser refuses
+ * outright -- and their state is re-rendered from props.
  */
 describe('caret preservation', () => {
+  /** Input types with no caret to keep. `keepCaret` must never be pointed at one. */
+  const CARETLESS = new Set(['radio', 'checkbox']);
+
   /** Every `<input>` in some markup, as `{ id, type }`. */
   function inputs(html: string): { id: string; type: string }[] {
     return [...html.matchAll(/<input\b[\s\S]*?\/>/g)].map((m) => ({
@@ -140,9 +169,12 @@ describe('caret preservation', () => {
       setupMarkup(props()),
       setupMarkup(props({ fields: fields({ authMode: 'code' }) })),
       setupMarkup(props({ storedUsername: 'm.miles' })),
+      // The collection section only renders with a saved site and a list, and
+      // it carries a typed field of its own.
+      setupMarkup(props({ collections: COLLECTIONS, schemaPaths: ['MWDL/title'] })),
     ];
     const typed = new Set(
-      rendered.flatMap((html) => inputs(html).filter((i) => i.type !== 'radio').map((i) => `#${i.id}`)),
+      rendered.flatMap((html) => inputs(html).filter((i) => !CARETLESS.has(i.type)).map((i) => `#${i.id}`)),
     );
 
     expect([...typed].sort()).toEqual([...TEXT_INPUTS].sort());
@@ -180,6 +212,204 @@ describe('a stored password', () => {
     const html = setupMarkup(props({ storedUsername: '<img src=x onerror=alert(1)>' }));
     expect(html).not.toContain('<img src=x');
     expect(html).toContain('&lt;img');
+  });
+});
+
+/**
+ * The dropdown that replaced a uuid box. It lists what this account can
+ * actually contribute to (`GET /collection?privilege=CREATE_ITEM`), so a wrong
+ * collection is something the operator can see rather than something they
+ * discover after a batch has landed in it.
+ */
+describe('the collection dropdown', () => {
+  it('lists every collection the account can contribute to', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
+    expect(html).toContain('id="setup-collection"');
+    expect(html).toContain('Faculty Content');
+    expect(html).toContain('Alumni Obituaries');
+    expect(html).toContain('value="coll-1"');
+  });
+
+  it('marks the chosen one as selected', () => {
+    const html = setupMarkup(
+      props({ collections: COLLECTIONS, fields: fields({ collectionUuid: 'coll-2' }) }),
+    );
+    expect(html).toMatch(/value="coll-2"\s+selected/);
+    expect(html).not.toMatch(/value="coll-1"\s+selected/);
+  });
+
+  /**
+   * An account holding CREATE_ITEM on nothing is a REAL state -- exactly what
+   * a viewer-only account looks like -- with a remedy that belongs to an
+   * openEQUELLA administrator. An empty `<select>` would read as a broken app
+   * and send the operator debugging their address or their password, which are
+   * both fine.
+   */
+  it('says so plainly when the account can contribute nowhere, rather than showing an empty list', () => {
+    const html = setupMarkup(props({ collections: [] }));
+    expect(html).not.toContain('id="setup-collection"');
+    expect(html).toContain('CREATE_ITEM');
+    expect(html).toMatch(/administrator/i);
+  });
+
+  // Unread is not empty. The two have no fix in common.
+  it('reports a list that could not be read as unread, not as empty', () => {
+    const html = setupMarkup(props({ collections: null, collectionsError: 'fetch failed' }));
+    expect(html).toContain('fetch failed');
+    expect(html).not.toContain('CREATE_ITEM');
+  });
+
+  it('explains, rather than erroring, before any site has been saved', () => {
+    const html = setupMarkup(props({ instanceId: '', collections: null }));
+    expect(html).not.toContain('id="setup-collection"');
+    expect(html).not.toContain('role="alert"');
+    expect(html).toMatch(/save your sign-in details first/i);
+  });
+
+  // The names come off the wire and this markup is assigned to innerHTML.
+  it('escapes a collection name containing markup', () => {
+    const html = setupMarkup(
+      props({ collections: [{ uuid: 'c', name: '<img src=x onerror=alert(1)>', schemaUuid: 's' }] }),
+    );
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;img');
+  });
+});
+
+/**
+ * The field whose absence was silent. See session.test.ts for the regression
+ * itself; this is the screen that now collects it.
+ */
+describe('the attachment-uuid path', () => {
+  it('is a field on this screen, holding what was typed', () => {
+    const html = setupMarkup(props({ fields: fields({ attachmentUuidPath: 'BYUI_extended/attachments/attachment' }) }));
+    expect(html).toContain('id="setup-attachment-path"');
+    expect(html).toContain('value="BYUI_extended/attachments/attachment"');
+  });
+
+  /**
+   * The "offer" half: where the schema is known, its valid xpaths are on the
+   * dropdown so the operator picks one instead of having to know it. A
+   * datalist suggests rather than constrains, so a site whose schema could not
+   * be read can still type the path it knows is right.
+   */
+  it('offers the schema’s own paths once a collection is chosen', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS, schemaPaths: ['MWDL/title', 'MWDL/description'] }));
+    expect(html).toContain('list="setup-schema-paths"');
+    expect(html).toContain('<datalist id="setup-schema-paths">');
+    expect(html).toContain('value="MWDL/description"');
+  });
+
+  it('offers nothing to pick from when no schema has been read', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS, schemaPaths: null }));
+    expect(html).not.toContain('<datalist');
+    expect(html).not.toContain('list="setup-schema-paths"');
+  });
+});
+
+/**
+ * The same lookup core/preflight.ts's attachmentFieldCheck makes, said where
+ * the value is entered. This field is written on EVERY item the runner
+ * creates, so a wrong path is a mistake repeated across the whole batch.
+ */
+describe('attachmentPathVerdict', () => {
+  const PATHS = ['MWDL/title', 'BYUI_extended/attachments/attachment'];
+
+  // Blank is the DEFAULT and correct for most schemas. It is not an error, and
+  // the message says what it means rather than leaving it to be inferred.
+  it('treats blank as the deliberate choice it is', () => {
+    const verdict = attachmentPathVerdict('', PATHS);
+    expect(verdict.kind).toBe('blank');
+    expect(verdict.message).toMatch(/no attachment-uuid field is written/i);
+  });
+
+  it('treats whitespace as blank', () => {
+    expect(attachmentPathVerdict('   ', PATHS).kind).toBe('blank');
+  });
+
+  it('confirms a path the schema declares', () => {
+    expect(attachmentPathVerdict('BYUI_extended/attachments/attachment', PATHS).kind).toBe('declared');
+  });
+
+  it('refuses a path the schema does not declare, and says how many it has', () => {
+    const verdict = attachmentPathVerdict('MWDL/nope', PATHS);
+    expect(verdict.kind).toBe('undeclared');
+    expect(verdict.message).toContain('2 valid paths');
+  });
+
+  /**
+   * COULD NOT CHECK IS NEVER CLEAN. With no schema read there is no evidence
+   * either way, and reporting a typed path as fine would be inventing some --
+   * the same rule findDuplicates and the pre-flight both follow.
+   */
+  it('reports an unchecked path as unchecked, never as correct', () => {
+    const verdict = attachmentPathVerdict('MWDL/title', null);
+    expect(verdict.kind).toBe('unchecked');
+    expect(verdict.kind).not.toBe('declared');
+    expect(verdict.message).toMatch(/not checked/i);
+  });
+
+  it('is what the screen actually renders', () => {
+    const html = setupMarkup(
+      props({ collections: COLLECTIONS, schemaPaths: PATHS, fields: fields({ attachmentUuidPath: 'MWDL/nope' }) }),
+    );
+    expect(html).toContain('verdict--undeclared');
+    expect(html).toContain('2 valid paths');
+  });
+});
+
+/**
+ * The banner is the only durable cue telling an operator which site they are
+ * pointed at, and it is loud only for a site marked live. This is the one
+ * thing the app cannot work out for itself.
+ */
+describe('the live-site flag', () => {
+  it('is ticked by default', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
+    expect(html).toContain('id="setup-live"');
+    expect(html).toMatch(/id="setup-live"[\s\S]*?checked/);
+  });
+
+  it('is unticked when the operator has said the site is not live', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS, fields: fields({ live: false }) }));
+    expect(html).toMatch(/id="setup-live"/);
+    expect(html).not.toMatch(/id="setup-live"[\s\S]*?checked/);
+  });
+});
+
+describe('instanceFrom', () => {
+  it('carries the attachment path, trimmed', () => {
+    const built = instanceFrom(props({ fields: fields({ attachmentUuidPath: '  MWDL/x  ' }) }));
+    expect(built.attachmentUuidPath).toBe('MWDL/x');
+  });
+
+  // Blank means "write no such field". Coercing it would put metadata the
+  // operator never asked for on every item in every batch.
+  it('keeps blank as blank rather than filling something in', () => {
+    expect(instanceFrom(props()).attachmentUuidPath).toBe('');
+  });
+
+  it('defaults the site to live', () => {
+    expect(instanceFrom(props()).live).toBe(true);
+  });
+
+  it('carries a site the operator marked not live', () => {
+    expect(instanceFrom(props({ fields: fields({ live: false }) })).live).toBe(false);
+  });
+
+  /**
+   * The schema uuid comes off the chosen collection's OWN list entry --
+   * `parseCollections` keeps `schema.uuid` on every one precisely so this
+   * costs no extra request. It is the address of the cached schema that
+   * extraction later reads offline.
+   */
+  it('takes the schema uuid from the chosen collection, not from anything typed', () => {
+    const built = instanceFrom(props({ collections: COLLECTIONS, fields: fields({ collectionUuid: 'coll-2' }) }));
+    expect(built.schemaUuid).toBe('schema-2');
+  });
+
+  it('resolves no schema when no collection has been chosen', () => {
+    expect(instanceFrom(props({ collections: COLLECTIONS })).schemaUuid).toBe('');
   });
 });
 

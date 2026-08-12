@@ -75,13 +75,62 @@ export type Settings = OAuthSettings | PasswordSettings;
  */
 export type InstanceId = string;
 
-/** An openEQUELLA site the operator has added, as everything outside this module sees it. */
+/**
+ * An openEQUELLA site the operator has added, as everything outside this
+ * module sees it.
+ *
+ * Everything here is per-INSTANCE and not per-credential, which is why it sits
+ * beside `Settings` rather than inside it: an institution's schema, its
+ * production-or-not status and its site address are facts about the SITE, true
+ * whether it is reached with a password or with an OAuth client.
+ */
 export interface Instance {
   id: InstanceId;
   /** What the operator calls it. Defaults to the address's host. */
   label: string;
   /** Normalised (`normaliseInstanceUrl`), so it can be concatenated with an api path. */
   baseUrl: string;
+  /** How this site signs in. Mirrors `Settings.authMode`; carries no secret. */
+  authMode: SettingsAuthMode;
+  /**
+   * Where each item's attachment uuid is written into its metadata, as a
+   * spreadsheet-style xpath (`BYUI_extended/attachments/attachment`), or ''
+   * for "write no such field".
+   *
+   * STORED, not read from `process.env`. `session.ts`'s `buildConfig` used to
+   * take it from `OEQ_ATTACHMENT_UUID_PATH`, which works for a developer
+   * running `npm run desktop` and is useless for an operator launching the
+   * packaged app from a Start Menu shortcut with no environment set -- their
+   * items came out silently missing the field, with no error and nothing to
+   * notice until somebody went looking in openEQUELLA weeks later.
+   *
+   * BLANK IS A LEGITIMATE CHOICE and the right default for most institutions,
+   * whose schema declares no such node. It is never coerced into a guess.
+   */
+  attachmentUuidPath: string;
+  /**
+   * Whether this is a live site -- one where a contribution is a real,
+   * undoable item in a real collection. Drives the instance banner
+   * (ui/banner.ts).
+   *
+   * DEFAULTS TO TRUE, including for an entry written before this field
+   * existed. A new site is assumed live until the operator says otherwise, so
+   * the failure direction stays safe: being warned about a sandbox is a
+   * nuisance, not being warned about production is an unrecoverable batch.
+   */
+  live: boolean;
+  /**
+   * The schema of the collection the operator picked on Setup, or '' if none
+   * has been picked.
+   *
+   * Stored because it is the ADDRESS OF THE CACHED SCHEMA: `SchemaCache`
+   * (core/schemaCache.ts) is keyed on (instance url, schema uuid), and
+   * extraction -- which never touches the network -- has no other way to find
+   * the schema it should validate its columns against. Derived from the chosen
+   * collection's own `schema.uuid` (discovery.ts#parseCollections), never
+   * typed by the operator.
+   */
+  schemaUuid: string;
 }
 
 /**
@@ -94,7 +143,13 @@ export interface Instance {
  *
  * The password itself is NOT here: it lives in `StoredShapeV3.passwords`.
  */
-type StoredEntry = { label: string; baseUrl: string } & (
+type StoredEntry = {
+  label: string;
+  baseUrl: string;
+  attachmentUuidPath: string;
+  live: boolean;
+  schemaUuid: string;
+} & (
   | { authMode: 'code'; clientId: string; clientSecret: string; redirectUri: string }
   | { authMode: 'password' }
 );
@@ -144,6 +199,14 @@ interface LoadResult {
  * been invented yet would send an operator back to their administrator for a
  * client secret for no reason at all.
  *
+ * The three per-site settings are defaulted rather than required, for the same
+ * reason: an entry written before they existed is a perfectly good credential,
+ * and none of them is a secret that has to come from the operator.
+ * `attachmentUuidPath` and `schemaUuid` default to '' -- "no such field" and
+ * "no schema picked", both true of an entry that predates them. `live`
+ * defaults to TRUE: an unmarked site is assumed live, because the direction to
+ * be wrong in is warning about a sandbox, not staying quiet about production.
+ *
  * Nothing else is filled in. A `code` entry still has to carry all three OAuth
  * fields, and one missing its `redirectUri` is still dropped rather than
  * having one derived for it.
@@ -152,7 +215,13 @@ function parseStoredEntry(v: unknown): StoredEntry | null {
   const e = v as Record<string, unknown> | null;
   if (typeof e !== 'object' || e === null) return null;
   if (typeof e.label !== 'string' || typeof e.baseUrl !== 'string') return null;
-  const base = { label: e.label, baseUrl: e.baseUrl };
+  const base = {
+    label: e.label,
+    baseUrl: e.baseUrl,
+    attachmentUuidPath: typeof e.attachmentUuidPath === 'string' ? e.attachmentUuidPath : '',
+    live: typeof e.live === 'boolean' ? e.live : true,
+    schemaUuid: typeof e.schemaUuid === 'string' ? e.schemaUuid : '',
+  };
 
   if (e.authMode === 'password') return { ...base, authMode: 'password' };
   if (e.authMode !== undefined && e.authMode !== 'code') return null;
@@ -169,6 +238,28 @@ function parseStoredEntry(v: unknown): StoredEntry | null {
     clientId: e.clientId,
     clientSecret: e.clientSecret,
     redirectUri: e.redirectUri,
+  };
+}
+
+/**
+ * One stored entry as everything outside this module sees it. Deliberately
+ * field-by-field rather than a spread of `stored`: `StoredEntry` also carries
+ * the client id and secret in OAuth mode, and this is the shape handed to the
+ * sandboxed renderer through `listInstances` (ipc.ts's `InstanceChoice`). A
+ * spread would put an OAuth client secret in the renderer the day a field was
+ * added to `StoredEntry`, silently.
+ */
+function toInstance(id: InstanceId, stored: StoredEntry): Instance {
+  return {
+    id,
+    label: stored.label,
+    baseUrl: stored.baseUrl,
+    // Always set: parseStoredEntry fills 'code' in for an entry written
+    // before the discriminator existed, rather than leaving it absent.
+    authMode: stored.authMode,
+    attachmentUuidPath: stored.attachmentUuidPath,
+    live: stored.live,
+    schemaUuid: stored.schemaUuid,
   };
 }
 
@@ -220,8 +311,25 @@ export class SecretStore {
    * A blank label falls back to the address's host: a dropdown of untitled
    * entries is no way to tell a live site from a sandbox, and the host is the
    * one name that is always available and always true.
+   *
+   * The three per-site settings are OPTIONAL on the way in, and an omitted one
+   * leaves whatever is already stored alone -- the same rule as a blank
+   * password below. A caller that only means to rename a site must not silently
+   * reset which field its attachment uuids are written to, or un-mark it as
+   * live. Explicitly passing `''` for `attachmentUuidPath` is NOT an omission:
+   * blank means "write no such field", which is a real choice and the correct
+   * one for most schemas, so it is stored as given.
    */
-  async saveInstance(instance: { label: string; baseUrl: string }, settings: Settings): Promise<Instance> {
+  async saveInstance(
+    instance: {
+      label: string;
+      baseUrl: string;
+      attachmentUuidPath?: string;
+      live?: boolean;
+      schemaUuid?: string;
+    },
+    settings: Settings,
+  ): Promise<Instance> {
     this.requireEncryption();
     // Before anything is written: an address that cannot be normalised has no
     // key, and https is required (see normaliseInstanceUrl).
@@ -230,8 +338,20 @@ export class SecretStore {
     const label = instance.label.trim() || new URL(baseUrl).host;
 
     const { shape } = await this.loadAll();
+    const previous = shape.instances[id];
+    const site = {
+      label,
+      baseUrl,
+      attachmentUuidPath: instance.attachmentUuidPath ?? previous?.attachmentUuidPath ?? '',
+      // `true` last, not `previous?.live ?? true` folded into one `??` chain
+      // with an explicit `false`: `false ?? true` is `false`, but reading it
+      // that way takes a moment, and "assumed live" is the rule this defaults
+      // to when nothing at all is known.
+      live: instance.live ?? previous?.live ?? true,
+      schemaUuid: instance.schemaUuid ?? previous?.schemaUuid ?? '',
+    };
     if (settings.authMode === 'password') {
-      shape.instances[id] = { label, baseUrl, authMode: 'password' };
+      shape.instances[id] = { ...site, authMode: 'password' };
       // A BLANK password means "leave the stored one alone", not "clear it".
       // Setup never renders a stored password back into a field, so the form
       // submitted by an operator who only renamed the site carries an empty
@@ -242,13 +362,13 @@ export class SecretStore {
       }
     } else {
       const { authMode, clientId, clientSecret, redirectUri } = settings;
-      shape.instances[id] = { label, baseUrl, authMode, clientId, clientSecret, redirectUri };
+      shape.instances[id] = { ...site, authMode, clientId, clientSecret, redirectUri };
       // Any password stored for this site is left where it is: switching to
       // Advanced to correct a client id must not throw away a credential the
       // operator can only replace by typing it again.
     }
     await this.write(shape);
-    return { id, label, baseUrl };
+    return { id, authMode: settings.authMode, ...site };
   }
 
   /**
@@ -309,16 +429,16 @@ export class SecretStore {
     await this.write(shape);
   }
 
-  /** The instance itself -- address and label -- without its credentials. */
+  /** The instance itself -- address, name and per-site settings -- without its credentials. */
   async loadInstance(instanceId: InstanceId): Promise<Instance | null> {
     const stored = (await this.loadAll()).shape.instances[instanceId];
-    return stored ? { id: instanceId, label: stored.label, baseUrl: stored.baseUrl } : null;
+    return stored ? toInstance(instanceId, stored) : null;
   }
 
   /** Every instance the operator has added, for the dropdowns. Credentials stay here. */
   async listInstances(): Promise<Instance[]> {
     const { shape } = await this.loadAll();
-    return Object.entries(shape.instances).map(([id, e]) => ({ id, label: e.label, baseUrl: e.baseUrl }));
+    return Object.entries(shape.instances).map(([id, e]) => toInstance(id, e));
   }
 
   async hasSettings(instanceId: InstanceId): Promise<boolean> {

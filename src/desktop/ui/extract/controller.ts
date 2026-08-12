@@ -7,6 +7,17 @@ import { initialExtractState, canContinue, type ExtractState } from './state.js'
 
 export interface ExtractControllerOptions {
   api: OeqApi;
+  /**
+   * Whose schema the columns are validated against, or '' for none.
+   *
+   * Extraction NEVER touches the network -- that is what lets an operator
+   * build a spreadsheet without signing in to anything -- so this does not
+   * fetch a schema. It names the instance whose already-fetched schema is in
+   * the on-disk cache (core/schemaCache.ts). With no id, or no cache for it,
+   * the main process falls back to the schema export bundled with the app;
+   * extraction runs either way (ipc.ts's schemaPaths).
+   */
+  instanceId?: string;
   /** Called when the operator leaves the flow. */
   onExit(): void;
   /** Called after every state change; the caller decides which screen to draw. */
@@ -90,13 +101,17 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       const dir = await options.api.chooseFolder();
       if (dir === null) return;
       await guard(async () => {
-        // Independent of each other: one samples the chosen folder, the other
-        // parses a static bundled schema file. Run together, as app.ts already
-        // does for its own pair of unrelated calls.
+        // Independent of each other: one samples the chosen folder, the others
+        // read a schema (the site's own from the cache, or the bundled export).
+        // Run together, as app.ts already does for its own pair of unrelated
+        // calls. All three take the same instance id so the scan's starter
+        // profile and the Add-column picker cannot disagree about which columns
+        // are valid.
+        const instanceId = options.instanceId ?? '';
         const [scan, schemaPaths, schemaNamePath] = await Promise.all([
-          options.api.extractScan(dir),
-          options.api.schemaPaths(),
-          options.api.schemaNamePath(),
+          options.api.extractScan(dir, instanceId),
+          options.api.schemaPaths(instanceId),
+          options.api.schemaNamePath(instanceId),
         ]);
         // The starter profile is built in the main process and arrives with the
         // scan. It holds only the attachment column: the program can see a

@@ -14,6 +14,7 @@ import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.
 import { starterProfile } from '../core/extract/suggest.js';
 import { listTemplates, loadTemplate } from '../core/extract/templates.js';
 import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
+import type { SchemaInfo } from '../core/discovery.js';
 import { CHANNELS, type ExtractScan, type ExtractRunReport } from './ipc.js';
 
 const PREVIEW_ROWS = 5;
@@ -70,10 +71,28 @@ export interface ExtractHandlerOptions {
   schemaFile: string;
   /** Directory of shipped template profiles. Resolved by the caller, same as schemaFile. */
   templatesDir: string;
+  /**
+   * The schema fetched from an instance and cached on disk, or null when there
+   * is none for it. Injected rather than read here so this module stays free of
+   * the secret store: resolving an instance id to its base url and schema uuid
+   * is the caller's business (handlers.ts#cachedSchema).
+   *
+   * WHY THE CACHE EXISTS AT ALL: `src/core/extract/` never touches the network,
+   * which is what lets an operator build a spreadsheet without signing in to
+   * anything. The schema it validates columns against now comes from the API.
+   * The cache is what reconciles those two facts -- whoever DID sign in leaves
+   * the schema on disk, and extraction reads it later, offline.
+   *
+   * Optional, and null is ordinary. Absent or null falls back to `schemaFile`,
+   * the export bundled with the app. Extraction MUST still run without a
+   * cache: refusing would trade a real capability for a check the operator
+   * never asked for.
+   */
+  cachedSchema?: (instanceId: string) => Promise<SchemaInfo | null>;
 }
 
 export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandlerOptions): void {
-  ipcMain.handle(CHANNELS.extractScan, async (_e, dir: string): Promise<ExtractScan> => {
+  ipcMain.handle(CHANNELS.extractScan, async (_e, dir: string, instanceId?: string): Promise<ExtractScan> => {
     // listFolder is core's own, shared with extractFolder. This handler used to
     // reimplement it, with a shorter skip reason that omitted the extension --
     // so a skipped file was described one way here and another way in the run
@@ -95,9 +114,13 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       // Built from what the scan actually found, not from filenames alone.
       // Without the evidence, a table heading of "Job Description" went
       // unmapped and the description column came out empty on every row.
+      // Against the SAME schema the Add-column picker uses -- the site's own
+      // when it has been cached, the bundled export otherwise. Two different
+      // schemas here would have the starter propose columns the picker then
+      // reports as invalid.
       starter: starterProfile(supported, {
         ...evidence,
-        schemaPaths: await schemaPathsOnce(options.schemaFile),
+        schemaPaths: (await cachedFor(instanceId))?.paths ?? (await schemaPathsOnce(options.schemaFile)),
       }),
     };
   });
@@ -127,16 +150,40 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
     },
   );
 
-  ipcMain.handle(CHANNELS.schemaPaths, async (): Promise<string[]> => {
+  ipcMain.handle(CHANNELS.schemaPaths, async (_e, instanceId?: string): Promise<string[]> => {
+    const cached = await cachedFor(instanceId);
+    if (cached) return [...cached.paths].sort();
     return [...(await schemaPathsOnce(options.schemaFile))].sort();
   });
 
   // Read here rather than in the renderer for the usual reason: this reaches
   // `node:fs`, and a `node:` import anywhere the renderer can reach blanks the
   // window with nothing on the terminal (tests/desktop/rendererPurity.test.ts).
-  ipcMain.handle(CHANNELS.schemaNamePath, async (): Promise<string | null> => {
+  ipcMain.handle(CHANNELS.schemaNamePath, async (_e, instanceId?: string): Promise<string | null> => {
+    const cached = await cachedFor(instanceId);
+    // `titleHeader`, not `namePath`: this answers in spreadsheet-header form
+    // (`MWDL/title`), which is what `extractItemNamePath` returns from the
+    // bundled export below -- it strips the leading slash. The two sources
+    // have to be interchangeable or the Add-column picker's first section
+    // silently stops matching any column.
+    if (cached) return cached.titleHeader;
     return extractItemNamePath(await readFile(options.schemaFile, 'utf8'));
   });
+
+  /**
+   * The instance's own cached schema, or null to fall back to the bundled
+   * export. Never throws: a resolver that fails for any reason is "no cache",
+   * which is the same answer as an operator who has never signed in, and the
+   * extract flow has to work for them.
+   */
+  async function cachedFor(instanceId?: string): Promise<SchemaInfo | null> {
+    if (!instanceId || !options.cachedSchema) return null;
+    try {
+      return await options.cachedSchema(instanceId);
+    } catch {
+      return null;
+    }
+  }
 
   ipcMain.handle(CHANNELS.listTemplates, () => listTemplates(options.templatesDir));
   ipcMain.handle(CHANNELS.loadTemplate, (_e, id: string) => loadTemplate(id, options.templatesDir));

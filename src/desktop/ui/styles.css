@@ -379,6 +379,41 @@ button.link-button:hover:not(:disabled) {
   margin-right: 0.5rem;
 }
 
+/* Setup's per-site settings: which collection, where the attachment uuid is
+   written, and whether the site is live. Facts about the SITE rather than
+   about the credential, so they get their own group. */
+.site-settings {
+  margin-top: 1rem;
+}
+
+.checkbox-label {
+  display: block;
+  font-weight: 400;
+  margin: 1rem 0 0.25rem;
+}
+
+.checkbox-label input {
+  margin-right: 0.5rem;
+}
+
+/* The verdict under the attachment-uuid path. Deliberately three different
+   readings and not two: "undeclared" is a problem, "declared" is confirmed,
+   and blank/unchecked are neither -- blank is the right answer for most
+   schemas, and unchecked has to look like the absence of evidence it is,
+   never like a pass. */
+.verdict--declared {
+  color: var(--valid-text);
+}
+
+.verdict--undeclared {
+  color: var(--error-text);
+  font-weight: 600;
+}
+
+.reset-row .link-button + .link-button {
+  margin-left: 1rem;
+}
+
 .danger-panel {
   border: 2px solid var(--error-border);
   background: var(--error-bg);

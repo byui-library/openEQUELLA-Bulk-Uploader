@@ -567,6 +567,137 @@ describe('SecretStore passwords', () => {
   });
 });
 
+/**
+ * The per-site settings, which are facts about the SITE rather than about the
+ * credential -- true whether it is reached with a password or an OAuth client
+ * -- and so live on the instance entry rather than inside `Settings`.
+ */
+describe('SecretStore — per-site settings', () => {
+  const CODE = { authMode: 'code', clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE } as const;
+  const PATH = 'BYUI_extended/attachments/attachment';
+
+  it('round-trips the attachment path for one instance', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    const inst = await s.saveInstance({ label: 'Live', baseUrl: LIVE, attachmentUuidPath: PATH }, CODE);
+    expect(inst.attachmentUuidPath).toBe(PATH);
+    expect((await s.loadInstance(instanceKey(LIVE)))?.attachmentUuidPath).toBe(PATH);
+    expect((await s.listInstances())[0]?.attachmentUuidPath).toBe(PATH);
+  });
+
+  // Per SITE, not per machine -- which is precisely what the environment
+  // variable it replaced could never be.
+  it('keeps a different attachment path for each site', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, attachmentUuidPath: PATH }, CODE);
+    await s.saveInstance({ label: 'Sandbox', baseUrl: SANDBOX, attachmentUuidPath: '' }, { ...CODE, redirectUri: SANDBOX });
+    expect((await s.loadInstance(instanceKey(LIVE)))?.attachmentUuidPath).toBe(PATH);
+    expect((await s.loadInstance(instanceKey(SANDBOX)))?.attachmentUuidPath).toBe('');
+  });
+
+  /**
+   * Blank means "write no such field", which is a real choice and the correct
+   * one for the many schemas that declare no such node. Stored as given, never
+   * coerced into a guess and never treated as "unset, so use the other one".
+   */
+  it('preserves an explicitly blank attachment path as blank', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, attachmentUuidPath: PATH }, CODE);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, attachmentUuidPath: '' }, CODE);
+    expect((await s.loadInstance(instanceKey(LIVE)))?.attachmentUuidPath).toBe('');
+  });
+
+  /**
+   * An OMITTED field is not a blank one. A caller that only means to rename a
+   * site must not silently reset which field its attachment uuids are written
+   * to -- the same rule the blank-password case above follows.
+   */
+  it('leaves an omitted attachment path alone rather than clearing it', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, attachmentUuidPath: PATH }, CODE);
+    await s.saveInstance({ label: 'Renamed', baseUrl: LIVE }, CODE);
+    const inst = await s.loadInstance(instanceKey(LIVE));
+    expect(inst?.attachmentUuidPath).toBe(PATH);
+    expect(inst?.label).toBe('Renamed');
+  });
+
+  /**
+   * A NEW SITE IS ASSUMED LIVE. Being warned about a sandbox is a nuisance;
+   * not being warned about production is an unrecoverable batch, and this tool
+   * creates items with no undo into collections with no moderation workflow.
+   */
+  it('defaults a newly added site to live', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    const inst = await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    expect(inst.live).toBe(true);
+    expect((await s.loadInstance(instanceKey(LIVE)))?.live).toBe(true);
+  });
+
+  it('round-trips a site the operator marked not live', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Sandbox', baseUrl: SANDBOX, live: false }, { ...CODE, redirectUri: SANDBOX });
+    expect((await s.loadInstance(instanceKey(SANDBOX)))?.live).toBe(false);
+  });
+
+  // `false` is a value, not an absence: a `??` chain that read it as one would
+  // quietly re-mark a sandbox as live on the next save.
+  it('does not treat "not live" as an omission on a later save', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Sandbox', baseUrl: SANDBOX, live: false }, { ...CODE, redirectUri: SANDBOX });
+    await s.saveInstance({ label: 'Sandbox', baseUrl: SANDBOX, live: false }, { ...CODE, redirectUri: SANDBOX });
+    expect((await s.loadInstance(instanceKey(SANDBOX)))?.live).toBe(false);
+  });
+
+  // The address of the cached schema -- see Instance.schemaUuid.
+  it('round-trips the chosen collection’s schema uuid', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, schemaUuid: 'schema-1' }, CODE);
+    expect((await s.loadInstance(instanceKey(LIVE)))?.schemaUuid).toBe('schema-1');
+  });
+
+  // Mirrors Settings.authMode, so the renderer can say what the Sign-in button
+  // will actually do without ever being handed a credential.
+  it('reports how each site signs in, without any credential', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.saveInstance(
+      { label: 'Sandbox', baseUrl: SANDBOX },
+      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+    );
+    expect((await s.loadInstance(instanceKey(LIVE)))?.authMode).toBe('code');
+    expect((await s.loadInstance(instanceKey(SANDBOX)))?.authMode).toBe('password');
+    // No client secret, no password, ever. listInstances feeds the sandboxed
+    // renderer (ipc.ts's InstanceChoice).
+    expect(JSON.stringify(await s.listInstances())).not.toContain('shhh');
+    expect(JSON.stringify(await s.listInstances())).not.toContain('hunter2');
+  });
+
+  /**
+   * An entry written before these fields existed is a perfectly good
+   * credential and must keep working. The defaults are the safe ones: no
+   * attachment field, no schema picked, and LIVE.
+   */
+  it('reads an entry written before these fields existed, defaulting it to live', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {
+            [instanceKey(LIVE)]: { label: 'Live', baseUrl: LIVE, authMode: 'password' },
+          },
+          passwords: { [instanceKey(LIVE)]: { username: 'm.miles', password: 'hunter2' } },
+        }),
+      ),
+    );
+    const inst = await s.loadInstance(instanceKey(LIVE));
+    expect(inst?.live).toBe(true);
+    expect(inst?.attachmentUuidPath).toBe('');
+    expect(inst?.schemaUuid).toBe('');
+  });
+});
+
 describe('EncryptedTokenStore', () => {
   const baseUrl = SANDBOX;
   const otherBaseUrl = LIVE;

@@ -82,7 +82,7 @@
  */
 import type { AuthProvider } from './auth.js';
 import { ApiError, ValidationError } from './errors.js';
-import { parseSchema, type SchemaInfo } from './discovery.js';
+import { displayName, parseCollections, parseSchema, type SchemaInfo } from './discovery.js';
 
 export interface AttachmentSpec {
   filename: string;
@@ -118,10 +118,14 @@ export interface CollectionSummary {
   /**
    * The schema this collection contributes against, from the response's
    * `schema: { uuid }`. CONFIRMED present on `GET /collection/{uuid}` --
-   * tests/fixtures/api/collection-one.json, recorded live. `''` when the
-   * response declares none, so a caller can tell "no schema named" from a
-   * schema that could not be read. Only `getCollection` populates it; the
-   * list endpoint's entries are not read for it here.
+   * tests/fixtures/api/collection-one.json, recorded live -- and on every
+   * entry of `GET /collection` (tests/fixtures/api/collections.json, same
+   * recording). `''` when the response declares none, so a caller can tell
+   * "no schema named" from a schema that could not be read.
+   *
+   * BOTH `getCollection` and `listCollections` populate it. The list used not
+   * to: its inline parse read `uuid` and `name` only, which is why picking a
+   * collection could not resolve its schema without a second request.
    */
   schemaUuid?: string;
 }
@@ -138,29 +142,6 @@ export interface SearchHit {
   name: string;
   /** Filenames of this item's attachments. Empty if it has none. */
   attachmentNames: string[];
-}
-
-/**
- * `CollectionBean.name` (swagger.json) is typed only as `I18NString`, which
- * is itself documented as a bare `{ type: "object" }` -- no shape at all, the
- * same kind of gap `AttachmentBean` has for `filename`/`type` (see this
- * file's header comment). In practice openEQUELLA's REST responses serialise
- * it as a plain string already resolved to the session's locale; this
- * defensively also accepts an `I18NStrings`-shaped object (`{ strings: {
- * [locale]: string } }`) in case a deployment does something else, and falls
- * back to the uuid rather than letting a missing display label crash `check`
- * / `oeq_check` over what is, worst case, cosmetic.
- */
-function extractDisplayName(name: unknown, fallback: string): string {
-  if (typeof name === 'string' && name) return name;
-  if (name && typeof name === 'object') {
-    const strings = (name as { strings?: Record<string, string> }).strings;
-    if (strings) {
-      const first = Object.values(strings).find((v) => typeof v === 'string' && v);
-      if (first) return first;
-    }
-  }
-  return fallback;
 }
 
 /**
@@ -558,7 +539,7 @@ export class OeqClient {
     const body = (await res.json()) as { uuid: string; name?: unknown; schema?: { uuid?: unknown } };
     return {
       uuid: body.uuid,
-      name: extractDisplayName(body.name, body.uuid),
+      name: displayName(body.name, body.uuid),
       schemaUuid: typeof body.schema?.uuid === 'string' ? body.schema.uuid : '',
     };
   }
@@ -584,14 +565,21 @@ export class OeqClient {
    * the response shape). Used by `check`/`oeq_check` with
    * `privilege: 'CREATE_ITEM'` to confirm the current user can actually
    * contribute to the target collection -- and, if not, to list the ones
-   * they can.
+   * they can. Also by the desktop's Setup screen, which offers the operator
+   * the collections they can actually contribute to instead of asking them
+   * for a uuid.
+   *
+   * The body is read by `discovery.ts#parseCollections`, NOT by an inline
+   * parse here. There used to be one, and it dropped each entry's
+   * `schema.uuid` -- the single fact that lets a chosen collection resolve to
+   * its schema without a second request, which is exactly what Setup needs to
+   * offer or check an attachment-uuid path. See parseCollections.
    */
   async listCollections(opts: { privilege?: string; length?: number } = {}): Promise<CollectionSummary[]> {
     const params = new URLSearchParams();
     if (opts.privilege) params.set('privilege', opts.privilege);
     params.set('length', String(opts.length ?? 100));
     const res = await this.request(`/api/collection?${params.toString()}`);
-    const body = (await res.json()) as { results: { uuid: string; name?: unknown }[] };
-    return body.results.map((r) => ({ uuid: r.uuid, name: extractDisplayName(r.name, r.uuid) }));
+    return parseCollections(await res.json());
   }
 }

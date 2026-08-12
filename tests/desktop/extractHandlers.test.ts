@@ -4,8 +4,9 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerExtractHandlers, __resetExtractCache } from '../../src/desktop/extractHandlers.js';
-import { makePdf } from '../fixtures/extract/make.js';
+import { makeDocx, makePdf } from '../fixtures/extract/make.js';
 import { ATTACHMENT_COLUMN, type Profile } from '../../src/core/extract/types.js';
+import type { SchemaInfo } from '../../src/core/discovery.js';
 
 /** A stand-in for Electron's ipcMain that just records the handlers. */
 function fakeIpcMain() {
@@ -141,5 +142,115 @@ describe('extract handlers', () => {
     const paths = await ipc.call<string[]>('oeq:schemaPaths');
     expect(paths).toContain('MWDL/title');
     expect(paths.length).toBeGreaterThan(100);
+  });
+});
+
+/**
+ * `src/core/extract/` NEVER TOUCHES THE NETWORK -- that is what lets an
+ * operator build a spreadsheet from a folder of files without signing in to
+ * anything -- but the schema it validates columns against now comes from the
+ * API. `SchemaCache` is what reconciles those: whoever signed in leaves the
+ * schema on disk, and extraction reads it later, offline.
+ */
+describe('extract handlers and the cached schema', () => {
+  beforeEach(() => __resetExtractCache());
+
+  const cached: SchemaInfo = {
+    uuid: 'schema-1',
+    namePath: '/OTHER/name',
+    titleHeader: 'OTHER/name',
+    paths: new Set(['OTHER/name', 'OTHER/summary']),
+  };
+
+  const withCache = (ipc: ReturnType<typeof fakeIpcMain>, fn: (id: string) => Promise<SchemaInfo | null>) =>
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      cachedSchema: fn,
+    });
+
+  it('validates against the instance’s own cached schema, not the bundled export', async () => {
+    const ipc = fakeIpcMain();
+    withCache(ipc, async () => cached);
+    const paths = await ipc.call<string[]>('oeq:schemaPaths', 'https://other.example.edu');
+    expect(paths).toEqual(['OTHER/name', 'OTHER/summary']);
+    // The bundled export is BYU-Idaho's, and correct nowhere else.
+    expect(paths).not.toContain('MWDL/title');
+  });
+
+  it('reads the item name path from the cached schema too, in header form', async () => {
+    const ipc = fakeIpcMain();
+    withCache(ipc, async () => cached);
+    expect(await ipc.call<string | null>('oeq:schemaNamePath', 'https://other.example.edu')).toBe('OTHER/name');
+  });
+
+  /**
+   * THE REQUIREMENT THAT MATTERS MOST. A missing cache -- a fresh install,
+   * another institution's site, an operator who has never signed in -- must
+   * degrade to the bundled export, never to a refusal. Blocking the offline
+   * half of the tool on a network call nobody asked for would trade a real
+   * capability for a check.
+   */
+  it('still runs with no cache at all, falling back to the bundled export', async () => {
+    const ipc = fakeIpcMain();
+    withCache(ipc, async () => null);
+    const paths = await ipc.call<string[]>('oeq:schemaPaths', 'https://oeq.example.edu');
+    expect(paths).toContain('MWDL/title');
+    expect(paths.length).toBeGreaterThan(100);
+  });
+
+  it('still runs when no instance is named at all', async () => {
+    const ipc = fakeIpcMain();
+    withCache(ipc, async () => cached);
+    expect(await ipc.call<string[]>('oeq:schemaPaths')).toContain('MWDL/title');
+  });
+
+  // A cache lookup that throws is "no cache", for exactly the same reason.
+  it('still runs when the cache lookup itself fails', async () => {
+    const ipc = fakeIpcMain();
+    withCache(ipc, async () => {
+      throw new Error('disk gone');
+    });
+    const paths = await ipc.call<string[]>('oeq:schemaPaths', 'https://oeq.example.edu');
+    expect(paths).toContain('MWDL/title');
+  });
+
+  /**
+   * The scan's proposed starter profile is built against the SAME schema the
+   * Add-column picker uses. Two different schemas here would have the starter
+   * propose a column the picker then reports as invalid.
+   *
+   * A table heading is what exercises it: `starterProfile` maps a heading onto
+   * a schema path by matching its last word (core/extract/suggest.ts), so
+   * "Summary" resolves to `OTHER/summary` from the cached schema -- a path the
+   * bundled BYU-Idaho export does not contain at all.
+   */
+  it('builds the starter profile against the cached schema', async () => {
+    const ipc = fakeIpcMain();
+    withCache(ipc, async () => cached);
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-'));
+    await writeFile(
+      join(dir, 'Record.docx'),
+      makeDocx({ table: [['Summary'], ['A short account of the thing.']] }),
+    );
+
+    const scan = await ipc.call<{ tableColumns: string[]; starter: Profile }>(
+      'oeq:extractScan', dir, 'https://other.example.edu',
+    );
+    expect(scan.tableColumns).toContain('Summary');
+    expect(scan.starter.columns.map((c) => c.path)).toContain('OTHER/summary');
+  });
+
+  it('builds it against the bundled export when there is no cache', async () => {
+    const ipc = fakeIpcMain();
+    withCache(ipc, async () => null);
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-'));
+    await writeFile(
+      join(dir, 'Record.docx'),
+      makeDocx({ table: [['Summary'], ['A short account of the thing.']] }),
+    );
+
+    const scan = await ipc.call<{ starter: Profile }>('oeq:extractScan', dir, 'https://other.example.edu');
+    expect(scan.starter.columns.map((c) => c.path)).not.toContain('OTHER/summary');
   });
 });

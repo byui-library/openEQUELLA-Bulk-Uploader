@@ -363,11 +363,34 @@ describe('OeqClient — getCollection', () => {
 describe('OeqClient — listCollections', () => {
   it('filters by privilege', async () => {
     mock.state.collections.push(
-      { uuid: 'c1', name: 'Contributable', privileges: ['CREATE_ITEM'] },
-      { uuid: 'c2', name: 'View only', privileges: ['VIEW_ITEM'] },
+      { uuid: 'c1', name: 'Contributable', privileges: ['CREATE_ITEM'], schemaUuid: 's1' },
+      { uuid: 'c2', name: 'View only', privileges: ['VIEW_ITEM'], schemaUuid: 's1' },
     );
     const results = await client.listCollections({ privilege: 'CREATE_ITEM' });
-    expect(results).toEqual([{ uuid: 'c1', name: 'Contributable' }]);
+    expect(results).toEqual([{ uuid: 'c1', name: 'Contributable', schemaUuid: 's1' }]);
+  });
+
+  /**
+   * The field the inline parse this method used to carry dropped on the
+   * floor. Each list entry declares its schema, so choosing a collection
+   * determines its schema in ONE hop -- which is what lets Setup offer or
+   * check an attachment-uuid path against the schema that collection really
+   * uses, instead of asking a non-technical operator to know a uuid.
+   */
+  it('carries each collection\'s schema uuid, from parseCollections', async () => {
+    mock.state.collections.push(
+      { uuid: 'c1', name: 'Faculty Content', privileges: ['CREATE_ITEM'], schemaUuid: 'schema-abc' },
+    );
+    const [only] = await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(only?.schemaUuid).toBe('schema-abc');
+  });
+
+  // A collection whose response declares no schema is '' -- distinguishable
+  // from a schema that could not be read, and never undefined-by-accident.
+  it('reports an undeclared schema as empty rather than missing', async () => {
+    mock.state.collections.push({ uuid: 'c1', name: 'No schema', privileges: ['CREATE_ITEM'] });
+    const [only] = await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(only?.schemaUuid).toBe('');
   });
 
   it('returns everything when no privilege filter is given', async () => {
