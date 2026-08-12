@@ -63,6 +63,8 @@ export class SchemaCache {
       uuid: schema.uuid,
       namePath: schema.namePath,
       titleHeader: schema.titleHeader,
+      descriptionPath: schema.descriptionPath,
+      descriptionHeader: schema.descriptionHeader,
       paths: [...schema.paths],
     };
     await writeFile(this.file(instanceUrl, schema.uuid), JSON.stringify(payload, null, 2), 'utf8');
@@ -100,10 +102,22 @@ function toSchemaInfo(parsed: unknown): SchemaInfo | null {
   if (raw.namePath !== null && typeof raw.namePath !== 'string') return null;
   if (raw.titleHeader !== null && typeof raw.titleHeader !== 'string') return null;
 
+  // ABSENT is tolerated here and read as null, unlike the fields above. A file
+  // written before the description path was cached at all has neither key, and
+  // rejecting it would throw away a perfectly good schema -- sending extraction
+  // back to the bundled export -- over a field whose "not declared" answer is
+  // null anyway. A present value of the wrong type is still refused.
+  const descriptionPath = raw.descriptionPath ?? null;
+  const descriptionHeader = raw.descriptionHeader ?? null;
+  if (descriptionPath !== null && typeof descriptionPath !== 'string') return null;
+  if (descriptionHeader !== null && typeof descriptionHeader !== 'string') return null;
+
   return {
     uuid: raw.uuid,
     namePath: raw.namePath,
     titleHeader: raw.titleHeader,
+    descriptionPath,
+    descriptionHeader,
     paths: new Set(raw.paths as string[]),
   };
 }

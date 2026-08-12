@@ -303,6 +303,8 @@ describe('fetchAndCacheSchema', () => {
     uuid: 'schema-1',
     namePath: '/MWDL/title',
     titleHeader: 'MWDL/title',
+    descriptionPath: '/MWDL/description',
+    descriptionHeader: 'MWDL/description',
     paths: new Set(['MWDL/title', 'MWDL/description']),
   };
   const fakeClient = { getSchema: async () => schema };

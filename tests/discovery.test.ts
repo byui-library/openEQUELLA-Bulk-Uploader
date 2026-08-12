@@ -82,6 +82,30 @@ describe('parseSchema', () => {
     expect(parseSchema(recordedSchema).titleHeader).toBe('MWDL/title');
   });
 
+  /**
+   * The starter profile proposes a description column, and it used to propose
+   * BYU-Idaho's `MWDL/description` whatever schema it was handed. The schema
+   * declares this the same way it declares the name path, so it is read the
+   * same way rather than assumed.
+   */
+  it('reads the declared description path rather than assuming it', () => {
+    expect(parseSchema(recordedSchema).descriptionPath).toBe('/MWDL/description');
+    expect(parseSchema(recordedSchema).descriptionHeader).toBe('MWDL/description');
+  });
+
+  it('accepts itemDescriptionPath too, which is how the XML export spells it', () => {
+    expect(
+      parseSchema({ uuid: 'x', itemDescriptionPath: '/local/abstract', definition: {} })
+        .descriptionHeader,
+    ).toBe('local/abstract');
+  });
+
+  it('returns null rather than a guess when no description path is declared', () => {
+    const schema = parseSchema({ uuid: 'x', definition: { xml: { local: { title: {} } } } });
+    expect(schema.descriptionPath).toBeNull();
+    expect(schema.descriptionHeader).toBeNull();
+  });
+
   it('accepts itemNamePath too, which is how the XML export spells it', () => {
     expect(parseSchema({ uuid: 'x', itemNamePath: '/local/title', definition: {} }).titleHeader).toBe(
       'local/title',

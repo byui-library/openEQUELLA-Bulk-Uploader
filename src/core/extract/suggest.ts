@@ -72,11 +72,22 @@ export function detectPattern(allFilenames: string[]): string {
  * "Job Description" is a description, and "Company" and "Pay" match nothing, so
  * nothing is proposed for them.
  *
- * Where several fields share a leaf name, MWDL wins: `MWDL/description` rather
- * than `MWDL/rights/description`. MWDL holds the descriptive fields nearly
- * every item needs; the others are specialised.
+ * Where several fields share a leaf name, one section wins: `MWDL/description`
+ * rather than `BYUI_extended/…/description`. That section holds the
+ * descriptive fields nearly every item needs; the others are specialised.
+ *
+ * WHICH section is not a constant. `preferSection` is the top-level section the
+ * schema's own declared item-name path lives in -- `MWDL` at BYU-Idaho, so the
+ * behaviour there is unchanged, and whatever the local schema calls its main
+ * section anywhere else. Hardcoding `MWDL/` meant the tie-break simply never
+ * fired at another institution, quietly falling through to the shortest match.
+ * With no section to prefer that fallback is still what happens.
  */
-export function matchSchemaPath(name: string, schemaPaths: Set<string>): string | null {
+export function matchSchemaPath(
+  name: string,
+  schemaPaths: Set<string>,
+  preferSection?: string | null,
+): string | null {
   const lastWord = name.trim().split(/\s+/).pop()?.toLowerCase();
   if (lastWord === undefined || lastWord === '') return null;
 
@@ -85,8 +96,12 @@ export function matchSchemaPath(name: string, schemaPaths: Set<string>): string 
   );
   if (matches.length === 0) return null;
 
-  const mwdl = matches.filter((p) => p.startsWith('MWDL/')).sort((a, b) => a.length - b.length);
-  return mwdl[0] ?? matches.sort((a, b) => a.length - b.length)[0]!;
+  const shortestFirst = (a: string, b: string): number => a.length - b.length;
+  if (preferSection) {
+    const preferred = matches.filter((p) => p.startsWith(`${preferSection}/`)).sort(shortestFirst);
+    if (preferred[0]) return preferred[0];
+  }
+  return matches.sort(shortestFirst)[0]!;
 }
 
 /** What a scan of the folder found, for proposing mappings. */
@@ -96,15 +111,57 @@ export interface StarterEvidence {
   tableColumns: string[];
   /** Headings found in the documents, from `findSections`. */
   sections: string[];
-  schemaPaths: Set<string>;
+}
+
+/**
+ * What the schema declares, as much of it as a starter profile needs.
+ *
+ * Structurally a subset of `discovery.ts#SchemaInfo`, so a fetched schema can
+ * be passed straight in; a caller reading the bundled XML export instead builds
+ * one from `schema.ts` (`extractItemNamePath`, `extractItemDescriptionPath`,
+ * `parseSchemaPaths`). Declared here rather than imported so `src/core/extract/`
+ * keeps owning its own inputs.
+ */
+export interface StarterSchema {
+  /** The declared item name path, header form. Null when the schema declares none. */
+  titleHeader: string | null;
+  /** The declared description path, header form. Null when the schema declares none. */
+  descriptionHeader: string | null;
+  /** Every valid xpath, leaves only. */
+  paths: Set<string>;
+}
+
+/** A declared path, but only if the schema really has a field there. */
+function declaredColumn(header: string | null, paths: Set<string>): string | null {
+  // Membership is checked, not assumed. A path that is declared but absent from
+  // the definition is exactly the column the picker flags invalid, which is the
+  // whole failure this reads the schema to avoid -- proposing it because the
+  // schema named it would reproduce the bug from the other direction.
+  return header && paths.has(header) ? header : null;
+}
+
+/** The top-level section a header sits in: `MWDL/title` -> `MWDL`. */
+function topSection(header: string | null): string | null {
+  return header?.split('/')[0] ?? null;
 }
 
 /**
  * A profile that is valid and runnable immediately.
  *
- * With no evidence it proposes the attachment column plus the three fields
- * almost every contribution needs, wiring title and creator to the document
- * properties that state them.
+ * EVERY COLUMN COMES OUT OF THE SCHEMA HANDED IN. The three fields almost every
+ * contribution needs used to be the literals `MWDL/title`,
+ * `MWDL/creators/creator` and `MWDL/description` -- BYU-Idaho's, proposed
+ * whatever schema this was given, so the extractor's very first output at any
+ * other institution contained three columns the column picker immediately
+ * flagged invalid. Title and description are read from what the schema declares
+ * (`titleHeader`, `descriptionHeader`); the creator has no declared equivalent,
+ * so it is matched against the schema's real paths by leaf name and OMITTED
+ * when nothing matches. A missing column is the smaller harm: the operator adds
+ * what they need and the picker already supports that, whereas an invented path
+ * is a mistake they have to recognise first.
+ *
+ * With no evidence it proposes the attachment column plus those fields, wiring
+ * title and creator to the document properties that state them.
  *
  * Given evidence from a scan it does better: a table heading or document label
  * whose name matches a schema field is mapped to it. That is what makes a real
@@ -120,16 +177,34 @@ export interface StarterEvidence {
  * "Pay" are real headings in these documents and mean nothing to this schema,
  * so they are left alone rather than mapped somewhere plausible.
  */
-export function starterProfile(filenames: string[], evidence?: StarterEvidence): Profile {
+export function starterProfile(
+  filenames: string[],
+  schema: StarterSchema,
+  evidence?: StarterEvidence,
+): Profile {
+  const section = topSection(schema.titleHeader);
+  const titlePath = declaredColumn(schema.titleHeader, schema.paths);
+  const descriptionPath = declaredColumn(schema.descriptionHeader, schema.paths);
+  // `creator` first, then `author`: both are real spellings of the same field
+  // and a schema carrying both means the one it calls a creator. Leaf-name
+  // matching finds `creators/creator` as readily as a bare `creator`.
+  const creatorPath =
+    matchSchemaPath('creator', schema.paths, section) ??
+    matchSchemaPath('author', schema.paths, section);
+
   const columns: Column[] = [
     { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
-    // The filename last, so a document that states its title keeps it. Two of
-    // twelve real journal PDFs state none, and this field becomes the item's
-    // NAME -- an empty one contributes a nameless item.
-    { path: 'MWDL/title', sources: [{ property: 'title' }, { filenameStem: true }] },
-    { path: 'MWDL/creators/creator', sources: [{ property: 'author' }], transform: 'people' },
-    { path: 'MWDL/description', sources: [] },
   ];
+  // The filename last, so a document that states its title keeps it. Two of
+  // twelve real journal PDFs state none, and this field becomes the item's
+  // NAME -- an empty one contributes a nameless item.
+  if (titlePath) {
+    columns.push({ path: titlePath, sources: [{ property: 'title' }, { filenameStem: true }] });
+  }
+  if (creatorPath) {
+    columns.push({ path: creatorPath, sources: [{ property: 'author' }], transform: 'people' });
+  }
+  if (descriptionPath) columns.push({ path: descriptionPath, sources: [] });
 
   if (evidence === undefined) return { version: 1, pattern: detectPattern(filenames), columns };
 
@@ -145,7 +220,7 @@ export function starterProfile(filenames: string[], evidence?: StarterEvidence):
   const found: { source: Source; path: string }[] = evidence.tableColumns
     .map((tableColumn) => ({
       source: { tableColumn } as Source,
-      path: matchSchemaPath(tableColumn, evidence.schemaPaths) ?? '',
+      path: matchSchemaPath(tableColumn, schema.paths, section) ?? '',
     }))
     .filter((m) => m.path !== '' && m.path !== ATTACHMENT_COLUMN);
 
@@ -176,7 +251,10 @@ export function starterProfile(filenames: string[], evidence?: StarterEvidence):
   // they happened to appear. One profile serves the whole folder, so a folder
   // where most files have an Abstract and one has only a Purpose is filled
   // completely -- per file, the first source with anything in it wins.
-  const description = byPath.get('MWDL/description');
+  // The schema's own declared description path, not a literal: a schema that
+  // declares none gets no section sources and no opening fallback, because
+  // there is no column for them to land in.
+  const description = descriptionPath ? byPath.get(descriptionPath) : undefined;
   if (description) {
     const ranked = SECTION_HEADINGS.filter((h) => evidence.sections.includes(h));
     description.sources = [

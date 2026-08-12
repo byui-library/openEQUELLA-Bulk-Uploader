@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import {
   extractDefinition,
+  extractItemDescriptionPath,
   extractItemNamePath,
   parseSchemaPaths,
   validateHeaders,
@@ -97,6 +98,35 @@ describe('extractItemNamePath', () => {
         '<com.tle.common.ImportExportPack><entity><itemNamePath>/local/dc/title</itemNamePath></entity></com.tle.common.ImportExportPack>',
       ),
     ).toBe('local/dc/title');
+  });
+});
+
+/**
+ * The declared description path is what the starter profile proposes its
+ * description column from. Read, never assumed, for the same reason as the name
+ * path: `MWDL/description` is correct here only because BYU-Idaho's export
+ * declares it, and the CLI and the desktop app both build a starter profile
+ * offline from this export.
+ */
+describe('extractItemDescriptionPath', () => {
+  it('reads the declared description path from the real export, in header form', () => {
+    expect(extractItemDescriptionPath(entity)).toBe('MWDL/description');
+  });
+
+  it('returns null when the export declares none, rather than guessing', () => {
+    expect(
+      extractItemDescriptionPath(
+        '<com.tle.common.ImportExportPack><entity><name>S</name></entity></com.tle.common.ImportExportPack>',
+      ),
+    ).toBeNull();
+  });
+
+  it('reads whatever path the export declares, not a BYU-Idaho one', () => {
+    expect(
+      extractItemDescriptionPath(
+        '<com.tle.common.ImportExportPack><entity><itemDescriptionPath>/local/dc/abstract</itemDescriptionPath></entity></com.tle.common.ImportExportPack>',
+      ),
+    ).toBe('local/dc/abstract');
   });
 });
 
