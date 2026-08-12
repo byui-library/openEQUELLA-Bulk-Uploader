@@ -24,7 +24,7 @@ import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { redactSecret as redactAllForms } from '../core/redact.js';
 import { OeqClient } from '../core/client.js';
-import { runPreflight } from '../core/preflight.js';
+import { runPreflight, summarise } from '../core/preflight.js';
 import type { ItemState } from '../core/types.js';
 
 type Env = Record<string, string | undefined>;
@@ -582,11 +582,13 @@ export interface CheckDeps {
 const MCP_LOGIN_HINT = 'Call the oeq_login_url tool, then oeq_login_complete with the code';
 
 /**
- * Same four read-only checks `oeq-upload check` runs (see core/preflight.ts
- * -- shared with the CLI so the two front ends can't drift): a usable
- * token, who it belongs to, whether the target collection exists on THIS
- * host, and whether this user can actually contribute to it. Creates
- * nothing.
+ * The same read-only checks `oeq-upload check` runs (see core/preflight.ts
+ * -- shared with the CLI so the two front ends can't drift): the configured
+ * address, a usable token, which sign-in method produced it, who it belongs
+ * to, whether the target collection exists on THIS host, whether this user
+ * can contribute anywhere at all and to that collection in particular, and
+ * whether its schema declares the fields duplicate detection and the
+ * attachment-uuid field depend on. Creates nothing.
  */
 export async function checkTool(env: Env = process.env, deps: CheckDeps = {}): Promise<ToolResult> {
   try {
@@ -600,7 +602,7 @@ export async function checkTool(env: Env = process.env, deps: CheckDeps = {}): P
       '',
       ...result.checks.map((c) => `[${c.pass ? 'PASS' : 'FAIL'}] ${c.label}: ${c.message}`),
       '',
-      result.ok ? 'All checks passed.' : 'One or more checks failed -- see above.',
+      summarise(result),
     ];
     return text(redactSecret(lines.join('\n'), env), !result.ok);
   } catch (err) {

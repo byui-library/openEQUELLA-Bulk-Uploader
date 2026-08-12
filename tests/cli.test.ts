@@ -777,7 +777,12 @@ describe('checkAction', () => {
       uuid: 'c1',
       name: 'BYU-Idaho Faculty Content',
       privileges: ['CREATE_ITEM'],
+      schemaUuid: 's1',
     });
+    // "Everything lines up" now includes a readable schema that declares an
+    // item name path -- without one, duplicate detection reports could-not-
+    // check for every row, which is not a full success by any reading.
+    mock.state.schemas.push({ uuid: 's1', namePath: '/MWDL/title', paths: ['MWDL/title'] });
     const store = await loggedInStore();
 
     let code = -1;
@@ -789,14 +794,18 @@ describe('checkAction', () => {
     const out = logs.join('\n');
     expect(out).toContain(`OEQ_BASE_URL: ${mock.url}`);
     expect(out).toContain('OEQ_COLLECTION_UUID: c1');
+    expect(out).toContain('[PASS] HTTPS:');
     expect(out).toContain('[PASS] Token: present and usable.');
+    expect(out).toContain('[PASS] Sign-in method: signed in with OEQ_AUTH_MODE=code');
     expect(out).toContain(
       '[PASS] Identity: logged in as jdoe (Jane Doe). Created items will be owned by this user.',
     );
     expect(out).toContain(
       `[PASS] Collection: 'BYU-Idaho Faculty Content' (c1) exists on ${mock.url}.`,
     );
+    expect(out).toContain('[PASS] Collections available: 1 collection(s)');
     expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'BYU-Idaho Faculty Content'.");
+    expect(out).toContain("[PASS] Duplicate detection: existing items will be matched on 'MWDL/title'");
     expect(out).toContain('All checks passed.');
   });
 

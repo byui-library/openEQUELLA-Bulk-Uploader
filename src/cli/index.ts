@@ -16,7 +16,7 @@ import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { OeqClient } from '../core/client.js';
 import { runManifest } from '../core/runner.js';
-import { runPreflight } from '../core/preflight.js';
+import { runPreflight, summarise } from '../core/preflight.js';
 import { checkLock } from '../core/lock.js';
 import { OeqError, ValidationError } from '../core/errors.js';
 import type { ItemState } from '../core/types.js';
@@ -570,9 +570,15 @@ export interface CheckDeps {
 }
 
 /**
- * Read-only pre-flight (see core/preflight.ts): confirms a token, identity,
- * that the target collection exists on THIS host, and that this user can
- * actually contribute to it. Creates nothing. Returns the process exit code.
+ * Read-only pre-flight (see core/preflight.ts): confirms the address, a
+ * token, which sign-in method produced it, identity, that the target
+ * collection exists on THIS host, that this user can contribute to it at
+ * all, and that its schema declares the fields duplicate detection and the
+ * attachment-uuid field depend on. Creates nothing.
+ *
+ * It is also the compatibility probe a new institution reports back with, so
+ * every line is rendered -- including the ones that passed. Returns the
+ * process exit code.
  */
 export async function checkAction(env: Env = process.env, deps: CheckDeps = {}): Promise<number> {
   const cfg = loadConfig(env);
@@ -586,7 +592,7 @@ export async function checkAction(env: Env = process.env, deps: CheckDeps = {}):
   for (const c of result.checks) {
     console.log(`[${c.pass ? 'PASS' : 'FAIL'}] ${c.label}: ${c.message}`);
   }
-  console.log(result.ok ? '\nAll checks passed.' : '\nOne or more checks failed -- see above.');
+  console.log(`\n${summarise(result)}`);
   return result.ok ? 0 : 1;
 }
 
