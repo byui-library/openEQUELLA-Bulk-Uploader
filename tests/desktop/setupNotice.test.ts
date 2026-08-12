@@ -65,7 +65,7 @@ describe('the Setup notice', () => {
     );
     await store.saveInstance(
       { label: 'Live', baseUrl: 'https://oeq.example.edu' },
-      { clientId: 'cid', clientSecret: 'shhh', redirectUri: 'https://oeq.example.edu' },
+      { authMode: 'code', clientId: 'cid', clientSecret: 'shhh', redirectUri: 'https://oeq.example.edu' },
     );
     expect(setupNotice(await store.credentialsDropped())).toBe('');
   });

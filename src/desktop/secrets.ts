@@ -16,7 +16,25 @@ export interface Cipher {
   decrypt(encrypted: Buffer): string;
 }
 
-export interface Settings {
+/**
+ * How the operator signs in to one instance.
+ *
+ * A DISCRIMINATOR, not an inference from which fields happen to be filled in.
+ * "Empty client id means they must have meant password" is a rule that has to
+ * be re-derived correctly at every site that reads these settings, and is
+ * wrong the first time somebody saves a half-typed form; an explicit mode is
+ * read the same way everywhere and survives a partly filled form intact.
+ *
+ * A subset of core's `AuthMode` (core/config.ts): `client_credentials` is
+ * deliberately absent, because it is an unattended-run mode with no operator
+ * at the keyboard and Setup has nothing to collect for it that it does not
+ * already collect for `code`.
+ */
+export type SettingsAuthMode = 'code' | 'password';
+
+/** OAuth authorization-code credentials -- the SSO-backed sites' route in. */
+export interface OAuthSettings {
+  authMode: 'code';
   clientId: string;
   clientSecret: string;
   /**
@@ -29,6 +47,25 @@ export interface Settings {
    */
   redirectUri: string;
 }
+
+/**
+ * An ordinary openEQUELLA account: what an institution that is not behind SSO
+ * can use on the day it installs this tool, with nothing to request from an
+ * administrator first.
+ *
+ * The password is here because `buildConfig` (session.ts) needs it to reach
+ * `UsernamePasswordAuth`. On disk it lives apart from the instance entry, in
+ * its own per-instance record, so `forgetPassword` can remove the credential
+ * without removing the site -- see `StoredShapeV3`.
+ */
+export interface PasswordSettings {
+  authMode: 'password';
+  username: string;
+  /** Never logged, never written to a manifest. See core/config.ts. */
+  password: string;
+}
+
+export type Settings = OAuthSettings | PasswordSettings;
 
 /**
  * The key one instance's credentials are stored under: `instanceKey` of its
@@ -48,17 +85,42 @@ export interface Instance {
 }
 
 /**
- * On-disk shape for one instance's entry. Every field is required: an entry
- * missing one is not a usable credential, and filling the gap in would mean
- * inventing a value -- see `Settings.redirectUri` for what inventing that one
- * in particular has cost this project.
+ * On-disk shape for one instance's entry. Every field its OWN mode needs is
+ * required: an entry missing one is not a usable credential, and filling the
+ * gap in would mean inventing a value -- see `OAuthSettings.redirectUri` for
+ * what inventing that one in particular has cost this project. Which fields
+ * those are depends on `authMode`, so a password entry is not rejected for
+ * having no client id it was never going to have.
+ *
+ * The password itself is NOT here: it lives in `StoredShapeV3.passwords`.
  */
-type StoredEntry = Settings & { label: string; baseUrl: string };
+type StoredEntry = { label: string; baseUrl: string } & (
+  | { authMode: 'code'; clientId: string; clientSecret: string; redirectUri: string }
+  | { authMode: 'password' }
+);
 
-/** On-disk shape written by THIS version of the store. */
+/** One instance's openEQUELLA account, as stored. */
+interface StoredPassword {
+  username: string;
+  password: string;
+}
+
+/**
+ * On-disk shape written by THIS version of the store.
+ *
+ * `passwords` is keyed exactly like `instances` and kept beside them rather
+ * than inside them for two reasons: "Forget this password" has to be able to
+ * remove the credential while leaving the site, its name and its address
+ * alone; and a v3 file written before password auth existed simply has no
+ * `passwords` key, which reads as "no passwords stored" with no migration at
+ * all. Still ONE file and ONE `safeStorage` encryption -- a second store
+ * would be a second thing to keep in step and a second thing to leave behind
+ * on `clear()`.
+ */
 interface StoredShapeV3 {
   version: 3;
   instances: Record<InstanceId, StoredEntry>;
+  passwords: Record<InstanceId, StoredPassword>;
 }
 
 /**
@@ -71,17 +133,52 @@ interface LoadResult {
   dropped: boolean;
 }
 
-function isStoredEntry(v: unknown): v is StoredEntry {
-  const e = v as Partial<StoredEntry> | null;
-  return (
-    typeof e === 'object' &&
-    e !== null &&
-    typeof e.clientId === 'string' &&
-    typeof e.clientSecret === 'string' &&
-    typeof e.redirectUri === 'string' &&
-    typeof e.label === 'string' &&
-    typeof e.baseUrl === 'string'
-  );
+/**
+ * One on-disk entry, normalised -- or null if it is not a usable credential.
+ *
+ * A parse rather than a type guard because of the one thing it fills in: an
+ * entry with NO `authMode` is a v3 entry written by this same branch before
+ * password auth existed, and every one of those is an OAuth entry. Reading it
+ * as `code` is not a guess -- `code` was the only mode the desktop could
+ * produce, hardcoded in `buildConfig`. Discarding it over a field that had not
+ * been invented yet would send an operator back to their administrator for a
+ * client secret for no reason at all.
+ *
+ * Nothing else is filled in. A `code` entry still has to carry all three OAuth
+ * fields, and one missing its `redirectUri` is still dropped rather than
+ * having one derived for it.
+ */
+function parseStoredEntry(v: unknown): StoredEntry | null {
+  const e = v as Record<string, unknown> | null;
+  if (typeof e !== 'object' || e === null) return null;
+  if (typeof e.label !== 'string' || typeof e.baseUrl !== 'string') return null;
+  const base = { label: e.label, baseUrl: e.baseUrl };
+
+  if (e.authMode === 'password') return { ...base, authMode: 'password' };
+  if (e.authMode !== undefined && e.authMode !== 'code') return null;
+  if (
+    typeof e.clientId !== 'string' ||
+    typeof e.clientSecret !== 'string' ||
+    typeof e.redirectUri !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    ...base,
+    authMode: 'code',
+    clientId: e.clientId,
+    clientSecret: e.clientSecret,
+    redirectUri: e.redirectUri,
+  };
+}
+
+/** One stored account, or null. Both halves or neither -- a password with no
+ *  username signs nobody in, and a username alone is not a credential. */
+function parseStoredPassword(v: unknown): StoredPassword | null {
+  const p = v as Record<string, unknown> | null;
+  if (typeof p !== 'object' || p === null) return null;
+  if (typeof p.username !== 'string' || typeof p.password !== 'string') return null;
+  return { username: p.username, password: p.password };
 }
 
 /**
@@ -125,12 +222,7 @@ export class SecretStore {
    * one name that is always available and always true.
    */
   async saveInstance(instance: { label: string; baseUrl: string }, settings: Settings): Promise<Instance> {
-    if (!this.cipher.isAvailable()) {
-      throw new Error(
-        'OS encryption is unavailable, so credentials cannot be stored safely. ' +
-          'Refusing to write them in plaintext.',
-      );
-    }
+    this.requireEncryption();
     // Before anything is written: an address that cannot be normalised has no
     // key, and https is required (see normaliseInstanceUrl).
     const baseUrl = normaliseInstanceUrl(instance.baseUrl);
@@ -138,21 +230,83 @@ export class SecretStore {
     const label = instance.label.trim() || new URL(baseUrl).host;
 
     const { shape } = await this.loadAll();
-    shape.instances[id] = { label, baseUrl, ...settings };
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, this.cipher.encrypt(JSON.stringify(shape)));
+    if (settings.authMode === 'password') {
+      shape.instances[id] = { label, baseUrl, authMode: 'password' };
+      // A BLANK password means "leave the stored one alone", not "clear it".
+      // Setup never renders a stored password back into a field, so the form
+      // submitted by an operator who only renamed the site carries an empty
+      // one; treating that as a deletion would sign them out of a site they
+      // never touched. The only way to remove a password is forgetPassword.
+      if (settings.password !== '') {
+        shape.passwords[id] = { username: settings.username, password: settings.password };
+      }
+    } else {
+      const { authMode, clientId, clientSecret, redirectUri } = settings;
+      shape.instances[id] = { label, baseUrl, authMode, clientId, clientSecret, redirectUri };
+      // Any password stored for this site is left where it is: switching to
+      // Advanced to correct a client id must not throw away a credential the
+      // operator can only replace by typing it again.
+    }
+    await this.write(shape);
     return { id, label, baseUrl };
   }
 
+  /**
+   * The instance's credentials in the shape `buildConfig` consumes, or null
+   * when there is no usable one.
+   *
+   * Null for a password-mode instance whose password has been forgotten: it
+   * is a site with no credential, and reporting it as configured would put a
+   * "Sign in" button in front of the operator that can only fail with an empty
+   * password. `handlers.ts` turns the null into "no credentials saved for
+   * {site}", which is both true and actionable.
+   */
   async loadSettings(instanceId: InstanceId): Promise<Settings | null> {
-    const stored = (await this.loadAll()).shape.instances[instanceId];
+    const { shape } = await this.loadAll();
+    const stored = shape.instances[instanceId];
     if (!stored) return null;
+    if (stored.authMode === 'password') {
+      const account = shape.passwords[instanceId];
+      if (!account) return null;
+      return { authMode: 'password', username: account.username, password: account.password };
+    }
     return {
+      authMode: 'code',
       clientId: stored.clientId,
       clientSecret: stored.clientSecret,
-      // Verbatim, never re-derived. See Settings.redirectUri.
+      // Verbatim, never re-derived. See OAuthSettings.redirectUri.
       redirectUri: stored.redirectUri,
     };
+  }
+
+  /**
+   * Store one instance's openEQUELLA account. Same encryption and the same
+   * per-instance key as the client secret: an account that works on one site
+   * is refused outright by another, so there is no such thing as "the"
+   * password any more than there is "the" client id.
+   */
+  async setPassword(instanceId: InstanceId, username: string, password: string): Promise<void> {
+    this.requireEncryption();
+    const { shape } = await this.loadAll();
+    shape.passwords[instanceId] = { username, password };
+    await this.write(shape);
+  }
+
+  /** Null when nothing is stored, or when the store cannot be read -- never throws. */
+  async getPassword(instanceId: InstanceId): Promise<StoredPassword | null> {
+    return (await this.loadAll()).shape.passwords[instanceId] ?? null;
+  }
+
+  /**
+   * Behind Setup's "Forget this password". Removing what is absent is not an
+   * error, and costs no write -- which also means it cannot fail on a machine
+   * whose encryption has stopped working, where there is nothing to forget.
+   */
+  async forgetPassword(instanceId: InstanceId): Promise<void> {
+    const { shape } = await this.loadAll();
+    if (!shape.passwords[instanceId]) return;
+    delete shape.passwords[instanceId];
+    await this.write(shape);
   }
 
   /** The instance itself -- address and label -- without its credentials. */
@@ -198,9 +352,32 @@ export class SecretStore {
     }
   }
 
+  /**
+   * The one refusal, shared by every write: an OS with no working encryption
+   * must not be quietly downgraded to a plaintext file holding somebody's
+   * client secret or account password.
+   */
+  private requireEncryption(): void {
+    if (!this.cipher.isAvailable()) {
+      throw new Error(
+        'OS encryption is unavailable, so credentials cannot be stored safely. ' +
+          'Refusing to write them in plaintext.',
+      );
+    }
+  }
+
+  private async write(shape: StoredShapeV3): Promise<void> {
+    this.requireEncryption();
+    await mkdir(dirname(this.filePath), { recursive: true });
+    await writeFile(this.filePath, this.cipher.encrypt(JSON.stringify(shape)));
+  }
+
   /** Reads and validates the on-disk store. Never throws -- see class doc. */
   private async loadAll(): Promise<LoadResult> {
-    const empty = (dropped = false): LoadResult => ({ shape: { version: 3, instances: {} }, dropped });
+    const empty = (dropped = false): LoadResult => ({
+      shape: { version: 3, instances: {}, passwords: {} },
+      dropped,
+    });
     let blob: Buffer;
     try {
       blob = await readFile(this.filePath);
@@ -218,9 +395,20 @@ export class SecretStore {
       }
       const instances: Record<InstanceId, StoredEntry> = {};
       for (const [id, v] of Object.entries(parsed.instances as Record<string, unknown>)) {
-        if (isStoredEntry(v)) instances[id] = v;
+        const entry = parseStoredEntry(v);
+        if (entry) instances[id] = entry;
       }
-      return { shape: { version: 3, instances }, dropped: false };
+      // Absent on any v3 file written before password auth existed, which is
+      // simply "no passwords stored" -- no migration, nothing dropped.
+      const passwords: Record<InstanceId, StoredPassword> = {};
+      const rawPasswords = parsed.passwords;
+      if (typeof rawPasswords === 'object' && rawPasswords !== null) {
+        for (const [id, v] of Object.entries(rawPasswords as Record<string, unknown>)) {
+          const account = parseStoredPassword(v);
+          if (account) passwords[id] = account;
+        }
+      }
+      return { shape: { version: 3, instances, passwords }, dropped: false };
     } catch {
       // Corrupt, hand-edited, or written by a different OS user. Treat as
       // absent: the resulting "set up your credentials" prompt is the right

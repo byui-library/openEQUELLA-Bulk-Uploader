@@ -361,6 +361,20 @@ button.link-button:hover:not(:disabled) {
   margin: 0.5rem 0;
 }
 
+/* Setup's "Advanced: OAuth client credentials" disclosure. Shut by default:
+   most institutions sign in with an ordinary username and password, and the
+   OAuth fields are for the SSO-backed sites only. */
+.auth-method details {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+}
+
+.auth-method summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .radio-label input {
   margin-right: 0.5rem;
 }

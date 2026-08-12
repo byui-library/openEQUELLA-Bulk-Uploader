@@ -42,7 +42,11 @@ const tokens = () => new EncryptedTokenStore(join(userData(), 'token.enc'), ciph
  * names for them.
  */
 export function missingCredentialsMessage(label: string): string {
-  return `No credentials saved for ${label}. Enter the client ID and secret for that instance in Setup.`;
+  // Says "sign-in details", not "client ID and secret": a site can now be
+  // configured with an ordinary openEQUELLA username and password
+  // (secrets.ts), and naming the OAuth credential would send most
+  // institutions looking for something they do not have and cannot get.
+  return `No credentials saved for ${label}. Add your sign-in details for that site in Setup.`;
 }
 
 /** The instance record the operator saved, or a refusal naming the id. */
@@ -251,10 +255,40 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   });
 
   ipcMain.handle(
+    CHANNELS.setPassword,
+    async (_e, args: Parameters<OeqApi['setPassword']>[0]) =>
+      secrets().setPassword(args.instanceId, args.username, args.password),
+  );
+
+  // Returns the USERNAME ONLY. The password never crosses back into the
+  // renderer -- see OeqApi.getPassword for why.
+  ipcMain.handle(
+    CHANNELS.getPassword,
+    async (_e, instanceId: Parameters<OeqApi['getPassword']>[0]) => {
+      const stored = await secrets().getPassword(instanceId);
+      return stored ? { username: stored.username } : null;
+    },
+  );
+
+  ipcMain.handle(
+    CHANNELS.forgetPassword,
+    async (_e, instanceId: Parameters<OeqApi['forgetPassword']>[0]) =>
+      secrets().forgetPassword(instanceId),
+  );
+
+  ipcMain.handle(
     CHANNELS.signIn,
     async (_e, instanceId: Parameters<OeqApi['signIn']>[0]) => {
       const { inst, settings } = await requireSettings(instanceId);
       const cfg = buildConfig(inst, settings, 'unused-for-signin');
+      // Password auth has no browser flow to drive: UsernamePasswordAuth signs
+      // in on its first request, so asking the site who is signed in IS the
+      // sign-in, and its failure IS the "check the username and password"
+      // error (core/passwordAuth.ts). Opening an SSO window here would present
+      // an institution that has no SSO with a login page they cannot use.
+      if (cfg.authMode === 'password') {
+        return buildClient(cfg, buildAuth(cfg, tokens())).currentUser();
+      }
       // buildCodeAuth, not buildAuth: this handler IS the authorization-code
       // browser flow, and signInInteractive needs that flow's own API.
       const auth = buildCodeAuth(cfg, tokens());
