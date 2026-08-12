@@ -1,6 +1,6 @@
 // src/core/duplicates.ts
 
-import { sameFileName, TITLE_XPATH, type Manifest } from './types.js';
+import { sameFileName, type Manifest } from './types.js';
 
 /**
  * One item already in the collection, as the rules below need to see it.
@@ -119,8 +119,22 @@ export function defaultChoice(tier: DuplicateTier): DuplicateChoice {
  * without a server, and so is this.
  */
 export interface TitleSearcher {
-  searchByTitle(collectionUuid: string, title: string): Promise<ExistingItemHit[]>;
+  searchByTitle(
+    collectionUuid: string,
+    title: string,
+    titleHeader: string,
+  ): Promise<ExistingItemHit[]>;
 }
+
+/**
+ * Shown for every pending row when the title path is unknown.
+ *
+ * It names the remedy, not just the gap: a warning the operator cannot act on
+ * trains them to click past it, which is worse than no warning at all.
+ */
+export const UNKNOWN_TITLE_PATH_DETAIL =
+  "this collection's schema does not say which field holds the item title, so existing " +
+  'items could not be searched -- check by hand before uploading';
 
 /** How many checks are in flight at once. Enough to be quick, few enough to be polite. */
 const CONCURRENCY = 5;
@@ -133,21 +147,47 @@ const CONCURRENCY = 5;
  * exists, and it must not block a plan that is otherwise ready. It must
  * equally never be reported as clean, which is why it produces a finding at
  * all rather than being swallowed.
+ *
+ * `titleHeader` is the schema's declared item name path, in spreadsheet-header
+ * form, and is null when the schema declares none. It is a parameter rather
+ * than something fetched here so this function stays pure: it is given the
+ * facts, it does not go looking for them.
  */
 export async function findDuplicates(
   client: TitleSearcher,
   manifest: Manifest,
+  titleHeader: string | null,
 ): Promise<DuplicateFinding[]> {
   const pending = manifest.entries.filter((e) => e.status === 'pending');
+
+  // Without a declared title path there is nothing to match on. No search is
+  // issued -- a query naming no field, or a guessed one, would be a wasted
+  // request whose answer means nothing. Every pending row is reported
+  // could-not-check, because returning [] here would tell the operator their
+  // batch is clean on the strength of a check that never happened. That exact
+  // failure has shipped from this codebase once already; see
+  // docs/superpowers/specs/2026-08-06-duplicate-prevention-design.md.
+  if (!titleHeader) {
+    return pending.map((entry) => ({
+      rowNumber: entry.rowNumber,
+      fileName: entry.fileName,
+      tier: 'could-not-check' as const,
+      detail: UNKNOWN_TITLE_PATH_DETAIL,
+      existing: [],
+    }));
+  }
+
   const findings: DuplicateFinding[] = [];
 
   for (let i = 0; i < pending.length; i += CONCURRENCY) {
     const results = await Promise.all(
       pending.slice(i, i + CONCURRENCY).map(async (entry) => {
-        const title = (entry.metadata[TITLE_XPATH]?.[0] ?? '').trim();
+        const title = (entry.metadata[titleHeader]?.[0] ?? '').trim();
         try {
           const hits =
-            title === '' ? [] : await client.searchByTitle(manifest.collectionUuid, title);
+            title === ''
+              ? []
+              : await client.searchByTitle(manifest.collectionUuid, title, titleHeader);
           const verdict = verdictFor(entry.fileName, title, hits);
           return verdict ? { ...verdict, rowNumber: entry.rowNumber } : null;
         } catch (err) {

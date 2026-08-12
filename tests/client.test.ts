@@ -218,7 +218,7 @@ describe('OeqClient', () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: 'Senior Recital', attachmentNames: ['Smith_Jane.pdf'] },
       ];
-      expect(await client.searchByTitle('c1', 'Senior Recital')).toEqual([
+      expect(await client.searchByTitle('c1', 'Senior Recital', 'MWDL/title')).toEqual([
         { uuid: 'i1', version: 1, name: '', attachmentNames: ['Smith_Jane.pdf'] },
       ]);
     });
@@ -227,20 +227,20 @@ describe('OeqClient', () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: 'Senior Recital', attachmentNames: [] },
       ];
-      expect(await client.searchByTitle('c1', 'Recital')).toEqual([]);
-      expect(await client.searchByTitle('c1', 'Senior')).toEqual([]);
+      expect(await client.searchByTitle('c1', 'Recital', 'MWDL/title')).toEqual([]);
+      expect(await client.searchByTitle('c1', 'Senior', 'MWDL/title')).toEqual([]);
     });
 
     it('matches a title containing an apostrophe', async () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: "Bach's Prelude", attachmentNames: ['b.pdf'] },
       ];
-      expect(await client.searchByTitle('c1', "Bach's Prelude")).toHaveLength(1);
+      expect(await client.searchByTitle('c1', "Bach's Prelude", 'MWDL/title')).toHaveLength(1);
     });
 
     it('returns nothing when the collection holds no such title', async () => {
       mock.state.existingItems = [];
-      expect(await client.searchByTitle('c1', 'Senior Recital')).toEqual([]);
+      expect(await client.searchByTitle('c1', 'Senior Recital', 'MWDL/title')).toEqual([]);
     });
 
     /**
@@ -251,21 +251,58 @@ describe('OeqClient', () => {
      */
     it('asks for non-live items, or it would never see this tool own drafts', async () => {
       mock.state.existingItems = [{ uuid: 'i1', version: 1, title: 'A Draft', attachmentNames: [] }];
-      expect(await client.searchByTitle('c1', 'A Draft')).toHaveLength(1);
+      expect(await client.searchByTitle('c1', 'A Draft', 'MWDL/title')).toHaveLength(1);
     });
 
     it('asks for attachments, or the filename tier has nothing to compare', async () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: 'T', attachmentNames: ['only-if-info-requested.pdf'] },
       ];
-      expect((await client.searchByTitle('c1', 'T'))[0]?.attachmentNames).toEqual([
+      expect((await client.searchByTitle('c1', 'T', 'MWDL/title'))[0]?.attachmentNames).toEqual([
         'only-if-info-requested.pdf',
       ]);
     });
 
     it('copes with an item that has no attachments at all', async () => {
       mock.state.existingItems = [{ uuid: 'i1', version: 1, title: 'T', attachmentNames: [] }];
-      expect((await client.searchByTitle('c1', 'T'))[0]?.attachmentNames).toEqual([]);
+      expect((await client.searchByTitle('c1', 'T', 'MWDL/title'))[0]?.attachmentNames).toEqual([]);
+    });
+
+    /**
+     * `MWDL/title` is BYU-Idaho's schema, not a universal one. A hardcoded
+     * clause matches nothing at any other institution, so every row comes back
+     * clean from a check that never looked -- the same shape of silent failure
+     * this whole feature exists to prevent.
+     */
+    it('builds the where clause from the supplied path', async () => {
+      mock.state.titlePath = 'local/dc/title';
+      await client.searchByTitle('c1', 'A Thesis', 'local/dc/title');
+      const asked = decodeURIComponent(mock.state.searchUrls[0] ?? '');
+      expect(asked).toContain("/xml/local/dc/title = 'A Thesis'");
+      expect(asked).not.toContain('MWDL');
+    });
+
+    /**
+     * showall=true is mandatory: /search excludes non-live items by default,
+     * and everything this tool creates is a draft. Omitting it made the check
+     * blind to this tool's own uploads once already. Asserted on the URL as
+     * well as on behaviour above, so a change to the clause cannot quietly
+     * drop it.
+     */
+    it('still sends showall=true, which drafts depend on', async () => {
+      mock.state.titlePath = 'local/dc/title';
+      await client.searchByTitle('c1', 'A Thesis', 'local/dc/title');
+      expect(mock.state.searchUrls[0]).toContain('showall=true');
+    });
+
+    it('finds an item through a path other than MWDL/title', async () => {
+      mock.state.titlePath = 'local/dc/title';
+      mock.state.existingItems = [
+        { uuid: 'i1', version: 1, title: 'A Thesis', attachmentNames: ['thesis.pdf'] },
+      ];
+      expect(await client.searchByTitle('c1', 'A Thesis', 'local/dc/title')).toEqual([
+        { uuid: 'i1', version: 1, name: '', attachmentNames: ['thesis.pdf'] },
+      ]);
     });
   });
 });

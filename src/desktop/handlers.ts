@@ -6,7 +6,13 @@ import { CHANNELS, INSTANCES, type ColumnReport, type OeqApi, type PlanReport, t
 import { SecretStore, EncryptedTokenStore } from './secrets.js';
 import { buildAuth, buildCodeAuth, buildClient, buildConfig, instanceById } from './session.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths, validateHeaders, isAnnotationHeader } from '../core/schema.js';
+import {
+  extractDefinition,
+  extractItemNamePath,
+  parseSchemaPaths,
+  validateHeaders,
+  isAnnotationHeader,
+} from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
@@ -122,6 +128,19 @@ function resourcePathOpts(): { isPackaged: boolean; appPath: string; resourcesPa
 async function schemaPaths(): Promise<Set<string>> {
   const p = resolveSchemaPath(resourcePathOpts());
   return parseSchemaPaths(extractDefinition(await readFile(p, 'utf8')));
+}
+
+/**
+ * The title xpath the same export declares, or null if it declares none.
+ *
+ * Read rather than assumed: the duplicate check searches on this path, and a
+ * hardcoded `MWDL/title` matches nothing outside BYU-Idaho -- which would
+ * report every row clean from a check that never looked. Null reaches
+ * findDuplicates as "could not check", never as "clean".
+ */
+async function schemaTitleHeader(): Promise<string | null> {
+  const p = resolveSchemaPath(resourcePathOpts());
+  return extractItemNamePath(await readFile(p, 'utf8'));
 }
 
 /**
@@ -377,7 +396,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       // A failure for one row becomes a `could-not-check` finding rather than
       // an exception, so an unreachable server cannot block a plan that is
       // otherwise ready -- and cannot be mistaken for a clean result either.
-      const duplicates = await findDuplicates(client, manifest);
+      const duplicates = await findDuplicates(client, manifest, await schemaTitleHeader());
 
       const manifestPath = join(userData(), 'job.json');
       await saveManifest(manifestPath, manifest);

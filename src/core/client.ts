@@ -479,9 +479,22 @@ export class OeqClient {
    * is asked for because `info` REPLACES the default rather than adding to it;
    * it does not in fact yield a `name`, but asking costs nothing and stops the
    * omission looking deliberate.
+   *
+   * `titleHeader` is REQUIRED and has no default. It is the schema's declared
+   * item name path in spreadsheet-header form (`MWDL/title` at BYU-Idaho,
+   * something else everywhere else). Defaulting it would be worse than a
+   * compile error: a clause naming a path the schema does not declare matches
+   * nothing, so the caller is told the batch is clean by a query that could
+   * never have found anything. Callers read it from the schema -- see
+   * discovery.ts#parseSchema and schema.ts#extractItemNamePath.
    */
-  async searchByTitle(collectionUuid: string, title: string, limit = 50): Promise<SearchHit[]> {
-    const clause = `/xml/MWDL/title = '${escapeWhereValue(title)}'`;
+  async searchByTitle(
+    collectionUuid: string,
+    title: string,
+    titleHeader: string,
+    limit = 50,
+  ): Promise<SearchHit[]> {
+    const clause = `/xml/${titleHeader} = '${escapeWhereValue(title)}'`;
     const url =
       `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
       `&where=${encodeURIComponent(clause)}` +
