@@ -31,10 +31,6 @@ const arg = (name) => {
 const has = (name) => process.argv.includes(`--${name}`);
 
 const base = (arg('base') ?? process.env.OEQ_BASE_URL ?? '').replace(/\/+$/, '');
-if (!base) {
-  console.error('Need --base <url> or OEQ_BASE_URL in the environment.');
-  process.exit(2);
-}
 
 const collectionUuid = arg('collection') ?? process.env.OEQ_COLLECTION_UUID ?? '';
 const schemaUuid = arg('schema') ?? process.env.OEQ_SCHEMA_UUID ?? '';
@@ -67,17 +63,40 @@ if (has('urls')) {
 
 // `--analyse` reads fixtures saved from the browser and answers the same
 // questions the live path does, so an SSO instance gets an identical report.
+// Runs BEFORE the base-url requirement on purpose: reading files saved from a
+// browser needs no instance address, and demanding one turned the simplest
+// path into an error message.
 if (has('analyse') || has('analyze')) {
   const { readFileSync } = await import('node:fs');
   const read = (f) => {
+    const path = `tests/fixtures/api/${f}`;
+    let text;
     try {
-      return JSON.parse(readFileSync(`tests/fixtures/api/${f}`, 'utf8'));
+      text = readFileSync(path, 'utf8');
     } catch {
+      console.log(`    (not found: ${path})`);
+      return null;
+    }
+    // A browser's JSON viewer saves HTML, not JSON -- a silent, easy mistake
+    // whose failure would otherwise read as "the API returned nothing".
+    if (/^\s*</.test(text)) {
+      console.log(`    (${path} is HTML, not JSON -- save the browser's Raw Data tab instead)`);
+      return null;
+    }
+    try {
+      return JSON.parse(text.replace(/^﻿/, ''));
+    } catch (error) {
+      console.log(`    (${path} is not valid JSON: ${error.message})`);
       return null;
     }
   };
   report(read('collections.json'), read('collection-one.json'), read('schema.json'));
   process.exit(0);
+}
+
+if (!base) {
+  console.error('Need --base <url> or OEQ_BASE_URL in the environment.');
+  process.exit(2);
 }
 
 if (!arg('user')) {

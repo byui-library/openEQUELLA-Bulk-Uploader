@@ -1,0 +1,23 @@
+{
+  "uuid": "bb348ab1-7a81-4e37-8ef7-adc095ade4f9",
+  "name": "BYU-Idaho Faculty Content",
+  "nameStrings": {
+    "en": "BYU-Idaho Faculty Content"
+  },
+  "description": "BYU-Idaho Faculty Content",
+  "descriptionStrings": {
+    "en": "BYU-Idaho Faculty Content"
+  },
+  "modifiedDate": "2026-06-29T10:02:19.804-07:00",
+  "createdDate": "2012-08-01T20:17:51.090-07:00",
+  "owner": {
+    "id": "00000000-0000-0000-0000-000000000000"
+  },
+  "schema": {
+    "uuid": "c93181f3-a443-41bf-9afe-ac9f7daf90b7"
+  },
+  "filestoreId": "default",
+  "links": {
+    "self": "https://content.byui.edu/api/collection/bb348ab1-7a81-4e37-8ef7-adc095ade4f9"
+  }
+}

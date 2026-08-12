@@ -60,6 +60,61 @@ were believed by every test until an instance said otherwise.
 
 ---
 
+## What the probe actually found — 2026-08-12, content.byui.edu
+
+Run by the operator via the browser (see Task 1). **All three unknowns are
+settled, and two of the answers are better than the design assumed.** Fixtures
+are committed under `tests/fixtures/api/`.
+
+**Q1 — the collection list works.** `GET /api/collection?privilege=CREATE_ITEM&full=true`
+returned `{ start, length, available, results }` with `available: 29`. Entries
+carry `uuid`, `name` and — the useful part — **`schema: { uuid }`**.
+
+**Q2 — YES, and the second request is unnecessary.** The schema uuid is on each
+**list entry**, so `parseCollections` should carry it through and Setup needs no
+per-collection follow-up call. Across the 29 collections there are two distinct
+schemas, so an institution really can have more than one and the discovery
+design is not over-engineering.
+
+**Q3 — the field is `namePath`, not `itemNamePath`.**
+
+```json
+"namePath": "/MWDL/title",
+"descriptionPath": "/MWDL/description",
+"definition": { "xml": { "item": …, "MWDL": …, "BYUI_extended": … } }
+```
+
+`definition` is a **nested object**, not XML, so `parseSchemaPaths` cannot be
+reused for the API path and the tree-walker is required. (`serializedDefinition`
+does carry the XML string, but parsing JSON we already have would be perverse.)
+
+### Two bugs this found in the walker as originally specified
+
+Cross-checked the walker's output against `parseSchemaPaths(schema/_entity.xml)`
+on the same schema — 158 paths from the XML export, 227 from the naive walk:
+
+1. **The `xml` root must be stripped.** Paths live under `definition.xml`, so
+   walking `definition` yields `xml/MWDL/title` where a spreadsheet header is
+   `MWDL/title`. Note `namePath` omits the root, giving `/MWDL/title`.
+2. **Containers must not be emitted.** The 70 extra paths are parent nodes —
+   `MWDL/creators`, `MWDL/subjects`, `MWDL/genres`. `parseSchemaPaths` emits
+   **leaves only**, and rightly: openEQUELLA cannot store a value at a container,
+   so offering one as a valid header would let an operator build a spreadsheet
+   that fails at upload.
+3. **Attributes are addressable and must not be skipped.** The single path in
+   the XML export missing from the walk was `item/oai/id`, because the JSON
+   represents it as `@id` and the draft walker skipped every `@`-prefixed key.
+   Underscore keys (`_type`, `_indexed`, `_field`) are metadata and *are*
+   skipped; `@name` becomes the path segment `name`.
+
+**The test that catches all three is the cross-check itself:** parse
+`schema/_entity.xml` with the existing `parseSchemaPaths`, walk
+`tests/fixtures/api/schema.json`, and assert the two agree. They describe the
+same schema, so any disagreement is a bug in one of them. Write that test in
+Task 7 — it is worth more than any hand-written fixture.
+
+---
+
 ## File structure
 
 **Create:**
