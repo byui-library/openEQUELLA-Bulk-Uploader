@@ -1533,6 +1533,95 @@ git commit -m "fix(core): read the title path from the schema instead of hardcod
 
 ---
 
+## Task 8b: The other BYU-Idaho values baked into core
+
+**Added 2026-08-12, missed by the original plan.** Task 8 found the hardcoded
+title path. Auditing `src/` for the Task 11 acceptance test found three more of
+the same kind, and one of them is worse than the title path because it is a
+**write, on every item created**.
+
+**Files:**
+- Modify: `src/core/types.ts:61`, `src/core/runner.ts:117`, `src/core/plan.ts:81`, `src/core/config.ts:34-35`, `src/desktop/ui/extract/picker.ts:21`
+- Test: `tests/runner.test.ts`, `tests/config.test.ts`
+
+### 1. `ATTACHMENT_UUID_XPATH` — the write
+
+```typescript
+// src/core/types.ts:61
+export const ATTACHMENT_UUID_XPATH = 'BYUI_extended/attachments/attachment';
+
+// src/core/runner.ts:117 -- on EVERY created item
+[ATTACHMENT_UUID_XPATH]: [attachmentUuid],
+```
+
+`BYUI_extended` is BYU-Idaho's schema extension. At any other institution that
+node does not exist, so the tool would write metadata to a path outside the
+collection's schema on every item it creates — either silently storing junk or
+failing the create, and neither is discoverable from the message.
+
+**The attachment itself is not affected.** Attachments are linked through the
+attachment API; this field is a convenience index that BYU-Idaho's schema
+declares. So the correct behaviour elsewhere is **to not write it at all**.
+
+Make it configuration: `attachmentUuidPath`, defaulting to **unset**. When
+unset, `runner.ts` omits the field entirely rather than substituting a guess.
+Tests: an item built with the path set carries the field; one with it unset
+carries no trace of it; `plan.ts`'s skip at line 81 still skips it when set and
+is a no-op when not.
+
+### 2. `DEFAULT_COLLECTION` and `DEFAULT_SCHEMA` — silent wrong defaults
+
+```typescript
+// src/core/config.ts:34-35
+const DEFAULT_COLLECTION = 'bb348ab1-7a81-4e37-8ef7-adc095ade4f9';
+const DEFAULT_SCHEMA = 'c93181f3-a443-41bf-9afe-ac9f7daf90b7';
+```
+
+An institution that does not set `OEQ_COLLECTION_UUID` gets **BYU-Idaho's
+collection uuid** rather than an error. The failure arrives from the server, as
+a not-found on an identifier the operator never chose and cannot recognise.
+
+Delete both. `OEQ_COLLECTION_UUID` joins the required list; the error naming a
+missing variable is a better outcome than any default. `OEQ_SCHEMA_UUID` is
+recorded in the manifest but never sent anywhere (see `CLAUDE.md`), so it
+becomes optional-and-empty rather than required.
+
+Test: `loadConfig` with no `OEQ_COLLECTION_UUID` throws naming it, and no BYUI
+uuid appears in `src/`.
+
+### 3. `SCHEMA_ORDER` — a cosmetic one, worth doing while here
+
+```typescript
+// src/desktop/ui/extract/picker.ts:21
+const SCHEMA_ORDER = ['MWDL', 'BYUI_extended'];
+```
+
+Sorts the column picker so BYU-Idaho's two top-level schema sections appear in a
+useful order — plain sorting put all 98 `BYUI_extended` entries ahead of the
+MWDL fields most items need. Elsewhere the array simply does not match and the
+ordering falls back, which is not a bug but is dead weight.
+
+Derive the order from the schema instead: the section containing the declared
+`namePath` first, then the rest alphabetically. That reproduces today's
+behaviour at BYU-Idaho — `namePath` is `/MWDL/title`, so MWDL leads — while
+being right anywhere.
+
+- [ ] **Step 1: Write the failing tests for all three.**
+- [ ] **Step 2: Run, confirm each fails for the stated reason.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Full suite green, typecheck clean.**
+- [ ] **Step 5: Mutation-test the `attachmentUuidPath`-unset path** — make the
+  unset case fall back to the old constant and confirm a test goes red. This is
+  the one whose silent failure would corrupt every item at a new institution.
+  Use the Edit tool for the mutation; see the CRLF warning at the top.
+- [ ] **Step 6: Commit**
+
+```bash
+git commit -m "fix(core): stop writing BYU-Idaho schema paths and uuids everywhere"
+```
+
+---
+
 ## Task 9: Cache the schema so extraction stays offline
 
 `src/core/extract/` never touches the network — that is what lets an operator
@@ -1848,12 +1937,9 @@ git commit -m "feat(cli): check reports per-capability compatibility"
 - Modify: `src/desktop/ipc.ts`, `src/desktop/ui/instances.ts`, `src/desktop/secrets.ts`, `src/desktop/session.ts`, `src/desktop/ui/app.ts`
 - Test: `tests/desktop/ui/instances.test.ts`, `tests/desktop/secrets.test.ts`
 
-**This task was badly understated in the first draft of this plan.** It said
-"empty both literals". That is not sufficient, and doing only that would
-silently destroy existing operators' stored credentials.
-
-`InstanceId` is not data — it is a union type woven through the type system and
-the on-disk format:
+**This task was understated in the first draft of this plan.** It said "empty
+both literals". `InstanceId` is not data — it is a union type woven through the
+type system and the on-disk format:
 
 ```typescript
 // src/desktop/secrets.ts
@@ -1865,32 +1951,79 @@ interface StoredShapeV2 {
 }
 ```
 
-So an operator running v1.0.0 today has their OAuth client id, client secret and
+So an operator running v1.0.0 has their OAuth client id, client secret and
 redirect URI encrypted on disk under the literal keys `production` and `test`.
-**Those credentials are supplied out-of-band by an administrator** — if they
-become unreachable, the operator cannot simply re-type them.
+
+### Decision: clean break, not a migration — settled 2026-08-12
+
+Stored credentials are **discarded** and Setup re-prompts. A v2→v3 rekeying
+migration and a seed-don't-rekey hybrid were both considered and rejected.
+
+Why, in order of weight:
+
+1. **The operator is resetting the OAuth client secret.** Every stored
+   `clientSecret` becomes invalid regardless of what this task does. A
+   migration would faithfully preserve dead credentials, and the failure would
+   then surface at sign-in rather than at Setup — further from the fix, and
+   much harder to diagnose.
+2. **Migration is the only option that can lose what it exists to protect.**
+   Discarding is deliberate; not touching them is safe; moving them is the one
+   path with a failure mode.
+3. **Both preserving options keep BYU-Idaho's URLs in the shipped code**, as a
+   seed or migration map. Removing them is the entire point of this task, and
+   in a codebase heading for public release such a map reads as a default to
+   whoever finds it next.
+4. **The codebase already made this exact call.** `loadAll` returns `empty` for
+   any unrecognised shape, and `SecretStore`'s doc comment reasons it out:
+   *"the operator sees Setup again and re-enters what they have; that one-time
+   re-prompt is a far smaller cost than a wrong-instance credential being sent
+   to openEQUELLA unnoticed."*
 
 ### What this task must therefore do
 
 1. **`InstanceId` becomes `string`** — a stable key derived from the normalised
    instance URL, not a hand-picked name. `normaliseInstanceUrl` from Task 2 is
-   what makes two spellings of the same address agree on one key.
-2. **A v2 → v3 migration**, in `loadAll`. The store already has migration
-   precedent — v1 → v2, plus the `redirectUri` backfill documented on
-   `loadSettings` — so follow that pattern rather than inventing one.
-3. **BYU-Idaho's two URLs stay in the code, but ONLY inside the migration**, as
-   the mapping `production` → `https://content.byui.edu`, `test` →
-   `https://content-test.byui.edu`. They are removed as shipped presets, which
-   is the point of the task, but they are the only thing that can rekey an
-   existing install. Comment them as migration data with an explicit note that
-   they are not defaults and must not be reintroduced as such.
-4. **A test that a v2 blob is readable after migration** — write a v2-shaped
-   store, load it through the new code, and assert the settings come back under
-   the URL-derived key with nothing lost. This is the test that protects the
-   people already using the tool.
+   what makes two spellings of one address agree on a single key.
+2. **Bump the stored version to 3.** `loadAll`'s existing "unrecognised shape →
+   `empty`" path then discards v2 entries with no new code. Do not write a
+   rekeying step.
+3. **Setup must explain the blank form**, once, when a v2 store was found and
+   dropped. A silent empty form reads as a broken app:
+   *"This version stores credentials differently, and the client secret has
+   been reset. Ask your administrator for the current client ID and secret."*
+   **This string is the whole cost of the decision above — do not skip it.**
+   Test that the notice appears for a v2 blob and does NOT appear for a fresh
+   install, which has nothing to explain.
+4. **`defaultRedirectUri` must go or change.** It looks the id up in `INSTANCES`
+   and its doc comment relies on that list always declaring both known ids —
+   an invariant this task deletes. Do not leave it silently returning `''`.
 
 The two hand-mirrored `INSTANCES` literals and their drift test stay as a
 mechanism; only their hardcoded contents go.
+
+### The acceptance test, stated precisely
+
+**No BYU-Idaho VALUE may remain in `src/` — but the comments stay.**
+
+`grep -ri byui src/` currently returns 21 hits in 11 files, and they are three
+different things. Only the first must go:
+
+| Category | Examples | Action |
+| --- | --- | --- |
+| **Values and defaults** | the two `INSTANCES` literals in `ipc.ts` and `ui/instances.ts` | **Remove.** This task. |
+| **Schema paths and uuids** | `ATTACHMENT_UUID_XPATH`, `DEFAULT_COLLECTION`, `DEFAULT_SCHEMA`, `SCHEMA_ORDER` | **Task 8b**, not here. |
+| **Comments recording live findings** | `authCode.ts` on the redirect-URI trailing slash, `client.ts` on the staging `201`, `tokenStore.ts` on measured expiry | **Keep.** |
+
+That last row matters. Those comments name `content-test.byui.edu` as the
+*provenance of evidence* — "confirmed live against X" — and each one records
+something that cost real time to establish and that a future reader would
+otherwise re-derive or get wrong. Deleting them to satisfy a grep would destroy
+the most valuable prose in the codebase. Naming where a fact was verified is
+good practice, not institutional residue.
+
+`secrets.ts:87-88` is the one comment that does need rewording, because it cites
+the two instances as the *reason* credentials are per-instance. Keep the reason,
+change the example.
 
 - [ ] **Step 1: Write the failing test**
 
