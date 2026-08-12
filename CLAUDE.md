@@ -99,9 +99,14 @@ easy to get wrong from first principles.
   single-attachment item; that is accreted junk from repeated bulk edits, not the
   intended pattern.
 - **Authentication is SSO-backed** (Okta via `id.churchofjesuschrist.org`).
-  Interactive login cannot be automated, so unattended runs require OAuth
-  client credentials. The API client needs `CREATE_ITEM` on the target
-  collection; `VIEW_APIDOCS` gates `/api/swagger.json`.
+  Interactive login cannot be automated. The API client needs `CREATE_ITEM` on
+  the target collection; `VIEW_APIDOCS` gates `/api/swagger.json`.
+- **BYU-Idaho's OAuth client cannot do the client-credentials grant.** Probed
+  2026-08-12: it answers `invalid_client` — *"To use the Client Credentials
+  flow your client must be registered with a fixed user"*. This file previously
+  said unattended runs require that grant; they cannot use it as registered.
+  `OEQ_AUTH_MODE=code` (authorization code, interactive) is the working path
+  here, and `password` is the path for institutions that are not behind SSO.
 - **The duplicate check matches `/xml/MWDL/title` exactly** via the search
   API's `where` clause, not free-text `q` -- `q`'s matching semantics are
   unconfirmed and would raise false alarms. CONFIRMED against production: the
@@ -135,6 +140,17 @@ easy to get wrong from first principles.
   in Node. `tests/desktop/rendererPurity.test.ts` now walks the import graph and
   fails the build instead. If the renderer needs something a Node-dependent
   module computes, compute it in the main process and send it over IPC.
+- **Mutation testing has a trap here: source files are CRLF in the working
+  copy.** A `perl` or `sed` pattern containing `\n` silently matches nothing,
+  so the mutation never applies, the suite comes back green, and the result is
+  indistinguishable from a well-covered test. This has produced a false "all
+  passing" twice. Apply mutations with the Edit tool and confirm the file
+  actually changed before believing a green run. The same CRLF issue already
+  broke multi-line `node -e` string replaces once.
+- **`noUnusedLocals` is NOT enabled.** `tsconfig.json` sets `strict` and
+  `noUncheckedIndexedAccess` only. Do not rely on the typecheck to find a dead
+  import — it will not. Stated here because a plan and several task briefs
+  asserted otherwise.
 - **Any input whose `input` event triggers a re-render must call
   `ui/dom.ts#keepCaret`.** Screens render by replacing `innerHTML`, so the input
   is destroyed and recreated on every keystroke; without it the field loses
