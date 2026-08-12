@@ -81,3 +81,66 @@ describe('UsernamePasswordAuth', () => {
     );
   });
 });
+
+describe('the password never escapes', () => {
+  const SECRET = 'correct-horse-battery-staple';
+
+  /**
+   * Walks every string reachable from a thrown error -- message, stack,
+   * ApiError's body field, and anything nested -- looking for the password
+   * in either literal or percent-encoded form. It travels in a query string,
+   * so a URL echoed back by the server carries the encoded form.
+   */
+  const findsSecret = (value: unknown): boolean => {
+    const seen = new Set<unknown>();
+    const walk = (v: unknown): boolean => {
+      if (v == null || seen.has(v)) return false;
+      seen.add(v);
+      if (typeof v === 'string') {
+        return v.includes(SECRET) || v.includes(encodeURIComponent(SECRET));
+      }
+      if (v instanceof Error) {
+        // Own enumerable properties matter as much as the built-ins: ApiError
+        // carries the server's response in `body`, and `message`/`stack`/
+        // `cause` alone would miss it entirely. Checked by mutation -- with
+        // redact() neutered this branch is what goes red.
+        return (
+          walk(v.message) ||
+          walk(v.stack) ||
+          walk(v.cause) ||
+          Object.values(v as unknown as object).some(walk)
+        );
+      }
+      if (typeof v === 'object') return Object.values(v as object).some(walk);
+      return false;
+    };
+    return walk(value);
+  };
+
+  it('is absent from a rejected sign-in, including the echoed body', async () => {
+    const impl = vi.fn(
+      async (input: string | URL) =>
+        // A server echoing the request line back is exactly how the encoded
+        // form leaks.
+        new Response(`Rejected request: ${String(input)}`, { status: 401 }),
+    ) as unknown as typeof fetch;
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', SECRET, impl);
+    const error = await auth.authHeader().catch((e: unknown) => e);
+    expect(findsSecret(error)).toBe(false);
+  });
+
+  it('is absent when the network fails before a response', async () => {
+    const impl = vi.fn(async (input: string | URL) => {
+      throw new Error(`connect ECONNREFUSED for ${String(input)}`);
+    }) as unknown as typeof fetch;
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', SECRET, impl);
+    const error = await auth.authHeader().catch((e: unknown) => e);
+    expect(findsSecret(error)).toBe(false);
+  });
+
+  it('is absent from the Cookie header handed to the client', async () => {
+    const { impl } = loginStub();
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', SECRET, impl);
+    expect(findsSecret(await auth.authHeader())).toBe(false);
+  });
+});
