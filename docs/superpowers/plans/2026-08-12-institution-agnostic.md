@@ -2144,6 +2144,38 @@ git commit -m "feat(desktop): instances are added by the operator, not shipped"
 > the same lookup can offer the right value rather than making the operator
 > know it.
 
+> ### THIS TASK IS THE CONSUMER OF THREE THINGS BUILT AHEAD OF IT
+>
+> Tasks 6, 7 and 9 built modules that **currently have no production caller.**
+> `grep -rn SchemaCache src/` and `grep -rn parseCollections src/` each return
+> only their own definition. That is acceptable only because this task adopts
+> them. If it does not, they are dead code and must be deleted rather than left
+> as plausible-looking infrastructure nobody calls.
+>
+> 1. **`parseCollections`** — Setup's collection dropdown. Note a real
+>    duplication to resolve while here: `client.listCollections` parses the same
+>    `/api/collection` response with its own inline `body.results.map(...)` and
+>    **drops the `schema.uuid`** that `parseCollections` keeps. Two parsers for
+>    one endpoint. `parseCollections` should win, because the schema uuid is
+>    exactly what Setup needs to go from a chosen collection to its schema in
+>    one hop. Make `listCollections` use it and delete the inline parse.
+> 2. **`parseSchema`** — already widely used; no action.
+> 3. **`SchemaCache`** — write to it when Setup fetches a schema, so
+>    `src/core/extract/` keeps validating columns without a network call. That
+>    offline property is the whole reason the cache exists.
+
+> ### A SEAM THIS TASK DOES NOT CLOSE — record it, do not silently widen it
+>
+> `planAction` in `src/cli/index.ts` still reads the schema from a **local XML
+> file** (`--schema-file`, via `extractItemNamePath`), while the pre-flight now
+> reads it **from the API**. So the title path `check` reports and the one
+> `plan` actually searches on come from different sources and can disagree —
+> for instance when a schema has been edited on the server since the export was
+> taken.
+>
+> Not this task's job, but do not make it worse. If a later task unifies them,
+> the API is the authority and the local file is the offline fallback.
+
 
 **Files:**
 - Modify: `src/desktop/secrets.ts`, the Setup screen, `src/desktop/ipc.ts`
