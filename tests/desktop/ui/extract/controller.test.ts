@@ -36,9 +36,32 @@ describe('createExtractController', () => {
     const a = api();
     const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
     await c.chooseFolder();
-    expect(a.extractScan).toHaveBeenCalledWith('C:/files');
+    // The second argument names whose schema the columns are checked against;
+    // no instance was given here, so it is empty and the main process falls
+    // back to the bundled export.
+    expect(a.extractScan).toHaveBeenCalledWith('C:/files', '');
     expect(c.state().dir).toBe('C:/files');
     expect(c.state().profile?.columns[0]?.path).toBe(ATTACHMENT_COLUMN);
+  });
+
+  /**
+   * Extraction still touches no network -- this only names WHOSE already
+   * cached schema the main process should validate against. Without it every
+   * institution's columns are checked against the schema export bundled with
+   * the app, which is BYU-Idaho's and correct nowhere else.
+   */
+  it('tells the main process which instance’s schema to validate against', async () => {
+    const a = api();
+    const c = createExtractController({
+      api: a as never,
+      instanceId: 'https://other.example.edu',
+      onExit: vi.fn(),
+      render: vi.fn(),
+    });
+    await c.chooseFolder();
+    expect(a.extractScan).toHaveBeenCalledWith('C:/files', 'https://other.example.edu');
+    expect(a.schemaPaths).toHaveBeenCalledWith('https://other.example.edu');
+    expect(a.schemaNamePath).toHaveBeenCalledWith('https://other.example.edu');
   });
 
   it('does not advance when the folder holds nothing readable', async () => {

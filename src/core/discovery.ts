@@ -12,7 +12,42 @@ export interface CollectionSummary {
 }
 
 /**
+ * A collection's display label, from whatever shape the response put it in.
+ *
+ * `CollectionBean.name` (swagger.json) is typed only as `I18NString`, which is
+ * itself documented as a bare `{ type: "object" }` -- no shape at all. In
+ * practice openEQUELLA's REST responses serialise it as a plain string already
+ * resolved to the session's locale; this defensively also accepts an
+ * `I18NStrings`-shaped object (`{ strings: { [locale]: string } }`) in case a
+ * deployment does something else, and falls back to the uuid rather than
+ * letting a missing display label crash a caller over what is, worst case,
+ * cosmetic.
+ *
+ * It lives here rather than in client.ts because BOTH readers of a collection
+ * response need it and there must be exactly one of it: `client.getCollection`
+ * imports it, and `parseCollections` below applies it to every list entry.
+ */
+export function displayName(name: unknown, fallback: string): string {
+  if (typeof name === 'string' && name) return name;
+  if (name && typeof name === 'object') {
+    const strings = (name as { strings?: Record<string, string> }).strings;
+    if (strings) {
+      const first = Object.values(strings).find((v) => typeof v === 'string' && v);
+      if (first) return first;
+    }
+  }
+  return fallback;
+}
+
+/**
  * Read `GET /api/collection?privilege=CREATE_ITEM&full=true`.
+ *
+ * THE ONLY PARSER FOR THIS RESPONSE. `client.listCollections` used to have a
+ * second, inline one that read the same body and dropped `schema.uuid` on the
+ * floor -- so the one fact that turns a chosen collection into its schema in a
+ * single hop was thrown away at exactly the call site that needed it. Two
+ * parsers for one endpoint is two places for a field to go missing; this is
+ * the one.
  *
  * Each entry carries `schema: { uuid }`, so choosing a collection also
  * determines its schema with no further request. That was verified by probe,
@@ -31,7 +66,7 @@ export function parseCollections(body: unknown): CollectionSummary[] {
     if (typeof row?.uuid !== 'string' || !row.uuid) continue;
     collections.push({
       uuid: row.uuid,
-      name: typeof row.name === 'string' && row.name ? row.name : row.uuid,
+      name: displayName(row.name, row.uuid),
       schemaUuid: typeof row.schema?.uuid === 'string' ? row.schema.uuid : '',
     });
   }

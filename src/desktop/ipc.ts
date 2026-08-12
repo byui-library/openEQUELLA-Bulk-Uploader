@@ -8,13 +8,46 @@ import type { DuplicateFinding } from '../core/duplicates.js';
 // this module is reachable from the sandboxed renderer. A type-only import is
 // erased at compile time and never becomes a runtime require (see
 // tests/desktop/rendererPurity.test.ts).
-import type { Settings } from './secrets.js';
+import type { Settings, SettingsAuthMode } from './secrets.js';
 
+/**
+ * One saved site, as the renderer sees it. Mirrors secrets.ts's `Instance`
+ * exactly and carries NO credential: not the client secret, not the password.
+ * See `toInstance` there for why the mapping is field-by-field.
+ */
 export interface InstanceChoice {
   /** `instanceKey` of the base url -- see core/instanceUrl.ts. */
   id: string;
   label: string;
   baseUrl: string;
+  /**
+   * How this site signs in. The renderer needs it for wording that would
+   * otherwise be a lie -- Sign-in says "this opens an openEQUELLA sign-in
+   * window", which is true of the authorization-code flow and false of
+   * password mode, where the handler signs in directly with no browser.
+   */
+  authMode: SettingsAuthMode;
+  /** Where the attachment uuid is written, or '' for no such field. See Instance. */
+  attachmentUuidPath: string;
+  /** Whether this is a live site. Drives the banner (ui/banner.ts). Defaults true. */
+  live: boolean;
+  /** The chosen collection's schema, or ''. The key to the offline schema cache. */
+  schemaUuid: string;
+}
+
+/**
+ * A fetched schema, flattened for the IPC boundary: `SchemaInfo.paths` is a
+ * `Set`, and this crosses a process boundary where an array is the shape every
+ * consumer can rely on.
+ */
+export interface SchemaSummary {
+  uuid: string;
+  /** As declared, with a leading slash: `/MWDL/title`. Null if undeclared. */
+  namePath: string | null;
+  /** The same path in spreadsheet-header form: `MWDL/title`. Null if undeclared. */
+  titleHeader: string | null;
+  /** Every valid xpath, leaves only, in spreadsheet-header form. */
+  paths: string[];
 }
 
 /**
@@ -94,12 +127,25 @@ export interface OeqApi {
   credentialsDropped(): Promise<boolean>;
   hasSettings(instanceId: string): Promise<boolean>;
   /**
-   * Add or update one instance and its credentials. The address comes from
-   * the operator; the id is derived from it in the main process (one rule for
-   * what an address's key is) and returned, so the caller can select what it
-   * just saved.
+   * Add or update one instance, its per-site settings and its credentials. The
+   * address comes from the operator; the id is derived from it in the main
+   * process (one rule for what an address's key is) and returned, so the caller
+   * can select what it just saved.
+   *
+   * The per-site fields are optional and an omitted one keeps whatever is
+   * stored (secrets.ts). An explicit `''` attachment path is not an omission:
+   * blank means "write no such field" and is stored as given.
    */
-  saveInstance(instance: { label: string; baseUrl: string }, s: Settings): Promise<InstanceChoice>;
+  saveInstance(
+    instance: {
+      label: string;
+      baseUrl: string;
+      attachmentUuidPath?: string;
+      live?: boolean;
+      schemaUuid?: string;
+    },
+    s: Settings,
+  ): Promise<InstanceChoice>;
   clearSettings(): Promise<void>;
 
   /**
@@ -127,6 +173,23 @@ export interface OeqApi {
   currentUser(instanceId: string): Promise<CurrentUser | null>;
 
   listCollections(instanceId: string): Promise<CollectionSummary[]>;
+
+  /**
+   * Read one schema from the site and remember it.
+   *
+   * Two jobs, on purpose. It answers Setup -- which needs the chosen
+   * collection's valid xpaths to offer or check an attachment-uuid path
+   * instead of making the operator know one -- and, on the way, it writes the
+   * schema into the on-disk `SchemaCache` (core/schemaCache.ts). That cache is
+   * what lets `src/core/extract/` validate the columns it produces WITHOUT a
+   * network call, which is the whole reason the extract flow works for an
+   * operator who has not signed in to anything.
+   *
+   * The schema uuid comes from the collection list entry
+   * (`CollectionSummary.schemaUuid`), so choosing a collection resolves its
+   * schema in one hop and nothing has to be configured twice.
+   */
+  fetchSchema(args: { instanceId: string; schemaUuid: string }): Promise<SchemaSummary>;
 
   chooseSpreadsheet(): Promise<string | null>;
   chooseFolder(): Promise<string | null>;
@@ -163,21 +226,38 @@ export interface OeqApi {
   retryFailed(manifestPath: string): Promise<void>;
   loadManifest(manifestPath: string): Promise<Manifest>;
 
-  /** Read a folder: what is there, and what can be mapped from. Samples the first few documents. */
-  extractScan(dir: string): Promise<ExtractScan>;
+  /**
+   * Read a folder: what is there, and what can be mapped from. Samples the
+   * first few documents. `instanceId` picks whose schema the proposed starter
+   * profile is built against -- same cached-then-bundled resolution as
+   * `schemaPaths`, so the starter and the Add-column picker cannot disagree
+   * about which columns are valid.
+   */
+  extractScan(dir: string, instanceId?: string): Promise<ExtractScan>;
   /** First few rows for the live preview. Cheap enough to call on every edit. */
   extractPreview(args: { dir: string; profile: Profile }): Promise<ExtractedRow[]>;
   /** Write the spreadsheet. */
   extractRun(args: { dir: string; profile: Profile; outPath: string }): Promise<ExtractRunReport>;
-  /** Every valid schema xpath, for the Add-column picker. */
-  schemaPaths(): Promise<string[]>;
+  /**
+   * Every valid schema xpath, for the Add-column picker.
+   *
+   * `instanceId` selects WHOSE schema. Given one whose schema has been fetched
+   * and cached (see `fetchSchema`), extraction validates against that site's
+   * real schema, offline. Without a cache -- a fresh install, another
+   * institution's site, an operator who has not signed in -- it falls back to
+   * the schema export bundled with the app rather than refusing: blocking the
+   * offline half of the tool on a network call the operator did not ask for
+   * would trade a real capability for a check.
+   */
+  schemaPaths(instanceId?: string): Promise<string[]>;
   /**
    * The xpath the schema declares as the item's name, or null if it declares
    * none. The Add-column picker offers that path's own section first, since it
    * holds the fields nearly every item needs. Parsed in the main process:
-   * reading the schema reaches `node:fs`, which the renderer cannot.
+   * reading the schema reaches `node:fs`, which the renderer cannot. Same
+   * cached-then-bundled resolution as `schemaPaths`.
    */
-  schemaNamePath(): Promise<string | null>;
+  schemaNamePath(instanceId?: string): Promise<string | null>;
   /** Templates shipped with the app, for the "start from" choice. */
   listTemplates(): Promise<{ id: string; label: string }[]>;
   /** A shipped template, validated, ready to use as the starting profile. */
@@ -244,6 +324,7 @@ export const CHANNELS = {
   signOut: 'oeq:signOut',
   currentUser: 'oeq:currentUser',
   listCollections: 'oeq:listCollections',
+  fetchSchema: 'oeq:fetchSchema',
   chooseSpreadsheet: 'oeq:chooseSpreadsheet',
   chooseFolder: 'oeq:chooseFolder',
   saveStarterKit: 'oeq:saveStarterKit',

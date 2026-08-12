@@ -492,7 +492,16 @@ export async function startMockServer(): Promise<MockServer> {
           privileges.length > 0
             ? state.collections.filter((c) => privileges.every((p) => c.privileges.includes(p)))
             : state.collections;
-        const results = filtered.slice(0, length).map((c) => ({ uuid: c.uuid, name: c.name }));
+        // Each entry carries `schema: { uuid }`, exactly as the recorded
+        // tests/fixtures/api/collections.json does on every one of its 29
+        // entries. The mock used to omit it -- mirroring the inline parse in
+        // client.listCollections, which read only uuid and name -- so no test
+        // could have noticed the field being dropped.
+        const results = filtered.slice(0, length).map((c) => ({
+          uuid: c.uuid,
+          name: c.name,
+          ...(c.schemaUuid ? { schema: { uuid: c.schemaUuid } } : {}),
+        }));
         return send(res, 200, {
           start: 0,
           length: results.length,

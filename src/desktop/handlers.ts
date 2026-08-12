@@ -2,8 +2,17 @@ import { app, dialog, safeStorage, type BrowserWindow, type IpcMain } from 'elec
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, readdir, copyFile } from 'node:fs/promises';
-import { CHANNELS, type ColumnReport, type OeqApi, type PlanReport, type RunReport } from './ipc.js';
+import {
+  CHANNELS,
+  type ColumnReport,
+  type OeqApi,
+  type PlanReport,
+  type RunReport,
+  type SchemaSummary,
+} from './ipc.js';
 import { SecretStore, EncryptedTokenStore, type Instance } from './secrets.js';
+import { SchemaCache } from '../core/schemaCache.js';
+import type { SchemaInfo } from '../core/discovery.js';
 import { buildAuth, buildCodeAuth, buildClient, buildConfig, requireInstance } from './session.js';
 import { readSheet } from '../core/sheet.js';
 import {
@@ -32,6 +41,76 @@ const cipher = {
 
 const secrets = () => new SecretStore(join(userData(), 'settings.enc'), cipher);
 const tokens = () => new EncryptedTokenStore(join(userData(), 'token.enc'), cipher);
+
+/**
+ * Fetched schemas, on disk, so extraction can validate its columns offline.
+ *
+ * NOT encrypted, unlike the two stores above, and deliberately not: a schema
+ * is a public description of a collection's fields, holds no credential and
+ * nothing personal, and `SchemaCache` is a plain-JSON cache that any of its
+ * files being unreadable degrades to "no cache" rather than to an error.
+ */
+const schemas = () => new SchemaCache(join(userData(), 'schema-cache'));
+
+/** A fetched schema in the shape that crosses IPC -- `paths` as an array, not a Set. */
+function toSummary(schema: SchemaInfo): SchemaSummary {
+  return {
+    uuid: schema.uuid,
+    namePath: schema.namePath,
+    titleHeader: schema.titleHeader,
+    paths: [...schema.paths].sort(),
+  };
+}
+
+/**
+ * Read one schema and leave it in the cache on the way past.
+ *
+ * THE WRITE IS THE POINT, as much as the answer is. `src/core/extract/` never
+ * touches the network -- which is what lets an operator build a spreadsheet
+ * without signing in to anything -- so this is the only way a schema fetched
+ * here reaches the column validation that happens there.
+ *
+ * A CACHE WRITE THAT FAILS DOES NOT FAIL THE FETCH. The operator asked to see
+ * a schema, not to populate a cache; a full or read-only disk would otherwise
+ * turn "here are your collection's fields" into an error dialog, and the only
+ * thing actually lost is a later offline validation that degrades to the
+ * bundled export anyway.
+ *
+ * Taken as parameters rather than built here so it can be exercised without an
+ * Electron process, a live instance, or an https address -- `saveInstance`
+ * refuses anything else, which puts the real handler's path out of reach of a
+ * loopback mock server.
+ */
+export async function fetchAndCacheSchema(
+  client: { getSchema(uuid: string): Promise<SchemaInfo> },
+  cache: { save(instanceUrl: string, schema: SchemaInfo): Promise<void> },
+  instanceUrl: string,
+  schemaUuid: string,
+): Promise<SchemaSummary> {
+  const schema = await client.getSchema(schemaUuid);
+  try {
+    await cache.save(instanceUrl, schema);
+  } catch {
+    // See above: the answer is still good.
+  }
+  return toSummary(schema);
+}
+
+/**
+ * The cached schema for one instance, or null when there is none.
+ *
+ * Null for every ordinary reason: no instance selected, a site whose schema
+ * has never been fetched, a collection that names no schema, an unreadable or
+ * damaged cache file. Every one of those means "validate against the bundled
+ * export instead" -- never "refuse to extract". See `SchemaCache`'s own doc
+ * comment, which makes the same promise about its reads.
+ */
+async function cachedSchema(instanceId: string): Promise<SchemaInfo | null> {
+  if (!instanceId) return null;
+  const inst = await secrets().loadInstance(instanceId);
+  if (!inst || inst.schemaUuid === '') return null;
+  return schemas().load(inst.baseUrl, inst.schemaUuid);
+}
 
 /**
  * The exact wording an operator sees when the instance they've selected has
@@ -330,6 +409,18 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     },
   );
 
+  // Read one schema and REMEMBER IT -- see fetchAndCacheSchema, which is
+  // where the reasoning and the tests live.
+  ipcMain.handle(
+    CHANNELS.fetchSchema,
+    async (_e, args: Parameters<OeqApi['fetchSchema']>[0]): Promise<SchemaSummary> => {
+      const { inst, settings } = await requireSettings(args.instanceId);
+      const cfg = buildConfig(inst, settings, 'unused');
+      const client = buildClient(cfg, buildAuth(cfg, tokens()));
+      return fetchAndCacheSchema(client, schemas(), inst.baseUrl, args.schemaUuid);
+    },
+  );
+
   ipcMain.handle(CHANNELS.chooseSpreadsheet, async () => {
     const r = await dialog.showOpenDialog({
       properties: ['openFile'],
@@ -528,5 +619,9 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   registerExtractHandlers(ipcMain, {
     schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
     templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
+    // The site's OWN schema, when one has been fetched and cached, in
+    // preference to the bundled export -- which is BYU-Idaho's and correct
+    // nowhere else. Null falls back to the bundle; see cachedSchema.
+    cachedSchema,
   });
 }

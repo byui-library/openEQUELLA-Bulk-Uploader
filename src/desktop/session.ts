@@ -51,21 +51,23 @@ export function requireInstance(instanceId: string, instance: Instance | null): 
  * It is sent in OAuth mode only; password auth has no redirect at all, and
  * `loadConfig` defaults the field for it.
  *
- * OEQ_ATTACHMENT_UUID_PATH is read from the process environment because the
- * desktop has no setting for it yet (core/types.ts says what the field is).
- * Unset -- which it is for anyone who has not deliberately set it for their
- * Windows account -- means the attachment uuid is written into no metadata
- * field at all, which is correct for a schema that declares no such node. An
- * institution whose schema DOES declare one sets the variable; a per-instance
- * setting on Setup is the better home for it once the instance list itself is
- * operator-managed.
+ * OEQ_ATTACHMENT_UUID_PATH comes from `instance.attachmentUuidPath` -- the
+ * per-instance STORED setting (secrets.ts), collected on Setup. It USED TO be
+ * read from `process.env`, which works for a developer running `npm run
+ * desktop` and is useless for the operator, who launches the packaged app from
+ * a Start Menu shortcut with no environment set. The effect was silent: a
+ * BYU-Idaho operator using the GUI created items with no
+ * `BYUI_extended/attachments/attachment` at all -- no error, no warning, just
+ * absent from every contribution, and nothing to notice until somebody went
+ * looking in openEQUELLA weeks later. There is no env fallback left on
+ * purpose: a fallback that only works on the developer's machine is how this
+ * hid for as long as it did.
+ *
+ * Blank -- the default, and correct for a schema that declares no such node --
+ * means the attachment uuid is written into no metadata field at all. It is
+ * passed through blank, never coerced into a guess.
  */
-export function buildConfig(
-  instance: Instance,
-  settings: Settings,
-  collectionUuid: string,
-  env: Record<string, string | undefined> = process.env,
-): Config {
+export function buildConfig(instance: Instance, settings: Settings, collectionUuid: string): Config {
   const credentials =
     settings.authMode === 'password'
       ? {
@@ -83,7 +85,7 @@ export function buildConfig(
   return loadConfig({
     OEQ_BASE_URL: instance.baseUrl,
     OEQ_COLLECTION_UUID: collectionUuid,
-    OEQ_ATTACHMENT_UUID_PATH: env.OEQ_ATTACHMENT_UUID_PATH,
+    OEQ_ATTACHMENT_UUID_PATH: instance.attachmentUuidPath,
     ...credentials,
   });
 }

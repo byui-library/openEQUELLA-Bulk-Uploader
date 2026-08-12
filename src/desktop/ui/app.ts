@@ -65,6 +65,16 @@ interface AppState extends BatchState {
   // The username of the account stored for `setupInstanceId`, or null. The
   // password itself never comes back from the main process (ipc.ts).
   setupStoredUsername: string | null;
+  // The collections `setupInstanceId` can contribute to, and why they could
+  // not be read. Null is "not read"; an EMPTY ARRAY is "this account can
+  // create nothing", which is a real state the screen states plainly rather
+  // than rendering as an empty dropdown (screens/setup.ts).
+  setupCollections: CollectionSummary[] | null;
+  setupCollectionsError: string | null;
+  // Every valid xpath in the chosen collection's schema, or null for "not
+  // checked". Fetched through window.oeq.fetchSchema, which also leaves the
+  // schema in the on-disk cache extraction reads offline (ipc.ts).
+  setupSchemaPaths: string[] | null;
   setupSaving: boolean;
   setupError: string | null;
   // Whether credentials written by an older version of the store were found
@@ -114,6 +124,14 @@ function blankSetupFields(): SetupFields {
     redirectUri: '',
     username: '',
     password: '',
+    // Blank means "write no such field", which is right for most schemas and
+    // is a choice, not an unfilled box. It is never guessed at.
+    attachmentUuidPath: '',
+    collectionUuid: '',
+    // A new site is assumed LIVE until the operator says otherwise: being
+    // warned about a sandbox is a nuisance; not being warned about production
+    // is an unrecoverable batch (ui/banner.ts).
+    live: true,
   };
 }
 
@@ -130,6 +148,9 @@ function initialState(): AppState {
     setupFields: blankSetupFields(),
     setupRedirectTouched: false,
     setupStoredUsername: null,
+    setupCollections: null,
+    setupCollectionsError: null,
+    setupSchemaPaths: null,
     setupSaving: false,
     setupError: null,
     credentialsDropped: false,
@@ -216,11 +237,16 @@ function render(): void {
         credentialsDropped: state.credentialsDropped,
         fields: state.setupFields,
         storedUsername: state.setupStoredUsername,
+        collections: state.setupCollections,
+        collectionsError: state.setupCollectionsError,
+        schemaPaths: state.setupSchemaPaths,
         error: state.setupError,
         saving: state.setupSaving,
         onInstanceChange: handleSetupInstanceChange,
         onFieldChange: handleSetupFieldChange,
         onAuthModeChange: handleSetupAuthModeChange,
+        onCollectionChange: handleSetupCollectionChange,
+        onLiveChange: handleSetupLiveChange,
         onForgetPassword: handleForgetPassword,
         onSave: handleSaveSettings,
       });
@@ -239,6 +265,7 @@ function render(): void {
         onSignOut: handleSignOut,
         onContinue: handleSigninContinue,
         onAddCredentials: handleAddCredentials,
+        onSiteSettings: handleSiteSettings,
         onResetSettings: handleResetSettings,
       });
       break;
@@ -267,6 +294,10 @@ function render(): void {
           const root = requireEl('app');
           const controller = createExtractController({
             api: window.oeq,
+            // So the columns are validated against THIS site's schema when one
+            // has been cached, rather than the bundled export -- which is
+            // BYU-Idaho's, and correct nowhere else.
+            instanceId: state.instanceId,
             onExit: () => render(),
             render: (s) => renderExtract(root, s, controller, (p) => window.oeq.openPath(p)),
           });
@@ -365,11 +396,21 @@ function renderFatal(message: string): void {
 function seedSetupForm(id: string): void {
   state.setupInstanceId = id;
   state.setupError = null;
+  // Both belong to whichever site was previously selected. Left standing they
+  // would have the attachment path checked against another site's schema, and
+  // a wrong "found in the schema" is worse than no answer at all.
+  state.setupCollections = null;
+  state.setupCollectionsError = null;
+  state.setupSchemaPaths = null;
   const selected = instanceById(id);
   state.setupFields = {
     ...blankSetupFields(),
     baseUrl: selected?.baseUrl ?? '',
     label: selected?.label ?? '',
+    // Per-site settings, seeded from what was stored. `live` falls back to
+    // TRUE for a site not saved yet -- assumed live until said otherwise.
+    attachmentUuidPath: selected?.attachmentUuidPath ?? '',
+    live: selected?.live ?? true,
     // Sensible starting point for a field non-technical staff cannot fill in
     // from nothing: the site's own address. Pre-filled into the form, where
     // the operator can see and correct it before saving -- never substituted
@@ -385,6 +426,82 @@ function handleSetupInstanceChange(id: string): void {
   seedSetupForm(id);
   render();
   void refreshStoredUsername();
+  void refreshSetupCollections();
+}
+
+/**
+ * The collections the site Setup is pointed at can actually be contributed
+ * to, for the dropdown that replaced a uuid box.
+ *
+ * Only for a SAVED site: the list comes from openEQUELLA and needs stored
+ * credentials to ask for it, so a site being added for the first time simply
+ * has no list yet -- the screen says so rather than showing an error for a
+ * request that was never sensible to make.
+ *
+ * A failure is recorded as a failure, never as an empty list. "This account
+ * can create nothing" and "the list could not be read" have no fix in common
+ * (an administrator grants a privilege; the other is a host that cannot be
+ * reached), and the same distinction is made in core/preflight.ts.
+ */
+async function refreshSetupCollections(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') {
+    state.setupCollections = null;
+    state.setupCollectionsError = null;
+    return;
+  }
+  state.setupCollections = null;
+  state.setupCollectionsError = null;
+  render();
+  let collections: CollectionSummary[] | null = null;
+  let error: string | null = null;
+  try {
+    collections = await window.oeq.listCollections(instanceId);
+  } catch (err) {
+    error = errorMessage(err);
+  }
+  // The operator may have switched sites while this was in flight; another
+  // site's collections must never be attributed to the one now on screen.
+  if (state.setupInstanceId !== instanceId) return;
+  state.setupCollections = collections;
+  state.setupCollectionsError = error;
+  render();
+}
+
+/**
+ * Picking a collection reads its schema -- and that read is what leaves the
+ * schema in the on-disk cache `src/core/extract/` later validates against
+ * offline (ipc.ts's fetchSchema). The schema uuid comes off the collection's
+ * own list entry, so this costs one request and nothing has to be configured
+ * twice.
+ *
+ * A schema that cannot be read leaves `setupSchemaPaths` null, which the
+ * screen reports as "not checked" -- never as a path that turned out to be
+ * fine.
+ */
+function handleSetupCollectionChange(uuid: string): void {
+  state.setupFields = { ...state.setupFields, collectionUuid: uuid };
+  state.setupSchemaPaths = null;
+  render();
+  const chosen = state.setupCollections?.find((c) => c.uuid === uuid);
+  const schemaUuid = chosen?.schemaUuid ?? '';
+  if (schemaUuid === '') return;
+  const instanceId = state.setupInstanceId;
+  void window.oeq.fetchSchema({ instanceId, schemaUuid }).then(
+    (schema) => {
+      if (state.setupInstanceId !== instanceId || state.setupFields.collectionUuid !== uuid) return;
+      state.setupSchemaPaths = schema.paths;
+      render();
+    },
+    () => {
+      // Unread stays unread. See this function's doc comment.
+    },
+  );
+}
+
+function handleSetupLiveChange(live: boolean): void {
+  state.setupFields = { ...state.setupFields, live };
+  render();
 }
 
 function handleSetupFieldChange(field: SetupTextField, value: string): void {
@@ -453,7 +570,13 @@ async function handleForgetPassword(): Promise<void> {
 }
 
 async function handleSaveSettings(
-  instance: { label: string; baseUrl: string },
+  instance: {
+    label: string;
+    baseUrl: string;
+    attachmentUuidPath: string;
+    live: boolean;
+    schemaUuid: string;
+  },
   settings: Settings,
 ): Promise<void> {
   if (instance.baseUrl === '') {
@@ -493,6 +616,9 @@ async function handleSaveSettings(
     // back in a field, and the client secret has never been rendered back.
     state.setupFields = { ...state.setupFields, password: '', clientSecret: '' };
     void refreshStoredUsername();
+    // The credentials this site needed may only just have arrived, so the
+    // collections it can contribute to are askable for the first time.
+    void refreshSetupCollections();
     // Nothing left to explain: the discarded store has just been overwritten.
     state.credentialsDropped = false;
     // Point the rest of the app at the instance that was just configured --
@@ -559,6 +685,25 @@ function handleAddCredentials(): void {
   state.screen = nextScreen('signin', { type: 'addCredentials' });
   render();
   void refreshStoredUsername();
+  void refreshSetupCollections();
+}
+
+/**
+ * Sign-in's "Settings for {site}…" -- Setup for the selected site, with
+ * nothing cleared.
+ *
+ * The same non-destructive transition as `handleAddCredentials` above, and
+ * deliberately so: the site's per-site settings (which collection's schema,
+ * where the attachment uuid goes, whether it is live) live on Setup, and the
+ * only other route there was "Change credentials…", which wipes every saved
+ * site first.
+ */
+function handleSiteSettings(): void {
+  seedSetupForm(state.instanceId);
+  state.screen = nextScreen('signin', { type: 'addCredentials' });
+  render();
+  void refreshStoredUsername();
+  void refreshSetupCollections();
 }
 
 async function handleSignIn(): Promise<void> {

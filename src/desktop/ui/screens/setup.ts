@@ -1,4 +1,5 @@
 import type { InstanceChoice } from '../../ipc.js';
+import type { CollectionSummary } from '../../../core/client.js';
 // `import type`: secrets.ts reaches `node:fs`, and this module is rendered in
 // the sandboxed renderer. A type-only import is erased at compile time and
 // never becomes a runtime require -- see tests/desktop/rendererPurity.test.ts.
@@ -26,14 +27,30 @@ export interface SetupFields {
   redirectUri: string;
   username: string;
   password: string;
+  /**
+   * Where each item's attachment uuid is written into its metadata, or '' for
+   * "write no such field" -- which is a real choice and the right default for
+   * most institutions, not an unfilled box.
+   */
+  attachmentUuidPath: string;
+  /**
+   * The collection whose schema the attachment path is checked against.
+   * NOT itself saved as a credential: it exists so choosing a collection can
+   * resolve its schema in one hop (discovery.ts#parseCollections), and what
+   * IS saved is the schema uuid it yields.
+   */
+  collectionUuid: string;
+  /** Whether this is a live site. Defaults ON -- see the checkbox's own copy. */
+  live: boolean;
 }
 
 /**
- * The typed fields, as opposed to the sign-in method. Kept apart from
- * `authMode` so `onFieldChange` cannot be handed a mode as a bare string and
- * have to re-validate it: the mode has its own callback and its own type.
+ * The typed fields, as opposed to everything on this screen that is chosen
+ * rather than typed. Kept apart so `onFieldChange` cannot be handed a mode, a
+ * uuid or a boolean as a bare string and have to re-validate it: each of those
+ * has its own callback and its own type.
  */
-export type SetupTextField = Exclude<keyof SetupFields, 'authMode'>;
+export type SetupTextField = Exclude<keyof SetupFields, 'authMode' | 'collectionUuid' | 'live'>;
 
 export interface SetupProps {
   /** Sites the operator has already added. Empty on a fresh install. */
@@ -52,13 +69,43 @@ export interface SetupProps {
    * forget.
    */
   storedUsername: string | null;
+  /**
+   * The collections this account can actually contribute to, or null when they
+   * have not been read (no site saved yet, still loading, or the read failed).
+   *
+   * AN EMPTY ARRAY IS NOT NULL and must not render as one: an account holding
+   * CREATE_ITEM on nothing is a real, diagnosable state -- exactly what a
+   * viewer-only account looks like -- and the screen has to say so rather than
+   * showing an empty dropdown that reads as a broken app.
+   */
+  collections: CollectionSummary[] | null;
+  /** Why the collection list could not be read, if it could not be. */
+  collectionsError: string | null;
+  /**
+   * Every valid xpath in the chosen collection's schema, or null when no
+   * collection is chosen or its schema could not be read. Null means the
+   * attachment path is UNCHECKED, which is reported as unchecked -- never as
+   * correct.
+   */
+  schemaPaths: string[] | null;
   error: string | null;
   saving: boolean;
   onInstanceChange(id: string): void;
   onFieldChange(field: SetupTextField, value: string): void;
   onAuthModeChange(mode: SettingsAuthMode): void;
+  onCollectionChange(uuid: string): void;
+  onLiveChange(live: boolean): void;
   onForgetPassword(): void;
-  onSave(instance: { label: string; baseUrl: string }, settings: Settings): void;
+  onSave(
+    instance: {
+      label: string;
+      baseUrl: string;
+      attachmentUuidPath: string;
+      live: boolean;
+      schemaUuid: string;
+    },
+    settings: Settings,
+  ): void;
 }
 
 /**
@@ -75,7 +122,63 @@ export const TEXT_INPUTS = [
   '#setup-client-id',
   '#setup-client-secret',
   '#setup-redirect-uri',
+  '#setup-attachment-path',
 ] as const;
+
+/** What the screen can say about a typed attachment-uuid path. */
+export interface AttachmentPathVerdict {
+  kind: 'blank' | 'unchecked' | 'declared' | 'undeclared';
+  message: string;
+}
+
+/**
+ * Whether the attachment-uuid path the operator typed is a node the chosen
+ * collection's schema actually has.
+ *
+ * The same lookup `core/preflight.ts`'s attachmentFieldCheck makes, said on
+ * the screen where the value is entered rather than only in a pre-flight
+ * report run from a terminal. This field is written on EVERY item the runner
+ * creates, so a wrong path is a mistake repeated across a whole batch, and
+ * openEQUELLA's response to metadata at an undeclared path does not explain
+ * itself.
+ *
+ * BLANK IS NOT AN ERROR. It means "write no such field", which is correct for
+ * the many schemas that declare no such node, and the message says so instead
+ * of leaving an operator to infer it from silence.
+ *
+ * UNCHECKED IS NOT CORRECT. With no schema read, this says it could not check
+ * -- the same rule every other check in this tool follows. "Could not check"
+ * has never been reported as clean here and is not going to start.
+ */
+export function attachmentPathVerdict(path: string, schemaPaths: string[] | null): AttachmentPathVerdict {
+  const trimmed = path.trim();
+  if (trimmed === '') {
+    return {
+      kind: 'blank',
+      message:
+        'Left blank, so no attachment-uuid field is written into item metadata. ' +
+        'That is correct for most schemas — the attachment itself is unaffected.',
+    };
+  }
+  if (schemaPaths === null) {
+    return {
+      kind: 'unchecked',
+      message:
+        'Not checked: choose a collection above and this is compared against ' +
+        'the schema that collection actually uses.',
+    };
+  }
+  if (schemaPaths.includes(trimmed)) {
+    return { kind: 'declared', message: 'Found in this collection’s schema.' };
+  }
+  return {
+    kind: 'undeclared',
+    message:
+      `Not declared by this collection’s schema (it has ${schemaPaths.length} valid paths). ` +
+      'Every item created would write metadata to a node outside the schema. ' +
+      'Correct it, or leave it blank.',
+  };
+}
 
 /**
  * The sign-in half of the screen.
@@ -197,6 +300,152 @@ function authSection(props: SetupProps, forWhat: string): string {
 }
 
 /**
+ * The collections this account can contribute to, as a dropdown.
+ *
+ * A DROPDOWN AND NOT A UUID BOX. The list comes from
+ * `GET /collection?privilege=CREATE_ITEM`, so it is exactly what this account
+ * can create in; asking a non-technical operator to know a uuid instead
+ * offers no way to notice a wrong one until items land in the wrong place.
+ *
+ * Every state it can be in says which state it is. Three of them are NOT
+ * errors and must not look like one:
+ *  - no site saved yet -- there is nobody to ask, so the section explains that
+ *    this arrives after the credentials are saved;
+ *  - still reading, or unreadable -- reported as unread, never as empty;
+ *  - read, and EMPTY. An account that can create nothing is a real state (a
+ *    viewer-only account looks exactly like this) with a real remedy that
+ *    belongs to an administrator, not to this screen. An empty `<select>`
+ *    would read as a broken app and send the operator looking in the wrong
+ *    place entirely.
+ */
+function collectionSection(props: SetupProps): string {
+  const legend = '<legend>What this site is for</legend>';
+
+  if (props.instanceId === '') {
+    return `
+      <fieldset class="site-settings">
+        ${legend}
+        <p class="hint">
+          Save your sign-in details first. This tool then lists the collections
+          your account can contribute to, and reads the schema they use.
+        </p>
+      </fieldset>`;
+  }
+
+  const body = ((): string => {
+    if (props.collectionsError !== null) {
+      return `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`;
+    }
+    if (props.collections === null) {
+      return '<p class="muted">Reading the collections you can contribute to…</p>';
+    }
+    if (props.collections.length === 0) {
+      return `
+        <p class="note">
+          This account holds <strong>CREATE_ITEM</strong> on no collection, so
+          it can contribute nowhere and no upload can succeed. Sign-in itself
+          worked, so this is a permission an openEQUELLA administrator grants —
+          not a wrong address and not a wrong password.
+        </p>`;
+    }
+    const options = [
+      `<option value=""${props.fields.collectionUuid === '' ? ' selected' : ''}>Choose a collection…</option>`,
+      ...props.collections.map(
+        (c) =>
+          `<option value="${escapeHtml(c.uuid)}"${c.uuid === props.fields.collectionUuid ? ' selected' : ''}>${escapeHtml(c.name)}</option>`,
+      ),
+    ].join('');
+    return `
+      <label for="setup-collection">Collection you contribute to</label>
+      <select id="setup-collection">${options}</select>
+      <p class="hint">
+        Used to read that collection’s schema, so the field below can be
+        checked for you. You still pick a collection for each batch later.
+      </p>`;
+  })();
+
+  return `
+      <fieldset class="site-settings">
+        ${legend}
+        ${body}
+        ${attachmentSection(props)}
+        ${liveSection(props)}
+      </fieldset>`;
+}
+
+/**
+ * The attachment-uuid path, with the schema's own paths offered as a datalist
+ * and a verdict under the box.
+ *
+ * THIS IS A LIVE REGRESSION BEING FIXED, not a new nicety. `buildConfig` read
+ * this from `OEQ_ATTACHMENT_UUID_PATH` in the process environment, which is
+ * unset for an operator launching the packaged app from a Start Menu shortcut
+ * -- so a BYU-Idaho operator using the GUI silently created items with no
+ * `BYUI_extended/attachments/attachment` at all. No error, no warning, just
+ * absent from every contribution.
+ *
+ * The datalist is the "offer" half: where the schema is known, the valid
+ * xpaths are on the dropdown so the operator picks one instead of having to
+ * know it. It does NOT restrict what can be typed -- a `<datalist>` suggests,
+ * it does not constrain -- because a site whose schema could not be read must
+ * still be able to enter the path they know is right.
+ */
+function attachmentSection(props: SetupProps): string {
+  const verdict = attachmentPathVerdict(props.fields.attachmentUuidPath, props.schemaPaths);
+  const list =
+    props.schemaPaths === null
+      ? ''
+      : `<datalist id="setup-schema-paths">${props.schemaPaths
+          .map((p) => `<option value="${escapeHtml(p)}"></option>`)
+          .join('')}</datalist>`;
+
+  return `
+        <label for="setup-attachment-path">
+          Field that holds the attachment ID — leave blank unless your schema has one
+        </label>
+        <input
+          id="setup-attachment-path"
+          name="attachmentUuidPath"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          ${props.schemaPaths === null ? '' : 'list="setup-schema-paths"'}
+          value="${escapeHtml(props.fields.attachmentUuidPath)}"
+        />
+        ${list}
+        <p class="hint verdict verdict--${verdict.kind}">${escapeHtml(verdict.message)}</p>`;
+}
+
+/**
+ * The live-site flag.
+ *
+ * CHECKED BY DEFAULT, and the copy says what that means. The instance banner
+ * is the only durable cue telling an operator which site they are pointed at,
+ * and it used to shout for every configured site -- which is the same as
+ * shouting for none, since a warning seen daily on a sandbox is not seen at
+ * all on the real thing. This is the one thing the app cannot work out for
+ * itself and the operator can answer in one click.
+ */
+function liveSection(props: SetupProps): string {
+  return `
+        <label class="checkbox-label" for="setup-live">
+          <input
+            id="setup-live"
+            name="live"
+            type="checkbox"
+            ${props.fields.live ? 'checked' : ''}
+          />
+          <span>This is a live site — items created here are real</span>
+        </label>
+        <p class="hint">
+          Leave this ticked unless you know the address above is a test or
+          training instance. When it is ticked the banner at the top stays
+          loud, which is the only thing telling you which site you are
+          uploading to.
+        </p>`;
+}
+
+/**
  * The whole screen as markup, separated from `renderSetup` so it can be
  * asserted against as a string -- this project has no jsdom, and the existing
  * screen tests (ui/duplicates.ts and its test) read the markup a renderer
@@ -262,6 +511,8 @@ export function setupMarkup(props: SetupProps): string {
 
         ${authSection(props, forWhat)}
 
+        ${collectionSection(props)}
+
         ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
         <div class="button-row">
@@ -285,6 +536,37 @@ export function setupMarkup(props: SetupProps): string {
  * type their password again, and it is why the only way to remove a password
  * is the Forget button.
  */
+/**
+ * The per-site record this screen would save: what the site IS, as opposed to
+ * how it is signed in to (`settingsFrom` below).
+ *
+ * `schemaUuid` is taken from the chosen collection's own list entry rather
+ * than fetched or typed -- `parseCollections` keeps `schema.uuid` on every
+ * entry precisely so this costs no extra request. '' when no collection is
+ * chosen, which is honest: nothing has been resolved.
+ *
+ * The attachment path is trimmed but NOT otherwise touched. Blank stays
+ * blank: it means "write no such field", and coercing it into anything else
+ * would write metadata the operator did not ask for onto every item in every
+ * batch.
+ */
+export function instanceFrom(props: SetupProps): {
+  label: string;
+  baseUrl: string;
+  attachmentUuidPath: string;
+  live: boolean;
+  schemaUuid: string;
+} {
+  const chosen = props.collections?.find((c) => c.uuid === props.fields.collectionUuid);
+  return {
+    label: props.fields.label.trim(),
+    baseUrl: props.fields.baseUrl.trim(),
+    attachmentUuidPath: props.fields.attachmentUuidPath.trim(),
+    live: props.fields.live,
+    schemaUuid: chosen?.schemaUuid ?? '',
+  };
+}
+
 export function settingsFrom(props: SetupProps): Settings {
   const f = props.fields;
   if (f.authMode === 'password') {
@@ -339,6 +621,15 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   field('#setup-client-id', 'clientId');
   field('#setup-client-secret', 'clientSecret');
   field('#setup-redirect-uri', 'redirectUri');
+  field('#setup-attachment-path', 'attachmentUuidPath');
+
+  root.querySelector<HTMLSelectElement>('#setup-collection')?.addEventListener('change', (e) => {
+    props.onCollectionChange((e.target as HTMLSelectElement).value);
+  });
+
+  root.querySelector<HTMLInputElement>('#setup-live')?.addEventListener('change', (e) => {
+    props.onLiveChange((e.target as HTMLInputElement).checked);
+  });
 
   for (const [selector, mode] of [
     ['#setup-auth-password', 'password'],
@@ -355,9 +646,6 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
 
   root.querySelector<HTMLFormElement>('#setup-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
-    props.onSave(
-      { label: props.fields.label.trim(), baseUrl: props.fields.baseUrl.trim() },
-      settingsFrom(props),
-    );
+    props.onSave(instanceFrom(props), settingsFrom(props));
   });
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { signinMode } from '../../../src/desktop/ui/signin.js';
+import { signinBusyLabel, signinHint } from '../../../src/desktop/ui/screens/signin.js';
 import type { CurrentUser } from '../../../src/core/client.js';
 
 const user: CurrentUser = { username: 'alovelace', firstName: 'Ada', lastName: 'Lovelace' };
@@ -24,5 +25,31 @@ describe('signinMode', () => {
 
   it('is signed-in when credentials exist and a user is present', () => {
     expect(signinMode(true, user)).toBe('signed-in');
+  });
+});
+
+/**
+ * The copy told every operator "This opens an openEQUELLA sign-in window".
+ * That is true of the authorization-code flow and simply UNTRUE in password
+ * mode, where the handler signs in directly with the stored account and no
+ * window ever appears (handlers.ts's signIn). Someone told to expect a window
+ * that never comes has no way to tell a working sign-in from a broken one.
+ */
+describe('the Sign-in button’s copy', () => {
+  it('promises a window in the flow that actually opens one', () => {
+    expect(signinHint('code')).toMatch(/sign-in window/i);
+    expect(signinBusyLabel('code')).toMatch(/window/i);
+  });
+
+  it('promises no window in password mode, where none opens', () => {
+    expect(signinHint('password')).not.toMatch(/opens an openEQUELLA sign-in window/i);
+    expect(signinHint('password')).toMatch(/username and password/i);
+    expect(signinBusyLabel('password')).not.toMatch(/window/i);
+  });
+
+  // The failure being fixed is precisely that both modes said the same thing.
+  it('says something different in each mode', () => {
+    expect(signinHint('password')).not.toBe(signinHint('code'));
+    expect(signinBusyLabel('password')).not.toBe(signinBusyLabel('code'));
   });
 });

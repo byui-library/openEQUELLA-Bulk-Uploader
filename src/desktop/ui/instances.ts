@@ -23,4 +23,4 @@ import type { InstanceChoice } from '../ipc.js';
  * and asserts this literal matches it exactly, so the two copies cannot
  * silently drift apart.
  */
-export const UI_INSTANCES: Pick<InstanceChoice, 'id' | 'label' | 'baseUrl'>[] = [];
+export const UI_INSTANCES: InstanceChoice[] = [];

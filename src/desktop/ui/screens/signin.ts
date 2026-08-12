@@ -1,7 +1,35 @@
 import type { CurrentUser } from '../../../core/client.js';
 import type { InstanceChoice } from '../../ipc.js';
+// `import type`: secrets.ts reaches `node:fs` and this module runs in the
+// sandboxed renderer. Erased at compile time; never a runtime require.
+import type { SettingsAuthMode } from '../../secrets.js';
 import { escapeHtml } from '../dom.js';
 import { signinMode } from '../signin.js';
+
+/**
+ * What the Sign-in button is about to do, in the operator's words.
+ *
+ * MODE-AWARE because the old copy -- "This opens an openEQUELLA sign-in
+ * window" -- is simply untrue in password mode, where the handler signs in
+ * directly with the stored account and no browser window ever appears
+ * (handlers.ts's signIn). An operator told to expect a window that never comes
+ * has no way to tell a working sign-in from a broken one.
+ *
+ * Exported so it can be asserted on directly: the two modes must not say the
+ * same thing, which is the failure being fixed.
+ */
+export function signinHint(authMode: SettingsAuthMode): string {
+  return authMode === 'password'
+    ? 'This signs in with the username and password saved for this site. ' +
+        'No sign-in window opens.'
+    : 'This opens an openEQUELLA sign-in window. Sign in there and this ' +
+        'screen will update automatically.';
+}
+
+/** The button's own label, for the same reason: nothing is "opening" in password mode. */
+export function signinBusyLabel(authMode: SettingsAuthMode): string {
+  return authMode === 'password' ? 'Signing in…' : 'Opening sign-in window…';
+}
 
 export interface SigninProps {
   /** The sites the operator has added. Comes from the store, not from a shipped list. */
@@ -17,6 +45,16 @@ export interface SigninProps {
   onSignOut(): void;
   onContinue(): void;
   onAddCredentials(): void;
+  /**
+   * Back to Setup for the SELECTED site, clearing nothing.
+   *
+   * Without it the per-site settings Setup now collects -- which collection's
+   * schema to check against, where the attachment uuid is written, whether
+   * this is a live site -- would be reachable only by "Change credentials…",
+   * which wipes every saved site first. A setting an operator can only change
+   * by destroying their credentials is a setting they will not change.
+   */
+  onSiteSettings(): void;
   onResetSettings(): void;
 }
 
@@ -39,8 +77,13 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
     )
     .join('');
 
-  const label = props.instances.find((i) => i.id === props.instanceId)?.label ?? props.instanceId;
+  const selected = props.instances.find((i) => i.id === props.instanceId);
+  const label = selected?.label ?? props.instanceId;
   const mode = signinMode(props.instanceHasSettings, props.user);
+  // 'code' for a site not in the list at all: that is the flow that opens a
+  // window, and promising a window that then appears is the harmless way to be
+  // wrong. Every saved instance carries its real mode (ipc.ts).
+  const authMode = selected?.authMode ?? 'code';
 
   const body =
     mode === 'missing-credentials'
@@ -70,12 +113,9 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
       </div>`
         : `
       <button id="signin-btn" type="button" ${props.signingIn ? 'disabled' : ''}>
-        ${props.signingIn ? 'Opening sign-in window…' : 'Sign in'}
+        ${props.signingIn ? escapeHtml(signinBusyLabel(authMode)) : 'Sign in'}
       </button>
-      <p class="hint">
-        This opens an openEQUELLA sign-in window. Sign in there and this
-        screen will update automatically.
-      </p>`;
+      <p class="hint">${escapeHtml(signinHint(authMode))}</p>`;
 
   root.innerHTML = `
     <section class="screen">
@@ -90,6 +130,7 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
       ${body}
 
       <p class="reset-row">
+        <button id="site-settings-btn" type="button" class="link-button">Settings for ${escapeHtml(label)}…</button>
         <button id="reset-settings-btn" type="button" class="link-button">Change credentials…</button>
       </p>
     </section>
@@ -104,6 +145,9 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
   root
     .querySelector<HTMLButtonElement>('#add-credentials-btn')
     ?.addEventListener('click', () => props.onAddCredentials());
+  root
+    .querySelector<HTMLButtonElement>('#site-settings-btn')
+    ?.addEventListener('click', () => props.onSiteSettings());
   root
     .querySelector<HTMLButtonElement>('#reset-settings-btn')
     ?.addEventListener('click', () => props.onResetSettings());

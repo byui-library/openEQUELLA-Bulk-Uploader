@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   applyOverrides,
+  fetchAndCacheSchema,
   reportColumns,
   resolveSchemaPath,
   missingCredentialsMessage,
   registerHandlers,
 } from '../../src/desktop/handlers.js';
 import { saveManifest, loadManifest } from '../../src/core/state.js';
+import { SchemaCache } from '../../src/core/schemaCache.js';
+import type { SchemaInfo } from '../../src/core/discovery.js';
 import type { Sheet, Manifest } from '../../src/core/types.js';
 
 // registerHandlers ends up calling registerExtractHandlers, which resolves the
@@ -282,5 +285,85 @@ describe('applyDuplicateChoices', () => {
     await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [2] });
     const reread = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
     expect(reread.entries[0]?.status).toBe('skipped');
+  });
+});
+
+/**
+ * The write half of the offline schema cache.
+ *
+ * `src/core/extract/` never touches the network -- that is what lets an
+ * operator build a spreadsheet without signing in to anything -- but the
+ * schema it validates columns against comes from the API. This is the moment
+ * those two are reconciled: whoever DID sign in leaves the schema on disk,
+ * keyed by (instance url, schema uuid), and extraction reads it later.
+ */
+describe('fetchAndCacheSchema', () => {
+  const SITE = 'https://oeq.example.edu';
+  const schema: SchemaInfo = {
+    uuid: 'schema-1',
+    namePath: '/MWDL/title',
+    titleHeader: 'MWDL/title',
+    paths: new Set(['MWDL/title', 'MWDL/description']),
+  };
+  const fakeClient = { getSchema: async () => schema };
+
+  it('writes the fetched schema where extraction reads it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const cache = new SchemaCache(dir);
+    await fetchAndCacheSchema(fakeClient, cache, SITE, 'schema-1');
+    // Read back through the cache's OWN key, which is what the extract
+    // handlers use. A write under any other key is a write nobody can find.
+    expect(await cache.load(SITE, 'schema-1')).toEqual(schema);
+  });
+
+  /**
+   * KEYED ON THE INSTANCE AS WELL AS THE SCHEMA. Schema uuids are not globally
+   * unique across institutions, and one institution's test and production
+   * instances routinely share them outright -- keying on the uuid alone would
+   * let one site's schema answer for another's, silently, with paths that look
+   * entirely real.
+   */
+  it('does not let one site’s schema answer for another’s', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const cache = new SchemaCache(dir);
+    await fetchAndCacheSchema(fakeClient, cache, SITE, 'schema-1');
+    expect(await cache.load('https://oeq-test.example.edu', 'schema-1')).toBeNull();
+  });
+
+  it('answers with the schema flattened for the IPC boundary', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const summary = await fetchAndCacheSchema(fakeClient, new SchemaCache(dir), SITE, 'schema-1');
+    // An array, not a Set: JSON.stringify renders a Set as `{}`, and every
+    // valid xpath would be lost while the payload still looked plausible.
+    expect(summary.paths).toEqual(['MWDL/description', 'MWDL/title']);
+    expect(summary.titleHeader).toBe('MWDL/title');
+  });
+
+  /**
+   * The operator asked to see a schema, not to populate a cache. A full or
+   * read-only disk must not turn "here are your collection's fields" into an
+   * error dialog -- all that is actually lost is a later offline validation
+   * that degrades to the bundled export anyway.
+   */
+  it('still answers when the cache cannot be written', async () => {
+    const brokenCache = {
+      save: async () => {
+        throw new Error('disk full');
+      },
+    };
+    const summary = await fetchAndCacheSchema(fakeClient, brokenCache, SITE, 'schema-1');
+    expect(summary.uuid).toBe('schema-1');
+  });
+
+  // A fetch that fails is a real failure and is reported as one -- unlike the
+  // cache write above, there is no answer to give.
+  it('does not swallow a failure to read the schema itself', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const failing = {
+      getSchema: async () => {
+        throw new Error('404 not found');
+      },
+    };
+    await expect(fetchAndCacheSchema(failing, new SchemaCache(dir), SITE, 'nope')).rejects.toThrow(/404/);
   });
 });

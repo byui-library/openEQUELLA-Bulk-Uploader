@@ -10,12 +10,26 @@ import { AuthorizationCodeAuth } from '../../src/core/authCode.js';
 // administrator; this exact value has been guessed wrong twice in this
 // project (one client has no trailing slash, another has one), so buildConfig
 // must pass through whatever was actually stored, verbatim.
-const LIVE: Instance = { id: 'https://oeq.example.edu', label: 'Live', baseUrl: 'https://oeq.example.edu' };
-const SANDBOX: Instance = {
+const instance = (over: Partial<Instance> & Pick<Instance, 'id' | 'label' | 'baseUrl'>): Instance => ({
+  authMode: 'code',
+  // Blank is the DEFAULT and a real choice -- most schemas declare no such
+  // node. See Instance.attachmentUuidPath.
+  attachmentUuidPath: '',
+  live: true,
+  schemaUuid: '',
+  ...over,
+});
+
+const LIVE: Instance = instance({
+  id: 'https://oeq.example.edu',
+  label: 'Live',
+  baseUrl: 'https://oeq.example.edu',
+});
+const SANDBOX: Instance = instance({
   id: 'https://oeq-test.example.edu',
   label: 'Sandbox',
   baseUrl: 'https://oeq-test.example.edu',
-};
+});
 
 describe('buildConfig', () => {
   it('uses the stored redirect uri verbatim, with no trailing slash', () => {
@@ -45,7 +59,11 @@ describe('buildConfig', () => {
   it('takes the base url from the instance record it is given', () => {
     const settings: Settings = { authMode: 'code', clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://library.example.edu/oeq' };
     const cfg = buildConfig(
-      { id: 'https://library.example.edu/oeq', label: 'Library', baseUrl: 'https://library.example.edu/oeq' },
+      instance({
+        id: 'https://library.example.edu/oeq',
+        label: 'Library',
+        baseUrl: 'https://library.example.edu/oeq',
+      }),
       settings,
       'coll-uuid',
     );
@@ -116,6 +134,64 @@ describe('buildConfig', () => {
   it('carries the chosen collection through', () => {
     const settings: Settings = { authMode: 'code', clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq.example.edu' };
     expect(buildConfig(LIVE, settings, 'abc').collectionUuid).toBe('abc');
+  });
+});
+
+/**
+ * The live regression this task exists to fix.
+ *
+ * `buildConfig` read the attachment-uuid path from
+ * `process.env.OEQ_ATTACHMENT_UUID_PATH`. That works for a developer running
+ * `npm run desktop` and is useless for the operator, who launches the packaged
+ * app from a Start Menu shortcut with no environment set -- so a BYU-Idaho
+ * operator using the GUI silently created items with no
+ * `BYUI_extended/attachments/attachment` at all. No error, no warning, just
+ * absent from every contribution, and nothing to notice until someone went
+ * looking in openEQUELLA weeks later.
+ */
+describe('buildConfig and the attachment-uuid path', () => {
+  const PASSWORD: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+  const PATH = 'BYUI_extended/attachments/attachment';
+
+  it('takes it from the stored instance, per site', () => {
+    const cfg = buildConfig(instance({ ...LIVE, attachmentUuidPath: PATH }), PASSWORD, 'coll');
+    expect(cfg.attachmentUuidPath).toBe(PATH);
+  });
+
+  // Two sites, two answers, from one process. An environment variable could
+  // only ever give both the same one.
+  it('is per instance, not per machine', () => {
+    expect(
+      buildConfig(instance({ ...LIVE, attachmentUuidPath: PATH }), PASSWORD, 'c').attachmentUuidPath,
+    ).toBe(PATH);
+    expect(buildConfig(SANDBOX, PASSWORD, 'c').attachmentUuidPath).toBe('');
+  });
+
+  // Blank means "write no such field", which is the right configuration for
+  // the many schemas that declare no such node. It is a choice, and it is
+  // never coerced into a guess.
+  it('preserves blank as blank', () => {
+    expect(buildConfig(instance({ ...LIVE, attachmentUuidPath: '' }), PASSWORD, 'c').attachmentUuidPath).toBe('');
+  });
+
+  /**
+   * THE REGRESSION GUARD. With a stored blank and the environment variable
+   * set -- which is exactly a developer's own machine -- the stored value must
+   * win. An env fallback that only works where the developer sits is how this
+   * hid for as long as it did.
+   */
+  it('ignores OEQ_ATTACHMENT_UUID_PATH in the environment entirely', () => {
+    const previous = process.env.OEQ_ATTACHMENT_UUID_PATH;
+    process.env.OEQ_ATTACHMENT_UUID_PATH = 'from/the/environment';
+    try {
+      expect(buildConfig(LIVE, PASSWORD, 'c').attachmentUuidPath).toBe('');
+      expect(
+        buildConfig(instance({ ...LIVE, attachmentUuidPath: PATH }), PASSWORD, 'c').attachmentUuidPath,
+      ).toBe(PATH);
+    } finally {
+      if (previous === undefined) delete process.env.OEQ_ATTACHMENT_UUID_PATH;
+      else process.env.OEQ_ATTACHMENT_UUID_PATH = previous;
+    }
   });
 });
 
