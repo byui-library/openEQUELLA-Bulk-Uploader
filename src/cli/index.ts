@@ -678,7 +678,10 @@ export function buildProgram(env: Env = process.env): Command {
 
   program
     .command('logout')
-    .description('Remove the cached OAuth token.')
+    .description(
+      'Remove the cached OAuth token. In password mode there is no cached token to remove and ' +
+        'no session held between runs, so this reports that rather than claiming a logout.',
+    )
     .action(async () => {
       await logoutAction({}, env);
     });
@@ -686,7 +689,10 @@ export function buildProgram(env: Env = process.env): Command {
   program
     .command('check')
     .description(
-      'Read-only pre-flight: confirms auth, identity, and CREATE_ITEM on the target collection. Creates nothing.',
+      'Read-only pre-flight and compatibility probe. Nine checks: https, authentication, sign-in ' +
+        'method, identity, collections available, the target collection, CREATE_ITEM on it, the ' +
+        'attachment-uuid field, and whether duplicate detection can work. Run this first at a new ' +
+        'institution -- each failure says what it means for a real run. Creates nothing.',
     )
     .action(async () => {
       process.exitCode = await checkAction(env);

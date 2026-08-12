@@ -726,10 +726,14 @@ server.tool(
 
 server.tool(
   'oeq_check',
-  'Read-only pre-flight, run before any upload: confirms a cached token exists, who it belongs ' +
-    'to (whoever runs oeq_login_complete owns every item created), whether the target collection ' +
-    '(OEQ_COLLECTION_UUID) exists on OEQ_BASE_URL, and whether that user actually holds ' +
-    'CREATE_ITEM on it. Creates nothing.',
+  'Read-only pre-flight and compatibility probe, run before any upload. Nine checks: https, ' +
+    'authentication, which sign-in method was used, who the account belongs to (whoever signs ' +
+    'in owns every item created), how many collections that account can contribute to, whether ' +
+    'the target collection (OEQ_COLLECTION_UUID) exists on OEQ_BASE_URL, whether the user holds ' +
+    'CREATE_ITEM on it, whether the configured attachment-uuid field exists in the schema, and ' +
+    'whether duplicate detection can work -- which needs the schema to declare an item name ' +
+    'path, without which every row reports "could not check". Each failure says what it means ' +
+    'for a real run. Creates nothing.',
   {},
   async () => checkTool(),
 );
