@@ -1,9 +1,11 @@
 import type { CurrentUser } from '../../../core/client.js';
-import { UI_INSTANCES } from '../instances.js';
+import type { InstanceChoice } from '../../ipc.js';
 import { escapeHtml } from '../dom.js';
 import { signinMode } from '../signin.js';
 
 export interface SigninProps {
+  /** The sites the operator has added. Comes from the store, not from a shipped list. */
+  instances: InstanceChoice[];
   instanceId: string;
   instanceHasSettings: boolean;
   user: CurrentUser | null;
@@ -21,21 +23,23 @@ export interface SigninProps {
 /**
  * Sign-in screen. The instance dropdown drives the banner too -- changing it
  * here re-checks (via window.oeq.currentUser) whether a still-valid token
- * already exists for that instance, since a token minted for Test is refused
- * against Production and vice versa (core token-store behaviour, unchanged).
+ * already exists for that instance, since a token minted for one site is
+ * refused by another (core token-store behaviour, unchanged).
  *
- * Credentials are per instance now (secrets.ts), so switching the dropdown
- * to an instance that has never been configured must never present a "Sign
- * in" button that can only fail -- see signinMode. Instead it offers to add
- * credentials for exactly that instance, right here.
+ * Credentials are per instance (secrets.ts), so switching the dropdown to a
+ * site that has never been configured must never present a "Sign in" button
+ * that can only fail -- see signinMode. Instead it offers to add credentials
+ * for exactly that site, right here.
  */
 export function renderSignin(root: HTMLElement, props: SigninProps): void {
-  const options = UI_INSTANCES.map(
-    (i) =>
-      `<option value="${i.id}"${i.id === props.instanceId ? ' selected' : ''}>${escapeHtml(i.label)}</option>`,
-  ).join('');
+  const options = props.instances
+    .map(
+      (i) =>
+        `<option value="${escapeHtml(i.id)}"${i.id === props.instanceId ? ' selected' : ''}>${escapeHtml(i.label)}</option>`,
+    )
+    .join('');
 
-  const label = UI_INSTANCES.find((i) => i.id === props.instanceId)?.label ?? props.instanceId;
+  const label = props.instances.find((i) => i.id === props.instanceId)?.label ?? props.instanceId;
   const mode = signinMode(props.instanceHasSettings, props.user);
 
   const body =

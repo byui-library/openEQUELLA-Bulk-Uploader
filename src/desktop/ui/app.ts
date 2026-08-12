@@ -1,4 +1,4 @@
-import type { OeqApi, ColumnReport, PlanReport, RunProgress, RunReport } from '../ipc.js';
+import type { OeqApi, ColumnReport, InstanceChoice, PlanReport, RunProgress, RunReport } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
 import type { ItemState } from '../../core/types.js';
 import { initialScreen, nextScreen, type Screen } from './state.js';
@@ -37,18 +37,26 @@ declare global {
  */
 interface AppState extends BatchState {
   screen: Screen;
+  // Every site the operator has added, read from the store at startup and
+  // after every save. UI_INSTANCES (what the app SHIPS with) is empty; this
+  // is the real list -- see ui/instances.ts.
+  instances: InstanceChoice[];
   // The instance the rest of the app (Sign-in beyond the missing-credentials
-  // prompt, Choose, Confirm, Progress, Results) acts against.
+  // prompt, Choose, Confirm, Progress, Results) acts against. '' until the
+  // operator has one.
   instanceId: string;
 
-  // Setup screen -- which instance is being configured. Deliberately a
-  // SEPARATE field from `instanceId`: credentials are per instance
-  // (secrets.ts), and Setup must default to Production (most operators only
-  // ever configure that one) without disturbing `instanceId`'s own
-  // safety-first default -- see initialState().
+  // Setup screen -- which instance is being configured, or '' for a site not
+  // added yet. Deliberately a SEPARATE field from `instanceId`: credentials
+  // are per instance (secrets.ts), and Setup must be able to configure one
+  // site while the rest of the app is pointed at another.
   setupInstanceId: string;
   setupSaving: boolean;
   setupError: string | null;
+  // Whether credentials written by an older version of the store were found
+  // and discarded on this launch -- Setup says so rather than presenting a
+  // blank form that reads as a broken app. See ui/setupNotice.ts.
+  credentialsDropped: boolean;
 
   // Sign-in screen
   // Whether `instanceId` currently has credentials saved at all -- see
@@ -73,21 +81,19 @@ interface AppState extends BatchState {
   // Review, Confirm, Progress and Results state all lives in BatchState.
 }
 
-// Defaults to 'test' -- never Production -- so a user who has not yet made a
-// deliberate choice is never one click away from the wrong environment. See
-// the instance banner: it is red specifically because this default (and
-// every subsequent choice) needs a durable, unmissable visual cue.
+// No instance is selected until the operator has added one, and none is
+// chosen for them: the app ships knowing no addresses at all (ui/instances.ts),
+// and a default pointed at somebody's live site is exactly what the instance
+// banner exists to prevent.
 function initialState(): AppState {
   return {
     screen: 'setup',
-    instanceId: 'test',
-    // Most operators only ever have Production credentials -- see
-    // renderSetup's doc comment. Reassigned to 'production' explicitly
-    // wherever Setup is (re)entered fresh; see init() and
-    // handleResetSettings().
-    setupInstanceId: 'production',
+    instances: [...UI_INSTANCES],
+    instanceId: '',
+    setupInstanceId: '',
     setupSaving: false,
     setupError: null,
+    credentialsDropped: false,
     instanceHasSettings: false,
     user: null,
     checkingUser: false,
@@ -134,22 +140,41 @@ function requireEl<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-function currentInstance() {
-  return UI_INSTANCES.find((i) => i.id === state.instanceId);
+/**
+ * The list the dropdowns show: whatever the app ships with (nothing --
+ * ui/instances.ts) plus every site the operator has added. A saved entry wins
+ * over a shipped one with the same id, since the operator's own credentials
+ * and label are the newer truth.
+ */
+function withSaved(saved: InstanceChoice[]): InstanceChoice[] {
+  return [...UI_INSTANCES.filter((s) => !saved.some((i) => i.id === s.id)), ...saved];
+}
+
+function instanceById(id: string): InstanceChoice | null {
+  return state.instances.find((i) => i.id === id) ?? null;
+}
+
+function currentInstance(): InstanceChoice | null {
+  return instanceById(state.instanceId);
 }
 
 function render(): void {
   // On Setup, the banner must reflect the instance being CONFIGURED
   // (setupInstanceId), not the app's separate action-flow instance -- a
-  // form labelled "Client ID (Production)" under a banner reading TEST
+  // form labelled "Client ID (Live)" under a banner naming another site
   // would look broken.
-  renderBanner(requireEl('banner'), state.screen === 'setup' ? state.setupInstanceId : state.instanceId);
+  renderBanner(
+    requireEl('banner'),
+    state.screen === 'setup' ? instanceById(state.setupInstanceId) : currentInstance(),
+  );
 
   const app = requireEl('app');
   switch (state.screen) {
     case 'setup':
       renderSetup(app, {
+        instances: state.instances,
         instanceId: state.setupInstanceId,
+        credentialsDropped: state.credentialsDropped,
         error: state.setupError,
         saving: state.setupSaving,
         onInstanceChange: handleSetupInstanceChange,
@@ -158,6 +183,7 @@ function render(): void {
       break;
     case 'signin':
       renderSignin(app, {
+        instances: state.instances,
         instanceId: state.instanceId,
         instanceHasSettings: state.instanceHasSettings,
         user: state.user,
@@ -290,8 +316,16 @@ function handleSetupInstanceChange(id: string): void {
   render();
 }
 
-async function handleSaveSettings(clientId: string, clientSecret: string, redirectUri: string): Promise<void> {
-  if (clientId === '' || clientSecret === '' || redirectUri === '') {
+async function handleSaveSettings(
+  instance: { label: string; baseUrl: string },
+  settings: { clientId: string; clientSecret: string; redirectUri: string },
+): Promise<void> {
+  if (instance.baseUrl === '') {
+    state.setupError = 'Enter the address of your openEQUELLA site.';
+    render();
+    return;
+  }
+  if (settings.clientId === '' || settings.clientSecret === '' || settings.redirectUri === '') {
     state.setupError = 'Enter the client ID, client secret, and redirect URL.';
     render();
     return;
@@ -300,13 +334,21 @@ async function handleSaveSettings(clientId: string, clientSecret: string, redire
   state.setupError = null;
   render();
   try {
-    await window.oeq.saveSettings(state.setupInstanceId, { clientId, clientSecret, redirectUri });
+    // The main process derives the id from the address (one rule for what an
+    // address's key is) and hands it back, so the app selects exactly the
+    // entry that was written -- including when the operator typed a spelling
+    // that normalised onto a site they had already added.
+    const saved = await window.oeq.saveInstance(instance, settings);
+    state.instances = withSaved(await window.oeq.listInstances());
     state.setupSaving = false;
     state.setupError = null;
+    state.setupInstanceId = saved.id;
+    // Nothing left to explain: the discarded store has just been overwritten.
+    state.credentialsDropped = false;
     // Point the rest of the app at the instance that was just configured --
-    // landing back on Sign-in still defaulted to a DIFFERENT (uncredentialed)
+    // landing back on Sign-in still pointed at a DIFFERENT (uncredentialed)
     // instance would look like nothing had happened.
-    state.instanceId = state.setupInstanceId;
+    state.instanceId = saved.id;
     state.screen = nextScreen('setup', { type: 'settingsSaved' });
     render();
     void checkInstanceState();
@@ -429,8 +471,14 @@ async function handleResetSettings(): Promise<void> {
   state.instanceHasSettings = false;
   state.signinError = null;
   state.setupError = null;
-  // Both instances were just wiped -- back to Setup's usual default.
-  state.setupInstanceId = 'production';
+  // Every site was just wiped, addresses included -- Setup starts from the
+  // blank form it shows on a fresh install.
+  state.instances = [...UI_INSTANCES];
+  state.instanceId = '';
+  state.setupInstanceId = '';
+  // The operator cleared this themselves; they do not need a notice telling
+  // them their credentials are gone.
+  state.credentialsDropped = false;
   state.screen = nextScreen(state.screen, { type: 'editSettings' });
   render();
 }
@@ -834,21 +882,29 @@ async function handleRetryFailed(): Promise<void> {
 
 async function init(): Promise<void> {
   requireEl('app').innerHTML = '<p class="muted">Starting…</p>';
-  renderBanner(requireEl('banner'), state.instanceId);
+  renderBanner(requireEl('banner'), currentInstance());
   // Registered exactly once for the lifetime of the app: preload.cts's
   // onProgress adds a NEW ipcRenderer listener on every call, so calling
   // this more than once would fire the handler multiple times per event.
   window.oeq.onProgress(handleProgress);
   try {
-    // "First run" means NEITHER instance has ever been configured -- an
-    // operator who set up Production only (the common case) must land on
-    // Sign-in, not be sent back through Setup just because Test, which they
-    // may never use, has nothing saved.
-    const [hasProduction, hasTest] = await Promise.all([
-      window.oeq.hasSettings('production'),
-      window.oeq.hasSettings('test'),
+    // "First run" means the operator has added no site at all. One who
+    // configured a single site must land on Sign-in, not be sent back through
+    // Setup -- and the app has no opinion about how many sites they ought to
+    // have, because it ships knowing none (ui/instances.ts).
+    const [instances, credentialsDropped] = await Promise.all([
+      window.oeq.listInstances(),
+      window.oeq.credentialsDropped(),
     ]);
-    state.screen = initialScreen(hasProduction || hasTest);
+    state.instances = withSaved(instances);
+    state.credentialsDropped = credentialsDropped;
+    // The first saved site is merely what the dropdown lands on, not a
+    // judgement about which one is safe -- the app cannot know that any more.
+    // The banner names the selected site and its address on every screen, and
+    // it is loud for all of them for exactly this reason (ui/banner.ts).
+    state.instanceId = state.instances[0]?.id ?? '';
+    state.setupInstanceId = state.instanceId;
+    state.screen = initialScreen(state.instances.length > 0);
     render();
     if (state.screen === 'signin') void checkInstanceState();
   } catch (err) {

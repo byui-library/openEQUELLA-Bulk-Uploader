@@ -2,7 +2,7 @@ import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises';
 import { unlinkSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { StoredToken, TokenStore } from '../core/tokenStore.js';
-import { INSTANCES } from './ipc.js';
+import { instanceKey, normaliseInstanceUrl } from '../core/instanceUrl.js';
 
 /**
  * The subset of Electron's `safeStorage` this module needs, extracted as an
@@ -31,76 +31,83 @@ export interface Settings {
 }
 
 /**
- * The OAuth client on production is a completely different registration
- * from the one on test -- see the module doc below -- so credentials are
- * keyed by instance, never shared.
+ * The key one instance's credentials are stored under: `instanceKey` of its
+ * address (core/instanceUrl.ts). A plain string, not a union of known names
+ * -- the instances are the operator's own, added on Setup, and this tool
+ * ships knowing none of them.
  */
-export type InstanceId = 'production' | 'test';
+export type InstanceId = string;
 
-const INSTANCE_IDS: readonly InstanceId[] = ['production', 'test'];
-
-/**
- * On-disk shape for one instance's entry. `redirectUri` is OPTIONAL here,
- * even though it is required on the public `Settings` type `loadSettings`
- * returns: entries written by this project's very first per-instance store
- * (commit f31505b, before this field existed) have no `redirectUri` key at
- * all. See `defaultRedirectUri` and the migration note on `loadSettings`
- * below for how that gap is filled back in.
- */
-type StoredSettings = Pick<Settings, 'clientId' | 'clientSecret'> & Partial<Pick<Settings, 'redirectUri'>>;
-
-/** On-disk shape written by THIS version of the store. */
-interface StoredShapeV2 {
-  version: 2;
-  instances: Partial<Record<InstanceId, StoredSettings>>;
+/** An openEQUELLA site the operator has added, as everything outside this module sees it. */
+export interface Instance {
+  id: InstanceId;
+  /** What the operator calls it. Defaults to the address's host. */
+  label: string;
+  /** Normalised (`normaliseInstanceUrl`), so it can be concatenated with an api path. */
+  baseUrl: string;
 }
 
-function isStoredSettings(v: unknown): v is StoredSettings {
+/**
+ * On-disk shape for one instance's entry. Every field is required: an entry
+ * missing one is not a usable credential, and filling the gap in would mean
+ * inventing a value -- see `Settings.redirectUri` for what inventing that one
+ * in particular has cost this project.
+ */
+type StoredEntry = Settings & { label: string; baseUrl: string };
+
+/** On-disk shape written by THIS version of the store. */
+interface StoredShapeV3 {
+  version: 3;
+  instances: Record<InstanceId, StoredEntry>;
+}
+
+/**
+ * What `loadAll` returns: the store, plus whether readable credentials
+ * written by an older version were found and thrown away. Setup needs that
+ * second fact to explain an otherwise blank form -- see `credentialsDropped`.
+ */
+interface LoadResult {
+  shape: StoredShapeV3;
+  dropped: boolean;
+}
+
+function isStoredEntry(v: unknown): v is StoredEntry {
+  const e = v as Partial<StoredEntry> | null;
   return (
-    typeof v === 'object' &&
-    v !== null &&
-    typeof (v as Partial<StoredSettings>).clientId === 'string' &&
-    typeof (v as Partial<StoredSettings>).clientSecret === 'string' &&
-    ((v as Partial<StoredSettings>).redirectUri === undefined ||
-      typeof (v as Partial<StoredSettings>).redirectUri === 'string')
+    typeof e === 'object' &&
+    e !== null &&
+    typeof e.clientId === 'string' &&
+    typeof e.clientSecret === 'string' &&
+    typeof e.redirectUri === 'string' &&
+    typeof e.label === 'string' &&
+    typeof e.baseUrl === 'string'
   );
 }
 
 /**
- * Migration default for a stored entry that predates `redirectUri` (and the
- * sensible pre-fill Setup shows for a fresh entry): the instance's own base
- * url, with no trailing slash -- verified live to match both of the
- * operator's new dedicated OAuth clients. Forcing re-entry instead would
- * have been the THIRD time in one day the operator had to retype
- * credentials for a gap that has nothing to do with the client ID/secret
- * they already typed correctly.
- */
-function defaultRedirectUri(instanceId: InstanceId): string {
-  const inst = INSTANCES.find((i) => i.id === instanceId);
-  // INSTANCES always declares both known instance ids (guarded by
-  // session.test.ts); this fallback only matters if that invariant is ever
-  // violated.
-  return inst ? inst.baseUrl.replace(/\/+$/, '') : '';
-}
-
-/**
- * Credentials are per instance: production (`content.byui.edu`) and test
- * (`content-test.byui.edu`) each register their own OAuth client, so a
- * client ID that works on one is refused outright by the other. Earlier
+ * Credentials are per instance: each openEQUELLA site registers its own OAuth
+ * client, so a client ID that works on one is refused outright by another. A
+ * site's entry is keyed by `instanceKey` of its address, which is what makes
+ * two spellings of one address a single entry rather than two. Earlier
  * versions of this store persisted a single, unkeyed `{clientId,
- * clientSecret}` pair -- fine when the app only ever talked to one
- * instance, wrong now that it can talk to either.
+ * clientSecret}` pair -- fine when the app only ever talked to one site,
+ * wrong now that the operator can add any number of them.
  *
- * Migration: a store written by that old format is indistinguishable from
- * "which instance was this pair for?" -- the old format never recorded
- * that, and guessing would risk silently handing one instance's client_id
- * to the other, which is precisely the bug being fixed here. So `loadAll`
- * treats ANY on-disk shape that isn't this version's `{version: 2,
- * instances: {...}}` wrapper -- the old flat shape, a corrupt blob, or
- * anything else unrecognised -- as "no credentials saved for either
- * instance". The operator sees Setup again and re-enters what they have;
- * that one-time re-prompt is a far smaller cost than a wrong-instance
- * credential being sent to openEQUELLA unnoticed.
+ * Migration: a store written by an older format cannot be rekeyed. `version:
+ * 2` keyed entries by the literal names 'production' and 'test' -- two
+ * addresses the app itself used to declare and no longer does -- and the
+ * older flat format never recorded which site its pair belonged to at all.
+ * Guessing would risk silently handing one site's client_id to another, which
+ * is precisely the bug this store exists to prevent. So `loadAll` treats ANY
+ * on-disk shape that isn't this version's `{version: 3, instances: {...}}`
+ * wrapper -- v2, the old flat shape, a corrupt blob, or anything else
+ * unrecognised -- as "no credentials saved at all". The operator sees Setup
+ * again and re-enters what they have; that one-time re-prompt is a far
+ * smaller cost than a wrong-instance credential being sent to openEQUELLA
+ * unnoticed.
+ *
+ * A discard that happened silently would read as a broken app, so it is
+ * reported: see `credentialsDropped`, and the notice Setup shows because of it.
  */
 export class SecretStore {
   constructor(
@@ -108,43 +115,79 @@ export class SecretStore {
     private readonly cipher: Cipher,
   ) {}
 
-  async saveSettings(instanceId: InstanceId, settings: Settings): Promise<void> {
+  /**
+   * Add or update one instance and its credentials, returning the instance as
+   * stored -- including the id, which is DERIVED here rather than supplied,
+   * so there is exactly one rule for what an address's key is.
+   *
+   * A blank label falls back to the address's host: a dropdown of untitled
+   * entries is no way to tell a live site from a sandbox, and the host is the
+   * one name that is always available and always true.
+   */
+  async saveInstance(instance: { label: string; baseUrl: string }, settings: Settings): Promise<Instance> {
     if (!this.cipher.isAvailable()) {
       throw new Error(
         'OS encryption is unavailable, so credentials cannot be stored safely. ' +
           'Refusing to write them in plaintext.',
       );
     }
-    const current = await this.loadAll();
-    current.instances[instanceId] = settings;
+    // Before anything is written: an address that cannot be normalised has no
+    // key, and https is required (see normaliseInstanceUrl).
+    const baseUrl = normaliseInstanceUrl(instance.baseUrl);
+    const id = instanceKey(baseUrl);
+    const label = instance.label.trim() || new URL(baseUrl).host;
+
+    const { shape } = await this.loadAll();
+    shape.instances[id] = { label, baseUrl, ...settings };
     await mkdir(dirname(this.filePath), { recursive: true });
-    const blob = this.cipher.encrypt(JSON.stringify(current));
-    await writeFile(this.filePath, blob);
+    await writeFile(this.filePath, this.cipher.encrypt(JSON.stringify(shape)));
+    return { id, label, baseUrl };
   }
 
-  /**
-   * Migration: an entry saved before `redirectUri` existed has no such key
-   * on disk (see `StoredSettings`'s doc comment). Rather than surface that
-   * gap as `undefined` -- which would go straight into an OAuth
-   * authorize-url query string as the literal string `"undefined"` -- it is
-   * filled in here with `defaultRedirectUri`, once, on every read. Nothing
-   * is written back to disk by this; the fill-in is applied fresh each time
-   * until the operator (or Setup's own pre-filled default) actually saves a
-   * value for it.
-   */
   async loadSettings(instanceId: InstanceId): Promise<Settings | null> {
-    const all = await this.loadAll();
-    const stored = all.instances[instanceId];
+    const stored = (await this.loadAll()).shape.instances[instanceId];
     if (!stored) return null;
     return {
       clientId: stored.clientId,
       clientSecret: stored.clientSecret,
-      redirectUri: stored.redirectUri ?? defaultRedirectUri(instanceId),
+      // Verbatim, never re-derived. See Settings.redirectUri.
+      redirectUri: stored.redirectUri,
     };
+  }
+
+  /** The instance itself -- address and label -- without its credentials. */
+  async loadInstance(instanceId: InstanceId): Promise<Instance | null> {
+    const stored = (await this.loadAll()).shape.instances[instanceId];
+    return stored ? { id: instanceId, label: stored.label, baseUrl: stored.baseUrl } : null;
+  }
+
+  /** Every instance the operator has added, for the dropdowns. Credentials stay here. */
+  async listInstances(): Promise<Instance[]> {
+    const { shape } = await this.loadAll();
+    return Object.entries(shape.instances).map(([id, e]) => ({ id, label: e.label, baseUrl: e.baseUrl }));
   }
 
   async hasSettings(instanceId: InstanceId): Promise<boolean> {
     return (await this.loadSettings(instanceId)) !== null;
+  }
+
+  /**
+   * Whether readable credentials written by an older version of this store
+   * were found and discarded, so Setup can say so instead of presenting a
+   * blank form that looks like a broken app.
+   *
+   * True only when a store was successfully decrypted and parsed and turned
+   * out to be a shape this version does not accept. A blob that would not
+   * decrypt at all is NOT reported: the notice claims something specific
+   * happened to the operator's credentials, and an unreadable file is no
+   * evidence of it.
+   *
+   * It reports the state of the file, so it stops being true the moment the
+   * operator saves anything -- the old blob is overwritten by then and there
+   * is nothing left to explain. That is what makes the notice appear once.
+   */
+  async credentialsDropped(): Promise<boolean> {
+    return (await this.loadAll()).dropped;
   }
 
   async clear(): Promise<void> {
@@ -156,32 +199,33 @@ export class SecretStore {
   }
 
   /** Reads and validates the on-disk store. Never throws -- see class doc. */
-  private async loadAll(): Promise<StoredShapeV2> {
-    const empty: StoredShapeV2 = { version: 2, instances: {} };
+  private async loadAll(): Promise<LoadResult> {
+    const empty = (dropped = false): LoadResult => ({ shape: { version: 3, instances: {} }, dropped });
     let blob: Buffer;
     try {
       blob = await readFile(this.filePath);
     } catch {
-      return empty;
+      // No file: a fresh install, with nothing to explain to anybody.
+      return empty();
     }
     try {
-      const parsed = JSON.parse(this.cipher.decrypt(blob)) as Partial<StoredShapeV2>;
-      if (parsed.version !== 2 || typeof parsed.instances !== 'object' || parsed.instances === null) {
-        // Old single-pair format, or anything else unrecognised. See the
+      const parsed = JSON.parse(this.cipher.decrypt(blob)) as Partial<StoredShapeV3>;
+      if (parsed.version !== 3 || typeof parsed.instances !== 'object' || parsed.instances === null) {
+        // A v2 store, the old single-pair format, or anything else
+        // unrecognised. Discarded, and reported as discarded. See the
         // migration note in this class's doc comment.
-        return empty;
+        return empty(true);
       }
-      const instances: Partial<Record<InstanceId, StoredSettings>> = {};
-      for (const id of INSTANCE_IDS) {
-        const v = (parsed.instances as Partial<Record<InstanceId, unknown>>)[id];
-        if (isStoredSettings(v)) instances[id] = v;
+      const instances: Record<InstanceId, StoredEntry> = {};
+      for (const [id, v] of Object.entries(parsed.instances as Record<string, unknown>)) {
+        if (isStoredEntry(v)) instances[id] = v;
       }
-      return { version: 2, instances };
+      return { shape: { version: 3, instances }, dropped: false };
     } catch {
       // Corrupt, hand-edited, or written by a different OS user. Treat as
       // absent: the resulting "set up your credentials" prompt is the right
-      // recovery either way.
-      return empty;
+      // recovery either way. Not reported as a drop -- nothing was read.
+      return empty();
     }
   }
 }
