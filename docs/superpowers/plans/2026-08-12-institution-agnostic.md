@@ -2081,6 +2081,30 @@ git commit -m "feat(desktop): instances are added by the operator, not shipped"
 
 ## Task 12: Desktop — password on Setup
 
+> ### REGRESSION INTRODUCED BY TASK 8b — FIX IT IN THIS TASK
+>
+> Task 8b made the attachment-uuid field configuration
+> (`OEQ_ATTACHMENT_UUID_PATH`), defaulting to unset. `src/desktop/session.ts`
+> now reads it from `process.env`, which is fine for a developer running
+> `npm run desktop` and **useless for the operator**, who launches the packaged
+> app from a Start Menu shortcut with no environment set.
+>
+> **As things stand, a BYU-Idaho operator using the GUI will silently create
+> items without `BYUI_extended/attachments/attachment`.** No error, no warning
+> — the field is simply absent from every contribution, and nobody would notice
+> until someone went looking for it in openEQUELLA weeks later.
+>
+> This task rewrites Setup and the per-instance settings store, so it is where
+> the field belongs: a **per-instance setting collected on Setup and stored with
+> the other credentials**, not an environment variable. The `process.env` read
+> in `session.ts` is a stopgap and must not survive this task.
+>
+> Pre-fill it from the chosen collection's schema where possible — Task 8b's
+> pre-flight already reports whether a configured path exists in the schema, so
+> the same lookup can offer the right value rather than making the operator
+> know it.
+
+
 **Files:**
 - Modify: `src/desktop/secrets.ts`, the Setup screen, `src/desktop/ipc.ts`
 - Test: `tests/desktop/secrets.test.ts`
