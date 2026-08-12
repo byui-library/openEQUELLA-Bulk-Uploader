@@ -17,6 +17,8 @@ const info: SchemaInfo = {
   uuid: 'c93181f3-a443-41bf-9afe-ac9f7daf90b7',
   namePath: '/MWDL/title',
   titleHeader: 'MWDL/title',
+  descriptionPath: '/MWDL/description',
+  descriptionHeader: 'MWDL/description',
   paths: new Set(['MWDL/title', 'MWDL/description']),
 };
 
@@ -42,9 +44,40 @@ describe('SchemaCache', () => {
     expect(loaded!.uuid).toBe(info.uuid);
     expect(loaded!.namePath).toBe('/MWDL/title');
     expect(loaded!.titleHeader).toBe('MWDL/title');
+    // The starter profile's description column is proposed from this. Losing it
+    // in the cache would mean an operator working offline gets no description
+    // column at all, from a schema that declares one.
+    expect(loaded!.descriptionPath).toBe('/MWDL/description');
+    expect(loaded!.descriptionHeader).toBe('MWDL/description');
     expect(loaded!.paths).toBeInstanceOf(Set);
     expect(loaded!.paths.has('MWDL/description')).toBe(true);
     expect(loaded!.paths.size).toBe(2);
+  });
+
+  /**
+   * A file written before the description path was cached at all has neither
+   * key. Refusing it would throw away a perfectly good schema -- sending
+   * extraction back to the bundled export -- over a field whose "not declared"
+   * answer is null anyway.
+   */
+  it('reads a cache file written before the description path existed', async () => {
+    const cache = new SchemaCache(dir);
+    await cache.save('https://oeq.example.edu', info);
+    await writeFile(
+      await onlyFile(),
+      JSON.stringify({
+        uuid: info.uuid,
+        namePath: '/MWDL/title',
+        titleHeader: 'MWDL/title',
+        paths: ['MWDL/title'],
+      }),
+      'utf8',
+    );
+
+    const loaded = await cache.load('https://oeq.example.edu', info.uuid);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.titleHeader).toBe('MWDL/title');
+    expect(loaded!.descriptionHeader).toBeNull();
   });
 
   /**
@@ -124,6 +157,8 @@ describe('SchemaCache', () => {
       uuid: 's-1',
       namePath: null,
       titleHeader: null,
+      descriptionPath: null,
+      descriptionHeader: null,
       paths: new Set(['Local/title']),
     });
 

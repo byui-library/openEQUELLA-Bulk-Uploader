@@ -79,6 +79,10 @@ export interface SchemaInfo {
   namePath: string | null;
   /** The same path in spreadsheet-header form: `MWDL/title`. Null if undeclared. */
   titleHeader: string | null;
+  /** As declared, with a leading slash: `/MWDL/description`. Null if undeclared. */
+  descriptionPath: string | null;
+  /** The same path in spreadsheet-header form: `MWDL/description`. Null if undeclared. */
+  descriptionHeader: string | null;
   /** Every valid xpath, leaves only, in spreadsheet-header form. */
   paths: Set<string>;
 }
@@ -98,20 +102,25 @@ export interface SchemaInfo {
  *
  * The REST field is `namePath`; the XML export spells the same thing
  * `itemNamePath`. Both are accepted so a caller can pass either source.
+ *
+ * THE DESCRIPTION PATH IS DECLARED THE SAME WAY, and read here for the same
+ * reason: `starterProfile` proposes a description column, and it used to
+ * propose BYU-Idaho's `MWDL/description` at every institution. Spelt
+ * `descriptionPath` by the REST API (confirmed by probe, and in
+ * tests/fixtures/api/schema.json) and `itemDescriptionPath` by the XML export.
+ * Undeclared is null, never a guess, exactly as for the name path.
  */
 export function parseSchema(body: unknown): SchemaInfo {
   const raw = body as {
     uuid?: unknown;
     namePath?: unknown;
     itemNamePath?: unknown;
+    descriptionPath?: unknown;
+    itemDescriptionPath?: unknown;
     definition?: unknown;
   } | null;
-  const declared =
-    typeof raw?.namePath === 'string' && raw.namePath
-      ? raw.namePath
-      : typeof raw?.itemNamePath === 'string' && raw.itemNamePath
-        ? raw.itemNamePath
-        : null;
+  const declared = firstString(raw?.namePath, raw?.itemNamePath);
+  const declaredDescription = firstString(raw?.descriptionPath, raw?.itemDescriptionPath);
 
   // Paths live under an `xml` root node; `namePath` omits it, and so do
   // spreadsheet headers. Walking from `definition` itself would prefix
@@ -124,9 +133,24 @@ export function parseSchema(body: unknown): SchemaInfo {
   return {
     uuid: typeof raw?.uuid === 'string' ? raw.uuid : '',
     namePath: declared,
-    titleHeader: declared ? declared.replace(/^\/+/, '') : null,
+    titleHeader: toHeader(declared),
+    descriptionPath: declaredDescription,
+    descriptionHeader: toHeader(declaredDescription),
     paths,
   };
+}
+
+/** The first of the candidates that is a non-empty string, or null. */
+function firstString(...candidates: unknown[]): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate) return candidate;
+  }
+  return null;
+}
+
+/** A declared path in spreadsheet-header form -- no leading slash. */
+function toHeader(declared: string | null): string | null {
+  return declared ? declared.replace(/^\/+/, '') : null;
 }
 
 /**

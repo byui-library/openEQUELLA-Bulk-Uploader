@@ -55,11 +55,36 @@ export function extractDefinition(entityXml: string): string {
  * an unknown path into `could-not-check`, which is the only honest answer.
  */
 export function extractItemNamePath(entityXml: string): string | null {
+  return declaredPath(entityXml, 'itemNamePath');
+}
+
+/**
+ * The path an exported schema declares as the item's description, in
+ * spreadsheet-header form (`MWDL/description`) -- or null when none is
+ * declared.
+ *
+ * THE STARTER PROFILE PROPOSES THIS COLUMN. It used to propose the literal
+ * `MWDL/description` whatever schema it was handed, so at any institution
+ * without an MWDL section the extractor's very first output contained a column
+ * the picker immediately flagged invalid. `discovery.ts#parseSchema` reads the
+ * same declaration from the REST response, where it is spelt
+ * `descriptionPath`; this reads it from the export, where it is
+ * `<itemDescriptionPath>`. Both exist for the same reason the two name-path
+ * readers do: extraction runs offline against the bundled export as well as
+ * online against the API, and a column proposed from one source has to match
+ * the schema the other validates against.
+ */
+export function extractItemDescriptionPath(entityXml: string): string | null {
+  return declaredPath(entityXml, 'itemDescriptionPath');
+}
+
+/** One declared `<item...Path>` off the exported entity, header form or null. */
+function declaredPath(entityXml: string, field: string): string | null {
   const parser = new XMLParser(parserOptions);
   const doc = parser.parse(entityXml) as Record<string, unknown>;
   const pack = doc['com.tle.common.ImportExportPack'] as Record<string, unknown> | undefined;
   const entity = pack?.['entity'] as Record<string, unknown> | undefined;
-  const declared = entity?.['itemNamePath'];
+  const declared = entity?.[field];
   if (typeof declared !== 'string' || declared.trim() === '') return null;
   return declared.trim().replace(/^\/+/, '');
 }

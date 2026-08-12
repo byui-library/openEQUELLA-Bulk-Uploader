@@ -159,6 +159,8 @@ describe('extract handlers and the cached schema', () => {
     uuid: 'schema-1',
     namePath: '/OTHER/name',
     titleHeader: 'OTHER/name',
+    descriptionPath: '/OTHER/summary',
+    descriptionHeader: 'OTHER/summary',
     paths: new Set(['OTHER/name', 'OTHER/summary']),
   };
 

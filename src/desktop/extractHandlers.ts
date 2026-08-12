@@ -3,7 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IpcMain } from 'electron';
 import { dialog, shell } from 'electron';
-import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
+import {
+  extractDefinition,
+  extractItemDescriptionPath,
+  extractItemNamePath,
+  parseSchemaPaths,
+} from '../core/schema.js';
 import { extractFolder, listFolder } from '../core/extract/extract.js';
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
@@ -11,7 +16,7 @@ import { evidenceFrom, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/ev
 import { buildRow } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
-import { starterProfile } from '../core/extract/suggest.js';
+import { starterProfile, type StarterSchema } from '../core/extract/suggest.js';
 import { listTemplates, loadTemplate } from '../core/extract/templates.js';
 import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
 import type { SchemaInfo } from '../core/discovery.js';
@@ -28,7 +33,7 @@ let cache: CacheEntry | null = null;
 /** Exported for tests. The cache is a preview accelerator, never a source of truth. */
 export function __resetExtractCache(): void {
   cache = null;
-  schemaPathsCache = null;
+  bundledSchemaCache = null;
 }
 
 /**
@@ -53,17 +58,24 @@ async function sample(dir: string): Promise<CacheEntry> {
 }
 
 /**
- * The schema's leaf paths, parsed once per process.
+ * The bundled export's leaf paths AND the paths it declares for an item's name
+ * and description, parsed once per process.
  *
- * The file is a bundled resource that never changes at runtime, and it is now
- * read on every folder scan as well as by the schemaPaths channel.
+ * The file is a bundled resource that never changes at runtime, and it is read
+ * on every folder scan as well as by the schemaPaths and schemaNamePath
+ * channels. All three read it through here so a fallback answer can never
+ * disagree with itself, and so the starter profile's title and description
+ * columns come from what this export declares rather than from BYU-Idaho's
+ * paths written into the code.
  */
-let schemaPathsCache: Promise<Set<string>> | null = null;
-function schemaPathsOnce(schemaFile: string): Promise<Set<string>> {
-  schemaPathsCache ??= readFile(schemaFile, 'utf8').then((xml) =>
-    parseSchemaPaths(extractDefinition(xml)),
-  );
-  return schemaPathsCache;
+let bundledSchemaCache: Promise<StarterSchema> | null = null;
+function bundledSchemaOnce(schemaFile: string): Promise<StarterSchema> {
+  bundledSchemaCache ??= readFile(schemaFile, 'utf8').then((xml) => ({
+    titleHeader: extractItemNamePath(xml),
+    descriptionHeader: extractItemDescriptionPath(xml),
+    paths: parseSchemaPaths(extractDefinition(xml)),
+  }));
+  return bundledSchemaCache;
 }
 
 export interface ExtractHandlerOptions {
@@ -118,10 +130,11 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       // when it has been cached, the bundled export otherwise. Two different
       // schemas here would have the starter propose columns the picker then
       // reports as invalid.
-      starter: starterProfile(supported, {
-        ...evidence,
-        schemaPaths: (await cachedFor(instanceId))?.paths ?? (await schemaPathsOnce(options.schemaFile)),
-      }),
+      starter: starterProfile(
+        supported,
+        (await cachedFor(instanceId)) ?? (await bundledSchemaOnce(options.schemaFile)),
+        evidence,
+      ),
     };
   });
 
@@ -153,7 +166,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
   ipcMain.handle(CHANNELS.schemaPaths, async (_e, instanceId?: string): Promise<string[]> => {
     const cached = await cachedFor(instanceId);
     if (cached) return [...cached.paths].sort();
-    return [...(await schemaPathsOnce(options.schemaFile))].sort();
+    return [...(await bundledSchemaOnce(options.schemaFile)).paths].sort();
   });
 
   // Read here rather than in the renderer for the usual reason: this reaches
@@ -167,7 +180,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
     // have to be interchangeable or the Add-column picker's first section
     // silently stops matching any column.
     if (cached) return cached.titleHeader;
-    return extractItemNamePath(await readFile(options.schemaFile, 'utf8'));
+    return (await bundledSchemaOnce(options.schemaFile)).titleHeader;
   });
 
   /**
