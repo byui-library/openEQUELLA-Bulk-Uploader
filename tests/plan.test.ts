@@ -1,8 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
-import { buildManifest, preflightDuplicates, markSkipped } from '../src/core/plan.js';
+import {
+  buildManifest,
+  preflightDuplicates,
+  markSkipped,
+  resolveIdentifierPath,
+  NO_IDENTIFIER_PATH_WARNING,
+} from '../src/core/plan.js';
+import {
+  extractDefinition,
+  extractItemNamePath,
+  parseSchemaPaths,
+} from '../src/core/schema.js';
 import { OeqClient } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ValidationError } from '../src/core/errors.js';
@@ -179,7 +190,13 @@ describe('preflightDuplicates', () => {
     await mock.close();
   });
 
-  const manifestWith = (identifier: string | undefined): Manifest => ({
+  /** BYU-Idaho's shape, hand-built: an `MWDL` section whose name path is `MWDL/title`. */
+  const mwdlSchema = { titleHeader: 'MWDL/title', paths };
+
+  const manifestWith = (
+    identifier: string | undefined,
+    header = 'MWDL/identifier',
+  ): Manifest => ({
     version: 1,
     createdAt: new Date().toISOString(),
     baseUrl: mock.url,
@@ -192,7 +209,7 @@ describe('preflightDuplicates', () => {
         rowNumber: 2,
         filePath: join(dir, 'a.mp4'),
         fileName: 'a.mp4',
-        metadata: identifier === undefined ? {} : { 'MWDL/identifier': [identifier] },
+        metadata: identifier === undefined ? {} : { [header]: [identifier] },
         status: 'pending',
         attempts: 0,
       },
@@ -202,17 +219,30 @@ describe('preflightDuplicates', () => {
 
   it('warns when an identifier already exists in the collection', async () => {
     mock.state.existingIdentifiers = ['a.mp4'];
-    const warnings = await preflightDuplicates(client, manifestWith('a.mp4'));
+    const warnings = await preflightDuplicates(client, manifestWith('a.mp4'), mwdlSchema);
     expect(warnings.join(' ')).toMatch(/a\.mp4/);
   });
 
   it('produces no warning when the identifier does not already exist', async () => {
-    const warnings = await preflightDuplicates(client, manifestWith('a.mp4'));
+    const warnings = await preflightDuplicates(client, manifestWith('a.mp4'), mwdlSchema);
     expect(warnings).toHaveLength(0);
   });
 
   it('skips entries with no identifier silently', async () => {
-    const warnings = await preflightDuplicates(client, manifestWith(undefined));
+    const warnings = await preflightDuplicates(client, manifestWith(undefined), mwdlSchema);
+    expect(warnings).toHaveLength(0);
+  });
+
+  /**
+   * A blank cell is genuinely not checkable and genuinely expected -- a
+   * hand-made spreadsheet routinely leaves the identifier off some rows. The
+   * schema DOES declare the field, so the check ran and found nothing to ask
+   * about. That must stay quiet; making it noisy would bury the warning that
+   * matters (the schema having no identifier field at all) in per-row chatter.
+   */
+  it('skips an entry whose identifier is blank silently', async () => {
+    mock.state.existingIdentifiers = ['a.mp4'];
+    const warnings = await preflightDuplicates(client, manifestWith('   '), mwdlSchema);
     expect(warnings).toHaveLength(0);
   });
 
@@ -220,15 +250,113 @@ describe('preflightDuplicates', () => {
     mock.state.existingIdentifiers = ['a.mp4'];
     const manifest = manifestWith('a.mp4');
     const before = JSON.stringify(manifest);
-    await preflightDuplicates(client, manifest);
+    await preflightDuplicates(client, manifest, mwdlSchema);
     expect(JSON.stringify(manifest)).toBe(before);
   });
 
   it('survives a network failure without throwing, and warns the check could not complete', async () => {
     const manifest = manifestWith('a.mp4');
     await mock.close();
-    const warnings = await preflightDuplicates(client, manifest);
+    const warnings = await preflightDuplicates(client, manifest, mwdlSchema);
     expect(warnings.join(' ')).toMatch(/could not|fail|error/i);
+  });
+
+  /**
+   * The whole point of Task 8d. `MWDL/identifier` is BYU-Idaho's spelling; a
+   * schema that calls the same field something else must still be checked,
+   * not silently skipped row by row while the batch reports clean.
+   */
+  it('checks against a schema whose identifier is not called MWDL/identifier', async () => {
+    mock.state.existingIdentifiers = ['a.mp4'];
+    const schema = {
+      titleHeader: 'local/dc/title',
+      paths: new Set(['local/dc/title', 'local/dc/identifier', 'local/dc/subject']),
+    };
+    const warnings = await preflightDuplicates(
+      client,
+      manifestWith('a.mp4', 'local/dc/identifier'),
+      schema,
+    );
+    expect(warnings.join(' ')).toMatch(/a\.mp4/);
+  });
+
+  /**
+   * A check that cannot run must never look like one that ran and found
+   * nothing. This is the exact failure recorded in
+   * docs/superpowers/specs/2026-08-06-duplicate-prevention-design.md -- the
+   * pre-flight read a field nobody filled in and "reported no duplicates by
+   * never having looked."
+   */
+  it('says so, rather than reporting clean, when the schema has no identifier field', async () => {
+    mock.state.existingIdentifiers = ['a.mp4'];
+    const schema = {
+      titleHeader: 'local/dc/title',
+      paths: new Set(['local/dc/title', 'local/dc/subject']),
+    };
+    const warnings = await preflightDuplicates(client, manifestWith('a.mp4'), schema);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toBe(NO_IDENTIFIER_PATH_WARNING);
+    expect(warnings[0]).toMatch(/no identifier field/);
+  });
+
+  it('has nothing to report when a schema without an identifier field plans no rows', async () => {
+    const empty = { ...manifestWith(undefined), entries: [] };
+    const schema = { titleHeader: 'local/dc/title', paths: new Set(['local/dc/title']) };
+    expect(await preflightDuplicates(client, empty, schema)).toHaveLength(0);
+  });
+});
+
+describe('resolveIdentifierPath', () => {
+  /**
+   * The behaviour BYU-Idaho already has, pinned against the REAL bundled
+   * schema rather than a hand-typed set -- this is the institution the check
+   * currently works for, and Task 8d must not change what it sees.
+   */
+  it("resolves MWDL/identifier from BYU-Idaho's real schema export", async () => {
+    const entity = await readFile('schema/_entity.xml', 'utf8');
+    const schema = {
+      titleHeader: extractItemNamePath(entity),
+      paths: parseSchemaPaths(extractDefinition(entity)),
+    };
+    expect(resolveIdentifierPath(schema)).toBe('MWDL/identifier');
+  });
+
+  it('resolves an identifier under any section name', () => {
+    expect(
+      resolveIdentifierPath({
+        titleHeader: 'local/dc/title',
+        paths: new Set(['local/dc/title', 'local/dc/identifier']),
+      }),
+    ).toBe('local/dc/identifier');
+  });
+
+  /** The name path names the main section, so its identifier is the one meant. */
+  it("prefers the section the schema's own name path lives in", () => {
+    expect(
+      resolveIdentifierPath({
+        titleHeader: 'local/dc/title',
+        paths: new Set(['local/dc/title', 'local/dc/identifier', 'MWDL/identifier']),
+      }),
+    ).toBe('local/dc/identifier');
+  });
+
+  it('is null when no path anywhere ends in identifier', () => {
+    expect(
+      resolveIdentifierPath({
+        titleHeader: 'local/dc/title',
+        paths: new Set(['local/dc/title', 'local/dc/subject']),
+      }),
+    ).toBeNull();
+  });
+
+  /** Undeclared name path is not a blocker: there is just no section to prefer. */
+  it('still resolves an identifier when the schema declares no name path', () => {
+    expect(
+      resolveIdentifierPath({
+        titleHeader: null,
+        paths: new Set(['local/dc/title', 'local/dc/identifier']),
+      }),
+    ).toBe('local/dc/identifier');
   });
 });
 

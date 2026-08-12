@@ -317,9 +317,12 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
         // unexpected happening before that point.
         try {
           const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
-          const dupWarnings = await preflightDuplicates(client, manifest);
+          const titleHeader = await loadTitleHeader(schemaFile);
+          // Identifier path resolved from the schema, never assumed -- see
+          // resolveIdentifierPath in plan.ts.
+          const dupWarnings = await preflightDuplicates(client, manifest, { titleHeader, paths });
           manifest.warnings.push(...dupWarnings);
-          duplicates = await findDuplicates(client, manifest, await loadTitleHeader(schemaFile));
+          duplicates = await findDuplicates(client, manifest, titleHeader);
         } catch (err) {
           manifest.warnings.push(`Duplicate check skipped: ${errorMessage(err)}`);
         }

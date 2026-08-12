@@ -137,7 +137,11 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
     const allGroups =
       section('Rows whose file could not be found', groups.missingFile) +
       section('Files with no matching row', groups.unmatchedFile) +
-      section('Identifiers that may already exist', groups.duplicateIdentifier) +
+      // Not "Identifiers that may already exist": this group also carries the
+      // cases where the check could NOT run -- a failed request, or a schema
+      // with no identifier field. A heading that promises hits would make
+      // "nobody looked" read as "we looked and found something".
+      section('Duplicate identifiers', groups.duplicateIdentifier) +
       section('Other warnings', groups.other);
 
     warningsSection = `
