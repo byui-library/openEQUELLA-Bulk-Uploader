@@ -1,6 +1,7 @@
 import { ApiError } from './errors.js';
 import type { AuthProvider } from './auth.js';
 import { normaliseInstanceUrl } from './instanceUrl.js';
+import { redactSecret } from './redact.js';
 
 /**
  * openEQUELLA's own username/password sign-in.
@@ -121,15 +122,7 @@ export class UsernamePasswordAuth implements AuthProvider {
   }
 
   private redact(text: string): string {
-    if (!this.password) return text;
-    // The password travels in a query string, so anything echoing the raw
-    // request back carries the percent-encoded form, not the literal one.
-    let result = text.split(this.password).join('[REDACTED]');
-    const encoded = encodeURIComponent(this.password);
-    if (encoded !== this.password) {
-      result = result.split(encoded).join('[REDACTED]');
-    }
-    return result;
+    return redactSecret(text, this.password);
   }
 
   async authHeader(): Promise<Record<string, string>> {

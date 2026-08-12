@@ -1,4 +1,5 @@
 import { ApiError } from './errors.js';
+import { redactSecret } from './redact.js';
 
 export interface AuthProvider {
   getToken(): Promise<string>;
@@ -134,18 +135,7 @@ export class OAuthClientCredentials implements AuthProvider {
   }
 
   private redact(text: string): string {
-    if (!this.clientSecret) return text;
-    // The secret travels in a query string, so on the wire (and in anything
-    // that echoes the raw request back, e.g. an error body) it appears
-    // percent-encoded, not literal. Base64-alphabet secrets — the overwhelming
-    // common case for generated OAuth secrets — contain '+', '/', '=', all of
-    // which get percent-escaped, so both forms must be redacted.
-    let result = text.split(this.clientSecret).join('[REDACTED]');
-    const encoded = encodeURIComponent(this.clientSecret);
-    if (encoded !== this.clientSecret) {
-      result = result.split(encoded).join('[REDACTED]');
-    }
-    return result;
+    return redactSecret(text, this.clientSecret);
   }
 
   async authHeader(): Promise<Record<string, string>> {
