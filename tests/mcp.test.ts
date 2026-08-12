@@ -553,7 +553,7 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
   });
 
   describe('oeq_check', () => {
-    it('mirrors the CLI: prints the same four PASS lines and succeeds when everything lines up', async () => {
+    it('mirrors the CLI: prints the same PASS lines and succeeds when everything lines up', async () => {
       mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
       // Whatever OEQ_COLLECTION_UUID names -- there is no default collection
       // any more, so the mock must register the one the config actually asks
@@ -562,7 +562,12 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
         uuid: 'c1',
         name: 'Faculty Content',
         privileges: ['CREATE_ITEM'],
+        schemaUuid: 's1',
       });
+      // "Everything lines up" now includes a readable schema that declares an
+      // item name path -- without one, duplicate detection reports could-not-
+      // check for every row, which is not a full success by any reading.
+      mock.state.schemas.push({ uuid: 's1', namePath: '/MWDL/title', paths: ['MWDL/title'] });
       const tokenStore = await loggedInStore();
 
       const result = await checkTool(env(), { tokenStore });
@@ -570,10 +575,16 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(result.isError).toBeFalsy();
       const out = textOf(result);
       expect(out).toContain(`OEQ_BASE_URL: ${mock.url}`);
+      expect(out).toContain('[PASS] HTTPS:');
       expect(out).toContain('[PASS] Token: present and usable.');
+      expect(out).toContain('[PASS] Sign-in method: signed in with OEQ_AUTH_MODE=code');
       expect(out).toContain('[PASS] Identity: logged in as jdoe (Jane Doe)');
       expect(out).toContain("[PASS] Collection: 'Faculty Content'");
+      expect(out).toContain('[PASS] Collections available: 1 collection(s)');
       expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'Faculty Content'.");
+      expect(out).toContain(
+        "[PASS] Duplicate detection: existing items will be matched on 'MWDL/title'",
+      );
       expect(out).toContain('All checks passed.');
     });
 
