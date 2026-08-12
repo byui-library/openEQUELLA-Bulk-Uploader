@@ -6,6 +6,7 @@ import { loadConfig, createAuthProvider } from '../src/core/config.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { AuthorizationCodeAuth } from '../src/core/authCode.js';
 import { FileTokenStore } from '../src/core/tokenStore.js';
+import { UsernamePasswordAuth } from '../src/core/passwordAuth.js';
 
 describe('loadConfig', () => {
   it('reads values from the environment', () => {
@@ -117,5 +118,38 @@ describe('createAuthProvider', () => {
     });
     const provider = createAuthProvider(cfg, {});
     expect(provider).toBeInstanceOf(OAuthClientCredentials);
+  });
+});
+
+describe('password auth mode', () => {
+  const base = {
+    OEQ_BASE_URL: 'https://oeq.example.edu',
+    OEQ_AUTH_MODE: 'password',
+    OEQ_USERNAME: 'jsmith',
+    OEQ_PASSWORD: 'hunter2',
+  };
+
+  it('loads without any OAuth client credentials', () => {
+    const cfg = loadConfig(base);
+    expect(cfg.authMode).toBe('password');
+    expect(cfg.username).toBe('jsmith');
+  });
+
+  it('builds a UsernamePasswordAuth provider', () => {
+    expect(createAuthProvider(loadConfig(base))).toBeInstanceOf(UsernamePasswordAuth);
+  });
+
+  it('names the missing variable when the password is absent', () => {
+    expect(() => loadConfig({ ...base, OEQ_PASSWORD: undefined })).toThrow(/OEQ_PASSWORD/);
+  });
+
+  it('still demands client credentials in the OAuth modes', () => {
+    expect(() =>
+      loadConfig({ OEQ_BASE_URL: 'https://oeq.example.edu', OEQ_AUTH_MODE: 'code' }),
+    ).toThrow(/OEQ_CLIENT_ID/);
+  });
+
+  it('rejects an unknown mode by listing the three that exist', () => {
+    expect(() => loadConfig({ ...base, OEQ_AUTH_MODE: 'saml' })).toThrow(/password/);
   });
 });
