@@ -7,14 +7,13 @@ import { existsSync, openSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import { loadConfig, type Config } from '../core/config.js';
+import { loadConfig, createAuthProvider, type Config } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths, validateHeaders, suggest } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { findDuplicates, type DuplicateFinding } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
-import { OAuthClientCredentials } from '../core/auth.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { redactSecret as redactAllForms } from '../core/redact.js';
@@ -80,8 +79,25 @@ async function loadPaths(schemaFile: string): Promise<Set<string>> {
  * manifest for the later `run` step, so `oeq_plan` still can't do anything
  * useful without it.
  */
+/**
+ * Which variables count as "credentials" depends on the auth mode: an
+ * institution using password auth has no OAuth client at all, so gating on
+ * OEQ_CLIENT_ID would make planning permanently credential-less for them and
+ * the skip warning below would name variables they can never set.
+ */
+function isPasswordMode(env: Env): boolean {
+  return env.OEQ_AUTH_MODE === 'password';
+}
+
+/** The variables `hasCredentials` gates on, for use in operator-facing text. */
+function credentialNames(env: Env): string {
+  return isPasswordMode(env) ? 'OEQ_USERNAME/OEQ_PASSWORD' : 'OEQ_CLIENT_ID/OEQ_CLIENT_SECRET';
+}
+
 function hasCredentials(env: Env): boolean {
-  return Boolean(env.OEQ_CLIENT_ID) && Boolean(env.OEQ_CLIENT_SECRET);
+  return isPasswordMode(env)
+    ? Boolean(env.OEQ_USERNAME) && Boolean(env.OEQ_PASSWORD)
+    : Boolean(env.OEQ_CLIENT_ID) && Boolean(env.OEQ_CLIENT_SECRET);
 }
 
 /**
@@ -103,7 +119,9 @@ function hasCredentials(env: Env): boolean {
  */
 function loadConfigForPlanning(env: Env): Config {
   if (hasCredentials(env)) return loadConfig(env);
-  return loadConfig({ ...env, OEQ_CLIENT_ID: 'unset', OEQ_CLIENT_SECRET: 'unset' });
+  return isPasswordMode(env)
+    ? loadConfig({ ...env, OEQ_USERNAME: 'unset', OEQ_PASSWORD: 'unset' })
+    : loadConfig({ ...env, OEQ_CLIENT_ID: 'unset', OEQ_CLIENT_SECRET: 'unset' });
 }
 
 /**
@@ -263,9 +281,9 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
     if (!skipDuplicateCheck) {
       if (!hasCredentials(env)) {
         manifest.warnings.push(
-          'Duplicate check skipped: OEQ_CLIENT_ID/OEQ_CLIENT_SECRET are not configured, so ' +
-            'existing identifiers in the collection could not be checked. Configure OAuth ' +
-            'credentials and re-plan (or pass skipDuplicateCheck) once ready.',
+          `Duplicate check skipped: ${credentialNames(env)} are not configured, so ` +
+            'existing identifiers in the collection could not be checked. Configure them ' +
+            'and re-plan (or pass skipDuplicateCheck) once ready.',
         );
       } else {
         // Guards only the setup (client construction) -- preflightDuplicates
@@ -273,10 +291,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
         // into its own per-row warning; this is a backstop for anything
         // unexpected happening before that point.
         try {
-          const client = new OeqClient(
-            cfg.baseUrl,
-            new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret),
-          );
+          const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
           const dupWarnings = await preflightDuplicates(client, manifest);
           manifest.warnings.push(...dupWarnings);
           duplicates = await findDuplicates(client, manifest);
@@ -451,6 +466,17 @@ export async function retryFailedTool(args: RetryFailedArgs): Promise<ToolResult
   }
 }
 
+/**
+ * Both login tools refuse in password mode for the same reason `oeq-upload
+ * login` does (see cli/index.ts): there is no browser flow to start and no
+ * token to cache, and a success result would read as "credentials verified"
+ * when nothing was verified. `oeq_check` is what actually verifies them.
+ */
+const PASSWORD_MODE_NO_LOGIN =
+  'Sign-in is not needed in password mode -- the username and password are read from ' +
+  'OEQ_USERNAME and OEQ_PASSWORD on every call, so there is no browser flow and no token to ' +
+  'cache. Call oeq_check to confirm they work.';
+
 export interface LoginUrlDeps {
   tokenStore?: TokenStore;
 }
@@ -464,6 +490,7 @@ export interface LoginUrlDeps {
 export async function loginUrlTool(env: Env = process.env, deps: LoginUrlDeps = {}): Promise<ToolResult> {
   try {
     const cfg = loadConfig(env);
+    if (cfg.authMode === 'password') return text(PASSWORD_MODE_NO_LOGIN, true);
     const auth = new AuthorizationCodeAuth(
       cfg.baseUrl,
       cfg.clientId,
@@ -504,6 +531,7 @@ export async function loginCompleteTool(
 ): Promise<ToolResult> {
   try {
     const cfg = loadConfig(env);
+    if (cfg.authMode === 'password') return text(PASSWORD_MODE_NO_LOGIN, true);
     const tokenStore = deps.tokenStore ?? new FileTokenStore();
     const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
     await auth.exchangeCode(args.code);
@@ -538,10 +566,7 @@ const MCP_LOGIN_HINT = 'Call the oeq_login_url tool, then oeq_login_complete wit
 export async function checkTool(env: Env = process.env, deps: CheckDeps = {}): Promise<ToolResult> {
   try {
     const cfg = loadConfig(env);
-    const auth =
-      cfg.authMode === 'client_credentials'
-        ? new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret)
-        : new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, deps.tokenStore);
+    const auth = createAuthProvider(cfg, env, deps.tokenStore);
     const client = deps.client ?? new OeqClient(cfg.baseUrl, auth);
     const result = await runPreflight(cfg, auth, client, MCP_LOGIN_HINT);
     const lines = [

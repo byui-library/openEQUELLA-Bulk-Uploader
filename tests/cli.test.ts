@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -691,6 +691,51 @@ describe('logoutAction', () => {
   it('does not throw when there was nothing to log out of', async () => {
     const store = new FileTokenStore(join(dir, 'never-logged-in.json'));
     await expect(logoutAction({ tokenStore: store })).resolves.toBeUndefined();
+  });
+});
+
+describe('login and logout in password mode', () => {
+  const passwordEnv = {
+    OEQ_BASE_URL: 'https://oeq.example.edu',
+    OEQ_AUTH_MODE: 'password',
+    OEQ_USERNAME: 'jsmith',
+    OEQ_PASSWORD: 'hunter2',
+  };
+
+  it('refuses to run `login`, naming the variables the credentials come from', async () => {
+    await expect(loginAction(passwordEnv)).rejects.toThrow(/OEQ_USERNAME/);
+  });
+
+  it("points at `check` rather than leaving the operator with nothing to try", async () => {
+    await expect(loginAction(passwordEnv)).rejects.toThrow(/check/);
+  });
+
+  it('never opens a browser or prompts for a code in password mode', async () => {
+    let opened = false;
+    await expect(
+      loginAction(passwordEnv, {
+        openBrowser: () => {
+          opened = true;
+        },
+        promptForCode: () => Promise.reject(new Error('must not prompt')),
+      }),
+    ).rejects.toThrow();
+    expect(opened).toBe(false);
+  });
+
+  it('still clears a token left over from an earlier OAuth setup, but says password mode cached none', async () => {
+    const store = new FileTokenStore(join(dir, 'stale.json'));
+    await store.save({ accessToken: 'stale', baseUrl: 'https://oeq.example.edu' });
+    const said: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((m: unknown) => {
+      said.push(String(m));
+    });
+
+    await logoutAction({ tokenStore: store }, passwordEnv);
+    log.mockRestore();
+
+    expect(await store.loadRaw()).toBeNull();
+    expect(said.join(' ')).toContain('OEQ_USERNAME');
   });
 });
 

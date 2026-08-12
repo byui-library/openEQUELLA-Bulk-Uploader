@@ -202,10 +202,18 @@ describe('oeq_plan duplicate pre-flight', () => {
     await mock.close();
   });
 
+  // client_credentials so findDuplicates' real searchByTitle call can get a
+  // token from the mock without a login flow -- identical to the mockEnv() in
+  // cli.test.ts's 'planAction duplicate check' block, which this describe
+  // exists to mirror. It used to be absent, and these tests passed anyway
+  // only because oeq_plan hard-coded an OAuthClientCredentials regardless of
+  // OEQ_AUTH_MODE while planAction honoured it -- exactly the drift that hid
+  // password mode being unreachable here.
   const mockEnv = () => ({
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
+    OEQ_AUTH_MODE: 'client_credentials',
   });
 
   it('does not attempt a network call when skipDuplicateCheck is true', async () => {
@@ -465,6 +473,36 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       const result = await loginUrlTool({ OEQ_CLIENT_ID: 'id', OEQ_CLIENT_SECRET: 'super-secret-value' });
       expect(result.isError).toBe(true);
       expect(textOf(result)).not.toContain('super-secret-value');
+    });
+  });
+
+  describe('the login tools in password mode', () => {
+    const passwordEnv = {
+      OEQ_BASE_URL: 'https://oeq.example.edu',
+      OEQ_AUTH_MODE: 'password',
+      OEQ_USERNAME: 'jsmith',
+      OEQ_PASSWORD: 'hunter2',
+    };
+
+    it('oeq_login_url refuses instead of handing back an authorize URL that cannot work', async () => {
+      const result = await loginUrlTool(passwordEnv);
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('OEQ_USERNAME');
+      expect(textOf(result)).toContain('oeq_check');
+      expect(textOf(result)).not.toContain('/oauth/authorise');
+    });
+
+    it('oeq_login_complete refuses rather than exchanging a code no flow issued', async () => {
+      const result = await loginCompleteTool({ code: 'whatever' }, passwordEnv);
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('OEQ_USERNAME');
+    });
+
+    it('never leaks the password in either refusal', async () => {
+      const url = await loginUrlTool(passwordEnv);
+      const complete = await loginCompleteTool({ code: 'whatever' }, passwordEnv);
+      expect(textOf(url)).not.toContain('hunter2');
+      expect(textOf(complete)).not.toContain('hunter2');
     });
   });
 
