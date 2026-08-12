@@ -513,9 +513,14 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         attachmentUuidPath: cfg.attachmentUuidPath,
       });
 
+      const titleHeader = await schemaTitleHeader();
+
       // Matches the CLI: fold advisory duplicate-identifier warnings into the
       // manifest at plan time so the reviewer sees them before confirming.
-      manifest.warnings.push(...(await preflightDuplicates(client, manifest)));
+      // The schema goes in because the identifier path is resolved from it --
+      // a hardcoded `MWDL/identifier` checks nothing outside BYU-Idaho, and a
+      // schema with no identifier field at all warns rather than reads clean.
+      manifest.warnings.push(...(await preflightDuplicates(client, manifest, { titleHeader, paths })));
 
       // One search per pending row. Advisory: nothing is skipped here, the
       // operator decides on the Review screen and the choices are applied by
@@ -524,7 +529,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       // A failure for one row becomes a `could-not-check` finding rather than
       // an exception, so an unreachable server cannot block a plan that is
       // otherwise ready -- and cannot be mistaken for a clean result either.
-      const duplicates = await findDuplicates(client, manifest, await schemaTitleHeader());
+      const duplicates = await findDuplicates(client, manifest, titleHeader);
 
       const manifestPath = join(userData(), 'job.json');
       await saveManifest(manifestPath, manifest);

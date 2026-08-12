@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { Manifest, ManifestEntry, Sheet, ItemState } from './types.js';
 import { splitRepeatable } from './metadata.js';
 import { ATTACHMENT_COLUMN } from './types.js';
-import { validateHeaders, isAnnotationHeader } from './schema.js';
+import { validateHeaders, isAnnotationHeader, matchSchemaPath, topSection } from './schema.js';
 import { ValidationError } from './errors.js';
 import type { OeqClient } from './client.js';
 
@@ -175,6 +175,50 @@ export async function buildManifest(
 }
 
 /**
+ * What the identifier pre-flight needs to know about the schema.
+ *
+ * Structurally a subset of `discovery.ts#SchemaInfo`, so a fetched schema goes
+ * straight in; a caller reading the bundled XML export builds one from
+ * `schema.ts` (`extractItemNamePath`, `parseSchemaPaths`).
+ */
+export interface IdentifierSchema {
+  /** The declared item name path, header form (`MWDL/title`). Null when undeclared. */
+  titleHeader: string | null;
+  /** Every valid xpath, leaves only, header form. */
+  paths: Set<string>;
+}
+
+/**
+ * Which field holds the identifier, or null when this schema has no such field.
+ *
+ * An openEQUELLA schema declares a name path and a description path and
+ * nothing else, so unlike the title there is no declaration to read: the
+ * identifier is found by matching the schema's REAL paths on leaf name, exactly
+ * as `starterProfile` finds the creator column. Ties go to the section the
+ * schema's own name path lives in, which at BYU-Idaho is `MWDL` and therefore
+ * yields `MWDL/identifier` -- the literal this used to hardcode, so nothing
+ * changes for them.
+ *
+ * Null, never a guess. A path that does not exist cannot be read, and the
+ * caller must report that rather than skip every row in silence.
+ */
+export function resolveIdentifierPath(schema: IdentifierSchema): string | null {
+  return matchSchemaPath('identifier', schema.paths, topSection(schema.titleHeader));
+}
+
+/**
+ * Shown once for the whole batch when the schema has no identifier field.
+ *
+ * It names the gap and the remedy rather than merely noting an absence: a
+ * warning the operator cannot act on trains them to click past it. Sibling of
+ * `duplicates.ts#UNKNOWN_TITLE_PATH_DETAIL`, for the same reason.
+ */
+export const NO_IDENTIFIER_PATH_WARNING =
+  "Duplicate identifiers were not checked: this collection's schema has no identifier field, " +
+  'so there was nothing to compare against. The title-and-filename duplicate check still ran; ' +
+  'if this batch relies on identifiers, check them by hand before uploading.';
+
+/**
  * Advisory pre-flight scan for identifiers that may already exist in the
  * target collection. Returns warnings only -- it never mutates `manifest`
  * and never removes/skips an entry. Whether a hit is a real duplicate is a
@@ -186,16 +230,40 @@ export async function buildManifest(
  * warning rather than aborting the whole pre-flight: an unreachable server
  * (or a transient error) is not evidence of anything about the identifier,
  * and it must not block a plan that is otherwise ready to run.
+ *
+ * `schema` is a parameter, not something fetched here: this function stays
+ * pure and testable, and every caller already holds the schema it validated
+ * the spreadsheet's headers against. WHICH path holds the identifier is read
+ * off it rather than assumed -- see resolveIdentifierPath. Hardcoding
+ * `MWDL/identifier` made every row at every other institution fall into the
+ * skip below, so the pre-flight examined nothing and reported no warnings.
+ * That is the same failure recorded in
+ * docs/superpowers/specs/2026-08-06-duplicate-prevention-design.md, and this
+ * is the second time this codebase has had it.
  */
 export async function preflightDuplicates(
   client: OeqClient,
   manifest: Manifest,
+  schema: IdentifierSchema,
 ): Promise<string[]> {
   const warnings: string[] = [];
+
+  const identifierPath = resolveIdentifierPath(schema);
+  // No field to read means no check ran. Say so once, for the batch, instead
+  // of returning [] -- an empty result is how the caller says "checked, all
+  // clean", and a check that never looked must not borrow that answer. Once
+  // rather than per row because the cause is the schema, not the rows: a
+  // per-row repeat of the same sentence is noise the operator learns to skip.
+  if (!identifierPath) {
+    return manifest.entries.length > 0 ? [NO_IDENTIFIER_PATH_WARNING] : [];
+  }
+
   for (const entry of manifest.entries) {
-    // Not every batch populates MWDL/identifier; entries without one are
-    // simply not checkable, and that's expected, not a problem to flag.
-    const identifier = entry.metadata['MWDL/identifier']?.[0]?.trim();
+    // Not every batch populates the identifier column; entries without one are
+    // simply not checkable, and that's expected, not a problem to flag. This
+    // is a blank CELL in a field the schema really has -- distinct from the
+    // schema having no such field at all, which is reported above.
+    const identifier = entry.metadata[identifierPath]?.[0]?.trim();
     if (!identifier) continue;
 
     try {

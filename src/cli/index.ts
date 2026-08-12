@@ -73,7 +73,10 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
 
   if (!o.skipDuplicateCheck) {
     const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
-    const dupWarnings = await preflightDuplicates(client, manifest);
+    // The schema, not a literal: which field holds the identifier is resolved
+    // from these paths (see resolveIdentifierPath), and a hardcoded
+    // `MWDL/identifier` checked nothing at all anywhere else.
+    const dupWarnings = await preflightDuplicates(client, manifest, { titleHeader, paths });
     manifest.warnings.push(...dupWarnings);
 
     const findings = await findDuplicates(client, manifest, titleHeader);

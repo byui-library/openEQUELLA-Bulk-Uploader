@@ -171,6 +171,58 @@ function lastSegment(path: string): string {
 }
 
 /**
+ * The schema field a human-written name refers to, or null.
+ *
+ * Real evidence is named for people: a Word table heading says "Job Title", not
+ * "MWDL/title". Matching the LAST WORD of the name against the schema's leaf
+ * element reads those without guessing at meaning — "Job Title" is a title,
+ * "Job Description" is a description, and "Company" and "Pay" match nothing, so
+ * nothing is proposed for them.
+ *
+ * Where several fields share a leaf name, one section wins: `MWDL/description`
+ * rather than `BYUI_extended/…/description`. That section holds the
+ * descriptive fields nearly every item needs; the others are specialised.
+ *
+ * WHICH section is not a constant. `preferSection` is the top-level section the
+ * schema's own declared item-name path lives in -- `MWDL` at BYU-Idaho, so the
+ * behaviour there is unchanged, and whatever the local schema calls its main
+ * section anywhere else. Hardcoding `MWDL/` meant the tie-break simply never
+ * fired at another institution, quietly falling through to the shortest match.
+ * With no section to prefer that fallback is still what happens.
+ *
+ * IT LIVES HERE, not in extract/, because two unrelated callers need it and
+ * there must be exactly one of it: `extract/suggest.ts` proposes the starter
+ * profile's creator column with it, and `plan.ts` resolves the duplicate
+ * pre-flight's identifier path with it. A schema declares a name path and a
+ * description path and nothing else, so every OTHER field either gets matched
+ * by leaf name or gets hardcoded to BYU-Idaho's spelling -- and the hardcoded
+ * version is the bug this codebase has now shipped twice.
+ */
+export function matchSchemaPath(
+  name: string,
+  schemaPaths: Set<string>,
+  preferSection?: string | null,
+): string | null {
+  const lastWord = name.trim().split(/\s+/).pop()?.toLowerCase();
+  if (lastWord === undefined || lastWord === '') return null;
+
+  const matches = [...schemaPaths].filter((p) => lastSegment(p).toLowerCase() === lastWord);
+  if (matches.length === 0) return null;
+
+  const shortestFirst = (a: string, b: string): number => a.length - b.length;
+  if (preferSection) {
+    const preferred = matches.filter((p) => p.startsWith(`${preferSection}/`)).sort(shortestFirst);
+    if (preferred[0]) return preferred[0];
+  }
+  return matches.sort(shortestFirst)[0]!;
+}
+
+/** The top-level section a header sits in: `MWDL/title` -> `MWDL`. */
+export function topSection(header: string | null): string | null {
+  return header?.split('/')[0] ?? null;
+}
+
+/**
  * Plausibility cutoff for the (possibly discounted, see TAIL_BONUS below)
  * normalizedDistance score, chosen so that garbage input (e.g. a header
  * that isn't even schema-shaped) returns no suggestions rather than the
