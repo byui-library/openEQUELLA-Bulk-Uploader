@@ -1622,6 +1622,54 @@ git commit -m "fix(core): stop writing BYU-Idaho schema paths and uuids everywhe
 
 ---
 
+## Task 8c: The starter profile still proposes BYU-Idaho's columns
+
+**Added 2026-08-12 after Task 12b, which found it.** Same class as Task 8b: an
+institution-specific schema path baked into logic that runs everywhere.
+
+**Files:** `src/core/extract/suggest.ts`, `src/core/discovery.ts`, tests.
+
+Two places:
+
+```typescript
+// :88 -- tie-break when several fields share a leaf name
+const mwdl = matches.filter((p) => p.startsWith('MWDL/')).sort(…);
+
+// :129-131 -- starterProfile's base columns, regardless of the schema handed in
+{ path: 'MWDL/title', sources: [{ property: 'title' }, { filenameStem: true }] },
+{ path: 'MWDL/creators/creator', sources: [{ property: 'author' }], transform: 'people' },
+{ path: 'MWDL/description', … },
+```
+
+Only the *table-column matching* consults the schema's real paths. So at another
+institution the starter profile proposes three columns that do not exist there,
+and the column picker then flags them invalid — the extractor's first output is
+wrong before the operator has done anything.
+
+**The fix is to read, not to guess** — the same move as Task 8:
+
+- **Title** comes from the schema's declared `namePath`. `parseSchema` already
+  returns it as `titleHeader`.
+- **Description** comes from the schema's declared `descriptionPath`. The probe
+  confirmed openEQUELLA returns it (`"descriptionPath": "/MWDL/description"`)
+  but `parseSchema` does not currently expose it. **Add it**, in both raw and
+  header form, mirroring `namePath`/`titleHeader` exactly.
+- **Creator** has no declared equivalent. Match it against the schema's real
+  paths by leaf name (`creator`, `creators/creator`, `author`) and **omit the
+  column when nothing matches** rather than proposing a path that does not
+  exist. A missing column is a smaller harm than an invalid one: the operator
+  adds what they need, and the picker already supports that.
+- **The `:88` tie-break** should prefer the section containing `namePath` — at
+  BYU-Idaho that is `MWDL`, so today's behaviour is preserved while being right
+  anywhere. Identical reasoning to the `SCHEMA_ORDER` fix in Task 8b.
+
+**Test:** a starter profile built against a schema with no MWDL section
+proposes only paths that exist in that schema. Assert every proposed column
+path is a member of `SchemaInfo.paths` — that is the property that matters, and
+it holds for any institution.
+
+---
+
 ## Task 9: Cache the schema so extraction stays offline
 
 `src/core/extract/` never touches the network — that is what lets an operator
