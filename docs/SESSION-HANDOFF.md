@@ -1,15 +1,126 @@
-# Session handoff — updated 2026-08-10
+# Session handoff — updated 2026-08-12
 
 Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **925 passing across 69 files**.
-2. **Nothing is in flight.** Every PR is merged, every feature branch is
-   pruned, `main` is the only branch. There is no open loop in the code.
-3. **v1.0.0 is released and in the operator's hands**, initial testing done
-   and looking good. What remains is theirs, not the code's — see
-   "What is waiting on the operator" below.
+1. `npm install && npm test` — expect **1197 passing across 78 files**.
+   `npm run typecheck` and `npm run build:desktop` are both clean.
+2. **You are on `feature/institution-agnostic`, and it is NOT merged.** It is
+   the only branch with work on it; `main` still carries v1.0.0. Nothing else
+   is in flight, and there is no open PR.
+3. **Two things you must not assume.** Both are below in full; they are here
+   because assuming either one would be an expensive mistake:
+   - **Password sign-in has never run against a live openEQUELLA instance.**
+   - **Spec 2 — publishing the repository — has not started.**
+
+### What this branch built
+
+The tool was hardcoded to BYU-Idaho. It now works at any openEQUELLA
+institution:
+
+- **Username and password sign-in** (`OEQ_AUTH_MODE=password`,
+  `src/core/passwordAuth.ts`). OAuth stays for SSO sites like BYU-Idaho, behind
+  an *Advanced* disclosure on the desktop Setup screen. Note the env default is
+  still `code` — the *desktop UI* defaults to password, which is a different
+  thing, and `runPreflight` reports which mode was actually used because
+  confusing the two produces openEQUELLA's `client_id (null)`.
+- **Collections and schemas come from the API** (`src/core/discovery.ts`).
+  Setup lists what the account can contribute to; the collection carries its
+  schema uuid. Nobody types a uuid or exports XML any more.
+- **The instance list ships empty.** Operators add their own address on Setup.
+  **Stored v1.0.0 credentials are discarded** — the store version went to 3 and
+  Setup explains the blank form in one sentence. Deliberate clean break, not an
+  accident; the reasoning is in the plan under Task 11.
+- **Nothing institution-specific is read at runtime.** Title path from the
+  schema's `namePath`, description from `descriptionPath`, identifier matched
+  by leaf name, attachment-uuid field per-instance configuration defaulting to
+  **writing nothing at all**.
+- **A per-instance "this is a live site" flag**, defaulting ON, drives the loud
+  red banner. Without it, deleting the shipped instance list made the warning
+  fire on every site, and a warning that fires on everything is not one.
+- **`oeq-upload check` is now the compatibility probe** — nine checks, each
+  saying what a failure means for a real run.
+- **`logout` ends the server session** (`PUT /api/auth/logout`) when it holds a
+  live password provider. A plain one-shot `oeq-upload logout` holds none and
+  makes no request; it says so rather than claiming a logout it did not do.
+
+### DO NOT ASSUME: password auth is unverified live
+
+`POST /api/auth/login` is in the swagger captured from BYU-Idaho, and
+`UsernamePasswordAuth` is covered by 20-odd unit tests against a stubbed
+server. **No openEQUELLA instance has ever answered a real login request from
+this code.** BYU-Idaho's accounts are Okta-backed, so the one site available
+could not test it. Task 1 Step 3 of the plan was the probe that would have, and
+it was not run for that reason.
+
+This is stated plainly in the README's *What is and is not verified* and in
+CLAUDE.md. Do not quietly soften it. The staging `?file=` parameter and
+`showall=false` were both believed by the entire test suite until an instance
+said otherwise.
+
+### DO NOT ASSUME: spec 2 has not started
+
+Publishing the repository — **a licence, a README written for outside readers,
+and the audit of ~196 commits of history** — is
+[spec 2](superpowers/specs/2026-08-12-institution-agnostic-design.md), and none
+of it exists. It was kept separate on purpose: it is the only step that cannot
+be undone. Whether BYU-Idaho's `alumni-obituary` template and
+`schema/_entity.xml` ship as worked examples is decided there, not here.
+
+### What the probe found — 2026-08-12, content.byui.edu
+
+Recorded here in the same way the `showall=false` and `?file=` findings were,
+because this codebase has now had **three** live probes refute assumptions the
+entire test suite agreed with. Fixtures are committed under
+`tests/fixtures/api/`, trimmed of `security` blocks and scrubbed of owner
+uuids. `scripts/probe-instance.mjs` is committed so any institution can re-run
+it against their own site.
+
+- **`GET /api/collection?privilege=CREATE_ITEM&full=true` works**, returning
+  `{ start, length, available, results }` with `available: 29`.
+- **A collection LIST entry already carries `schema: { uuid }`**, so Setup
+  needs no per-collection follow-up call — better than the design assumed.
+- **Those 29 collections use two distinct schemas.** An institution really can
+  have more than one, so the discovery design is not over-engineering.
+- **The declared title path is `namePath`, not `itemNamePath`** as the XML
+  export spells it. Value `/MWDL/title`, alongside
+  `"descriptionPath": "/MWDL/description"` — so BYU-Idaho's behaviour is
+  unchanged once the value is *read* rather than assumed.
+- **`definition` is nested JSON, not XML.** `parseSchemaPaths` cannot be reused
+  on the API path; a tree-walker is required. (`serializedDefinition` does
+  carry the XML string, but parsing JSON we already have would be perverse.)
+- **Cross-checking that walker against `parseSchemaPaths` on the same schema
+  found three bugs in the version the plan specified** — 158 paths from the XML
+  export against 227 from the naive walk. It must strip the `xml` root, emit
+  **leaves only** (the 70 extras were containers, which cannot hold a value),
+  and treat `@attr` as an addressable segment rather than skipping it
+  (`item/oai/id` was the single path the walk missed; `_`-prefixed keys are
+  metadata and *are* skipped). **That cross-check is now the test**: both
+  sources describe one schema, so any disagreement is a bug in one of them.
+- **Password login was NOT probed.** See above.
+
+### Known seams left open, on purpose
+
+- **`plan` reads the schema from `--schema-file`; `runPreflight` reads it from
+  the API.** They can disagree — a schema edited on the server since the export
+  was taken. Not made worse by this branch. If it is closed, the API is the
+  authority and the local file is the offline fallback.
+- **`schema/_entity.xml` is still `--schema-file`'s default**, so the CLI's
+  last institution-specific default is BYU-Idaho's schema export. Another
+  institution must export and pass its own.
+- **The desktop runs no probe at the end of Setup.** The design said it would
+  show the same lines as `oeq-upload check`; it does not. Saving credentials
+  validates locally, then the app advances to Sign-in. The collection list
+  refresh after saving is the only live call, and its result is visible on the
+  next visit to Setup.
+- **Apostrophe escaping in a `where` clause is still assumed.** `Bach's
+  Prelude` sends `Bach''s Prelude`; no live title has exercised it.
+
+## Historical: where things stood at v1.0.0 (2026-08-10)
+
+Everything below this line predates the institution-agnostic branch and is kept
+because it records how each fact was established.
 
 Released as **v1.0.0** on 2026-08-07 -- the first release since v0.1.0, carrying
 the extractor, duplicate prevention, collection templates and the Windows
@@ -111,7 +222,8 @@ The operator drove it in the app on 2026-08-07 and confirmed the chooser, the
 template load and the preview all work. A batch of ten alumni obituaries the
 generic extractor could say almost nothing about.
 
-**925 tests across 69 files**, typecheck clean, desktop builds.
+**925 tests across 69 files** at that point, typecheck clean, desktop builds.
+(1197 across 78 on `feature/institution-agnostic`.)
 
 ### What the operator found by using it
 
@@ -237,7 +349,11 @@ array, so the whole feature was parts that had never been connected.
 
 **What it does.** One search per pending row, matching `/xml/MWDL/title`
 exactly via the search API's `where` clause, with each hit's attachments in the
-same response. A filename match is `near-certain` and defaults to **skip**; a
+same response. **Superseded on `feature/institution-agnostic`:** that path is
+no longer a literal — it is read from the schema's declared `namePath`, which
+at BYU-Idaho *is* `/MWDL/title`, so everything measured below still holds. With
+no declared path, every row is reported `could-not-check` and no search is
+issued. A filename match is `near-certain` and defaults to **skip**; a
 title-only match is `possible` and defaults to **upload**, because two items
 can legitimately share a title and silently dropping a real item is worse than
 a visible duplicate. Rows the operator skips are written into the manifest as
@@ -298,6 +414,14 @@ twice and the tool said nothing. The cause was not a missing feature:
 line is `if (!identifier) continue;` against `MWDL/identifier` — a column the
 extractor has never produced. It had been reporting "no duplicates" by never
 looking.
+
+**It happened a second time, in the same function, and was fixed on
+`feature/institution-agnostic`.** `MWDL/identifier` was BYU-Idaho's spelling,
+so at any other institution every entry fell into that same skip branch and the
+check examined nothing. The path is now resolved off the schema by leaf name,
+and where nothing matches the batch gets one warning saying the check did not
+run and why — never an empty result, which is how the caller says "checked, all
+clean". **Read this paragraph before adding any check that can be skipped.**
 
 - Design: [superpowers/specs/2026-08-06-duplicate-prevention-design.md](superpowers/specs/2026-08-06-duplicate-prevention-design.md)
 - Plan: [superpowers/plans/2026-08-06-duplicate-prevention.md](superpowers/plans/2026-08-06-duplicate-prevention.md) — 15 tasks
@@ -372,7 +496,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            925 tests, 69 files
+npm test            1197 tests, 78 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
@@ -666,6 +790,20 @@ OEQ_REDIRECT_URI=https://content.byui.edu       # must match the client EXACTLY
 The collection UUID is **identical on test and production**, so `OEQ_BASE_URL`
 is the only thing distinguishing them. Check it before every run. The token
 store refuses a token issued for a different `baseUrl`, which is the backstop.
+
+On `feature/institution-agnostic`, three more matter, and `OEQ_COLLECTION_UUID`
+became **required in every mode** — the default above used to be built in, and
+an institution that never set it silently got BYU-Idaho's uuid:
+
+```text
+OEQ_AUTH_MODE=password                # code (DEFAULT) | client_credentials | password
+OEQ_USERNAME= / OEQ_PASSWORD=         # password mode only; no OAuth client needed
+OEQ_ATTACHMENT_UUID_PATH=BYUI_extended/attachments/attachment   # BLANK = write no such field
+```
+
+`.env.example` documents all of them with the reasoning. Note the trap:
+`OEQ_AUTH_MODE` unset means `code`, so setting only the username and password
+gets OAuth and `client_id (null)`.
 
 `.env` must be UTF-8 **without** BOM — PowerShell 5.1's `Set-Content -Encoding
 utf8` adds one, which silently breaks the *first* variable only. The tool
