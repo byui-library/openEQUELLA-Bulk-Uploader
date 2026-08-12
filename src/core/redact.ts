@@ -43,8 +43,10 @@ export function secretWireForms(secret: string): Set<string> {
  */
 export function redactSecret(text: string, secret: string): string {
   let result = text;
-  // Longest first, so a form that contains another (e.g. the literal inside a
-  // partially-escaped variant) cannot be half-replaced and left unmatched.
+  // Longest first is hygiene, not a security guard. Where one form contains
+  // another, replacing the shorter first can leave cosmetic residue around
+  // the marker; it cannot leave a recoverable secret, and reversing this sort
+  // keeps every test green. Sorted anyway so the output reads cleanly.
   const forms = [...secretWireForms(secret)].sort((a, b) => b.length - a.length);
   for (const form of forms) {
     result = result.split(form).join('[REDACTED]');

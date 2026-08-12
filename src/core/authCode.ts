@@ -111,7 +111,7 @@ export class AuthorizationCodeAuth implements AuthProvider {
       // carries client_secret in its query string, and some runtimes fold
       // the failing URL into the error message/cause.
       throw new ApiError(
-        `Authorization code exchange request to ${this.safeEndpoint()} failed before a response was received.`,
+        `Could not reach ${this.safeEndpoint()}. Check the address and your network connection.`,
         0,
         '',
       );
