@@ -1790,11 +1790,52 @@ git commit -m "feat(cli): check reports per-capability compatibility"
 ## Task 11: Desktop — user-managed instance list
 
 **Files:**
-- Modify: `src/desktop/ipc.ts`, `src/desktop/ui/instances.ts`
-- Test: `tests/desktop/ui/instances.test.ts`
+- Modify: `src/desktop/ipc.ts`, `src/desktop/ui/instances.ts`, `src/desktop/secrets.ts`, `src/desktop/session.ts`, `src/desktop/ui/app.ts`
+- Test: `tests/desktop/ui/instances.test.ts`, `tests/desktop/secrets.test.ts`
 
-The two files hold hand-mirrored copies of the instance list, guarded by a
-drift test. The mirroring concern stays; only the hardcoded contents go.
+**This task was badly understated in the first draft of this plan.** It said
+"empty both literals". That is not sufficient, and doing only that would
+silently destroy existing operators' stored credentials.
+
+`InstanceId` is not data — it is a union type woven through the type system and
+the on-disk format:
+
+```typescript
+// src/desktop/secrets.ts
+export type InstanceId = 'production' | 'test';
+
+interface StoredShapeV2 {
+  version: 2;
+  instances: Partial<Record<InstanceId, StoredSettings>>;   // <-- the disk key
+}
+```
+
+So an operator running v1.0.0 today has their OAuth client id, client secret and
+redirect URI encrypted on disk under the literal keys `production` and `test`.
+**Those credentials are supplied out-of-band by an administrator** — if they
+become unreachable, the operator cannot simply re-type them.
+
+### What this task must therefore do
+
+1. **`InstanceId` becomes `string`** — a stable key derived from the normalised
+   instance URL, not a hand-picked name. `normaliseInstanceUrl` from Task 2 is
+   what makes two spellings of the same address agree on one key.
+2. **A v2 → v3 migration**, in `loadAll`. The store already has migration
+   precedent — v1 → v2, plus the `redirectUri` backfill documented on
+   `loadSettings` — so follow that pattern rather than inventing one.
+3. **BYU-Idaho's two URLs stay in the code, but ONLY inside the migration**, as
+   the mapping `production` → `https://content.byui.edu`, `test` →
+   `https://content-test.byui.edu`. They are removed as shipped presets, which
+   is the point of the task, but they are the only thing that can rekey an
+   existing install. Comment them as migration data with an explicit note that
+   they are not defaults and must not be reintroduced as such.
+4. **A test that a v2 blob is readable after migration** — write a v2-shaped
+   store, load it through the new code, and assert the settings come back under
+   the URL-derived key with nothing lost. This is the test that protects the
+   people already using the tool.
+
+The two hand-mirrored `INSTANCES` literals and their drift test stay as a
+mechanism; only their hardcoded contents go.
 
 - [ ] **Step 1: Write the failing test**
 
