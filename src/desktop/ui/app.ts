@@ -4,7 +4,10 @@ import type { ItemState } from '../../core/types.js';
 import { initialScreen, nextScreen, type Screen } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
-import { renderSetup } from './screens/setup.js';
+import { renderSetup, type SetupFields, type SetupTextField } from './screens/setup.js';
+// `import type`: secrets.ts reaches `node:fs` and this module runs in the
+// sandboxed renderer, where a runtime import of it would blank the window.
+import type { Settings, SettingsAuthMode } from '../secrets.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
 import { renderReview } from './screens/review.js';
@@ -51,6 +54,17 @@ interface AppState extends BatchState {
   // are per instance (secrets.ts), and Setup must be able to configure one
   // site while the rest of the app is pointed at another.
   setupInstanceId: string;
+  // Everything typed on Setup. Held here rather than in the DOM because the
+  // screen re-renders on every keystroke and on every change of sign-in
+  // method, and an innerHTML re-render destroys the inputs (screens/setup.ts).
+  setupFields: SetupFields;
+  // Whether the operator has edited the redirect URL themselves. Until they
+  // do it follows the address, which is the only starting point non-technical
+  // staff can be given for a field they cannot derive.
+  setupRedirectTouched: boolean;
+  // The username of the account stored for `setupInstanceId`, or null. The
+  // password itself never comes back from the main process (ipc.ts).
+  setupStoredUsername: string | null;
   setupSaving: boolean;
   setupError: string | null;
   // Whether credentials written by an older version of the store were found
@@ -81,6 +95,28 @@ interface AppState extends BatchState {
   // Review, Confirm, Progress and Results state all lives in BatchState.
 }
 
+/**
+ * An empty Setup form. `authMode: 'password'` is the default because an
+ * ordinary openEQUELLA account is what a new institution can use immediately;
+ * OAuth is for the SSO-backed sites and lives behind Advanced.
+ *
+ * No credential is ever seeded from the store -- not the client secret, and
+ * not the password. A stored password is shown as "Signed in as ..." with a
+ * Forget button (screens/setup.ts) and never rendered back into a field.
+ */
+function blankSetupFields(): SetupFields {
+  return {
+    baseUrl: '',
+    label: '',
+    authMode: 'password',
+    clientId: '',
+    clientSecret: '',
+    redirectUri: '',
+    username: '',
+    password: '',
+  };
+}
+
 // No instance is selected until the operator has added one, and none is
 // chosen for them: the app ships knowing no addresses at all (ui/instances.ts),
 // and a default pointed at somebody's live site is exactly what the instance
@@ -91,6 +127,9 @@ function initialState(): AppState {
     instances: [...UI_INSTANCES],
     instanceId: '',
     setupInstanceId: '',
+    setupFields: blankSetupFields(),
+    setupRedirectTouched: false,
+    setupStoredUsername: null,
     setupSaving: false,
     setupError: null,
     credentialsDropped: false,
@@ -175,9 +214,14 @@ function render(): void {
         instances: state.instances,
         instanceId: state.setupInstanceId,
         credentialsDropped: state.credentialsDropped,
+        fields: state.setupFields,
+        storedUsername: state.setupStoredUsername,
         error: state.setupError,
         saving: state.setupSaving,
         onInstanceChange: handleSetupInstanceChange,
+        onFieldChange: handleSetupFieldChange,
+        onAuthModeChange: handleSetupAuthModeChange,
+        onForgetPassword: handleForgetPassword,
         onSave: handleSaveSettings,
       });
       break;
@@ -310,22 +354,123 @@ function renderFatal(message: string): void {
 
 // --- Setup ---------------------------------------------------------------
 
-function handleSetupInstanceChange(id: string): void {
+/**
+ * Point Setup at another saved site (or at "Add another site…").
+ *
+ * The form is reseeded from that site's own address and name, and every
+ * credential field is cleared: a client secret or a password belonging to one
+ * site must never be left sitting in a form that is about to be saved against
+ * a different one.
+ */
+function seedSetupForm(id: string): void {
   state.setupInstanceId = id;
+  state.setupError = null;
+  const selected = instanceById(id);
+  state.setupFields = {
+    ...blankSetupFields(),
+    baseUrl: selected?.baseUrl ?? '',
+    label: selected?.label ?? '',
+    // Sensible starting point for a field non-technical staff cannot fill in
+    // from nothing: the site's own address. Pre-filled into the form, where
+    // the operator can see and correct it before saving -- never substituted
+    // behind their back at sign-in time, which is how this value got
+    // hard-coded wrong twice (see secrets.ts's OAuthSettings.redirectUri).
+    redirectUri: selected?.baseUrl ?? '',
+  };
+  state.setupRedirectTouched = false;
+  state.setupStoredUsername = null;
+}
+
+function handleSetupInstanceChange(id: string): void {
+  seedSetupForm(id);
+  render();
+  void refreshStoredUsername();
+}
+
+function handleSetupFieldChange(field: SetupTextField, value: string): void {
+  state.setupFields = { ...state.setupFields, [field]: value };
+  if (field === 'redirectUri') state.setupRedirectTouched = true;
+  // Keep the redirect URL following the address until the operator edits it
+  // themselves, so what is saved is always exactly what is on screen.
+  if (field === 'baseUrl' && !state.setupRedirectTouched) {
+    state.setupFields.redirectUri = value.trim().replace(/\/+$/, '');
+  }
+  render();
+}
+
+function handleSetupAuthModeChange(mode: SettingsAuthMode): void {
+  state.setupFields = { ...state.setupFields, authMode: mode };
+  state.setupError = null;
+  render();
+}
+
+/**
+ * Whether the instance Setup is pointed at has an account stored, and whose.
+ *
+ * Fails soft: "nobody is signed in" is the honest answer when the store cannot
+ * say otherwise, and it is also the safe one -- it shows the password fields
+ * rather than a Forget button for a credential that may not exist.
+ */
+async function refreshStoredUsername(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') {
+    state.setupStoredUsername = null;
+    return;
+  }
+  let stored: { username: string } | null = null;
+  try {
+    stored = await window.oeq.getPassword(instanceId);
+  } catch {
+    stored = null;
+  }
+  // The operator may have switched sites while this was in flight; a stale
+  // answer for the previous site must never be attributed to the new one.
+  if (state.setupInstanceId !== instanceId) return;
+  state.setupStoredUsername = stored?.username ?? null;
+  // A stored account is also the honest default for HOW this site signs in:
+  // it is the one thing Setup can see about a saved credential.
+  if (stored) state.setupFields = { ...state.setupFields, authMode: 'password' };
+  render();
+}
+
+/**
+ * "Forget this password". Removes the stored account for this site and puts
+ * the username and password fields back, so the operator can enter another.
+ * Distinct from "Reset settings", which wipes every site the app knows.
+ */
+async function handleForgetPassword(): Promise<void> {
+  try {
+    await window.oeq.forgetPassword(state.setupInstanceId);
+  } catch (err) {
+    state.setupError = errorMessage(err);
+    render();
+    return;
+  }
+  state.setupStoredUsername = null;
+  state.setupFields = { ...state.setupFields, username: '', password: '' };
   state.setupError = null;
   render();
 }
 
 async function handleSaveSettings(
   instance: { label: string; baseUrl: string },
-  settings: { clientId: string; clientSecret: string; redirectUri: string },
+  settings: Settings,
 ): Promise<void> {
   if (instance.baseUrl === '') {
     state.setupError = 'Enter the address of your openEQUELLA site.';
     render();
     return;
   }
-  if (settings.clientId === '' || settings.clientSecret === '' || settings.redirectUri === '') {
+  if (settings.authMode === 'password') {
+    // An empty password is allowed only when one is already stored, which is
+    // the case the form shows as "Signed in as ..." with no password box at
+    // all -- secrets.ts then leaves the stored one alone.
+    if (settings.username === '' || (settings.password === '' && state.setupStoredUsername === null)) {
+      state.setupError = 'Enter the username and password for your openEQUELLA account.';
+      render();
+      return;
+    }
+  } else if (settings.clientId === '' || settings.clientSecret === '' || settings.redirectUri === '') {
     state.setupError = 'Enter the client ID, client secret, and redirect URL.';
     render();
     return;
@@ -343,6 +488,11 @@ async function handleSaveSettings(
     state.setupSaving = false;
     state.setupError = null;
     state.setupInstanceId = saved.id;
+    // Neither secret stays in the renderer once it has been stored. Setup
+    // shows a saved password as "Signed in as ..." (refreshed below), never
+    // back in a field, and the client secret has never been rendered back.
+    state.setupFields = { ...state.setupFields, password: '', clientSecret: '' };
+    void refreshStoredUsername();
     // Nothing left to explain: the discarded store has just been overwritten.
     state.credentialsDropped = false;
     // Point the rest of the app at the instance that was just configured --
@@ -399,15 +549,16 @@ function handleInstanceChange(id: string): void {
 /**
  * Sign-in's "Add credentials for {instance}" prompt (ui/signin.ts's
  * signinMode === 'missing-credentials'). Unlike `handleResetSettings`, this
- * clears NOTHING -- it only points Setup at the instance that's missing
- * credentials so the OTHER instance's saved credentials, if any, are left
- * completely untouched.
+ * STORES nothing and DELETES nothing -- it only points Setup at the instance
+ * that's missing credentials, seeding the form from that site's own address,
+ * so the OTHER instance's saved credentials, if any, are left completely
+ * untouched.
  */
 function handleAddCredentials(): void {
-  state.setupInstanceId = state.instanceId;
-  state.setupError = null;
+  seedSetupForm(state.instanceId);
   state.screen = nextScreen('signin', { type: 'addCredentials' });
   render();
+  void refreshStoredUsername();
 }
 
 async function handleSignIn(): Promise<void> {
@@ -475,7 +626,7 @@ async function handleResetSettings(): Promise<void> {
   // blank form it shows on a fresh install.
   state.instances = [...UI_INSTANCES];
   state.instanceId = '';
-  state.setupInstanceId = '';
+  seedSetupForm('');
   // The operator cleared this themselves; they do not need a notice telling
   // them their credentials are gone.
   state.credentialsDropped = false;
@@ -903,10 +1054,11 @@ async function init(): Promise<void> {
     // The banner names the selected site and its address on every screen, and
     // it is loud for all of them for exactly this reason (ui/banner.ts).
     state.instanceId = state.instances[0]?.id ?? '';
-    state.setupInstanceId = state.instanceId;
+    seedSetupForm(state.instanceId);
     state.screen = initialScreen(state.instances.length > 0);
     render();
     if (state.screen === 'signin') void checkInstanceState();
+    else void refreshStoredUsername();
   } catch (err) {
     renderFatal(errorMessage(err));
   }

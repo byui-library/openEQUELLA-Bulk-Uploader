@@ -4,6 +4,11 @@ import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
 import type { ExtractedRow } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
+// `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
+// this module is reachable from the sandboxed renderer. A type-only import is
+// erased at compile time and never becomes a runtime require (see
+// tests/desktop/rendererPurity.test.ts).
+import type { Settings } from './secrets.js';
 
 export interface InstanceChoice {
   /** `instanceKey` of the base url -- see core/instanceUrl.ts. */
@@ -94,11 +99,28 @@ export interface OeqApi {
    * what an address's key is) and returned, so the caller can select what it
    * just saved.
    */
-  saveInstance(
-    instance: { label: string; baseUrl: string },
-    s: { clientId: string; clientSecret: string; redirectUri: string },
-  ): Promise<InstanceChoice>;
+  saveInstance(instance: { label: string; baseUrl: string }, s: Settings): Promise<InstanceChoice>;
   clearSettings(): Promise<void>;
+
+  /**
+   * Store the openEQUELLA account for one instance. The password crosses into
+   * the main process because the operator typed it here; it never comes back
+   * -- see `getPassword`.
+   */
+  setPassword(args: { instanceId: string; username: string; password: string }): Promise<void>;
+  /**
+   * Who is signed in on this instance, or null when nothing is stored.
+   *
+   * DELIBERATELY NOT the password. Setup needs one thing from a stored
+   * credential -- the name to show beside "Signed in as" and the fact that
+   * there is something to forget -- and handing the renderer a plaintext
+   * password it has no use for is an exposure with nothing bought for it. The
+   * password stays in the main process, which is the only place that signs in
+   * with it (session.ts's buildConfig).
+   */
+  getPassword(instanceId: string): Promise<{ username: string } | null>;
+  /** Behind Setup's "Forget this password". Removing what is absent is not an error. */
+  forgetPassword(instanceId: string): Promise<void>;
 
   signIn(instanceId: string): Promise<CurrentUser>;
   signOut(): Promise<void>;
@@ -215,6 +237,9 @@ export const CHANNELS = {
   hasSettings: 'oeq:hasSettings',
   saveInstance: 'oeq:saveInstance',
   clearSettings: 'oeq:clearSettings',
+  setPassword: 'oeq:setPassword',
+  getPassword: 'oeq:getPassword',
+  forgetPassword: 'oeq:forgetPassword',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',
   currentUser: 'oeq:currentUser',

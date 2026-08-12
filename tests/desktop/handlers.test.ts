@@ -171,10 +171,10 @@ describe('missingCredentialsMessage', () => {
   // dropdown; the id is the address.
   it('names the site the operator chose', () => {
     expect(missingCredentialsMessage('Production')).toBe(
-      'No credentials saved for Production. Enter the client ID and secret for that instance in Setup.',
+      'No credentials saved for Production. Add your sign-in details for that site in Setup.',
     );
     expect(missingCredentialsMessage('Test')).toBe(
-      'No credentials saved for Test. Enter the client ID and secret for that instance in Setup.',
+      'No credentials saved for Test. Add your sign-in details for that site in Setup.',
     );
   });
 
@@ -183,7 +183,7 @@ describe('missingCredentialsMessage', () => {
   // never degrades to a bare "no credentials".
   it('names a host-derived label just as readably', () => {
     expect(missingCredentialsMessage('oeq.example.edu')).toBe(
-      'No credentials saved for oeq.example.edu. Enter the client ID and secret for that instance in Setup.',
+      'No credentials saved for oeq.example.edu. Add your sign-in details for that site in Setup.',
     );
   });
 });

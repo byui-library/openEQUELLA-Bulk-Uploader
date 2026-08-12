@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { buildConfig, requireInstance } from '../../src/desktop/session.js';
-import type { Instance } from '../../src/desktop/secrets.js';
+import type { Instance, Settings } from '../../src/desktop/secrets.js';
+import { createAuthProvider } from '../../src/core/config.js';
+import { UsernamePasswordAuth } from '../../src/core/passwordAuth.js';
+import { AuthorizationCodeAuth } from '../../src/core/authCode.js';
 
 // redirectUri is per-instance STORED CONFIGURATION (secrets.ts's Settings),
 // never hard-coded and never derived. It is registered per OAuth client by an
@@ -16,14 +19,14 @@ const SANDBOX: Instance = {
 
 describe('buildConfig', () => {
   it('uses the stored redirect uri verbatim, with no trailing slash', () => {
-    const settings = { clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq.example.edu' };
+    const settings: Settings = { authMode: 'code', clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq.example.edu' };
     const cfg = buildConfig(LIVE, settings, 'coll-uuid');
     expect(cfg.baseUrl).toBe('https://oeq.example.edu');
     expect(cfg.redirectUri).toBe('https://oeq.example.edu');
   });
 
   it('uses the stored redirect uri verbatim, WITH a trailing slash, when that is what was saved', () => {
-    const settings = { clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq-test.example.edu/' };
+    const settings: Settings = { authMode: 'code', clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq-test.example.edu/' };
     const cfg = buildConfig(SANDBOX, settings, 'coll-uuid');
     expect(cfg.redirectUri).toBe('https://oeq-test.example.edu/');
   });
@@ -32,7 +35,7 @@ describe('buildConfig', () => {
   // proves buildConfig is not silently adding one back in, the way a derived
   // value would.
   it('uses the stored redirect uri verbatim, with NO trailing slash, for the same instance', () => {
-    const settings = { clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq-test.example.edu' };
+    const settings: Settings = { authMode: 'code', clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq-test.example.edu' };
     const cfg = buildConfig(SANDBOX, settings, 'coll-uuid');
     expect(cfg.redirectUri).toBe('https://oeq-test.example.edu');
   });
@@ -40,7 +43,7 @@ describe('buildConfig', () => {
   // The base url comes from the instance the operator saved, not from a list
   // the app shipped with -- there is no such list any more.
   it('takes the base url from the instance record it is given', () => {
-    const settings = { clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://library.example.edu/oeq' };
+    const settings: Settings = { authMode: 'code', clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://library.example.edu/oeq' };
     const cfg = buildConfig(
       { id: 'https://library.example.edu/oeq', label: 'Library', baseUrl: 'https://library.example.edu/oeq' },
       settings,
@@ -49,8 +52,69 @@ describe('buildConfig', () => {
     expect(cfg.baseUrl).toBe('https://library.example.edu/oeq');
   });
 
+  /**
+   * The blocker this task exists to remove. `buildConfig` used to pass
+   * `OEQ_AUTH_MODE: 'code'` as a literal, so no matter what Setup collected
+   * and no matter that `buildAuth` honours every mode correctly, the desktop
+   * could only ever produce an authorization-code config -- and an
+   * institution not behind SSO could not sign in at all.
+   */
+  it('produces a password-mode config from password-mode settings', () => {
+    const settings: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+    const cfg = buildConfig(LIVE, settings, 'coll-uuid');
+    expect(cfg.authMode).toBe('password');
+    expect(cfg.username).toBe('m.miles');
+    expect(cfg.password).toBe('hunter2');
+  });
+
+  // An institution using password auth has no OAuth client at all. Demanding
+  // a client id of them would make the mode unusable -- which is exactly what
+  // happened while the mode was hardcoded, since loadConfig's required list
+  // is mode-dependent and it was always asked for the OAuth branch.
+  it('does not demand a client id or secret in password mode', () => {
+    const settings: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+    expect(() => buildConfig(LIVE, settings, 'coll-uuid')).not.toThrow();
+    const cfg = buildConfig(LIVE, settings, 'coll-uuid');
+    expect(cfg.clientId).toBe('');
+    expect(cfg.clientSecret).toBe('');
+  });
+
+  it('still produces a code-mode config from OAuth settings', () => {
+    const settings: Settings = {
+      authMode: 'code',
+      clientId: 'cid',
+      clientSecret: 'sec',
+      redirectUri: 'https://oeq.example.edu',
+    };
+    expect(buildConfig(LIVE, settings, 'coll-uuid').authMode).toBe('code');
+  });
+
+  /**
+   * The end-to-end proof that the desktop can now REACH password auth: the
+   * same `createAuthProvider` the CLI uses, handed a config the desktop built,
+   * returns the provider that actually signs in with a username and password.
+   * Everything upstream of this can look right and still leave the operator
+   * staring at openEQUELLA's "client_id (null)".
+   */
+  it('builds a UsernamePasswordAuth from a password-mode desktop config', () => {
+    const settings: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+    const provider = createAuthProvider(buildConfig(LIVE, settings, 'coll-uuid'));
+    expect(provider).toBeInstanceOf(UsernamePasswordAuth);
+  });
+
+  it('still builds an AuthorizationCodeAuth from an OAuth-mode desktop config', () => {
+    const settings: Settings = {
+      authMode: 'code',
+      clientId: 'cid',
+      clientSecret: 'sec',
+      redirectUri: 'https://oeq.example.edu',
+    };
+    const provider = createAuthProvider(buildConfig(LIVE, settings, 'coll-uuid'));
+    expect(provider).toBeInstanceOf(AuthorizationCodeAuth);
+  });
+
   it('carries the chosen collection through', () => {
-    const settings = { clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq.example.edu' };
+    const settings: Settings = { authMode: 'code', clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://oeq.example.edu' };
     expect(buildConfig(LIVE, settings, 'abc').collectionUuid).toBe('abc');
   });
 });

@@ -29,12 +29,27 @@ export function requireInstance(instanceId: string, instance: Instance | null): 
  * Synthesises an env-shaped object and hands it to the core's own
  * `loadConfig`, so validation rules live in exactly one place.
  *
+ * THE MODE COMES FROM THE STORED SETTINGS. It used to be the literal
+ * `'code'`, which meant the desktop could never produce anything else: Setup
+ * could collect a username and password, `buildAuth` could honour every mode
+ * correctly, and an institution not behind SSO would still be handed an OAuth
+ * provider with an empty client id and openEQUELLA's misleading "client_id
+ * (null)". `loadConfig`'s required-variable list is already mode-dependent,
+ * so password mode is not asked for an OAuth client it does not have.
+ *
+ * The two branches send DISJOINT variables rather than one object with the
+ * unused half blanked out: an empty `OEQ_CLIENT_ID` is indistinguishable to
+ * `loadConfig` from a missing one, and an empty `OEQ_USERNAME` would defeat
+ * the very check that tells a password-mode operator they have not signed in.
+ *
  * OEQ_REDIRECT_URI comes from `settings.redirectUri` -- the per-instance
  * STORED value (secrets.ts), collected in Setup -- and is passed through
  * verbatim, never derived from `instance.baseUrl` here. It is registered on
  * the OAuth client by an administrator and is not derivable: one client's
  * registered value has a trailing slash, another's does not. That value has
  * been hard-coded wrong here twice already; it must never be derived again.
+ * It is sent in OAuth mode only; password auth has no redirect at all, and
+ * `loadConfig` defaults the field for it.
  *
  * OEQ_ATTACHMENT_UUID_PATH is read from the process environment because the
  * desktop has no setting for it yet (core/types.ts says what the field is).
@@ -51,14 +66,25 @@ export function buildConfig(
   collectionUuid: string,
   env: Record<string, string | undefined> = process.env,
 ): Config {
+  const credentials =
+    settings.authMode === 'password'
+      ? {
+          OEQ_AUTH_MODE: 'password',
+          OEQ_USERNAME: settings.username,
+          OEQ_PASSWORD: settings.password,
+        }
+      : {
+          OEQ_AUTH_MODE: 'code',
+          OEQ_CLIENT_ID: settings.clientId,
+          OEQ_CLIENT_SECRET: settings.clientSecret,
+          OEQ_REDIRECT_URI: settings.redirectUri,
+        };
+
   return loadConfig({
     OEQ_BASE_URL: instance.baseUrl,
-    OEQ_CLIENT_ID: settings.clientId,
-    OEQ_CLIENT_SECRET: settings.clientSecret,
     OEQ_COLLECTION_UUID: collectionUuid,
-    OEQ_REDIRECT_URI: settings.redirectUri,
-    OEQ_AUTH_MODE: 'code',
     OEQ_ATTACHMENT_UUID_PATH: env.OEQ_ATTACHMENT_UUID_PATH,
+    ...credentials,
   });
 }
 
