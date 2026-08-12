@@ -534,6 +534,17 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
 
 export interface LogoutDeps {
   tokenStore?: TokenStore;
+  /**
+   * A live password-mode provider whose openEQUELLA session should be ended.
+   *
+   * Optional, and a plain `oeq-upload logout` run holds none: password mode
+   * signs in once per process, so by the time this command starts there is no
+   * JSESSIONID in THIS process to end -- building a provider here would only
+   * mint a fresh session in order to destroy it. A caller that DOES hold one
+   * (a long-lived front end, or a test) passes it, and the session is ended
+   * on the server rather than left to time out there.
+   */
+  auth?: { logout(): Promise<void> };
 }
 
 /**
@@ -554,10 +565,21 @@ export async function logoutAction(deps: LogoutDeps = {}, env: Env = process.env
   // must keep working when the config is incomplete or invalid, which is
   // exactly when someone reaches for it.
   if (env.OEQ_AUTH_MODE === 'password') {
+    if (deps.auth) {
+      // Before the message, not after: under password auth the JSESSIONID
+      // stays valid on the SERVER until openEQUELLA times it out, so "logged
+      // out" is not true until this has run. It never throws.
+      await deps.auth.logout();
+      console.log(
+        'Logged out, and the openEQUELLA session has been ended on the server. ' +
+          'Any token left over from an earlier OAuth setup has been removed.',
+      );
+      return;
+    }
     console.log(
       'Password mode does not cache a token -- your username and password are read from ' +
-        'OEQ_USERNAME and OEQ_PASSWORD on every run, so there was no session to end. ' +
-        'Any token left over from an earlier OAuth setup has been removed.',
+        'OEQ_USERNAME and OEQ_PASSWORD on every run, so this command had no live session to ' +
+        'end. Any token left over from an earlier OAuth setup has been removed.',
     );
     return;
   }

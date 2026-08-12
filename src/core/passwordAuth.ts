@@ -25,6 +25,8 @@ import { redactSecret } from './redact.js';
 /** Shared by the request and by safeEndpoint(), so an error can never name an
  *  endpoint the code did not actually call. */
 const LOGIN_PATH = '/api/auth/login';
+/** Confirmed in the captured schema/swagger.json. PUT, and it takes no body. */
+const LOGOUT_PATH = '/api/auth/logout';
 
 export class UsernamePasswordAuth implements AuthProvider {
   private session: string | null = null;
@@ -139,6 +141,43 @@ export class UsernamePasswordAuth implements AuthProvider {
   invalidate(): void {
     this.session = null;
     this.generation++;
+  }
+
+  /**
+   * End the session server-side as well as locally.
+   *
+   * Never throws. A logout that fails is not worth interrupting anyone over --
+   * the local session is dropped either way, and openEQUELLA times the server
+   * one out regardless. Throwing here would make `oeq-upload logout` fail on a
+   * flaky network having already done the part that matters.
+   *
+   * The local drop happens FIRST, and unconditionally. This side is the one
+   * this process can be certain of, so it must not be made to wait on a
+   * request that may hang: an operator who asked to log out has logged out.
+   * The captured session is then presented explicitly rather than through
+   * `authHeader()`, which would sign in again -- invalidate() has already run
+   * by then, so asking for a header would mint a NEW session and immediately
+   * ask the server to end it, leaving the real one alive.
+   *
+   * No session means no request. There is nothing on the server to end, and a
+   * PUT carrying no cookie would either be rejected or, worse, end some
+   * unrelated session the runtime attached a cookie jar to.
+   */
+  async logout(): Promise<void> {
+    const session = this.session;
+    this.invalidate();
+    if (!session) return;
+
+    try {
+      await this.fetchImpl(new URL(LOGOUT_PATH, this.baseUrl), {
+        method: 'PUT',
+        headers: { Cookie: `JSESSIONID=${session}` },
+      });
+    } catch {
+      // Deliberately empty -- see the doc comment. A non-2xx response is
+      // ignored for the same reason: the body would say nothing this process
+      // can act on.
+    }
   }
 }
 
