@@ -1761,6 +1761,46 @@ git commit -m "feat(core): cache fetched schemas so extraction stays offline"
 
 ## Task 10: `oeq-upload check` becomes the compatibility probe
 
+> ### CORRECTION — do NOT create `src/core/compatibility.ts`
+>
+> The task below, as first written, specified a new module exporting
+> `CheckResult` and `formatReport`. **That would re-implement what already
+> exists.** `src/core/preflight.ts` has done this job all along:
+>
+> ```typescript
+> export interface PreflightCheck { label: string; pass: boolean; message: string }
+> export interface PreflightResult { ok: boolean; checks: PreflightCheck[] }
+> ```
+>
+> `runPreflight` is already shared by the CLI's `check` and the MCP's
+> `oeq_check`, and already reports **Token, Identity, Collection, Permission**
+> and — added by Task 8b — **Attachment field**.
+>
+> So this task **extends `runPreflight`**, and adds no parallel module. The
+> `CheckResult`/`formatReport` code below is superseded; keep only the
+> presentation improvements, applied to `PreflightCheck`.
+>
+> **What is genuinely missing for a new institution:**
+>
+> 1. **HTTPS** — that the instance URL passed `normaliseInstanceUrl`. Cheap, and
+>    it is the precondition for password auth being safe at all.
+> 2. **Sign-in method** — which `OEQ_AUTH_MODE` was used and that it worked.
+>    A site that thinks it is using a password but fell through to OAuth should
+>    be told here, not at a confusing `client_id (null)` error.
+> 3. **Collections available** — `GET /api/collection?privilege=CREATE_ITEM`
+>    returning zero is a real, diagnosable state: the account authenticated but
+>    can create nothing. Distinct from the existing Collection check, which
+>    tests one named collection.
+> 4. **Duplicate detection** — whether the collection's schema declares a
+>    `namePath`. This is the highest-value line in the report. Without it every
+>    row reports `could not check`, and a site should learn that before a batch,
+>    not during one.
+>
+> Each new check must follow the existing file's discipline: never throw, always
+> push a result, and say what a failure means for a real run rather than only
+> what was observed.
+
+
 The first outside institution is the real test of this work. This is what lets
 them tell us what broke without us having access to their instance.
 
