@@ -2164,6 +2164,29 @@ git commit -m "feat(desktop): instances are added by the operator, not shipped"
 >    `src/core/extract/` keeps validating columns without a network call. That
 >    offline property is the whole reason the cache exists.
 
+> ### RESTORE THE PRODUCTION WARNING — Task 11 made it fire on everything
+>
+> `src/desktop/ui/banner.ts` used to shout PRODUCTION in red for the one
+> instance known to be live. Task 11 deleted the shipped instance list, so
+> nothing tells the app which of an operator's sites is real, and it now
+> renders **every configured site** in the loud style:
+>
+> ```typescript
+> bar.className = `banner ${instance ? 'banner--production' : 'banner--test'}`;
+> ```
+>
+> That was the right direction to err in for one commit, and it is not a
+> resting state. **A warning that fires on everything stops being a warning** —
+> an operator who sees red on their test instance every day will not see it on
+> the real one. The tool creates items with no undo, into a collection with no
+> moderation workflow, so this cue is load-bearing.
+>
+> Add a per-instance **"this is a live site"** flag, collected on Setup and
+> stored with the other per-instance settings. **Default it to ON**: a new site
+> is assumed live until the operator says otherwise, so the failure direction
+> stays safe while the signal is recoverable. The banner reads that flag rather
+> than inferring from an id that no longer exists.
+
 > ### A SEAM THIS TASK DOES NOT CLOSE — record it, do not silently widen it
 >
 > `planAction` in `src/cli/index.ts` still reads the schema from a **local XML
