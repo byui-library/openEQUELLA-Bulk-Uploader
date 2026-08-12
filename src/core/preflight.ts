@@ -2,6 +2,7 @@ import type { AuthProvider } from './auth.js';
 import type { OeqClient } from './client.js';
 import { ApiError } from './errors.js';
 import type { Config } from './config.js';
+import type { SchemaInfo } from './discovery.js';
 import { DEFAULT_LOGIN_HINT } from './authCode.js';
 
 export interface PreflightCheck {
@@ -81,8 +82,12 @@ export async function runPreflight(
     checks.push({ label: 'Identity', pass: false, message: errorMessage(err) });
   }
 
+  // Captured for the attachment-field check below: choosing a collection also
+  // determines its schema, so nothing has to be configured twice.
+  let schemaUuid = '';
   try {
     const collection = await client.getCollection(cfg.collectionUuid);
+    schemaUuid = collection.schemaUuid ?? '';
     checks.push({
       label: 'Collection',
       pass: true,
@@ -129,5 +134,88 @@ export async function runPreflight(
     checks.push({ label: 'Permission', pass: false, message: errorMessage(err) });
   }
 
+  checks.push(await attachmentFieldCheck(cfg, client, schemaUuid));
+
   return { ok: checks.every((c) => c.pass), checks };
+}
+
+/**
+ * Whether `OEQ_ATTACHMENT_UUID_PATH` names a node the target collection's
+ * schema actually has.
+ *
+ * This field is written on EVERY item the runner creates (see runner.ts), so a
+ * wrong path is a mistake repeated across the whole batch, and openEQUELLA's
+ * response to metadata at an undeclared path is not something the resulting
+ * error message would explain. Checking it costs one read-only request and
+ * turns that into a sentence before anything is uploaded.
+ *
+ * Unset is the DEFAULT and a perfectly good configuration -- most schemas
+ * declare no such node -- so it passes, and says what unset means rather than
+ * leaving the operator to infer it.
+ *
+ * When the path is set but cannot be verified (the collection names no schema,
+ * or the schema cannot be read) this FAILS rather than passing quietly. The
+ * operator deliberately asked for a field to be written; "could not check" is
+ * never reported as clean anywhere else in this tool, and it must not be here
+ * either. The message says it is unverified, not that it is wrong.
+ */
+async function attachmentFieldCheck(
+  cfg: Config,
+  client: OeqClient,
+  schemaUuid: string,
+): Promise<PreflightCheck> {
+  const path = cfg.attachmentUuidPath;
+  if (path === '') {
+    return {
+      label: 'Attachment field',
+      pass: true,
+      message:
+        'OEQ_ATTACHMENT_UUID_PATH is not set, so no attachment-uuid field is written into item ' +
+        'metadata. The attachment itself is unaffected -- attachments are linked through the ' +
+        'attachment API, not through that field.',
+    };
+  }
+
+  if (schemaUuid === '') {
+    return {
+      label: 'Attachment field',
+      pass: false,
+      message:
+        `OEQ_ATTACHMENT_UUID_PATH is set to '${path}', but the target collection names no schema ` +
+        `(or could not be read -- see the Collection check above), so it could not be confirmed ` +
+        `that this path exists. Every item created would write to it.`,
+    };
+  }
+
+  let schema: SchemaInfo;
+  try {
+    schema = await client.getSchema(schemaUuid);
+  } catch (err) {
+    return {
+      label: 'Attachment field',
+      pass: false,
+      message:
+        `OEQ_ATTACHMENT_UUID_PATH is set to '${path}', but schema ${schemaUuid} could not be read ` +
+        `(${errorMessage(err)}), so it could not be confirmed that this path exists. Every item ` +
+        `created would write to it.`,
+    };
+  }
+
+  if (!schema.paths.has(path)) {
+    return {
+      label: 'Attachment field',
+      pass: false,
+      message:
+        `OEQ_ATTACHMENT_UUID_PATH is set to '${path}', which schema ${schemaUuid} does not ` +
+        `declare (it has ${schema.paths.size} valid paths). Every item created would write ` +
+        `metadata to a node outside the schema. Correct it, or leave the variable blank -- blank ` +
+        `writes no such field at all, which is right for a schema without one.`,
+    };
+  }
+
+  return {
+    label: 'Attachment field',
+    pass: true,
+    message: `each item's attachment uuid will be written to '${path}', which schema ${schemaUuid} declares.`,
+  };
 }

@@ -14,6 +14,11 @@ export interface ExtractState {
   preview: ExtractedRow[];
   /** Every valid schema xpath, for the Add-column picker. */
   schemaPaths: string[];
+  /**
+   * The xpath the schema declares as the item's name, or null if it declares
+   * none. Only the picker uses it, to lead with that path's own section.
+   */
+  schemaNamePath: string | null;
   /** Templates shipped with the app, for the "start from" choice. Empty if none are bundled. */
   templates: { id: string; label: string }[];
   /** The selected template's id, or '' for the generic scanned starter. */
@@ -43,6 +48,7 @@ export function initialExtractState(): ExtractState {
     profilePath: null,
     preview: [],
     schemaPaths: [],
+    schemaNamePath: null,
     templates: [],
     templateId: '',
     busy: false,

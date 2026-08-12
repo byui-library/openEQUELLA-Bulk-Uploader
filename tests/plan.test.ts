@@ -16,10 +16,10 @@ beforeEach(async () => {
   await writeFile(join(dir, 'b.mp4'), 'bbb');
 });
 
-const paths = new Set(['MWDL/title', 'MWDL/identifier', 'BYUI_extended/attachments/attachment']);
+const paths = new Set(['MWDL/title', 'MWDL/identifier', 'Local/attachments/attachment']);
 
 const sheet = (rows: Record<string, string>[]): Sheet => ({
-  headers: ['attachment name', 'MWDL/title', 'MWDL/identifier', 'BYUI_extended/attachments/attachment'],
+  headers: ['attachment name', 'MWDL/title', 'MWDL/identifier', 'Local/attachments/attachment'],
   rows: rows.map((cells, i) => ({ rowNumber: i + 2, cells })),
 });
 
@@ -28,12 +28,15 @@ const opts = {
   collectionUuid: 'c1',
   schemaUuid: 's1',
   itemState: 'draft' as const,
+  // An incoming spreadsheet puts the FILENAME in this column; the runner
+  // substitutes the real uuid, so plan-time must not carry the cell through.
+  attachmentUuidPath: 'Local/attachments/attachment',
 };
 
 describe('buildManifest', () => {
   it('matches rows to files and carries metadata through', async () => {
     const m = await buildManifest(
-      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a.mp4', 'BYUI_extended/attachments/attachment': 'a.mp4' }]),
+      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a.mp4', 'Local/attachments/attachment': 'a.mp4' }]),
       dir, paths, opts,
     );
     expect(m.entries).toHaveLength(1);
@@ -43,17 +46,42 @@ describe('buildManifest', () => {
 
   it('strips the attachment-uuid xpath, which is filled in after upload', async () => {
     const m = await buildManifest(
-      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a.mp4', 'BYUI_extended/attachments/attachment': 'a.mp4' }]),
+      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a.mp4', 'Local/attachments/attachment': 'a.mp4' }]),
       dir, paths, opts,
     );
-    expect(m.entries[0]!.metadata['BYUI_extended/attachments/attachment']).toBeUndefined();
+    expect(m.entries[0]!.metadata['Local/attachments/attachment']).toBeUndefined();
+  });
+
+  /**
+   * With no path configured the runner writes no such field, so there is
+   * nothing for plan to reserve: the header is an ordinary column like any
+   * other, and the skip is a no-op rather than a hidden rule that silently
+   * drops one of the operator's columns.
+   */
+  it('reserves nothing when no attachment-uuid path is configured', async () => {
+    const m = await buildManifest(
+      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a.mp4', 'Local/attachments/attachment': 'a.mp4' }]),
+      dir, paths, { ...opts, attachmentUuidPath: '' },
+    );
+    expect(m.entries[0]!.metadata['Local/attachments/attachment']).toEqual(['a.mp4']);
+    expect(m.attachmentUuidPath).toBe('');
+  });
+
+  /** The runner reads it from the manifest, not from the environment it happens
+   *  to run in -- a batch planned today must run the same way tomorrow. */
+  it('records the configured attachment-uuid path in the manifest', async () => {
+    const m = await buildManifest(
+      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a.mp4', 'Local/attachments/attachment': 'a.mp4' }]),
+      dir, paths, opts,
+    );
+    expect(m.attachmentUuidPath).toBe('Local/attachments/attachment');
   });
 
   it('excludes a row whose file is missing and records why', async () => {
     const m = await buildManifest(
       sheet([
-        { 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'BYUI_extended/attachments/attachment': '' },
-        { 'attachment name': 'ghost.mp4', 'MWDL/title': 'G', 'MWDL/identifier': 'g', 'BYUI_extended/attachments/attachment': '' },
+        { 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'Local/attachments/attachment': '' },
+        { 'attachment name': 'ghost.mp4', 'MWDL/title': 'G', 'MWDL/identifier': 'g', 'Local/attachments/attachment': '' },
       ]),
       dir, paths, opts,
     );
@@ -63,7 +91,7 @@ describe('buildManifest', () => {
 
   it('warns about a file with no row but does not fail', async () => {
     const m = await buildManifest(
-      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'BYUI_extended/attachments/attachment': '' }]),
+      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'Local/attachments/attachment': '' }]),
       dir, paths, opts,
     );
     expect(m.warnings.join(' ')).toMatch(/b\.mp4/);
@@ -76,7 +104,7 @@ describe('buildManifest', () => {
 
   it('matches filenames case-insensitively, since .MP4 and .mp4 both occur', async () => {
     const m = await buildManifest(
-      sheet([{ 'attachment name': 'A.MP4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'BYUI_extended/attachments/attachment': '' }]),
+      sheet([{ 'attachment name': 'A.MP4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'Local/attachments/attachment': '' }]),
       dir, paths, opts,
     );
     expect(m.entries).toHaveLength(1);
@@ -86,7 +114,7 @@ describe('buildManifest', () => {
   it('produces an absolute filePath even when filesDir is given relative to cwd', async () => {
     const rel = relative(process.cwd(), dir);
     const m = await buildManifest(
-      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'BYUI_extended/attachments/attachment': '' }]),
+      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'Local/attachments/attachment': '' }]),
       rel, paths, opts,
     );
     expect(m.entries).toHaveLength(1);
@@ -97,8 +125,8 @@ describe('buildManifest', () => {
     await expect(
       buildManifest(
         sheet([
-          { 'attachment name': 'a.mp4', 'MWDL/title': 'A1', 'MWDL/identifier': 'a1', 'BYUI_extended/attachments/attachment': '' },
-          { 'attachment name': 'A.MP4', 'MWDL/title': 'A2', 'MWDL/identifier': 'a2', 'BYUI_extended/attachments/attachment': '' },
+          { 'attachment name': 'a.mp4', 'MWDL/title': 'A1', 'MWDL/identifier': 'a1', 'Local/attachments/attachment': '' },
+          { 'attachment name': 'A.MP4', 'MWDL/title': 'A2', 'MWDL/identifier': 'a2', 'Local/attachments/attachment': '' },
         ]),
         dir, paths, opts,
       ),
@@ -108,8 +136,8 @@ describe('buildManifest', () => {
   it('reports both conflicting row numbers when two rows claim the same file', async () => {
     const err = await buildManifest(
       sheet([
-        { 'attachment name': 'a.mp4', 'MWDL/title': 'A1', 'MWDL/identifier': 'a1', 'BYUI_extended/attachments/attachment': '' },
-        { 'attachment name': 'a.mp4', 'MWDL/title': 'A2', 'MWDL/identifier': 'a2', 'BYUI_extended/attachments/attachment': '' },
+        { 'attachment name': 'a.mp4', 'MWDL/title': 'A1', 'MWDL/identifier': 'a1', 'Local/attachments/attachment': '' },
+        { 'attachment name': 'a.mp4', 'MWDL/title': 'A2', 'MWDL/identifier': 'a2', 'Local/attachments/attachment': '' },
       ]),
       dir, paths, opts,
     ).catch((e: unknown) => e);
@@ -122,7 +150,7 @@ describe('buildManifest', () => {
   it('ignores a subdirectory of filesDir rather than treating it as a candidate file', async () => {
     await mkdir(join(dir, 'subdir'));
     const m = await buildManifest(
-      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'BYUI_extended/attachments/attachment': '' }]),
+      sheet([{ 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/identifier': 'a', 'Local/attachments/attachment': '' }]),
       dir, paths, opts,
     );
     // The subdirectory must not show up as an unmatched "file" warning, and

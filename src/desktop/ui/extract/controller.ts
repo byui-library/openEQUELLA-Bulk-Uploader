@@ -93,9 +93,10 @@ export function createExtractController(options: ExtractControllerOptions): Extr
         // Independent of each other: one samples the chosen folder, the other
         // parses a static bundled schema file. Run together, as app.ts already
         // does for its own pair of unrelated calls.
-        const [scan, schemaPaths] = await Promise.all([
+        const [scan, schemaPaths, schemaNamePath] = await Promise.all([
           options.api.extractScan(dir),
           options.api.schemaPaths(),
+          options.api.schemaNamePath(),
         ]);
         // The starter profile is built in the main process and arrives with the
         // scan. It holds only the attachment column: the program can see a
@@ -107,7 +108,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
         // killed the entire module graph and the window rendered blank, with
         // nothing on the terminal. Guarded by tests/desktop/rendererPurity.test.ts.
         const profile = state.profile ?? scan.starter;
-        return { dir, scan, schemaPaths, profile };
+        return { dir, scan, schemaPaths, schemaNamePath, profile };
       });
     },
 

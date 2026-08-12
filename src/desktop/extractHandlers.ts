@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IpcMain } from 'electron';
 import { dialog, shell } from 'electron';
-import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
+import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
 import { extractFolder, listFolder } from '../core/extract/extract.js';
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
@@ -129,6 +129,13 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
 
   ipcMain.handle(CHANNELS.schemaPaths, async (): Promise<string[]> => {
     return [...(await schemaPathsOnce(options.schemaFile))].sort();
+  });
+
+  // Read here rather than in the renderer for the usual reason: this reaches
+  // `node:fs`, and a `node:` import anywhere the renderer can reach blanks the
+  // window with nothing on the terminal (tests/desktop/rendererPurity.test.ts).
+  ipcMain.handle(CHANNELS.schemaNamePath, async (): Promise<string | null> => {
+    return extractItemNamePath(await readFile(options.schemaFile, 'utf8'));
   });
 
   ipcMain.handle(CHANNELS.listTemplates, () => listTemplates(options.templatesDir));

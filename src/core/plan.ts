@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Manifest, ManifestEntry, Sheet, ItemState } from './types.js';
 import { splitRepeatable } from './metadata.js';
-import { ATTACHMENT_COLUMN, ATTACHMENT_UUID_XPATH } from './types.js';
+import { ATTACHMENT_COLUMN } from './types.js';
 import { validateHeaders, isAnnotationHeader } from './schema.js';
 import { ValidationError } from './errors.js';
 import type { OeqClient } from './client.js';
@@ -12,6 +12,15 @@ export interface PlanOptions {
   collectionUuid: string;
   schemaUuid: string;
   itemState: ItemState;
+  /**
+   * Metadata xpath the runner will fill with the real attachment uuid, or
+   * empty/absent for "no such field" (the default -- see config.ts). When set,
+   * a spreadsheet cell under that header is dropped here rather than carried
+   * through: incoming spreadsheets put the FILENAME in that column and the
+   * runner substitutes the uuid. When unset, nothing is reserved and the
+   * header is an ordinary column like any other.
+   */
+  attachmentUuidPath?: string;
 }
 
 /**
@@ -29,6 +38,8 @@ export async function buildManifest(
   schemaPaths: Set<string>,
   opts: PlanOptions,
 ): Promise<Manifest> {
+  const attachmentUuidPath = opts.attachmentUuidPath ?? '';
+
   // Headers first: a typo should surface before we touch the filesystem.
   const { invalid } = validateHeaders(sheet.headers, schemaPaths);
   if (invalid.length > 0) {
@@ -77,8 +88,11 @@ export async function buildManifest(
     const metadata: Record<string, string[]> = {};
     for (const [header, value] of Object.entries(row.cells)) {
       if (header === ATTACHMENT_COLUMN) continue;
-      // Filled in with the real uuid once the attachment exists.
-      if (header === ATTACHMENT_UUID_XPATH) continue;
+      // Filled in with the real uuid once the attachment exists -- but only
+      // when a path is configured. The `!== ''` guard matters: without it, an
+      // unconfigured batch would silently drop any column whose header is
+      // itself blank, rather than reserving nothing at all.
+      if (attachmentUuidPath !== '' && header === attachmentUuidPath) continue;
       // Annotations for the human reading the spreadsheet, not metadata.
       if (isAnnotationHeader(header)) continue;
       // A repeatable field holding several semicolon-separated values becomes
@@ -154,6 +168,7 @@ export async function buildManifest(
     schemaUuid: opts.schemaUuid,
     itemState: opts.itemState,
     attachmentColumn: ATTACHMENT_COLUMN,
+    attachmentUuidPath,
     entries,
     warnings,
   };

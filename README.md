@@ -28,11 +28,26 @@ OEQ_CLIENT_ID=...
 OEQ_CLIENT_SECRET=...
 OEQ_COLLECTION_UUID=bb348ab1-7a81-4e37-8ef7-adc095ade4f9
 OEQ_SCHEMA_UUID=c93181f3-a443-41bf-9afe-ac9f7daf90b7
+OEQ_ATTACHMENT_UUID_PATH=BYUI_extended/attachments/attachment
 ```
 
-`OEQ_COLLECTION_UUID` and `OEQ_SCHEMA_UUID` already default to "BYU-Idaho
-Faculty Content" / `BYUI_MWDL` if left unset; only `OEQ_BASE_URL`,
-`OEQ_CLIENT_ID`, and `OEQ_CLIENT_SECRET` are required.
+`OEQ_BASE_URL`, `OEQ_COLLECTION_UUID` and the credentials for your auth mode
+(`OEQ_CLIENT_ID`/`OEQ_CLIENT_SECRET`, or `OEQ_USERNAME`/`OEQ_PASSWORD`) are
+required. There is no default collection: one used to be built in, and an
+institution that never set it silently got BYU-Idaho's collection uuid and a
+not-found from the server naming an identifier they had never chosen.
+
+`OEQ_SCHEMA_UUID` is optional -- it is recorded in the job manifest and sent
+nowhere.
+
+`OEQ_ATTACHMENT_UUID_PATH` is optional, and **blank means no such field is
+written**. It names a metadata xpath that should also receive each item's
+attachment uuid, a convenience index that BYU-Idaho's schema declares and most
+do not; writing to a path the collection's schema does not have would store
+junk or fail the create, on every item. The attachment itself is linked through
+the attachment API and is unaffected either way. `oeq-upload check` reports
+whether it is set and whether the path really exists in the collection's
+schema.
 
 Save `.env` as **UTF-8 without a BOM**. A BOM (common from PowerShell 5.1's
 `Set-Content -Encoding utf8`, and plenty of Windows editors) lands on the

@@ -129,11 +129,17 @@ function hasCredentials(env: Env): boolean {
  *
  * When the real credentials are absent, this substitutes inert placeholders
  * for just the two credential fields so the *real*, unmodified `loadConfig`
- * still computes the real `baseUrl` and its real collection/schema defaults
- * -- there is no local, drift-prone copy of those defaults here. The
- * placeholders must never be trusted for anything network-related; every
- * caller of this function checks `hasCredentials(env)` (the original env,
- * not the patched one) before ever reading `cfg.clientId`/`cfg.clientSecret`.
+ * still computes the real `baseUrl`, collection and attachment-uuid path --
+ * there is no local, drift-prone copy of that logic here. The placeholders
+ * must never be trusted for anything network-related; every caller of this
+ * function checks `hasCredentials(env)` (the original env, not the patched
+ * one) before ever reading `cfg.clientId`/`cfg.clientSecret`.
+ *
+ * `OEQ_COLLECTION_UUID` is NOT substituted, and planning without it fails.
+ * It is target configuration rather than a credential, `buildManifest`
+ * records it for the later `run`, and a manifest without one is rejected at
+ * load -- so a placeholder here would only move the failure to a point where
+ * the operator has already built a plan they cannot run.
  */
 function loadConfigForPlanning(env: Env): Config {
   if (hasCredentials(env)) return loadConfig(env);
@@ -291,6 +297,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
       collectionUuid: cfg.collectionUuid,
       schemaUuid: cfg.schemaUuid,
       itemState,
+      attachmentUuidPath: cfg.attachmentUuidPath,
     });
 
     // Mirrors planAction exactly: warnings land in manifest.warnings BEFORE

@@ -44,6 +44,7 @@ const configEnv = () => ({
   OEQ_BASE_URL: 'https://example.test',
   OEQ_CLIENT_ID: 'test-client-id',
   OEQ_CLIENT_SECRET: 'super-secret-value',
+  OEQ_COLLECTION_UUID: 'c1',
 });
 
 function textOf(result: { content: Array<{ type: 'text'; text: string }> }): string {
@@ -213,6 +214,7 @@ describe('oeq_plan duplicate pre-flight', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
     OEQ_AUTH_MODE: 'client_credentials',
   });
 
@@ -259,7 +261,10 @@ describe('oeq_plan duplicate pre-flight', () => {
     // would behave differently from the true "no server at all" case.
     const result = await planTool(
       { sheet: sheetPath, filesDir: dir, manifestPath },
-      { OEQ_BASE_URL: mock.url },
+      // The collection IS set: it is target configuration, not a credential,
+      // and a manifest without one cannot be run at all (loadManifest rejects
+      // it). Only the credentials are missing, which is what this tests.
+      { OEQ_BASE_URL: mock.url, OEQ_COLLECTION_UUID: 'c1' },
     );
 
     expect(result.isError).toBeFalsy();
@@ -267,14 +272,13 @@ describe('oeq_plan duplicate pre-flight', () => {
     expect(mock.state.issuedTokens).toHaveLength(0);
 
     // Not a landmine: the saved manifest is structurally complete (real
-    // baseUrl, non-empty collectionUuid/schemaUuid from loadConfig's own
-    // defaults) and loads back cleanly -- proving planning without
-    // credentials doesn't silently corrupt anything for later steps.
+    // baseUrl, the configured collectionUuid) and loads back cleanly --
+    // proving planning without credentials doesn't silently corrupt anything
+    // for later steps.
     const saved = await loadManifest(manifestPath);
     expect(saved.entries).toHaveLength(2);
     expect(saved.baseUrl).toBe(mock.url);
-    expect(saved.collectionUuid.length).toBeGreaterThan(0);
-    expect(saved.schemaUuid.length).toBeGreaterThan(0);
+    expect(saved.collectionUuid).toBe('c1');
   });
 
   it('reports a near-certain duplicate finding when an existing item already holds the row\'s file', async () => {
@@ -447,6 +451,7 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: secret,
+    OEQ_COLLECTION_UUID: 'c1',
   });
 
   /** A token store already populated via a real exchange against the mock -- mirrors cli.test.ts. */
@@ -479,6 +484,7 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
   describe('the login tools in password mode', () => {
     const passwordEnv = {
       OEQ_BASE_URL: 'https://oeq.example.edu',
+      OEQ_COLLECTION_UUID: 'c1',
       OEQ_AUTH_MODE: 'password',
       OEQ_USERNAME: 'jsmith',
       OEQ_PASSWORD: 'hunter2',
@@ -549,9 +555,12 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
   describe('oeq_check', () => {
     it('mirrors the CLI: prints the same four PASS lines and succeeds when everything lines up', async () => {
       mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+      // Whatever OEQ_COLLECTION_UUID names -- there is no default collection
+      // any more, so the mock must register the one the config actually asks
+      // for rather than a uuid the tool used to fall back to.
       mock.state.collections.push({
-        uuid: 'bb348ab1-7a81-4e37-8ef7-adc095ade4f9',
-        name: 'BYU-Idaho Faculty Content',
+        uuid: 'c1',
+        name: 'Faculty Content',
         privileges: ['CREATE_ITEM'],
       });
       const tokenStore = await loggedInStore();
@@ -563,8 +572,8 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(out).toContain(`OEQ_BASE_URL: ${mock.url}`);
       expect(out).toContain('[PASS] Token: present and usable.');
       expect(out).toContain('[PASS] Identity: logged in as jdoe (Jane Doe)');
-      expect(out).toContain("[PASS] Collection: 'BYU-Idaho Faculty Content'");
-      expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'BYU-Idaho Faculty Content'.");
+      expect(out).toContain("[PASS] Collection: 'Faculty Content'");
+      expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'Faculty Content'.");
       expect(out).toContain('All checks passed.');
     });
 
