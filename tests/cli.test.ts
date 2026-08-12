@@ -729,6 +729,55 @@ describe('login and logout in password mode', () => {
     expect(opened).toBe(false);
   });
 
+  /**
+   * Clearing the local store is a complete logout under OAuth, where the token
+   * IS the session. Under password auth the JSESSIONID stays valid on the
+   * SERVER until openEQUELLA times it out, so a caller holding a live session
+   * must have it ended before this command claims anything.
+   */
+  it('ends the openEQUELLA session, not just the local token', async () => {
+    const store = new FileTokenStore(join(dir, 'password-session.json'));
+    const ended: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await logoutAction(
+      {
+        tokenStore: store,
+        auth: {
+          logout: async () => {
+            ended.push('logout');
+          },
+        },
+      },
+      passwordEnv,
+    );
+    log.mockRestore();
+
+    expect(ended).toEqual(['logout']);
+    // And the store is still cleared -- an operator who moved over from an
+    // OAuth mode can have a stale token file, and stranding it would be worse.
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  /** Reads OEQ_AUTH_MODE directly, never through loadConfig: logging out has to
+   *  keep working when the config is broken, which is when someone reaches for
+   *  it. A config missing OEQ_COLLECTION_UUID would fail loadConfig outright. */
+  it('logs out even when the rest of the configuration is unusable', async () => {
+    const store = new FileTokenStore(join(dir, 'broken-config.json'));
+    await store.save({ accessToken: 'stale', baseUrl: 'https://oeq.example.edu' });
+    const ended: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await logoutAction(
+      { tokenStore: store, auth: { logout: async () => void ended.push('logout') } },
+      { OEQ_AUTH_MODE: 'password' },
+    );
+    log.mockRestore();
+
+    expect(ended).toEqual(['logout']);
+    expect(await store.loadRaw()).toBeNull();
+  });
+
   it('still clears a token left over from an earlier OAuth setup, but says password mode cached none', async () => {
     const store = new FileTokenStore(join(dir, 'stale.json'));
     await store.save({ accessToken: 'stale', baseUrl: 'https://oeq.example.edu' });

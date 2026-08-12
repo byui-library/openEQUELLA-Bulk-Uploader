@@ -167,6 +167,100 @@ describe('UsernamePasswordAuth', () => {
     expect(await auth.authHeader()).toEqual({ Cookie: 'JSESSIONID=yes' });
   });
 
+  /**
+   * Clearing the local token store is a complete logout under OAuth, where the
+   * token IS the session. Under password auth it is not: the JSESSIONID stays
+   * valid ON THE SERVER until openEQUELLA times it out, so "logged out" is a
+   * claim this tool has not earned until it has asked the server to end it.
+   */
+  describe('logout', () => {
+    /** Records what each request actually was, not just where it went. */
+    function recordingStub() {
+      const seen: { method: string; path: string; cookie: string | null }[] = [];
+      const impl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        seen.push({
+          method: init?.method ?? 'GET',
+          path: new URL(String(input)).pathname,
+          cookie: headers.get('cookie'),
+        });
+        return new Response('', {
+          status: 200,
+          headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/; HttpOnly' },
+        });
+      });
+      return { impl: impl as unknown as typeof fetch, seen };
+    }
+
+    it('asks the server to end the session, after signing in', async () => {
+      const { impl, seen } = recordingStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.authHeader();
+      await auth.logout();
+
+      expect(seen.map((r) => `${r.method} ${r.path}`)).toEqual([
+        'POST /api/auth/login',
+        'PUT /api/auth/logout',
+      ]);
+    });
+
+    /**
+     * The cookie is the whole request. A PUT without it ends nothing, and the
+     * server would answer 200 to it just the same -- so a test that only
+     * counted the call would pass against a logout that did nothing at all.
+     */
+    it('presents the session it is ending', async () => {
+      const { impl, seen } = recordingStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.authHeader();
+      await auth.logout();
+
+      expect(seen[1]?.cookie).toBe('JSESSIONID=abc123');
+    });
+
+    /**
+     * A logout that fails is not worth interrupting anyone over: the local
+     * session is dropped either way and openEQUELLA times the server one out
+     * regardless. Throwing would make `oeq-upload logout` fail on a flaky
+     * network having already done the part that matters.
+     */
+    it('resolves even when the request fails, and still drops the local session', async () => {
+      const calls: string[] = [];
+      const impl = vi.fn(async (input: string | URL) => {
+        calls.push(String(input));
+        if (String(input).includes('/logout')) throw new Error('connect ECONNREFUSED');
+        return new Response('', {
+          status: 200,
+          headers: { 'set-cookie': `JSESSIONID=session-${calls.length}; Path=/; HttpOnly` },
+        });
+      }) as unknown as typeof fetch;
+
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.getToken();
+      await expect(auth.logout()).resolves.toBeUndefined();
+
+      // Locally gone regardless: the next caller signs in afresh rather than
+      // being handed the session this process just tried to end.
+      expect(await auth.getToken()).toBe('session-3');
+    });
+
+    it('makes no request at all when there was never a session', async () => {
+      const { impl, seen } = recordingStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.logout();
+      expect(seen).toEqual([]);
+    });
+
+    it('makes no second request when called twice', async () => {
+      const { impl, seen } = recordingStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.authHeader();
+      await auth.logout();
+      await auth.logout();
+      expect(seen.filter((r) => r.path.endsWith('/logout'))).toHaveLength(1);
+    });
+  });
+
   it('refuses to be constructed against a plaintext instance', () => {
     const { impl } = loginStub();
     expect(() => new UsernamePasswordAuth('http://oeq.example.edu', 'j', 'p', impl)).toThrow(
@@ -270,5 +364,24 @@ describe('the password never escapes', () => {
     const { impl } = loginStub();
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', SECRET, impl);
     expect(findsSecret(await auth.authHeader())).toBe(false);
+  });
+
+  /**
+   * Sign-in genuinely carries the password in the query string -- that is
+   * openEQUELLA's API, not a choice made here, and it is why nothing else may.
+   * Logging out identifies the session by its cookie and has no reason to name
+   * a credential, so a URL built the same way as the sign-in one would put the
+   * password in a second set of server access logs for nothing.
+   */
+  it('is absent from the logout request, which needs no credential at all', async () => {
+    const { impl, calls } = loginStub();
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', SECRET, impl);
+    await auth.authHeader();
+    await auth.logout();
+
+    expect(calls).toHaveLength(2);
+    expect(findsSecret(calls[1])).toBe(false);
+    // And in no request's PATH, where even the sign-in must keep it out.
+    expect(findsSecret(calls.map((c) => new URL(c).pathname))).toBe(false);
   });
 });
