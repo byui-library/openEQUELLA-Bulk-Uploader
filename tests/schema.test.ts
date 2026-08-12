@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { extractDefinition, parseSchemaPaths, validateHeaders, suggest } from '../src/core/schema.js';
+import {
+  extractDefinition,
+  extractItemNamePath,
+  parseSchemaPaths,
+  validateHeaders,
+  suggest,
+} from '../src/core/schema.js';
 
 const entity = await readFile('schema/_entity.xml', 'utf8');
 const paths = parseSchemaPaths(extractDefinition(entity));
@@ -64,6 +70,33 @@ describe('parseSchemaPaths', () => {
 
   it('finds a substantial number of paths in the real schema (loose lower bound guards against a silent parser regression)', () => {
     expect(paths.size).toBeGreaterThan(150);
+  });
+});
+
+/**
+ * The declared item name path is what the duplicate check must search on. It
+ * is read from the schema, never assumed: `MWDL/title` is only correct here
+ * because BYU-Idaho's export happens to declare it.
+ */
+describe('extractItemNamePath', () => {
+  it('reads the declared name path from the real export, in header form', () => {
+    expect(extractItemNamePath(entity)).toBe('MWDL/title');
+  });
+
+  it('returns null when the export declares none, rather than guessing', () => {
+    expect(
+      extractItemNamePath(
+        '<com.tle.common.ImportExportPack><entity><name>S</name></entity></com.tle.common.ImportExportPack>',
+      ),
+    ).toBeNull();
+  });
+
+  it('reads whatever path the export declares, not a BYU-Idaho one', () => {
+    expect(
+      extractItemNamePath(
+        '<com.tle.common.ImportExportPack><entity><itemNamePath>/local/dc/title</itemNamePath></entity></com.tle.common.ImportExportPack>',
+      ),
+    ).toBe('local/dc/title');
   });
 });
 

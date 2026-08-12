@@ -168,6 +168,16 @@ export interface MockState {
   existingIdentifiers: string[];
   /** Items that already exist, for the title/attachment duplicate check. */
   existingItems: { uuid: string; version: number; title: string; attachmentNames: string[] }[];
+  /**
+   * The xpath this mock instance's schema declares as the item name. A `where`
+   * clause naming any other path matches nothing, which is what a real
+   * instance does and is exactly the silent-blindness failure the title-path
+   * work exists to prevent -- so the mock must model it rather than answering
+   * whatever path it is asked about.
+   */
+  titlePath: string;
+  /** Every `/api/search` request line, in order, so a test can assert on the URL itself. */
+  searchUrls: string[];
 }
 
 export interface MockServer {
@@ -200,6 +210,8 @@ export async function startMockServer(): Promise<MockServer> {
     items: [],
     existingIdentifiers: [],
     existingItems: [],
+    titlePath: 'MWDL/title',
+    searchUrls: [],
   };
 
   let counter = 0;
@@ -352,16 +364,26 @@ export async function startMockServer(): Promise<MockServer> {
         // live server's default of excluding drafts entirely.
         const showAll = url.searchParams.get('showall') === 'true';
         const where = url.searchParams.get('where');
+        state.searchUrls.push(req.url ?? '');
 
         if (where) {
           // Models the shape CONFIRMED against production on 2026-08-07:
           // an exact match on the node, and results that carry `attachments`
           // with a `filename` but NO `name` of their own.
-          const parsed = /^\/xml\/MWDL\/title\s*=\s*'(.*)'$/s.exec(where);
+          //
+          // The path is captured rather than hardcoded, and only the path this
+          // instance's schema declares (state.titlePath) can match: querying
+          // some other institution's title path returns zero hits, silently,
+          // just like the real server.
+          const parsed = /^\/xml\/(.+?)\s*=\s*'(.*)'$/s.exec(where);
           if (!parsed) return send(res, 400, { error: `unparseable where clause: ${where}` });
-          const wanted = parsed[1]!.replace(/''/g, "'");
+          const askedPath = parsed[1]!;
+          const wanted = parsed[2]!.replace(/''/g, "'");
 
-          const hits = showAll ? state.existingItems.filter((i) => i.title === wanted) : [];
+          const hits =
+            showAll && askedPath === state.titlePath
+              ? state.existingItems.filter((i) => i.title === wanted)
+              : [];
           const withAttachments = url.searchParams.get('info')?.includes('attachment') ?? false;
           return send(res, 200, {
             start: 0,

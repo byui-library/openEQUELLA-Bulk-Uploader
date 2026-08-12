@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
+import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
@@ -57,7 +57,12 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
   const cfg = loadConfig(env);
 
   const sheet = await readSheet(resolve(o.sheet));
-  const paths = parseSchemaPaths(extractDefinition(await readFile(o.schemaFile, 'utf8')));
+  const schemaXml = await readFile(o.schemaFile, 'utf8');
+  const paths = parseSchemaPaths(extractDefinition(schemaXml));
+  // Which field holds the title is read from the same schema export the paths
+  // come from, never assumed: it is `MWDL/title` at BYU-Idaho and something
+  // else at every other institution, and the duplicate check searches on it.
+  const titleHeader = extractItemNamePath(schemaXml);
   const manifest = await buildManifest(sheet, resolve(o.files), paths, {
     baseUrl: cfg.baseUrl,
     collectionUuid: cfg.collectionUuid,
@@ -70,7 +75,7 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
     const dupWarnings = await preflightDuplicates(client, manifest);
     manifest.warnings.push(...dupWarnings);
 
-    const findings = await findDuplicates(client, manifest);
+    const findings = await findDuplicates(client, manifest, titleHeader);
     for (const f of findings) {
       console.log(`  Row ${f.rowNumber}: ${f.fileName} -- ${f.tier}: ${f.detail}`);
     }

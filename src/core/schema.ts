@@ -40,6 +40,31 @@ export function extractDefinition(entityXml: string): string {
 }
 
 /**
+ * The path an exported schema declares as the item's name, in spreadsheet-header
+ * form (`MWDL/title`, no leading slash) -- or null when the export declares
+ * none.
+ *
+ * THE DUPLICATE CHECK SEARCHES ON THIS. The XML export spells it
+ * `<itemNamePath>`; the REST representation spells the same thing `namePath`
+ * and is parsed by discovery.ts#parseSchema. Both exist so a front end can read
+ * the declared path from whichever source it has, rather than assuming
+ * BYU-Idaho's `MWDL/title` -- an assumption that makes the check match nothing
+ * anywhere else and report every row clean.
+ *
+ * Null is returned rather than a fallback, deliberately: findDuplicates turns
+ * an unknown path into `could-not-check`, which is the only honest answer.
+ */
+export function extractItemNamePath(entityXml: string): string | null {
+  const parser = new XMLParser(parserOptions);
+  const doc = parser.parse(entityXml) as Record<string, unknown>;
+  const pack = doc['com.tle.common.ImportExportPack'] as Record<string, unknown> | undefined;
+  const entity = pack?.['entity'] as Record<string, unknown> | undefined;
+  const declared = entity?.['itemNamePath'];
+  if (typeof declared !== 'string' || declared.trim() === '') return null;
+  return declared.trim().replace(/^\/+/, '');
+}
+
+/**
  * Walk the definition tree and collect every *leaf* element path below the
  * <xml> root — the paths that actually hold a value. A container element
  * (e.g. 'MWDL/creators', wrapping one-or-more <creator> children) is not

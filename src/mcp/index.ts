@@ -9,7 +9,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { loadConfig, createAuthProvider, type Config } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths, validateHeaders, suggest } from '../core/schema.js';
+import {
+  extractDefinition,
+  extractItemNamePath,
+  parseSchemaPaths,
+  validateHeaders,
+  suggest,
+} from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { findDuplicates, type DuplicateFinding } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
@@ -70,6 +76,18 @@ export function redactSecret(message: string, env: Env): string {
 
 async function loadPaths(schemaFile: string): Promise<Set<string>> {
   return parseSchemaPaths(extractDefinition(await readFile(schemaFile, 'utf8')));
+}
+
+/**
+ * The title xpath the schema export declares, or null when it declares none.
+ *
+ * The duplicate check searches on this. Assuming `MWDL/title` would make it
+ * match nothing at any institution whose schema says otherwise, and a check
+ * that matches nothing reports every row clean. Null is passed through as
+ * "could not check" rather than replaced by a guess.
+ */
+async function loadTitleHeader(schemaFile: string): Promise<string | null> {
+  return extractItemNamePath(await readFile(schemaFile, 'utf8'));
 }
 
 /**
@@ -294,7 +312,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
           const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
           const dupWarnings = await preflightDuplicates(client, manifest);
           manifest.warnings.push(...dupWarnings);
-          duplicates = await findDuplicates(client, manifest);
+          duplicates = await findDuplicates(client, manifest, await loadTitleHeader(schemaFile));
         } catch (err) {
           manifest.warnings.push(`Duplicate check skipped: ${errorMessage(err)}`);
         }
