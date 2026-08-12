@@ -17,6 +17,19 @@ anywhere.
 **Tech Stack:** TypeScript on Node 22, `moduleResolution: nodenext` (relative
 imports need the `.js` extension), vitest, Electron with a sandboxed renderer.
 
+**Compiler strictness, checked rather than assumed:** `tsconfig.json` sets
+`strict` and `noUncheckedIndexedAccess`. It does **not** set `noUnusedLocals` —
+an earlier version of this plan claimed it did. Do not rely on the typecheck to
+find a dead import; it will not.
+
+**Mutation testing on this repo has a trap.** Source files are CRLF in the
+working copy, so a `perl` or `sed` pattern containing `\n` silently matches
+nothing — the mutation never applies, the suite comes back green, and the
+result is indistinguishable from a well-covered test. This has already produced
+a false "all passing" twice during this plan's execution. **Apply mutations with
+the Edit tool, and confirm the file actually changed before believing a green
+run.**
+
 **Spec:** [../specs/2026-08-12-institution-agnostic-design.md](../specs/2026-08-12-institution-agnostic-design.md)
 
 ---
@@ -814,6 +827,190 @@ Expected: PASS, and typecheck clean.
 ```bash
 git add src/core/config.ts tests/config.test.ts
 git commit -m "feat(core): OEQ_AUTH_MODE=password, with mode-dependent required vars"
+```
+
+---
+
+## Task 5b: Extract the single-flight/generation machinery
+
+**Added after review, not in the original plan.** Recommended by the code
+quality reviewer and deferred deliberately, because it touches OAuth code
+running in production today. It is written down as a task rather than left as a
+comment: two documentation commits were lost on this repo in the week before
+this plan was written by being remembered rather than tracked.
+
+**Files:**
+- Create: `src/core/singleFlight.ts`, `tests/singleFlight.test.ts`
+- Modify: `src/core/auth.ts`, `src/core/passwordAuth.ts`
+
+### The case for doing it
+
+`auth.ts` and `passwordAuth.ts` duplicate the concurrency protocol **verbatim**:
+four fields, the `!this.inFlight || this.inFlightGeneration !== this.generation`
+guard, the `void promise.finally(...).catch(() => {})` double-rejection dance,
+and a `startedInGeneration` parameter threaded through the network method purely
+so it can re-check `=== this.generation` before caching.
+
+That is the only subtle code in either file. It took four dedicated tests each
+to pin down, and `tests/auth.test.ts:92-97` records that its semantics were
+**already revised once under review**. The next such revision has to be found
+and applied twice, linked by nothing but the prose comment at
+`passwordAuth.ts:34`. A comment is not a mechanism.
+
+What must NOT be extracted: the endpoint, the response shape (cookie vs JSON),
+`authHeader()`'s format, the error wording, the constructor's URL policy. A
+shared abstract base would drag all of that into one file and every future
+divergence would be paid for with a hook. Only the concurrency protocol moves.
+
+### The shape
+
+```typescript
+// src/core/singleFlight.ts
+class SingleFlight<T> {
+  constructor(produce: () => Promise<T>);
+  get(): Promise<T>;
+  invalidate(): void;
+}
+```
+
+Each provider then owns one, and `getToken()` becomes `return this.flight.get()`,
+`invalidate()` becomes `this.flight.invalidate()`. **This is a net simplification,
+not just deduplication**: the generation check moves inside the helper, so
+`login()` and `fetchToken()` lose their `startedInGeneration` parameter and their
+trailing cache-guard entirely, and become plain "produce a value" functions.
+
+- [ ] **Step 1: Move the existing tests first, before touching the providers**
+
+`tests/auth.test.ts` and `tests/passwordAuth.test.ts` each hold the concurrency
+tests — `discards (does not cache) a token whose fetch was invalidated
+mid-flight`, `does not hand an invalidated in-flight token to a caller who calls
+getToken() after invalidate()`, and their session equivalents. Write the
+`SingleFlight` versions in `tests/singleFlight.test.ts` **first**, against a
+plain counter rather than a fetch stub, and confirm they fail.
+
+- [ ] **Step 2: Implement `SingleFlight`, confirm its tests pass.**
+
+- [ ] **Step 3: Convert `passwordAuth.ts` first** — it is the newer, less
+  battle-tested of the two, so a mistake there is cheaper. Full suite green.
+
+- [ ] **Step 4: Convert `auth.ts`.** The eight existing hardening tests across
+  both providers are the safety net. **If any of them needs editing to pass, stop
+  and report** — that means the refactor changed behaviour, which is exactly what
+  it must not do.
+
+- [ ] **Step 5: Mutation test.** Remove the generation check from `SingleFlight`
+  and confirm the moved tests go red. Apply mutations with the Edit tool and
+  verify the file changed — see the CRLF warning at the top of this plan.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/core/singleFlight.ts src/core/auth.ts src/core/passwordAuth.ts tests/
+git commit -m "refactor(core): one single-flight helper for both auth providers"
+```
+
+---
+
+## Task 5c: End the server session on logout
+
+**Added after review.** The spec's endpoint block lists `PUT /api/auth/logout`
+but no task implemented it — it fell through when the plan was written.
+
+**Files:**
+- Modify: `src/core/passwordAuth.ts`, `src/cli/index.ts`
+- Test: `tests/passwordAuth.test.ts`
+
+`logoutAction` ([src/cli/index.ts:517](../../../src/cli/index.ts#L517)) clears
+the local token store and nothing else. That is complete for OAuth, where the
+token is local. Under password auth the JSESSIONID stays valid on the server
+until openEQUELLA times it out, so "Logged out" would be a claim the tool has
+not earned.
+
+- [ ] **Step 1: Write the failing tests**
+
+```typescript
+// append to tests/passwordAuth.test.ts
+describe('logout', () => {
+  it('tells the server to end the session', async () => {
+    const calls: string[] = [];
+    const impl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${new URL(String(input)).pathname}`);
+      return new Response('', {
+        status: 200,
+        headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/' },
+      });
+    }) as unknown as typeof fetch;
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+    await auth.authHeader();
+    await auth.logout();
+    expect(calls).toEqual(['POST /api/auth/login', 'PUT /api/auth/logout']);
+  });
+
+  it('drops the local session even when the server call fails', async () => {
+    let first = true;
+    const impl = vi.fn(async () => {
+      if (first) {
+        first = false;
+        return new Response('', { status: 200, headers: { 'set-cookie': 'JSESSIONID=a; Path=/' } });
+      }
+      throw new Error('network down');
+    }) as unknown as typeof fetch;
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+    await auth.authHeader();
+    await expect(auth.logout()).resolves.toBeUndefined();
+  });
+
+  it('does nothing when there was never a session', async () => {
+    const calls: string[] = [];
+    const impl = vi.fn(async (input: string | URL) => {
+      calls.push(String(input));
+      return new Response('', { status: 200 });
+    }) as unknown as typeof fetch;
+    await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl).logout();
+    expect(calls).toEqual([]);
+  });
+});
+```
+
+- [ ] **Step 2: Run, confirm failure (`logout` is not a function).**
+
+- [ ] **Step 3: Implement**
+
+```typescript
+  /**
+   * End the session server-side as well as locally.
+   *
+   * Never throws. A logout that fails is not worth interrupting anyone over --
+   * the local session is dropped either way, and openEQUELLA times the server
+   * one out regardless. Throwing here would make `oeq-upload logout` fail on a
+   * flaky network while having done the part that matters.
+   */
+  async logout(): Promise<void> {
+    const session = this.session;
+    this.invalidate();
+    if (!session) return;
+    try {
+      await this.fetchImpl(new URL(LOGOUT_PATH, this.baseUrl), {
+        method: 'PUT',
+        headers: { Cookie: `JSESSIONID=${session}` },
+      });
+    } catch {
+      // Deliberately swallowed -- see the doc comment above.
+    }
+  }
+```
+
+with `const LOGOUT_PATH = '/api/auth/logout';` beside `LOGIN_PATH`.
+
+- [ ] **Step 4: Wire it into `logoutAction`** so that in password mode it calls
+  `logout()` on the provider before reporting. Keep the existing token-store
+  clear — an operator who moved over from an OAuth mode can still have a stale
+  token file, and refusing to clear it would strand them.
+
+- [ ] **Step 5: Run the full suite. Step 6: commit.**
+
+```bash
+git commit -m "feat(core): end the openEQUELLA session on logout, not just the local token"
 ```
 
 ---
