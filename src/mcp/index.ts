@@ -17,6 +17,7 @@ import { checkLock, type LockInfo } from '../core/lock.js';
 import { OAuthClientCredentials } from '../core/auth.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
+import { redactSecret as redactAllForms } from '../core/redact.js';
 import { OeqClient } from '../core/client.js';
 import { runPreflight } from '../core/preflight.js';
 import type { ItemState } from '../core/types.js';
@@ -54,10 +55,18 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
  * land directly in a conversation transcript, so a stray future change that
  * accidentally stringifies the whole config object must not silently leak
  * credentials into it.
+ *
+ * Delegates to core/redact.ts rather than matching the literal secret alone.
+ * The secret travels in a query string, so an ApiError carrying an echoed
+ * request line holds an ENCODED form -- and a literal-only match would sail
+ * straight past it into the transcript. The empty-secret guard lives in the
+ * core helper.
+ *
+ * Exported for test: the wrapper is the shim that binds the core helper to
+ * this layer's env lookup, and that binding is what needs proving.
  */
-function redactSecret(message: string, env: Env): string {
-  const secret = env.OEQ_CLIENT_SECRET;
-  return secret && secret.length > 0 ? message.split(secret).join('[REDACTED]') : message;
+export function redactSecret(message: string, env: Env): string {
+  return redactAllForms(message, env.OEQ_CLIENT_SECRET ?? '');
 }
 
 async function loadPaths(schemaFile: string): Promise<Set<string>> {

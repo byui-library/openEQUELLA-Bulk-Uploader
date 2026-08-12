@@ -28,6 +28,10 @@ export interface AuthProvider {
  * acceptable for a long-running batch tool where that costs a few hundred
  * milliseconds out of a multi-hour run.
  */
+/** Shared by the request and by safeEndpoint(), so an error can never name an
+ *  endpoint the code did not actually call. */
+const TOKEN_PATH = '/oauth/access_token';
+
 export class OAuthClientCredentials implements AuthProvider {
   private token: string | null = null;
   private inFlight: Promise<string> | null = null;
@@ -80,7 +84,7 @@ export class OAuthClientCredentials implements AuthProvider {
   }
 
   private async fetchToken(startedInGeneration: number): Promise<string> {
-    const url = new URL('/oauth/access_token', this.baseUrl);
+    const url = new URL(TOKEN_PATH, this.baseUrl);
     url.searchParams.set('grant_type', 'client_credentials');
     url.searchParams.set('client_id', this.clientId);
     url.searchParams.set('client_secret', this.clientSecret);
@@ -94,8 +98,11 @@ export class OAuthClientCredentials implements AuthProvider {
       // Network-level failure. Never include the request URL here: it
       // carries client_secret in its query string, and some runtimes fold
       // the failing URL into the error message/cause.
+      // Deliberately vague about WHERE this failed -- it covers both the
+      // fetch and the res.text() that follows it, and the advice is the same
+      // either way.
       throw new ApiError(
-        `Token request to ${this.safeEndpoint()} failed before a response was received.`,
+        `Could not reach ${this.safeEndpoint()}. Check the address and your network connection.`,
         0,
         '',
       );
@@ -130,7 +137,7 @@ export class OAuthClientCredentials implements AuthProvider {
 
   /** Origin + path only — no query string, so it can never carry the secret. */
   private safeEndpoint(): string {
-    const url = new URL('/oauth/access_token', this.baseUrl);
+    const url = new URL(TOKEN_PATH, this.baseUrl);
     return `${url.origin}${url.pathname}`;
   }
 

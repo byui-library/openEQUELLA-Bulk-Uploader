@@ -22,6 +22,10 @@ import { redactSecret } from './redact.js';
  * https is required (enforced in the constructor), and nothing in this class
  * ever puts a full URL into an error, a message or a log line.
  */
+/** Shared by the request and by safeEndpoint(), so an error can never name an
+ *  endpoint the code did not actually call. */
+const LOGIN_PATH = '/api/auth/login';
+
 export class UsernamePasswordAuth implements AuthProvider {
   private session: string | null = null;
   private inFlight: Promise<string> | null = null;
@@ -71,7 +75,7 @@ export class UsernamePasswordAuth implements AuthProvider {
   }
 
   private async login(startedInGeneration: number): Promise<string> {
-    const url = new URL('/api/auth/login', this.baseUrl);
+    const url = new URL(LOGIN_PATH, this.baseUrl);
     url.searchParams.set('username', this.username);
     url.searchParams.set('password', this.password);
 
@@ -83,8 +87,11 @@ export class UsernamePasswordAuth implements AuthProvider {
     } catch {
       // Never include the request URL: it carries the password, and some
       // runtimes fold the failing URL into the error's message or cause.
+      // Deliberately vague about WHERE this failed -- it covers both the
+      // fetch and the res.text() that follows it, and "check the address and
+      // your network" is the same advice either way.
       throw new ApiError(
-        `Sign-in request to ${this.safeEndpoint()} failed before a response was received.`,
+        `Could not reach ${this.safeEndpoint()}. Check the address and your network connection.`,
         0,
         '',
       );
@@ -101,8 +108,8 @@ export class UsernamePasswordAuth implements AuthProvider {
     const session = readJsessionId(res.headers);
     if (!session) {
       throw new ApiError(
-        'Sign-in returned success but no session cookie, so nothing is authenticated. ' +
-          'The address may point at something that is not openEQUELLA.',
+        'Signed in, but the site did not return a session. ' +
+          'The address may not be an openEQUELLA site.',
         res.status,
         '',
       );
@@ -117,7 +124,7 @@ export class UsernamePasswordAuth implements AuthProvider {
 
   /** Origin + path only — never the query string, which carries the password. */
   private safeEndpoint(): string {
-    const url = new URL('/api/auth/login', this.baseUrl);
+    const url = new URL(LOGIN_PATH, this.baseUrl);
     return `${url.origin}${url.pathname}`;
   }
 
@@ -135,13 +142,21 @@ export class UsernamePasswordAuth implements AuthProvider {
   }
 }
 
-/** Pull JSESSIONID out of the response's Set-Cookie headers. */
+/**
+ * Pull JSESSIONID out of the response's Set-Cookie headers.
+ *
+ * `getSetCookie()` and not `get('set-cookie')`: openEQUELLA sets several
+ * cookies, and `get()` returns them comma-joined into one string, which both
+ * defeats the `(?:^|;\s*)` anchor below and makes an individual cookie
+ * impossible to isolate. `getSetCookie()` has existed since Node 19.7 and
+ * this module only ever runs in a Node 22 process, so there is nothing to
+ * fall back to.
+ *
+ * The `(?:^|;\s*)` anchor is load-bearing: without it `MYJSESSIONID=nope`
+ * matches and the wrong value is returned as the session.
+ */
 function readJsessionId(headers: Headers): string | null {
-  const all =
-    typeof headers.getSetCookie === 'function'
-      ? headers.getSetCookie()
-      : [headers.get('set-cookie') ?? ''];
-  for (const cookie of all) {
+  for (const cookie of headers.getSetCookie()) {
     const match = /(?:^|;\s*)JSESSIONID=([^;]+)/.exec(cookie);
     if (match?.[1]) return match[1];
   }

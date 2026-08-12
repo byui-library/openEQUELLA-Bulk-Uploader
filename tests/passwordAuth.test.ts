@@ -132,7 +132,39 @@ describe('UsernamePasswordAuth', () => {
   it('rejects a 200 that carried no session cookie', async () => {
     const impl = vi.fn(async () => new Response('', { status: 200 })) as unknown as typeof fetch;
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
-    await expect(auth.authHeader()).rejects.toThrow(/no session/i);
+    await expect(auth.authHeader()).rejects.toThrow(/did not return a session/i);
+  });
+
+  /**
+   * openEQUELLA routinely sets several cookies, so a lone Set-Cookie header is
+   * the UNREALISTIC case. Built with two append() calls because that is what a
+   * real multi-cookie response looks like -- and note `headers.get()` would
+   * comma-join these into one unparseable string, which is why the
+   * implementation uses getSetCookie().
+   */
+  function multiCookieStub(cookies: string[]) {
+    const impl = vi.fn(async () => {
+      const headers = new Headers();
+      for (const c of cookies) headers.append('set-cookie', c);
+      return new Response('', { status: 200, headers });
+    });
+    return impl as unknown as typeof fetch;
+  }
+
+  it('finds JSESSIONID when it is not the first Set-Cookie header', async () => {
+    const impl = multiCookieStub(['other=1; Path=/', 'JSESSIONID=xyz; Path=/; HttpOnly']);
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+    expect(await auth.authHeader()).toEqual({ Cookie: 'JSESSIONID=xyz' });
+  });
+
+  /**
+   * The decoy is what makes the `(?:^|;\s*)` anchor earn its place: a
+   * substring match would return 'nope' and every later request would 401.
+   */
+  it('is not fooled by a cookie whose name merely ends in JSESSIONID', async () => {
+    const impl = multiCookieStub(['MYJSESSIONID=nope; Path=/', 'JSESSIONID=yes; Path=/']);
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+    expect(await auth.authHeader()).toEqual({ Cookie: 'JSESSIONID=yes' });
   });
 
   it('refuses to be constructed against a plaintext instance', () => {

@@ -13,6 +13,7 @@ import {
   loginUrlTool,
   loginCompleteTool,
   checkTool,
+  redactSecret,
 } from '../src/mcp/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
@@ -577,5 +578,40 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(out).not.toContain(secret);
       expect(out).not.toContain(encoded);
     });
+  });
+});
+
+/**
+ * The MCP layer used to carry its own literal-only redactor under the same
+ * name as the strong core one, so the conversation transcript was guarded by
+ * the weakest of the three. These pin the delegation.
+ *
+ * Note the secret above ('a+b/c=d&e') cannot detect that bug: every one of
+ * its special characters escapes identically under both encoders, so a
+ * literal-only redactor passes it. '!' is what separates them.
+ */
+describe('mcp redactSecret', () => {
+  const SECRET = 'Summer2026!pa ss';
+
+  it('redacts the form the secret actually takes on the wire', () => {
+    // What URLSearchParams puts in the request line -- and what a server
+    // echoing that line back would hand to an ApiError message.
+    const onWire = 'Summer2026%21pa+ss';
+    expect(redactSecret(`token request failed: ...&client_secret=${onWire}`, {
+      OEQ_CLIENT_SECRET: SECRET,
+    })).toBe('token request failed: ...&client_secret=[REDACTED]');
+  });
+
+  it('redacts the literal and encodeURIComponent forms too', () => {
+    for (const form of [SECRET, encodeURIComponent(SECRET)]) {
+      expect(redactSecret(`saw ${form} here`, { OEQ_CLIENT_SECRET: SECRET })).toBe(
+        'saw [REDACTED] here',
+      );
+    }
+  });
+
+  it('passes text through when no secret is configured', () => {
+    expect(redactSecret('nothing configured', {})).toBe('nothing configured');
+    expect(redactSecret('empty string', { OEQ_CLIENT_SECRET: '' })).toBe('empty string');
   });
 });
