@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { readFile, readdir, copyFile } from 'node:fs/promises';
 import { CHANNELS, INSTANCES, type ColumnReport, type OeqApi, type PlanReport, type RunReport } from './ipc.js';
 import { SecretStore, EncryptedTokenStore } from './secrets.js';
-import { buildAuth, buildClient, buildConfig, instanceById } from './session.js';
+import { buildAuth, buildCodeAuth, buildClient, buildConfig, instanceById } from './session.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, parseSchemaPaths, validateHeaders, isAnnotationHeader } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
@@ -235,7 +235,9 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     async (_e, instanceId: Parameters<OeqApi['signIn']>[0]) => {
       const settings = await requireSettings(instanceId);
       const cfg = buildConfig(instanceId, settings, 'unused-for-signin');
-      const auth = buildAuth(cfg, tokens());
+      // buildCodeAuth, not buildAuth: this handler IS the authorization-code
+      // browser flow, and signInInteractive needs that flow's own API.
+      const auth = buildCodeAuth(cfg, tokens());
       await signInInteractive(cfg.baseUrl, auth, getWindow() ?? undefined);
       return buildClient(cfg, auth).currentUser();
     },

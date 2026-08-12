@@ -12,7 +12,6 @@ import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
-import { OAuthClientCredentials } from '../core/auth.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { OeqClient } from '../core/client.js';
@@ -381,6 +380,22 @@ function defaultCaptureLoopbackCode(redirectUri: string): Promise<string> {
   });
 }
 
+/**
+ * `login` REFUSES in password mode rather than quietly succeeding.
+ *
+ * There is nothing for it to do: no browser flow, no cached token, and the
+ * credentials are read from the environment on every run. Exiting 0 would be
+ * the worse option -- `oeq-upload login` reporting success while verifying
+ * nothing is precisely the kind of confidently-wrong signal this project has
+ * already been bitten by, and a script chaining `login && run` would take it
+ * as "credentials confirmed". `check` is the command that actually confirms
+ * them, so the message points there.
+ */
+const PASSWORD_MODE_NO_LOGIN =
+  'Sign-in is not needed in password mode -- your username and password are read from ' +
+  'OEQ_USERNAME and OEQ_PASSWORD on every run, so there is no browser flow and no token to ' +
+  'cache. Run `oeq-upload check` to confirm they work.';
+
 export interface LoginDeps {
   tokenStore?: TokenStore;
   openBrowser?: (url: string) => void;
@@ -423,6 +438,7 @@ export interface LoginDeps {
  */
 export async function loginAction(env: Env = process.env, deps: LoginDeps = {}): Promise<void> {
   const cfg = loadConfig(env);
+  if (cfg.authMode === 'password') throw new OeqError(PASSWORD_MODE_NO_LOGIN);
   const tokenStore = deps.tokenStore ?? new FileTokenStore();
   const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
 
@@ -514,9 +530,31 @@ export interface LogoutDeps {
   tokenStore?: TokenStore;
 }
 
-export async function logoutAction(deps: LogoutDeps = {}): Promise<void> {
+/**
+ * `env` is the SECOND parameter, unusually, because `deps` was already first
+ * and every existing caller passes it positionally.
+ *
+ * Unlike `login`, this still does its work in password mode instead of
+ * refusing: clearing the store is the one genuinely useful thing left, since
+ * an operator who switched over from an OAuth mode can still have a stale
+ * token file on disk. What changes is only the message -- announcing "the
+ * cached token has been removed" to someone whose mode never cached one is a
+ * small lie that invites them to believe they had a session.
+ */
+export async function logoutAction(deps: LogoutDeps = {}, env: Env = process.env): Promise<void> {
   const tokenStore = deps.tokenStore ?? new FileTokenStore();
   await tokenStore.clear();
+  // Reads the raw variable rather than going through loadConfig: logging out
+  // must keep working when the config is incomplete or invalid, which is
+  // exactly when someone reaches for it.
+  if (env.OEQ_AUTH_MODE === 'password') {
+    console.log(
+      'Password mode does not cache a token -- your username and password are read from ' +
+        'OEQ_USERNAME and OEQ_PASSWORD on every run, so there was no session to end. ' +
+        'Any token left over from an earlier OAuth setup has been removed.',
+    );
+    return;
+  }
   console.log('Logged out. The cached token has been removed.');
 }
 
@@ -535,10 +573,7 @@ export async function checkAction(env: Env = process.env, deps: CheckDeps = {}):
   console.log(`OEQ_BASE_URL: ${cfg.baseUrl}`);
   console.log(`OEQ_COLLECTION_UUID: ${cfg.collectionUuid}\n`);
 
-  const auth =
-    cfg.authMode === 'client_credentials'
-      ? new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret)
-      : new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, deps.tokenStore);
+  const auth = createAuthProvider(cfg, env, deps.tokenStore);
   const client = deps.client ?? new OeqClient(cfg.baseUrl, auth);
 
   const result = await runPreflight(cfg, auth, client);
@@ -608,7 +643,7 @@ export function buildProgram(env: Env = process.env): Command {
     .command('logout')
     .description('Remove the cached OAuth token.')
     .action(async () => {
-      await logoutAction();
+      await logoutAction({}, env);
     });
 
   program

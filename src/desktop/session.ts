@@ -1,4 +1,5 @@
-import { loadConfig, type Config } from '../core/config.js';
+import { loadConfig, createAuthProvider, type Config } from '../core/config.js';
+import type { AuthProvider } from '../core/auth.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { OeqClient } from '../core/client.js';
 import { INSTANCES } from './ipc.js';
@@ -36,10 +37,31 @@ export function buildConfig(instanceId: string, settings: Settings, collectionUu
   });
 }
 
-export function buildAuth(cfg: Config, store: TokenStore): AuthorizationCodeAuth {
+/**
+ * The provider for everything that just needs to be authenticated: current
+ * user, collection list, plan, run.
+ *
+ * Delegates to `createAuthProvider` rather than constructing one, so
+ * `cfg.authMode` is honoured in exactly one place. This used to build an
+ * `AuthorizationCodeAuth` unconditionally, which meant a password-mode
+ * config produced an OAuth provider with an empty client id and openEQUELLA's
+ * misleading "client_id (null)" error.
+ */
+export function buildAuth(cfg: Config, store: TokenStore): AuthProvider {
+  return createAuthProvider(cfg, {}, store);
+}
+
+/**
+ * The interactive browser sign-in specifically, which is the authorization-code
+ * flow and nothing else: `signInInteractive` drives `getAuthorizeUrl()` and
+ * `exchangeCode()`, neither of which exists on `AuthProvider`. Kept separate
+ * from `buildAuth` above so the general path can vary by mode while this one
+ * stays honestly typed as the one flow it can actually drive.
+ */
+export function buildCodeAuth(cfg: Config, store: TokenStore): AuthorizationCodeAuth {
   return new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, store);
 }
 
-export function buildClient(cfg: Config, auth: AuthorizationCodeAuth): OeqClient {
+export function buildClient(cfg: Config, auth: AuthProvider): OeqClient {
   return new OeqClient(cfg.baseUrl, auth);
 }
