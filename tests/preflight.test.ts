@@ -26,12 +26,13 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-function cfgFor(mock: MockServer, collectionUuid: string): Config {
+function cfgFor(mock: MockServer, collectionUuid: string, attachmentUuidPath?: string): Config {
   return loadConfig({
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
     OEQ_COLLECTION_UUID: collectionUuid,
+    OEQ_ATTACHMENT_UUID_PATH: attachmentUuidPath,
   });
 }
 
@@ -49,7 +50,7 @@ async function loggedInAuth(cfg: Config): Promise<AuthorizationCodeAuth> {
 }
 
 describe('runPreflight', () => {
-  it('passes all four checks when everything lines up', async () => {
+  it('passes every check when everything lines up', async () => {
     const cfg = cfgFor(mock, 'c1');
     mock.state.collections.push({ uuid: 'c1', name: 'Faculty Content', privileges: ['CREATE_ITEM'] });
     const auth = await loggedInAuth(cfg);
@@ -58,7 +59,13 @@ describe('runPreflight', () => {
     const result = await runPreflight(cfg, auth, client);
 
     expect(result.ok).toBe(true);
-    expect(result.checks.map((c) => c.label)).toEqual(['Token', 'Identity', 'Collection', 'Permission']);
+    expect(result.checks.map((c) => c.label)).toEqual([
+      'Token',
+      'Identity',
+      'Collection',
+      'Permission',
+      'Attachment field',
+    ]);
     expect(result.checks.every((c) => c.pass)).toBe(true);
   });
 
@@ -135,6 +142,79 @@ describe('runPreflight', () => {
     expect(permissionCheck.pass).toBe(false); // ...just not contributable
     expect(permissionCheck.message).toContain('Other Collection');
     expect(permissionCheck.message).toContain('c2');
+  });
+
+  /**
+   * The attachment-uuid field is written on EVERY item created, so a path that
+   * does not exist in the collection's schema is worth naming before a batch
+   * runs rather than after. Unset is a legitimate configuration -- most
+   * schemas declare no such node -- and must read as one, not as a warning.
+   */
+  describe('the attachment-uuid field check', () => {
+    const contributable = { uuid: 'c1', name: 'Faculty Content', privileges: ['CREATE_ITEM'] };
+
+    it('says plainly that nothing will be written when no path is configured', async () => {
+      const cfg = cfgFor(mock, 'c1');
+      mock.state.collections.push(contributable);
+      const auth = await loggedInAuth(cfg);
+      const result = await runPreflight(cfg, auth, new OeqClient(cfg.baseUrl, auth));
+
+      const check = result.checks.find((c) => c.label === 'Attachment field')!;
+      expect(check.pass).toBe(true);
+      expect(check.message).toMatch(/OEQ_ATTACHMENT_UUID_PATH/);
+      expect(check.message).toMatch(/not set/i);
+      // It must not read as a defect: the attachment itself is unaffected.
+      expect(check.message).toMatch(/attachment itself/i);
+    });
+
+    it('confirms a configured path that the collection\'s schema really declares', async () => {
+      const cfg = cfgFor(mock, 'c1', 'Local/attachments/attachment');
+      mock.state.collections.push({ ...contributable, schemaUuid: 's1' });
+      mock.state.schemas.push({
+        uuid: 's1',
+        namePath: '/MWDL/title',
+        paths: ['MWDL/title', 'Local/attachments/attachment'],
+      });
+      const auth = await loggedInAuth(cfg);
+      const result = await runPreflight(cfg, auth, new OeqClient(cfg.baseUrl, auth));
+
+      const check = result.checks.find((c) => c.label === 'Attachment field')!;
+      expect(check.pass).toBe(true);
+      expect(check.message).toContain('Local/attachments/attachment');
+      expect(result.ok).toBe(true);
+    });
+
+    it('fails, naming the path and the variable, when the schema has no such node', async () => {
+      const cfg = cfgFor(mock, 'c1', 'Elsewhere/attachments/attachment');
+      mock.state.collections.push({ ...contributable, schemaUuid: 's1' });
+      mock.state.schemas.push({ uuid: 's1', namePath: '/MWDL/title', paths: ['MWDL/title'] });
+      const auth = await loggedInAuth(cfg);
+      const result = await runPreflight(cfg, auth, new OeqClient(cfg.baseUrl, auth));
+
+      const check = result.checks.find((c) => c.label === 'Attachment field')!;
+      expect(check.pass).toBe(false);
+      expect(check.message).toContain('Elsewhere/attachments/attachment');
+      expect(check.message).toContain('OEQ_ATTACHMENT_UUID_PATH');
+      expect(result.ok).toBe(false);
+    });
+
+    /**
+     * "Could not check" is never reported as clean anywhere else in this tool
+     * and must not be here either -- the operator opted into writing this
+     * field, so an unverifiable path is a thing to resolve, not to assume.
+     */
+    it('fails rather than passing quietly when the schema cannot be read', async () => {
+      const cfg = cfgFor(mock, 'c1', 'Local/attachments/attachment');
+      // Collection exists and is contributable, but declares no schema.
+      mock.state.collections.push(contributable);
+      const auth = await loggedInAuth(cfg);
+      const result = await runPreflight(cfg, auth, new OeqClient(cfg.baseUrl, auth));
+
+      const check = result.checks.find((c) => c.label === 'Attachment field')!;
+      expect(check.pass).toBe(false);
+      expect(check.message).toMatch(/could not/i);
+      expect(check.message).toContain('Local/attachments/attachment');
+    });
   });
 
   it('reports a failure when the user cannot contribute to any collection at all', async () => {

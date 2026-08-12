@@ -152,7 +152,18 @@ export interface MockState {
    * (with whatever `privileges` it wants the mock's "current user" to hold
    * on it) before either check can pass.
    */
-  collections: { uuid: string; name: string; privileges: string[] }[];
+  collections: { uuid: string; name: string; privileges: string[]; schemaUuid?: string }[];
+  /**
+   * Additive test scaffolding for `GET /api/schema/{uuid}`, backing
+   * `check`/`oeq_check`'s "does the configured attachment-uuid path actually
+   * exist in this collection's schema" check. `paths` are leaf xpaths in
+   * spreadsheet-header form; the route turns them back into the nested
+   * `definition.xml` tree a real schema response carries (see
+   * tests/fixtures/api/schema.json). Empty by default -- a collection must
+   * declare a `schemaUuid` AND a schema be registered here before anything can
+   * be looked up.
+   */
+  schemas: { uuid: string; namePath: string; paths: string[] }[];
   stagingAreas: Set<string>;
   uploads: { staging: string; filename: string; bytes: number }[];
   items: {
@@ -186,6 +197,24 @@ export interface MockServer {
   close: () => Promise<void>;
 }
 
+/**
+ * Turn leaf xpaths (`MWDL/title`) back into the nested object a real
+ * `definition.xml` is, so `parseSchema`'s own tree walk is exercised rather
+ * than bypassed. A leaf is a node with no non-underscore children, which is
+ * exactly what an empty object is.
+ */
+function definitionTree(paths: string[]): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  for (const path of paths) {
+    let cursor = root;
+    for (const segment of path.split('/').filter(Boolean)) {
+      cursor[segment] ??= {};
+      cursor = cursor[segment] as Record<string, unknown>;
+    }
+  }
+  return root;
+}
+
 const readBody = (req: IncomingMessage): Promise<Buffer> =>
   new Promise((resolve) => {
     const chunks: Buffer[] = [];
@@ -205,6 +234,7 @@ export async function startMockServer(): Promise<MockServer> {
     validAuthCodes: new Set(),
     currentUser: { username: 'test-user', firstName: 'Test', lastName: 'User' },
     collections: [],
+    schemas: [],
     stagingAreas: new Set(),
     uploads: [],
     items: [],
@@ -425,7 +455,28 @@ export async function startMockServer(): Promise<MockServer> {
       if (collectionGet && req.method === 'GET') {
         const found = state.collections.find((c) => c.uuid === collectionGet[1]);
         if (!found) return send(res, 404, { error: 'not found' });
-        return send(res, 200, { uuid: found.uuid, name: found.name });
+        // `schema: { uuid }` is on the real CollectionBean -- see
+        // tests/fixtures/api/collection-one.json, recorded live. Omitted when
+        // the mock collection declares none, which is how a "this collection
+        // names no schema" case is expressed.
+        return send(res, 200, {
+          uuid: found.uuid,
+          name: found.name,
+          ...(found.schemaUuid ? { schema: { uuid: found.schemaUuid } } : {}),
+        });
+      }
+
+      // CONFIRMED against tests/fixtures/api/schema.json, recorded live:
+      // GET /schema/{uuid} -> { uuid, namePath, definition: { xml: ... } }.
+      const schemaGet = /^\/api\/schema\/([^/]+)$/.exec(path);
+      if (schemaGet && req.method === 'GET') {
+        const found = state.schemas.find((s) => s.uuid === schemaGet[1]);
+        if (!found) return send(res, 404, { error: 'not found' });
+        return send(res, 200, {
+          uuid: found.uuid,
+          namePath: found.namePath,
+          definition: { xml: definitionTree(found.paths) },
+        });
       }
 
       // CONFIRMED against swagger.json: GET /collection (PagingBeanCollectionBean).

@@ -24,8 +24,22 @@ export function instanceById(id: string) {
  * trailing slash, a dedicated test client might or might not. That value has
  * been hard-coded wrong here twice already; it must never come from
  * INSTANCES again.
+ *
+ * OEQ_ATTACHMENT_UUID_PATH is read from the process environment because the
+ * desktop has no setting for it yet (core/types.ts says what the field is).
+ * Unset -- which it is for anyone who has not deliberately set it for their
+ * Windows account -- means the attachment uuid is written into no metadata
+ * field at all, which is correct for a schema that declares no such node. An
+ * institution whose schema DOES declare one sets the variable; a per-instance
+ * setting on Setup is the better home for it once the instance list itself is
+ * operator-managed.
  */
-export function buildConfig(instanceId: string, settings: Settings, collectionUuid: string): Config {
+export function buildConfig(
+  instanceId: string,
+  settings: Settings,
+  collectionUuid: string,
+  env: Record<string, string | undefined> = process.env,
+): Config {
   const inst = instanceById(instanceId);
   return loadConfig({
     OEQ_BASE_URL: inst.baseUrl,
@@ -34,6 +48,7 @@ export function buildConfig(instanceId: string, settings: Settings, collectionUu
     OEQ_COLLECTION_UUID: collectionUuid,
     OEQ_REDIRECT_URI: settings.redirectUri,
     OEQ_AUTH_MODE: 'code',
+    OEQ_ATTACHMENT_UUID_PATH: env.OEQ_ATTACHMENT_UUID_PATH,
   });
 }
 

@@ -68,6 +68,7 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
     collectionUuid: cfg.collectionUuid,
     schemaUuid: cfg.schemaUuid,
     itemState,
+    attachmentUuidPath: cfg.attachmentUuidPath,
   });
 
   if (!o.skipDuplicateCheck) {

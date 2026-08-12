@@ -82,6 +82,7 @@
  */
 import type { AuthProvider } from './auth.js';
 import { ApiError, ValidationError } from './errors.js';
+import { parseSchema, type SchemaInfo } from './discovery.js';
 
 export interface AttachmentSpec {
   filename: string;
@@ -114,6 +115,15 @@ export interface CurrentUser {
 export interface CollectionSummary {
   uuid: string;
   name: string;
+  /**
+   * The schema this collection contributes against, from the response's
+   * `schema: { uuid }`. CONFIRMED present on `GET /collection/{uuid}` --
+   * tests/fixtures/api/collection-one.json, recorded live. `''` when the
+   * response declares none, so a caller can tell "no schema named" from a
+   * schema that could not be read. Only `getCollection` populates it; the
+   * list endpoint's entries are not read for it here.
+   */
+  schemaUuid?: string;
 }
 
 /** One item already in the collection, as the duplicate check needs to see it. */
@@ -545,8 +555,27 @@ export class OeqClient {
    */
   async getCollection(uuid: string): Promise<CollectionSummary> {
     const res = await this.request(`/api/collection/${encodeURIComponent(uuid)}`);
-    const body = (await res.json()) as { uuid: string; name?: unknown };
-    return { uuid: body.uuid, name: extractDisplayName(body.name, body.uuid) };
+    const body = (await res.json()) as { uuid: string; name?: unknown; schema?: { uuid?: unknown } };
+    return {
+      uuid: body.uuid,
+      name: extractDisplayName(body.name, body.uuid),
+      schemaUuid: typeof body.schema?.uuid === 'string' ? body.schema.uuid : '',
+    };
+  }
+
+  /**
+   * `GET /schema/{uuid}` -> the schema's declared name path and its valid
+   * xpaths, parsed by discovery.ts#parseSchema (which is where the response
+   * shape is documented and pinned to a recorded fixture).
+   *
+   * Choosing a collection determines its schema -- `getCollection` above
+   * returns the uuid -- so nothing has to configure this separately. Used by
+   * the pre-flight to check a configured attachment-uuid path against the
+   * paths the schema actually declares.
+   */
+  async getSchema(uuid: string): Promise<SchemaInfo> {
+    const res = await this.request(`/api/schema/${encodeURIComponent(uuid)}`);
+    return parseSchema(await res.json());
   }
 
   /**

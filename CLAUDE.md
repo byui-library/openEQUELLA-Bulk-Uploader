@@ -93,11 +93,16 @@ easy to get wrong from first principles.
 - **Spreadsheet convention**: row 1 headers are literal schema xpaths
   (`MWDL/title`, `MWDL/creators/creator`, …). `attachment name` is a reserved
   header naming the file on disk; it is never written as metadata.
-- **`BYUI_extended/attachments/attachment` holds the attachment UUID**, not the
-  filename — even though incoming spreadsheets put the filename there. The tool
-  substitutes the real UUID. Note that `schema/sample.xml` shows ~170 UUIDs on a
-  single-attachment item; that is accreted junk from repeated bulk edits, not the
-  intended pattern.
+- **The attachment-uuid field is configuration, and defaults to written-nowhere.**
+  `OEQ_ATTACHMENT_UUID_PATH` names it; BYU-Idaho sets it to
+  `BYUI_extended/attachments/attachment`, which holds the attachment UUID, not
+  the filename — even though incoming spreadsheets put the filename there. The
+  tool substitutes the real UUID. Left blank, no such field is written at all:
+  it is a convenience index a schema may declare, the attachment is linked
+  through the attachment API regardless, and writing a guessed path would put
+  metadata outside the collection's schema on every item. Note that
+  `schema/sample.xml` shows ~170 UUIDs on a single-attachment item; that is
+  accreted junk from repeated bulk edits, not the intended pattern.
 - **Authentication is SSO-backed** (Okta via `id.churchofjesuschrist.org`).
   Interactive login cannot be automated. The API client needs `CREATE_ITEM` on
   the target collection; `VIEW_APIDOCS` gates `/api/swagger.json`.

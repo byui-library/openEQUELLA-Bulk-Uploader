@@ -30,6 +30,11 @@ describe('availablePaths', () => {
 // MWDL was 98 rows down, past a 50-row cap -- so the fields people actually
 // need (title, creator, date) could not be reached by scrolling at all.
 // Found by an operator on the real screen.
+//
+// Which section leads is DERIVED, from the schema's own declared name path:
+// the section holding it is the one whose fields every item needs. The order
+// used to be a hardcoded ['MWDL', 'BYUI_extended'], which was right at one
+// institution and simply did not match anywhere else.
 describe('availablePaths ordering', () => {
   const mixed = [
     'BYUI_extended/av/poster',
@@ -40,8 +45,8 @@ describe('availablePaths ordering', () => {
     'HBCS/subject',
   ];
 
-  it('puts MWDL first, then BYUI_extended, then everything else', () => {
-    expect(availablePaths(mixed, [], '')).toEqual([
+  it("puts the name path's own section first, then the rest alphabetically", () => {
+    expect(availablePaths(mixed, [], '', '/MWDL/title')).toEqual([
       'MWDL/creators/creator',
       'MWDL/title',
       'BYUI_extended/athletics/event',
@@ -51,13 +56,36 @@ describe('availablePaths ordering', () => {
     ]);
   });
 
+  /** A different schema, a different leading section -- no code change. */
+  it('leads with whichever section the schema actually names', () => {
+    expect(availablePaths(mixed, [], '', 'HBCS/subject').slice(0, 2)).toEqual([
+      'HBCS/subject',
+      'BYUI_extended/athletics/event',
+    ]);
+  });
+
+  it('falls back to plain alphabetical grouping when the schema declares no name path', () => {
+    // localeCompare, so the grouping is case-insensitive: 'item' sorts
+    // between 'HBCS' and 'MWDL', not after both of them.
+    expect(availablePaths(mixed, [], '', null)).toEqual([
+      'BYUI_extended/athletics/event',
+      'BYUI_extended/av/poster',
+      'HBCS/subject',
+      'item/name',
+      'MWDL/creators/creator',
+      'MWDL/title',
+    ]);
+  });
+
   it('still sorts alphabetically inside each group', () => {
-    const paths = availablePaths(['MWDL/title', 'MWDL/date', 'MWDL/creators/creator'], [], '');
+    const paths = availablePaths(
+      ['MWDL/title', 'MWDL/date', 'MWDL/creators/creator'], [], '', '/MWDL/title',
+    );
     expect(paths).toEqual(['MWDL/creators/creator', 'MWDL/date', 'MWDL/title']);
   });
 
   it('keeps the group order when a search narrows the list', () => {
-    expect(availablePaths(mixed, [], 'e')).toEqual([
+    expect(availablePaths(mixed, [], 'e', '/MWDL/title')).toEqual([
       'MWDL/creators/creator',
       'MWDL/title',
       'BYUI_extended/athletics/event',

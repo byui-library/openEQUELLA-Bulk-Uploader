@@ -319,7 +319,31 @@ describe('OeqClient — getCollection', () => {
   it('returns the collection when it exists on this host', async () => {
     mock.state.collections.push({ uuid: 'c1', name: 'Faculty Content', privileges: [] });
     const collection = await client.getCollection('c1');
-    expect(collection).toEqual({ uuid: 'c1', name: 'Faculty Content' });
+    // schemaUuid is '' because this collection declares no schema; the
+    // pre-flight tells that apart from a schema it could not read.
+    expect(collection).toEqual({ uuid: 'c1', name: 'Faculty Content', schemaUuid: '' });
+  });
+
+  it("carries the collection's declared schema uuid, so nothing has to configure it twice", async () => {
+    mock.state.collections.push({
+      uuid: 'c2',
+      name: 'Other Collection',
+      privileges: [],
+      schemaUuid: 's1',
+    });
+    expect((await client.getCollection('c2')).schemaUuid).toBe('s1');
+  });
+
+  it('reads a schema, parsing its declared name path and valid xpaths', async () => {
+    mock.state.schemas.push({
+      uuid: 's1',
+      namePath: '/MWDL/title',
+      paths: ['MWDL/title', 'Local/attachments/attachment'],
+    });
+    const schema = await client.getSchema('s1');
+    expect(schema.titleHeader).toBe('MWDL/title');
+    expect(schema.paths.has('Local/attachments/attachment')).toBe(true);
+    expect(schema.paths.has('Nothing/like/this')).toBe(false);
   });
 
   it('throws a non-retryable 404 ApiError when the collection does not exist on this host', async () => {

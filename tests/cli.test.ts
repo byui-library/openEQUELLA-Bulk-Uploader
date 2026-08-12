@@ -264,6 +264,7 @@ describe('runAction exit code', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
   });
 
   it('returns 0 when nothing failed, even if rows were interrupted', async () => {
@@ -328,6 +329,7 @@ describe('planAction duplicate check', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
     OEQ_AUTH_MODE: 'client_credentials',
   });
 
@@ -453,6 +455,7 @@ describe('loginAction', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: secret,
+    OEQ_COLLECTION_UUID: 'c1',
     OEQ_REDIRECT_URI: 'https://example.test/',
   });
 
@@ -605,6 +608,7 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
         OEQ_BASE_URL: mock.url,
         OEQ_CLIENT_ID: 'good-id',
         OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
         OEQ_REDIRECT_URI: redirectUri,
       },
       { tokenStore: store, openBrowser: () => {} },
@@ -647,6 +651,7 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
         OEQ_BASE_URL: mock.url,
         OEQ_CLIENT_ID: 'good-id',
         OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
         OEQ_REDIRECT_URI: redirectUri,
       },
       { tokenStore: store, openBrowser: () => {} },
@@ -697,6 +702,7 @@ describe('logoutAction', () => {
 describe('login and logout in password mode', () => {
   const passwordEnv = {
     OEQ_BASE_URL: 'https://oeq.example.edu',
+    OEQ_COLLECTION_UUID: 'c1',
     OEQ_AUTH_MODE: 'password',
     OEQ_USERNAME: 'jsmith',
     OEQ_PASSWORD: 'hunter2',
@@ -878,6 +884,7 @@ describe('stripBomFromEnvKeys', () => {
       [`${BOM}OEQ_BASE_URL`]: 'https://example.test',
       OEQ_CLIENT_ID: 'id',
       OEQ_CLIENT_SECRET: 'secret',
+      OEQ_COLLECTION_UUID: 'c1',
     };
     expect(() => loadConfig(raw)).toThrow(/OEQ_BASE_URL/);
 

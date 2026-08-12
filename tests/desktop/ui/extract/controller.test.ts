@@ -16,6 +16,7 @@ function api(over: Record<string, unknown> = {}) {
     extractPreview: vi.fn(async () => []),
     extractRun: vi.fn(async () => ({ outPath: 'C:/files/out.csv', written: 1, flagged: 0 })),
     schemaPaths: vi.fn(async () => ['MWDL/title']),
+    schemaNamePath: vi.fn(async () => '/MWDL/title'),
     listTemplates: vi.fn(async () => []),
     loadTemplate: vi.fn(async () => profile),
     openProfile: vi.fn(async () => null),

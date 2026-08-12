@@ -51,6 +51,7 @@ const { FileTokenStore } = await import('../src/core/tokenStore.js');
 
 const passwordEnv = {
   OEQ_BASE_URL: 'https://oeq.example.edu',
+  OEQ_COLLECTION_UUID: 'c1',
   OEQ_AUTH_MODE: 'password',
   OEQ_USERNAME: 'jsmith',
   OEQ_PASSWORD: 'hunter2',
@@ -114,7 +115,10 @@ describe('password mode reaches every front end', () => {
 
     const result = await planTool(
       { sheet: sheetPath, filesDir: dir, manifestPath: join(dir, 'job.json') },
-      { OEQ_BASE_URL: 'https://oeq.example.edu', OEQ_AUTH_MODE: 'password' },
+      // Collection set, credentials deliberately absent: the point of this
+      // test is WHICH credential variables get named, so the config must be
+      // complete apart from them.
+      { OEQ_BASE_URL: 'https://oeq.example.edu', OEQ_COLLECTION_UUID: 'c1', OEQ_AUTH_MODE: 'password' },
     );
 
     const out = result.content.map((c) => c.text).join('\n');

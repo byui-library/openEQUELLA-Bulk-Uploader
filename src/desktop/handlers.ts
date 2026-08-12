@@ -383,6 +383,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         collectionUuid: cfg.collectionUuid,
         schemaUuid: cfg.schemaUuid,
         itemState: args.itemState,
+        attachmentUuidPath: cfg.attachmentUuidPath,
       });
 
       // Matches the CLI: fold advisory duplicate-identifier warnings into the

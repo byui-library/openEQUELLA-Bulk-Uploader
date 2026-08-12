@@ -129,6 +129,13 @@ export interface OeqApi {
   extractRun(args: { dir: string; profile: Profile; outPath: string }): Promise<ExtractRunReport>;
   /** Every valid schema xpath, for the Add-column picker. */
   schemaPaths(): Promise<string[]>;
+  /**
+   * The xpath the schema declares as the item's name, or null if it declares
+   * none. The Add-column picker offers that path's own section first, since it
+   * holds the fields nearly every item needs. Parsed in the main process:
+   * reading the schema reaches `node:fs`, which the renderer cannot.
+   */
+  schemaNamePath(): Promise<string | null>;
   /** Templates shipped with the app, for the "start from" choice. */
   listTemplates(): Promise<{ id: string; label: string }[]>;
   /** A shipped template, validated, ready to use as the starting profile. */
@@ -204,6 +211,7 @@ export const CHANNELS = {
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',
   schemaPaths: 'oeq:schemaPaths',
+  schemaNamePath: 'oeq:schemaNamePath',
   listTemplates: 'oeq:listTemplates',
   loadTemplate: 'oeq:loadTemplate',
   openProfile: 'oeq:openProfile',

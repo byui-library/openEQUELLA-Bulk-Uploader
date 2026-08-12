@@ -48,9 +48,20 @@ describe('extract handlers', () => {
     expect(ipc.channels()).toEqual(
       expect.arrayContaining([
         'oeq:extractScan', 'oeq:extractPreview', 'oeq:extractRun', 'oeq:schemaPaths',
-        'oeq:listTemplates', 'oeq:loadTemplate',
+        'oeq:schemaNamePath', 'oeq:listTemplates', 'oeq:loadTemplate',
       ]),
     );
+  });
+
+  /**
+   * The picker leads with the section this path names. Parsed here, in the
+   * main process, because reading the schema reaches `node:fs` -- an import
+   * the sandboxed renderer cannot survive.
+   */
+  it('reports the xpath the schema declares as the item name', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    expect(await ipc.call<string | null>('oeq:schemaNamePath')).toBe('MWDL/title');
   });
 
   it('scan reports supported files, skipped files and the labels it found', async () => {

@@ -8,7 +8,11 @@ import { OeqClient } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { loadManifest, saveManifest } from '../src/core/state.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
+import { buildMetadataXml } from '../src/core/metadata.js';
 import type { Manifest } from '../src/core/types.js';
+
+/** A configured attachment-uuid path. Deliberately not any real institution's. */
+const ATTACHMENT_PATH = 'Local/attachments/attachment';
 
 let mock: MockServer;
 let client: OeqClient;
@@ -60,13 +64,35 @@ describe('runManifest', () => {
     expect(done.entries[0]!.itemUuid).toMatch(/^item-/);
   });
 
-  it('writes the attachment uuid into the metadata it sends', async () => {
+  it('writes the attachment uuid into the metadata it sends when a path is configured', async () => {
+    const path = join(dir, 'job.json');
+    const m = manifest();
+    m.attachmentUuidPath = ATTACHMENT_PATH;
+    await saveManifest(path, m);
+    await runManifest(client, path, { retryDelayMs: 1 });
+    expect(mock.state.items[0]!.metadata).toMatch(
+      /<Local><attachments><attachment>[^<]+<\/attachment>/,
+    );
+  });
+
+  /**
+   * The field is a convenience index that one institution's schema declares.
+   * Writing it anywhere else means writing to a node the collection's schema
+   * does not have -- junk at best, a failed create at worst, and neither is
+   * diagnosable from the resulting message. The attachment itself is linked
+   * through the attachment API and is unaffected either way.
+   *
+   * Asserted against the WHOLE metadata document, not just the absence of one
+   * key: a fallback path (the old hardcoded constant, say) would still satisfy
+   * "the configured path is absent".
+   */
+  it('writes no attachment-uuid field at all when no path is configured', async () => {
     const path = join(dir, 'job.json');
     await saveManifest(path, manifest());
     await runManifest(client, path, { retryDelayMs: 1 });
-    expect(mock.state.items[0]!.metadata).toMatch(
-      /<BYUI_extended><attachments><attachment>[^<]+<\/attachment>/,
-    );
+    const sent = mock.state.items[0]!.metadata;
+    expect(sent).toBe(buildMetadataXml({ 'MWDL/title': ['a.mp4'] }));
+    expect(sent).not.toMatch(/attachment/i);
   });
 
   it('skips entries already created, so re-running is safe', async () => {
@@ -141,7 +167,11 @@ describe('runManifest', () => {
 
   it('marks an entry incomplete, not created, when the server assigns a different attachment uuid', async () => {
     const path = join(dir, 'job.json');
-    await saveManifest(path, manifest());
+    const m = manifest();
+    // The row is incomplete because the metadata ALREADY SENT names the uuid
+    // we asked for. That is only true when the field was written at all.
+    m.attachmentUuidPath = ATTACHMENT_PATH;
+    await saveManifest(path, m);
     mock.state.mismatchAttachmentNext = 1;
     const summary = await runManifest(client, path, { retryDelayMs: 1 });
     expect(summary.created).toBe(1);
@@ -151,8 +181,33 @@ describe('runManifest', () => {
     expect(done.entries[0]!.status).toBe('incomplete');
     expect(done.entries[0]!.status).not.toBe('created');
     expect(done.entries[0]!.error).toBeTruthy();
+    // The message must still name the field that is now stale, so the operator
+    // knows what to correct by hand.
+    expect(done.entries[0]!.error).toContain(ATTACHMENT_PATH);
     expect(done.entries[0]!.itemUuid).toMatch(/^item-/);
     expect(done.entries[1]!.status).toBe('created');
+  });
+
+  /**
+   * With no path configured, nothing in the item's metadata references the
+   * uuid this tool asked for, so a server-assigned one leaves nothing stale.
+   * The item and its attachment are both correct. Reporting `incomplete` here
+   * would tell the operator to go and hand-correct a row that is not wrong.
+   */
+  it('records a uuid mismatch as created, not incomplete, when no path is configured', async () => {
+    const path = join(dir, 'job.json');
+    await saveManifest(path, manifest());
+    mock.state.mismatchAttachmentNext = 1;
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.created).toBe(2);
+    expect(summary.incomplete).toBe(0);
+    expect(summary.failed).toBe(0);
+    const done = await loadManifest(path);
+    expect(done.entries[0]!.status).toBe('created');
+    expect(done.entries[0]!.error).toBeUndefined();
+    // The uuid recorded is the one the server actually assigned, so the
+    // manifest still describes what exists.
+    expect(done.entries[0]!.attachmentUuid).toBeTruthy();
   });
 
   it('does not reprocess an incomplete entry on a later run (would duplicate the item)', async () => {
