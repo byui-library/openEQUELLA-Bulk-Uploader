@@ -1,0 +1,789 @@
+{
+  "uuid": "c93181f3-a443-41bf-9afe-ac9f7daf90b7",
+  "name": "BYUI_MWDL",
+  "nameStrings": {
+    "en": "BYUI_MWDL"
+  },
+  "modifiedDate": "2026-05-11T08:54:27.607-07:00",
+  "createdDate": "2012-07-25T10:04:54.817-07:00",
+  "owner": {
+    "id": "00000000-0000-0000-0000-000000000000"
+  },
+  "namePath": "/MWDL/title",
+  "descriptionPath": "/MWDL/description",
+  "definition": {
+    "xml": {
+      "item": {
+        "attachments": {
+          "attachment": {
+            "attributes": {
+              "entry": {
+                "string": {
+                  "_type": "text"
+                }
+              }
+            },
+            "type": {
+              "_indexed": true,
+              "_type": "text"
+            }
+          }
+        },
+        "viewable": {
+          "_type": "text"
+        },
+        "oai": {
+          "_type": "text",
+          "@id": {
+            "_field": true,
+            "_nested": true,
+            "_type": "text"
+          }
+        },
+        "discoverable": {
+          "_type": "text"
+        },
+        "collaborativeowners": {
+          "collaborator": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "projectId": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        }
+      },
+      "oai": {
+        "sourceRepository": {
+          "_field": true,
+          "_type": "text"
+        },
+        "sourceAttribution": {
+          "_type": "text"
+        },
+        "id": {
+          "_indexed": true,
+          "_type": "text"
+        },
+        "sourceCollection": {
+          "_field": true,
+          "_type": "text"
+        },
+        "sourceCollectionName": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        }
+      },
+      "MWDL": {
+        "date": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "extent": {
+          "_type": "text"
+        },
+        "formats": {
+          "format": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "medium": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "transcription": {
+          "_type": "text"
+        },
+        "creators": {
+          "creator": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "description": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "source": {
+          "_type": "text"
+        },
+        "isRequiredBys": {
+          "isRequiredBy": {
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "title": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "coverages": {
+          "_type": "text"
+        },
+        "relation": {
+          "_type": "text"
+        },
+        "conformsTos": {
+          "conforms_to": {
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "genres": {
+          "genre": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "rights": {
+          "cost": {
+            "_indexed": true,
+            "_type": "text"
+          },
+          "description": {
+            "_indexed": true,
+            "_type": "text"
+          },
+          "type": {
+            "_type": "text"
+          },
+          "copyrightAndOtherRestrictions": {
+            "_indexed": true,
+            "_type": "text"
+          }
+        },
+        "audiences": {
+          "audience": {
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "spatial": {
+          "_type": "text"
+        },
+        "temporal": {
+          "_type": "text"
+        },
+        "alternativeTitles": {
+          "alternativeTitle": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "coverage": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "identifier": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "types": {
+          "type": {
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "languages": {
+          "language": {
+            "_type": "text"
+          }
+        },
+        "subjects": {
+          "subject": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "conversionSpecifications": {
+          "_type": "text"
+        },
+        "abstract": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "isPartOf": {
+          "_type": "text"
+        },
+        "publisher": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "contributors": {
+          "contributor": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "tableOfContents": {
+          "_type": "text"
+        },
+        "isRequiredBy": {
+          "_field": true,
+          "_type": "text"
+        }
+      },
+      "BYUI_extended": {
+        "spori": {
+          "qr_codes": {
+            "qr_code": {
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "values": {
+            "appraised": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            },
+            "value": {
+              "_type": "text"
+            }
+          },
+          "locations": {
+            "location": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            },
+            "last_move_date": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "collection": {
+            "_field": true,
+            "_type": "text"
+          },
+          "conditions": {
+            "condition": {
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "external_urls": {
+            "external_url": {
+              "_type": "text"
+            }
+          },
+          "has_photo": {
+            "_type": "text"
+          },
+          "dimensions": {
+            "dimension": {
+              "_type": "text"
+            }
+          }
+        },
+        "attachments": {
+          "attachment": {
+            "_type": "text"
+          }
+        },
+        "accessibility": {
+          "closed_captioning": {
+            "_type": "text"
+          },
+          "transcript_available": {
+            "_type": "text"
+          },
+          "section_508_compliant": {
+            "_type": "text"
+          }
+        },
+        "year": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "dataName": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "hr": {
+          "hr_categories": {
+            "hr_category": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          }
+        },
+        "show_file_browser": {
+          "_type": "text"
+        },
+        "instruments": {
+          "instrument_family": {
+            "_type": "text"
+          },
+          "instrument_type": {
+            "_type": "text"
+          }
+        },
+        "month": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "av": {
+          "embed_code": {
+            "_field": true,
+            "_type": "text"
+          },
+          "inPoint": {
+            "_type": "text"
+          },
+          "entry_ids": {
+            "entry_id": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "outPoint": {
+            "_type": "text"
+          },
+          "resolution": {
+            "_type": "text"
+          },
+          "poster": {
+            "_type": "html"
+          },
+          "released": {
+            "_type": "text"
+          }
+        },
+        "activities": {
+          "activities_areas": {
+            "activities_area": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          }
+        },
+        "online": {
+          "toggle_media_type": {
+            "_type": "text"
+          },
+          "tags": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "equellasync": {
+          "created_with": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "athletics": {
+          "event": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "sport": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        },
+        "BYUI_information": {
+          "notes": {
+            "note": {
+              "_type": "text"
+            }
+          },
+          "assignment_types": {
+            "english_types": {
+              "composition_type": {
+                "_indexed": true,
+                "_field": true,
+                "_type": "text"
+              },
+              "literature_type": {
+                "_indexed": true,
+                "_field": true,
+                "_type": "text"
+              }
+            },
+            "assignment_type": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "module_types": {
+            "module_type": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "go_live_date": {
+            "date": {
+              "_type": "text"
+            },
+            "status": {
+              "_type": "text"
+            }
+          },
+          "special_collections": {
+            "date_digitized": {
+              "_type": "text"
+            },
+            "finding_aid": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            },
+            "date_published": {
+              "_type": "text"
+            },
+            "alumni_obituary": {
+              "death_date": {
+                "_indexed": true,
+                "_field": true,
+                "_type": "text"
+              }
+            },
+            "spc_category": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "folder_names": {
+            "folder_name": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "college_Ids": {
+            "college_id": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "department_ids": {
+            "department_id": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "delivery_modes": {
+            "delivery_mode": {
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "course_semester_year": {
+            "_type": "text"
+          },
+          "administrative_offices": {
+            "administrative_office": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "course_groups": {
+            "course_group": {
+              "_type": "text"
+            }
+          },
+          "buildings": {
+            "building": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "metadata_complete": {
+            "_type": "text"
+          },
+          "course_councils": {
+            "course_council": {
+              "_type": "text"
+            }
+          },
+          "course_names": {
+            "course_name": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "lessons": {
+            "lesson": {
+              "_field": true,
+              "_type": "text"
+            }
+          }
+        },
+        "byui_rights": {
+          "rights_contributor_name": {
+            "_type": "text"
+          },
+          "restrict_to_byui": {
+            "_field": true,
+            "_type": "text"
+          },
+          "textbook": {
+            "year": {
+              "_type": "text"
+            },
+            "author": {
+              "_type": "text"
+            },
+            "isbn": {
+              "_type": "text"
+            },
+            "page": {
+              "_type": "text"
+            },
+            "title": {
+              "_type": "text"
+            }
+          },
+          "rights_date": {
+            "_type": "text"
+          },
+          "citation": {
+            "_indexed": true,
+            "_type": "text"
+          },
+          "license_type": {
+            "_type": "text"
+          },
+          "copyright_statement": {
+            "_field": true,
+            "_type": "text"
+          },
+          "why_restricted": {
+            "_type": "text"
+          },
+          "usage": {
+            "usage_departments": {
+              "_type": "text"
+            },
+            "usage_courses": {
+              "_type": "text"
+            },
+            "usage_limitations": {
+              "_type": "text"
+            },
+            "usage_statement": {
+              "_type": "text"
+            }
+          },
+          "copyright_note": {
+            "_type": "text"
+          },
+          "copyright_concerns": {
+            "_type": "text"
+          },
+          "copyright_owner": {
+            "_type": "text"
+          },
+          "restrict_to_campus": {
+            "_type": "text"
+          },
+          "restriction": {
+            "_type": "text"
+          },
+          "fair_use": {
+            "_type": "text"
+          },
+          "creativeCommons": {
+            "license": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            },
+            "allowModifications": {
+              "_type": "text"
+            },
+            "derivative_works": {
+              "_type": "text"
+            },
+            "allowCommercialUses": {
+              "_type": "text"
+            },
+            "copyright_and_other_restrictions": {
+              "_type": "text"
+            }
+          },
+          "rights_contributor_role": {
+            "_type": "text"
+          }
+        },
+        "photography": {
+          "aperture": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "names": {
+            "last_name": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            },
+            "first_name": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "iso": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "exposure": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "last_name": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "locations": {
+            "location": {
+              "_indexed": true,
+              "_field": true,
+              "_type": "text"
+            }
+          },
+          "lens": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "camera_model": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "first_name": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          },
+          "entity": {
+            "_field": true,
+            "_type": "text"
+          },
+          "dimensions": {
+            "_indexed": true,
+            "_field": true,
+            "_type": "text"
+          }
+        }
+      },
+      "HBCS": {
+        "Event_Start_Year": {
+          "_type": "text"
+        },
+        "Revision_Date": {
+          "_type": "text"
+        },
+        "Academic_Discipline": {
+          "_indexed": true,
+          "_field": true,
+          "_type": "text"
+        },
+        "Event_End_year": {
+          "_type": "text"
+        },
+        "Gross_Revenue": {
+          "_type": "text"
+        },
+        "Geographic_Settings": {
+          "Geographic_Setting": {
+            "_type": "text"
+          }
+        },
+        "Supplementary_Materials": {
+          "_type": "text"
+        },
+        "num_employees": {
+          "_type": "text"
+        },
+        "Length": {
+          "_type": "text"
+        },
+        "Best_Seller_Flags": {
+          "Best_Seller_Flag": {
+            "_type": "text"
+          }
+        },
+        "List_Price": {
+          "_type": "text"
+        },
+        "Product_Type": {
+          "_indexed": true,
+          "_type": "text"
+        },
+        "Industry_Settings": {
+          "Industry_Setting": {
+            "_type": "text"
+          }
+        }
+      },
+      "collection": {
+        "_type": "text"
+      }
+    }
+  },
+  "citations": [],
+  "exportTransformsMap": {
+    "oai_dc": "oai_dc_limb.xsl",
+    "oai_dc_eds": "oai_dc_limb.xsl"
+  },
+  "importTransformsMap": {
+    "marktest": "MappingMapTobyui-schema.xslt",
+    "Identity Transform": "identity_transform.xsl",
+    "UEN OAI_DC": "Min-UEN.xsl",
+    "Content without Borders": "byui-cwb.xsl",
+    "LibCatalogZ3950": "libToEquella.xsl",
+    "The Internet Archives": "internetArchive2.xsl",
+    "OAI_DC_Internet_Archive_To_Equella": "ITtoEquella3.xsl"
+  },
+  "ownerUuid": "00000000-0000-0000-0000-000000000000",
+  "serializedDefinition": "<xml><oai><id search=\"true\" type=\"text\"/><sourceRepository field=\"true\" type=\"text\"/><sourceAttribution type=\"text\"/><sourceCollection field=\"true\" type=\"text\"/><sourceCollectionName field=\"true\" search=\"true\" type=\"text\"/></oai><MWDL><formats><format field=\"true\" search=\"true\" type=\"text\"/><medium field=\"true\" search=\"true\" type=\"text\"/></formats><title field=\"true\" search=\"true\" type=\"text\"/><description field=\"true\" search=\"true\" type=\"text\"/><creators><creator field=\"true\" search=\"true\" type=\"text\"/></creators><subjects><subject field=\"true\" search=\"true\" type=\"text\"/></subjects><alternativeTitles><alternativeTitle field=\"true\" search=\"true\" type=\"text\"/></alternativeTitles><contributors><contributor field=\"true\" search=\"true\" type=\"text\"/></contributors><abstract field=\"true\" search=\"true\" type=\"text\"/><conversionSpecifications type=\"text\"/><date field=\"true\" search=\"true\" type=\"text\"/><coverage field=\"true\" search=\"true\" type=\"text\"/><extent type=\"text\"/><genres><genre field=\"true\" search=\"true\" type=\"text\"/></genres><identifier field=\"true\" search=\"true\" type=\"text\"/><isPartOf type=\"text\"/><languages><language type=\"text\"/></languages><publisher field=\"true\" search=\"true\" type=\"text\"/><relation type=\"text\"/><rights><cost search=\"true\" type=\"text\"/><copyrightAndOtherRestrictions search=\"true\" type=\"text\"/><description search=\"true\" type=\"text\"/><type type=\"text\"/></rights><source type=\"text\"/><spatial type=\"text\"/><tableOfContents type=\"text\"/><temporal type=\"text\"/><transcription type=\"text\"/><types><type field=\"true\" type=\"text\"/></types><coverages type=\"text\"/><audiences><audience field=\"true\" type=\"text\"/></audiences><isRequiredBys><isRequiredBy field=\"true\" type=\"text\"/></isRequiredBys><isRequiredBy field=\"true\" type=\"text\"/><conformsTos><conforms_to field=\"true\" type=\"text\"/></conformsTos></MWDL><BYUI_extended><dataName field=\"true\" search=\"true\" type=\"text\"/><BYUI_information><delivery_modes><delivery_mode field=\"true\" type=\"text\"/></delivery_modes><department_ids><department_id field=\"true\" search=\"true\" type=\"text\"/></department_ids><college_Ids><college_id field=\"true\" search=\"true\" type=\"text\"/></college_Ids><course_groups><course_group type=\"text\"/></course_groups><course_councils><course_council type=\"text\"/></course_councils><course_names><course_name field=\"true\" search=\"true\" type=\"text\"/></course_names><course_semester_year type=\"text\"/><go_live_date><status type=\"text\"/><date type=\"text\"/></go_live_date><lessons><lesson field=\"true\" type=\"text\"/></lessons><metadata_complete type=\"text\"/><special_collections><date_published type=\"text\"/><date_digitized type=\"text\"/><finding_aid field=\"true\" search=\"true\" type=\"text\"/><alumni_obituary><death_date field=\"true\" search=\"true\" type=\"text\"/></alumni_obituary><spc_category field=\"true\" search=\"true\" type=\"text\"/></special_collections><notes><note type=\"text\"/></notes><module_types><module_type field=\"true\" search=\"true\" type=\"text\"/></module_types><assignment_types><assignment_type field=\"true\" search=\"true\" type=\"text\"/><english_types><literature_type field=\"true\" search=\"true\" type=\"text\"/><composition_type field=\"true\" search=\"true\" type=\"text\"/></english_types></assignment_types><administrative_offices><administrative_office field=\"true\" search=\"true\" type=\"text\"/></administrative_offices><folder_names><folder_name field=\"true\" search=\"true\" type=\"text\"/></folder_names><buildings><building field=\"true\" search=\"true\" type=\"text\"/></buildings></BYUI_information><accessibility><section_508_compliant type=\"text\"/><transcript_available type=\"text\"/><closed_captioning type=\"text\"/></accessibility><byui_rights><copyright_statement field=\"true\" type=\"text\"/><restrict_to_byui field=\"true\" type=\"text\"/><restrict_to_campus type=\"text\"/><why_restricted type=\"text\"/><copyright_concerns type=\"text\"/><rights_contributor_name type=\"text\"/><rights_contributor_role type=\"text\"/><rights_date type=\"text\"/><creativeCommons><allowCommercialUses type=\"text\"/><allowModifications type=\"text\"/><copyright_and_other_restrictions type=\"text\"/><derivative_works type=\"text\"/><license field=\"true\" search=\"true\" type=\"text\"/></creativeCommons><usage><usage_departments type=\"text\"/><usage_courses type=\"text\"/><usage_limitations type=\"text\"/><usage_statement type=\"text\"/></usage><textbook><isbn type=\"text\"/><page type=\"text\"/><year type=\"text\"/><title type=\"text\"/><author type=\"text\"/></textbook><copyright_owner type=\"text\"/><restriction type=\"text\"/><license_type type=\"text\"/><fair_use type=\"text\"/><copyright_note type=\"text\"/><citation search=\"true\" type=\"text\"/></byui_rights><attachments><attachment type=\"text\"/></attachments><av><inPoint type=\"text\"/><outPoint type=\"text\"/><released type=\"text\"/><embed_code field=\"true\" type=\"text\"/><resolution type=\"text\"/><poster type=\"html\"/><entry_ids><entry_id field=\"true\" search=\"true\" type=\"text\"/></entry_ids></av><photography><camera_model field=\"true\" search=\"true\" type=\"text\"/><iso field=\"true\" search=\"true\" type=\"text\"/><aperture field=\"true\" search=\"true\" type=\"text\"/><exposure field=\"true\" search=\"true\" type=\"text\"/><dimensions field=\"true\" search=\"true\" type=\"text\"/><lens field=\"true\" search=\"true\" type=\"text\"/><entity field=\"true\" type=\"text\"/><locations><location field=\"true\" search=\"true\" type=\"text\"/></locations><names><first_name field=\"true\" search=\"true\" type=\"text\"/><last_name field=\"true\" search=\"true\" type=\"text\"/></names><last_name field=\"true\" search=\"true\" type=\"text\"/><first_name field=\"true\" search=\"true\" type=\"text\"/></photography><instruments><instrument_family type=\"text\"/><instrument_type type=\"text\"/></instruments><equellasync><created_with field=\"true\" search=\"true\" type=\"text\"/></equellasync><hr><hr_categories><hr_category field=\"true\" search=\"true\" type=\"text\"/></hr_categories></hr><show_file_browser type=\"text\"/><online><toggle_media_type type=\"text\"/><tags field=\"true\" search=\"true\" type=\"text\"/></online><activities><activities_areas><activities_area field=\"true\" search=\"true\" type=\"text\"/></activities_areas></activities><spori><locations><location field=\"true\" search=\"true\" type=\"text\"/><last_move_date field=\"true\" search=\"true\" type=\"text\"/></locations><values><value type=\"text\"/><appraised field=\"true\" search=\"true\" type=\"text\"/></values><dimensions><dimension type=\"text\"/></dimensions><qr_codes><qr_code field=\"true\" type=\"text\"/></qr_codes><has_photo type=\"text\"/><external_urls><external_url type=\"text\"/></external_urls><conditions><condition field=\"true\" type=\"text\"/></conditions><collection field=\"true\" type=\"text\"/></spori><athletics><event field=\"true\" search=\"true\" type=\"text\"/><sport field=\"true\" search=\"true\" type=\"text\"/></athletics><month field=\"true\" search=\"true\" type=\"text\"/><year field=\"true\" search=\"true\" type=\"text\"/></BYUI_extended><HBCS><Revision_Date type=\"text\"/><Product_Type search=\"true\" type=\"text\"/><Geographic_Settings><Geographic_Setting type=\"text\"/></Geographic_Settings><Industry_Settings><Industry_Setting type=\"text\"/></Industry_Settings><Gross_Revenue type=\"text\"/><Event_Start_Year type=\"text\"/><Event_End_year type=\"text\"/><Academic_Discipline field=\"true\" search=\"true\" type=\"text\"/><Length type=\"text\"/><List_Price type=\"text\"/><Supplementary_Materials type=\"text\"/><Best_Seller_Flags><Best_Seller_Flag type=\"text\"/></Best_Seller_Flags><num_employees type=\"text\"/></HBCS><item><oai type=\"text\"><id attribute=\"true\" field=\"true\" type=\"text\"/></oai><attachments><attachment><type search=\"true\" type=\"text\"/><attributes><entry><string type=\"text\"/></entry></attributes></attachment></attachments><collaborativeowners><collaborator field=\"true\" search=\"true\" type=\"text\"/></collaborativeowners><discoverable type=\"text\"/><viewable type=\"text\"/><projectId field=\"true\" search=\"true\" type=\"text\"/></item><collection type=\"text\"/></xml>",
+  "links": {
+    "self": "https://content.byui.edu/api/schema/c93181f3-a443-41bf-9afe-ac9f7daf90b7"
+  }
+}
