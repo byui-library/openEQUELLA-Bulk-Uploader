@@ -60,21 +60,22 @@ export const ATTACHMENT_COLUMN = 'attachment name';
 /** Field that must receive the real attachment uuid, not the filename. */
 export const ATTACHMENT_UUID_XPATH = 'BYUI_extended/attachments/attachment';
 
-/**
- * The path BYU-Idaho's schema declares as the item name.
+/*
+ * There is deliberately NO default title xpath here.
  *
- * A FALLBACK, not a fact. It applies only to a hand-made spreadsheet with no
- * schema behind it. Anything that can reach an instance -- or even a local
- * schema export -- must read the declared path instead: `parseSchema` in
+ * `MWDL/title` used to live at this spot, and hardcoding it is what made
+ * duplicate detection silently blind anywhere but BYU-Idaho: the `where`
+ * clause matched nothing, so every row came back clean from a check that never
+ * looked. It was briefly kept as a "fallback for a hand-made spreadsheet",
+ * then removed once nothing referenced it -- a fallback nobody uses is just an
+ * attractive nuisance, and `noUnusedLocals` is off here so nothing would flag
+ * it.
+ *
+ * The path is READ, from whichever source is available: `parseSchema` in
  * discovery.ts for the REST representation, `extractItemNamePath` in schema.ts
- * for an _entity.xml export.
- *
- * Hardcoding this is what made duplicate detection silently blind anywhere but
- * BYU-Idaho: the `where` clause matched nothing, so every row came back clean
- * from a check that never looked. See findDuplicates -- an unknown title path
- * is `could-not-check`, never `clean`, and never this value.
+ * for an `_entity.xml` export. When neither declares one, the answer is
+ * `could-not-check` (see findDuplicates) -- never a guess, and never `clean`.
  */
-export const DEFAULT_TITLE_XPATH = 'MWDL/title';
 
 /**
  * How this tool decides two filenames are the same file.
