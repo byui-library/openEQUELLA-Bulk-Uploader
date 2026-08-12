@@ -28,8 +28,10 @@ import type { OeqApi, RunProgress } from './ipc.js';
  * match -- there is no automated check tying the two together.
  */
 const CHANNELS = {
+  listInstances: 'oeq:listInstances',
+  credentialsDropped: 'oeq:credentialsDropped',
   hasSettings: 'oeq:hasSettings',
-  saveSettings: 'oeq:saveSettings',
+  saveInstance: 'oeq:saveInstance',
   clearSettings: 'oeq:clearSettings',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',
@@ -62,8 +64,10 @@ const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
 const api: OeqApi = {
+  listInstances: () => invoke(CHANNELS.listInstances),
+  credentialsDropped: () => invoke(CHANNELS.credentialsDropped),
   hasSettings: (instanceId) => invoke(CHANNELS.hasSettings, instanceId),
-  saveSettings: (instanceId, s) => invoke(CHANNELS.saveSettings, instanceId, s),
+  saveInstance: (instance, s) => invoke(CHANNELS.saveInstance, instance, s),
   clearSettings: () => invoke(CHANNELS.clearSettings),
   signIn: (instanceId) => invoke(CHANNELS.signIn, instanceId),
   signOut: () => invoke(CHANNELS.signOut),

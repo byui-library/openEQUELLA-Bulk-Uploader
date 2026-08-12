@@ -224,6 +224,17 @@ button.link-button:hover:not(:disabled) {
   font-weight: 600;
 }
 
+/* Something the operator needs to READ before filling the form in -- not a
+   failure, so not `.error`, but not skippable either. Setup's explanation of
+   why credentials from an older version are gone is the one that matters:
+   without it the blank form reads as a broken app (ui/setupNotice.ts). */
+.notice {
+  background: var(--panel-bg);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+}
+
 .muted,
 .hint {
   color: var(--muted);

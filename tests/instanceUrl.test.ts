@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normaliseInstanceUrl } from '../src/core/instanceUrl.js';
+import { normaliseInstanceUrl, instanceKey } from '../src/core/instanceUrl.js';
 
 describe('normaliseInstanceUrl', () => {
   it('strips trailing slashes so callers can concatenate paths', () => {
@@ -49,5 +49,31 @@ describe('normaliseInstanceUrl', () => {
     expect(normaliseInstanceUrl('https://library.example.edu/oeq/')).toBe(
       'https://library.example.edu/oeq',
     );
+  });
+});
+
+describe('instanceKey', () => {
+  /**
+   * The key an instance's credentials are stored under (desktop/secrets.ts).
+   * It is DERIVED from the normalised address rather than typed, so two
+   * spellings of one site cannot end up as two entries -- which would mean
+   * the operator retyping a client secret for a site they had already
+   * configured, and two copies of it drifting apart afterwards.
+   */
+  it('gives one key to two spellings of the same address', () => {
+    expect(instanceKey('https://oeq.example.edu/')).toBe(instanceKey('https://oeq.example.edu'));
+    expect(instanceKey('  https://oeq.example.edu///  ')).toBe(instanceKey('https://oeq.example.edu'));
+  });
+
+  it('keeps different sites apart', () => {
+    expect(instanceKey('https://a.example.edu')).not.toBe(instanceKey('https://b.example.edu'));
+    // A path prefix is part of the address, not decoration: openEQUELLA can
+    // be hosted under one, and two such sites can share a host.
+    expect(instanceKey('https://x.example.edu/oeq')).not.toBe(instanceKey('https://x.example.edu'));
+  });
+
+  it('refuses an address normaliseInstanceUrl refuses, rather than keying off a bad one', () => {
+    expect(() => instanceKey('http://oeq.example.edu')).toThrow(/https/i);
+    expect(() => instanceKey('   ')).toThrow(/Enter the address/i);
   });
 });

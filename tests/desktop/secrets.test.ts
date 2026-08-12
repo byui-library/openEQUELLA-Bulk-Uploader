@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SecretStore, EncryptedTokenStore, type Cipher } from '../../src/desktop/secrets.js';
+import { instanceKey } from '../../src/core/instanceUrl.js';
 import type { StoredToken } from '../../src/core/tokenStore.js';
 
 // Stand-in for Electron's safeStorage. Reversible, not secure -- the point is
@@ -23,6 +24,10 @@ const fakeCipher: Cipher = {
   decrypt: (b) => Buffer.from(b.toString('utf8'), 'base64').toString('utf8'),
 };
 
+// Two sites the operator added themselves. Nothing ships knowing either one.
+const LIVE = 'https://oeq.example.edu';
+const SANDBOX = 'https://oeq-test.example.edu';
+
 let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'oeq-secrets-'));
@@ -31,144 +36,132 @@ beforeEach(async () => {
 describe('SecretStore', () => {
   it('round-trips settings for one instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings('production', {
+    const inst = await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE },
+    );
+    expect(await s.loadSettings(inst.id)).toEqual({
       clientId: 'cid',
       clientSecret: 'shhh',
-      redirectUri: 'https://content.byui.edu',
+      redirectUri: LIVE,
     });
-    const got = await s.loadSettings('production');
-    expect(got).toEqual({ clientId: 'cid', clientSecret: 'shhh', redirectUri: 'https://content.byui.edu' });
   });
 
-  // The entire bug this feature fixes: the redirect URI is registered per
-  // OAuth client by an administrator and is not derivable -- production has
-  // no trailing slash, a dedicated test client might or might not. So the
-  // store must round-trip whatever exact string was saved, verbatim,
-  // including the presence or absence of a trailing slash.
+  // The entry is keyed by the NORMALISED address, so an operator who types
+  // the same site with a trailing slash on Tuesday edits Monday's entry
+  // instead of creating a second one that then drifts from it.
+  it('keys an instance by its normalised address, so two spellings are one entry', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    const first = await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE },
+    );
+    const second = await s.saveInstance(
+      { label: 'Live', baseUrl: `${LIVE}/` },
+      { clientId: 'cid-2', clientSecret: 'shhh-2', redirectUri: LIVE },
+    );
+
+    expect(second.id).toBe(first.id);
+    expect(second.id).toBe(instanceKey(LIVE));
+    expect(second.baseUrl).toBe(LIVE);
+    expect(await s.listInstances()).toHaveLength(1);
+    expect((await s.loadSettings(instanceKey(`${LIVE}/`)))?.clientId).toBe('cid-2');
+  });
+
+  it('labels an instance with its host when the operator names it nothing', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    const inst = await s.saveInstance(
+      { label: '   ', baseUrl: LIVE },
+      { clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE },
+    );
+    expect(inst.label).toBe('oeq.example.edu');
+    expect((await s.listInstances())[0]?.label).toBe('oeq.example.edu');
+  });
+
+  // The redirect URI is registered per OAuth client by an administrator and
+  // is NOT derivable from the base url -- one client has a trailing slash,
+  // another does not. This exact value has been guessed wrong twice in this
+  // project, so the store must round-trip whatever string was saved,
+  // verbatim, including the presence or absence of that slash.
   it('round-trips a redirectUri WITH a trailing slash and one WITHOUT, verbatim', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings('production', {
-      clientId: 'prod-id',
-      clientSecret: 'prod-secret',
-      redirectUri: 'https://content.byui.edu',
-    });
-    await s.saveSettings('test', {
-      clientId: 'test-id',
-      clientSecret: 'test-secret',
-      redirectUri: 'https://content-test.byui.edu/',
-    });
-
-    expect((await s.loadSettings('production'))?.redirectUri).toBe('https://content.byui.edu');
-    expect((await s.loadSettings('test'))?.redirectUri).toBe('https://content-test.byui.edu/');
-  });
-
-  // Migration: entries written before redirectUri existed (this project's
-  // very first per-instance credential store, commit f31505b) have no
-  // redirectUri key at all. Forcing re-entry would be the THIRD time today
-  // the operator has had to retype credentials -- so a missing value must
-  // yield a sensible default (the instance's own base URL, no trailing
-  // slash) instead of null/undefined or an empty string.
-  it('a stored entry lacking redirectUri (pre-migration) yields the base-url default, per instance', async () => {
-    const path = join(dir, 'settings.enc');
-    const s = new SecretStore(path, fakeCipher);
-    const oldBlob = fakeCipher.encrypt(
-      JSON.stringify({
-        version: 2,
-        instances: {
-          production: { clientId: 'prod-id', clientSecret: 'prod-secret' },
-          test: { clientId: 'test-id', clientSecret: 'test-secret' },
-        },
-      }),
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'live-id', clientSecret: 'live-secret', redirectUri: LIVE },
     );
-    await writeFile(path, oldBlob);
+    await s.saveInstance(
+      { label: 'Sandbox', baseUrl: SANDBOX },
+      { clientId: 'sandbox-id', clientSecret: 'sandbox-secret', redirectUri: `${SANDBOX}/` },
+    );
 
-    expect(await s.loadSettings('production')).toEqual({
-      clientId: 'prod-id',
-      clientSecret: 'prod-secret',
-      redirectUri: 'https://content.byui.edu',
-    });
-    expect(await s.loadSettings('test')).toEqual({
-      clientId: 'test-id',
-      clientSecret: 'test-secret',
-      redirectUri: 'https://content-test.byui.edu',
-    });
+    expect((await s.loadSettings(instanceKey(LIVE)))?.redirectUri).toBe(LIVE);
+    expect((await s.loadSettings(instanceKey(SANDBOX)))?.redirectUri).toBe(`${SANDBOX}/`);
   });
 
   it('returns null when nothing is stored for that instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    expect(await s.loadSettings('production')).toBeNull();
-    expect(await s.loadSettings('test')).toBeNull();
+    expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
+    expect(await s.loadInstance(instanceKey(LIVE))).toBeNull();
+    expect(await s.listInstances()).toEqual([]);
   });
 
-  // The bug this whole change fixes: production and test use different OAuth
-  // clients, so saving one instance's credentials must never clobber or leak
-  // into the other's.
+  // The bug the per-instance store exists to fix: two sites use different
+  // OAuth clients, so saving one instance's credentials must never clobber
+  // or leak into the other's.
   it('saving one instance leaves the other intact', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings('production', {
-      clientId: 'prod-id',
-      clientSecret: 'prod-secret',
-      redirectUri: 'https://content.byui.edu',
-    });
-    await s.saveSettings('test', {
-      clientId: 'test-id',
-      clientSecret: 'test-secret',
-      redirectUri: 'https://content-test.byui.edu/',
-    });
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'live-id', clientSecret: 'live-secret', redirectUri: LIVE },
+    );
+    await s.saveInstance(
+      { label: 'Sandbox', baseUrl: SANDBOX },
+      { clientId: 'sandbox-id', clientSecret: 'sandbox-secret', redirectUri: `${SANDBOX}/` },
+    );
 
-    expect(await s.loadSettings('production')).toEqual({
-      clientId: 'prod-id',
-      clientSecret: 'prod-secret',
-      redirectUri: 'https://content.byui.edu',
+    // Re-saving one must not disturb the other's entry.
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'live-id-2', clientSecret: 'live-secret-2', redirectUri: LIVE },
+    );
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
+      clientId: 'live-id-2',
+      clientSecret: 'live-secret-2',
+      redirectUri: LIVE,
     });
-    expect(await s.loadSettings('test')).toEqual({
-      clientId: 'test-id',
-      clientSecret: 'test-secret',
-      redirectUri: 'https://content-test.byui.edu/',
+    expect(await s.loadSettings(instanceKey(SANDBOX))).toEqual({
+      clientId: 'sandbox-id',
+      clientSecret: 'sandbox-secret',
+      redirectUri: `${SANDBOX}/`,
     });
-
-    // Re-saving production must not disturb test's entry.
-    await s.saveSettings('production', {
-      clientId: 'prod-id-2',
-      clientSecret: 'prod-secret-2',
-      redirectUri: 'https://content.byui.edu',
-    });
-    expect(await s.loadSettings('production')).toEqual({
-      clientId: 'prod-id-2',
-      clientSecret: 'prod-secret-2',
-      redirectUri: 'https://content.byui.edu',
-    });
-    expect(await s.loadSettings('test')).toEqual({
-      clientId: 'test-id',
-      clientSecret: 'test-secret',
-      redirectUri: 'https://content-test.byui.edu/',
-    });
+    expect((await s.listInstances()).map((i) => i.baseUrl).sort()).toEqual([SANDBOX, LIVE].sort());
   });
 
   it('hasSettings reflects only the requested instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    expect(await s.hasSettings('production')).toBe(false);
-    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x', redirectUri: 'https://content.byui.edu' });
-    expect(await s.hasSettings('production')).toBe(true);
-    expect(await s.hasSettings('test')).toBe(false);
+    expect(await s.hasSettings(instanceKey(LIVE))).toBe(false);
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'cid', clientSecret: 'x', redirectUri: LIVE },
+    );
+    expect(await s.hasSettings(instanceKey(LIVE))).toBe(true);
+    expect(await s.hasSettings(instanceKey(SANDBOX))).toBe(false);
   });
 
   it('never writes either instance secret in plaintext', async () => {
     const path = join(dir, 'settings.enc');
     const s = new SecretStore(path, fakeCipher);
-    await s.saveSettings('production', {
-      clientId: 'cid',
-      clientSecret: 'sup3rs3cretProd',
-      redirectUri: 'https://content.byui.edu',
-    });
-    await s.saveSettings('test', {
-      clientId: 'cid2',
-      clientSecret: 'sup3rs3cretTest',
-      redirectUri: 'https://content-test.byui.edu/',
-    });
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'cid', clientSecret: 'sup3rs3cretLive', redirectUri: LIVE },
+    );
+    await s.saveInstance(
+      { label: 'Sandbox', baseUrl: SANDBOX },
+      { clientId: 'cid2', clientSecret: 'sup3rs3cretSandbox', redirectUri: SANDBOX },
+    );
     const raw = await readFile(path, 'utf8');
-    expect(raw).not.toContain('sup3rs3cretProd');
-    expect(raw).not.toContain('sup3rs3cretTest');
+    expect(raw).not.toContain('sup3rs3cretLive');
+    expect(raw).not.toContain('sup3rs3cretSandbox');
   });
 
   it('treats a corrupt blob as absent rather than throwing', async () => {
@@ -180,64 +173,179 @@ describe('SecretStore', () => {
         throw new Error('bad blob');
       },
     });
-    expect(await s.loadSettings('production')).toBeNull();
-    expect(await s.loadSettings('test')).toBeNull();
+    expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
+    expect(await s.listInstances()).toEqual([]);
+    // Nothing was ever read, so nothing can honestly be reported as dropped.
+    // Setup's notice claims a specific thing happened to the operator's
+    // credentials; a blob we could not decrypt is not evidence of it.
+    expect(await s.credentialsDropped()).toBe(false);
   });
 
-  // Migration decision: a store written by the old single-pair format (a
-  // flat `{clientId, clientSecret}` object, with no `version`/`instances`
-  // wrapper) is indistinguishable from "which instance was this for?" -- the
-  // old format never recorded that. Guessing wrong would silently send one
-  // instance's client_id to the other, which is exactly the bug this change
-  // fixes. So an unrecognised shape (old format OR anything else we don't
-  // understand) is treated as "no credentials saved for either instance" --
-  // the operator re-enters them once, which is a minor inconvenience, never
-  // a silently wrong credential.
-  it('treats an old-format (pre-migration) store as no credentials for either instance', async () => {
+  /**
+   * The clean break, settled 2026-08-12. `version: 2` keyed credentials by
+   * the literal names 'production' and 'test' -- BYU-Idaho's two instances,
+   * hardcoded in the shipped app. Instances are now the operator's own, keyed
+   * by address, so there is no honest way to say which site a v2 entry
+   * belonged to. Guessing would send one site's client_id to another, which
+   * is the failure this store has always refused to risk.
+   */
+  it('discards a version 2 store outright rather than rekeying it', async () => {
     const path = join(dir, 'settings.enc');
     const s = new SecretStore(path, fakeCipher);
-    // Write the OLD flat shape directly, bypassing the new saveSettings.
-    const oldBlob = fakeCipher.encrypt(JSON.stringify({ clientId: 'old-id', clientSecret: 'old-secret' }));
-    await writeFile(path, oldBlob);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 2,
+          instances: {
+            production: { clientId: 'prod-id', clientSecret: 'prod-secret', redirectUri: LIVE },
+            test: { clientId: 'test-id', clientSecret: 'test-secret', redirectUri: SANDBOX },
+          },
+        }),
+      ),
+    );
 
+    expect(await s.listInstances()).toEqual([]);
     expect(await s.loadSettings('production')).toBeNull();
     expect(await s.loadSettings('test')).toBeNull();
-
-    // And saving one instance afterwards must not resurrect the old pair
-    // under the other instance.
-    await s.saveSettings('production', {
-      clientId: 'new-id',
-      clientSecret: 'new-secret',
-      redirectUri: 'https://content.byui.edu',
-    });
-    expect(await s.loadSettings('production')).toEqual({
-      clientId: 'new-id',
-      clientSecret: 'new-secret',
-      redirectUri: 'https://content.byui.edu',
-    });
-    expect(await s.loadSettings('test')).toBeNull();
+    expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
   });
 
-  it('clear() wipes both instances', async () => {
+  /**
+   * Discarding silently would leave the operator staring at an empty Setup
+   * form that reads as a broken app. The store has to be able to say that it
+   * found credentials and dropped them -- that sentence is the whole cost of
+   * the clean break.
+   */
+  it('reports that a version 2 store was found and dropped', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 2,
+          instances: { production: { clientId: 'prod-id', clientSecret: 'prod-secret' } },
+        }),
+      ),
+    );
+    expect(await s.credentialsDropped()).toBe(true);
+  });
+
+  it('reports nothing dropped on a fresh install, which has nothing to explain', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.saveSettings('production', { clientId: 'cid', clientSecret: 'x', redirectUri: 'https://content.byui.edu' });
-    await s.saveSettings('test', { clientId: 'cid2', clientSecret: 'y', redirectUri: 'https://content-test.byui.edu/' });
+    expect(await s.credentialsDropped()).toBe(false);
+  });
+
+  it('stops reporting a drop once the operator has saved credentials again', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({ version: 2, instances: { production: { clientId: 'a', clientSecret: 'b' } } }),
+      ),
+    );
+    expect(await s.credentialsDropped()).toBe(true);
+
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE },
+    );
+    // The v2 blob is gone from disk now, so the notice has nothing left to
+    // explain and must not follow the operator around.
+    expect(await s.credentialsDropped()).toBe(false);
+  });
+
+  // The oldest format of all: a flat, unkeyed `{clientId, clientSecret}` pair
+  // that never recorded which site it belonged to. Same call as for v2 --
+  // treated as no credentials at all rather than guessed at.
+  it('treats an old single-pair store as no credentials, and says it dropped them', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(path, fakeCipher.encrypt(JSON.stringify({ clientId: 'old-id', clientSecret: 'old-secret' })));
+
+    expect(await s.listInstances()).toEqual([]);
+    expect(await s.credentialsDropped()).toBe(true);
+
+    // And saving an instance afterwards must not resurrect the old pair.
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'new-id', clientSecret: 'new-secret', redirectUri: LIVE },
+    );
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
+      clientId: 'new-id',
+      clientSecret: 'new-secret',
+      redirectUri: LIVE,
+    });
+    expect(await s.listInstances()).toHaveLength(1);
+  });
+
+  // A hand-edited or half-written entry is not a usable credential. Filling
+  // the gap in would mean inventing a redirect_uri, and an invented one
+  // reaches openEQUELLA as a mismatch the operator cannot diagnose.
+  it('ignores an entry missing any required field rather than filling it in', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {
+            [instanceKey(LIVE)]: { label: 'Live', baseUrl: LIVE, clientId: 'cid', clientSecret: 'x' },
+            [instanceKey(SANDBOX)]: {
+              label: 'Sandbox',
+              baseUrl: SANDBOX,
+              clientId: 'cid2',
+              clientSecret: 'y',
+              redirectUri: SANDBOX,
+            },
+          },
+        }),
+      ),
+    );
+    expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
+    expect(await s.loadSettings(instanceKey(SANDBOX))).not.toBeNull();
+  });
+
+  it('clear() wipes every instance', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { clientId: 'cid', clientSecret: 'x', redirectUri: LIVE },
+    );
+    await s.saveInstance(
+      { label: 'Sandbox', baseUrl: SANDBOX },
+      { clientId: 'cid2', clientSecret: 'y', redirectUri: SANDBOX },
+    );
     await s.clear();
-    expect(await s.loadSettings('production')).toBeNull();
-    expect(await s.loadSettings('test')).toBeNull();
+    expect(await s.listInstances()).toEqual([]);
+    expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
+    expect(await s.loadSettings(instanceKey(SANDBOX))).toBeNull();
   });
 
   it('refuses to save when encryption is unavailable', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), { ...fakeCipher, isAvailable: () => false });
     await expect(
-      s.saveSettings('production', { clientId: 'a', clientSecret: 'b', redirectUri: 'https://content.byui.edu' }),
+      s.saveInstance({ label: 'Live', baseUrl: LIVE }, { clientId: 'a', clientSecret: 'b', redirectUri: LIVE }),
     ).rejects.toThrow(/encryption/i);
+  });
+
+  it('refuses an address that is not a usable openEQUELLA site', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await expect(
+      s.saveInstance(
+        { label: 'Live', baseUrl: 'http://oeq.example.edu' },
+        { clientId: 'a', clientSecret: 'b', redirectUri: 'http://oeq.example.edu' },
+      ),
+    ).rejects.toThrow(/https/i);
   });
 });
 
 describe('EncryptedTokenStore', () => {
-  const baseUrl = 'https://content-test.byui.edu';
-  const otherBaseUrl = 'https://content.byui.edu';
+  const baseUrl = SANDBOX;
+  const otherBaseUrl = LIVE;
 
   const token: StoredToken = { accessToken: 'tok-abc', baseUrl };
 

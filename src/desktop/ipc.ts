@@ -6,30 +6,36 @@ import type { ExtractedRow } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
 
 export interface InstanceChoice {
-  id: 'production' | 'test';
+  /** `instanceKey` of the base url -- see core/instanceUrl.ts. */
+  id: string;
   label: string;
   baseUrl: string;
 }
 
 /**
- * Both instances are declared here rather than typed by the user. The
- * collection uuid is byte-identical on test and production, so the base url is
- * the ONLY thing distinguishing them -- a free-text field would be a footgun.
+ * Instances that ship WITH the app. There are none, and that is the point:
+ * this list used to declare BYU-Idaho's production and test addresses, and a
+ * tool handed to another institution must not arrive knowing them. An
+ * operator adds their own site on Setup and it is remembered per Windows
+ * account (secrets.ts). `listInstances` below is where the app's real list
+ * comes from.
+ *
+ * The empty literal and its mirror in ui/instances.ts are kept rather than
+ * deleted: they are the mechanism by which anything ever shipped would reach
+ * both the main process and the sandboxed renderer, and
+ * tests/desktop/ui/instances.test.ts is the tripwire that stops the two
+ * copies drifting.
  *
  * `redirectUri` is deliberately NOT a field here. It used to be, hard-coded
- * per instance -- and been guessed wrong TWICE in this project: production
- * has no trailing slash, one test OAuth client had one, the operator's next
- * dedicated test client doesn't. It is registered per OAuth client by an
- * administrator and is not derivable from the base url at all, so it is now
- * per-instance STORED CONFIGURATION, collected in Setup alongside the client
- * ID/secret and persisted in secrets.ts's `Settings` (see that module's doc
- * comment for the migration story). `buildConfig` (session.ts) reads it from
- * there, never from here.
+ * per instance -- and been guessed wrong TWICE in this project: one OAuth
+ * client's registered value has no trailing slash, another's does. It is
+ * registered per OAuth client by an administrator and is not derivable from
+ * the base url at all, so it is per-instance STORED CONFIGURATION, collected
+ * in Setup alongside the client ID/secret and persisted in secrets.ts's
+ * `Settings` (see that module's doc comment). `buildConfig` (session.ts)
+ * reads it from there, never from here.
  */
-export const INSTANCES: InstanceChoice[] = [
-  { id: 'production', label: 'Production', baseUrl: 'https://content.byui.edu' },
-  { id: 'test', label: 'Test', baseUrl: 'https://content-test.byui.edu' },
-];
+export const INSTANCES: InstanceChoice[] = [];
 
 export interface ColumnReport {
   header: string;
@@ -73,11 +79,25 @@ export interface RunReport {
 }
 
 export interface OeqApi {
+  /** Every instance the operator has added, newest state from disk. Empty on a fresh install. */
+  listInstances(): Promise<InstanceChoice[]>;
+  /**
+   * Whether credentials written by an older version of the store were found
+   * and discarded on this launch, so Setup can explain the blank form rather
+   * than looking broken. See secrets.ts's `credentialsDropped`.
+   */
+  credentialsDropped(): Promise<boolean>;
   hasSettings(instanceId: string): Promise<boolean>;
-  saveSettings(
-    instanceId: string,
+  /**
+   * Add or update one instance and its credentials. The address comes from
+   * the operator; the id is derived from it in the main process (one rule for
+   * what an address's key is) and returned, so the caller can select what it
+   * just saved.
+   */
+  saveInstance(
+    instance: { label: string; baseUrl: string },
     s: { clientId: string; clientSecret: string; redirectUri: string },
-  ): Promise<void>;
+  ): Promise<InstanceChoice>;
   clearSettings(): Promise<void>;
 
   signIn(instanceId: string): Promise<CurrentUser>;
@@ -190,8 +210,10 @@ export interface ExtractRunReport {
 }
 
 export const CHANNELS = {
+  listInstances: 'oeq:listInstances',
+  credentialsDropped: 'oeq:credentialsDropped',
   hasSettings: 'oeq:hasSettings',
-  saveSettings: 'oeq:saveSettings',
+  saveInstance: 'oeq:saveInstance',
   clearSettings: 'oeq:clearSettings',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',

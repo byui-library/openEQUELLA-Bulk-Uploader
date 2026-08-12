@@ -164,24 +164,26 @@ describe('reportColumns', () => {
 });
 
 describe('missingCredentialsMessage', () => {
-  // The exact wording an operator sees when they pick an instance that has
-  // never had credentials saved -- it must name the instance so "no
-  // credentials" isn't ambiguous between production and test.
-  it('names Production when that instance has no saved credentials', () => {
-    expect(missingCredentialsMessage('production')).toBe(
+  // The exact wording an operator sees when they pick a site that has never
+  // had credentials saved -- it must name the site, so "no credentials" is
+  // not ambiguous between the several they may have added. It is given the
+  // LABEL rather than the id, because the label is what they picked from the
+  // dropdown; the id is the address.
+  it('names the site the operator chose', () => {
+    expect(missingCredentialsMessage('Production')).toBe(
       'No credentials saved for Production. Enter the client ID and secret for that instance in Setup.',
     );
-  });
-
-  it('names Test when that instance has no saved credentials', () => {
-    expect(missingCredentialsMessage('test')).toBe(
+    expect(missingCredentialsMessage('Test')).toBe(
       'No credentials saved for Test. Enter the client ID and secret for that instance in Setup.',
     );
   });
 
-  it('falls back to the raw id for an unrecognised instance rather than crashing', () => {
-    expect(missingCredentialsMessage('staging')).toBe(
-      'No credentials saved for staging. Enter the client ID and secret for that instance in Setup.',
+  // An operator who left the name blank gets the host as their label
+  // (secrets.ts), so there is always something to name here -- the message
+  // never degrades to a bare "no credentials".
+  it('names a host-derived label just as readably', () => {
+    expect(missingCredentialsMessage('oeq.example.edu')).toBe(
+      'No credentials saved for oeq.example.edu. Enter the client ID and secret for that instance in Setup.',
     );
   });
 });

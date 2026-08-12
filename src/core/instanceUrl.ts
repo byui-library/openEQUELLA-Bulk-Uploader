@@ -41,3 +41,23 @@ export function normaliseInstanceUrl(raw: string): string {
   }
   return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
 }
+
+/**
+ * The stable key an instance is stored under (desktop/secrets.ts).
+ *
+ * DERIVED from the address rather than typed, and derived through
+ * `normaliseInstanceUrl` specifically, so that two spellings of one site --
+ * `https://oeq.example.edu/` typed today and `https://oeq.example.edu` typed
+ * next month -- resolve to a single entry. Keying off the raw string instead
+ * would silently produce two entries for one site: the operator would be
+ * asked for a client secret they had already supplied, and the two copies
+ * would then drift, with no way to tell from the UI which one a sign-in
+ * actually used.
+ *
+ * It throws for the same reasons `normaliseInstanceUrl` does. An address that
+ * cannot be normalised has no key, and inventing one for it would store
+ * credentials under something no later lookup could reproduce.
+ */
+export function instanceKey(rawUrl: string): string {
+  return normaliseInstanceUrl(rawUrl);
+}
