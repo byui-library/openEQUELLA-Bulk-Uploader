@@ -82,7 +82,11 @@ describe('password mode reaches every front end', () => {
   });
 
   it('the desktop builds a UsernamePasswordAuth', async () => {
-    buildAuth(loadConfig(passwordEnv), new FileTokenStore(join(dir, 'token.json')));
+    buildAuth(
+      loadConfig(passwordEnv),
+      new FileTokenStore(join(dir, 'token.json')),
+      'https://oeq.example.edu',
+    );
     expect(hoisted.built).toHaveLength(1);
     expect(hoisted.built[0]).toBeInstanceOf(UsernamePasswordAuth);
   });

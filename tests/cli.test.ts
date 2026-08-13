@@ -773,6 +773,7 @@ describe('login and logout in password mode', () => {
         auth: {
           logout: async () => {
             ended.push('logout');
+            return 'ended' as const;
           },
         },
       },
@@ -796,12 +797,45 @@ describe('login and logout in password mode', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await logoutAction(
-      { tokenStore: store, auth: { logout: async () => void ended.push('logout') } },
+      {
+        tokenStore: store,
+        auth: {
+          logout: async () => {
+            ended.push('logout');
+            return 'ended' as const;
+          },
+        },
+      },
       { OEQ_AUTH_MODE: 'password' },
     );
     log.mockRestore();
 
     expect(ended).toEqual(['logout']);
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  /**
+   * THE SAME FALSE CLAIM, ONE LAYER UP. `logout()` never throws, so this
+   * command used to print "the openEQUELLA session has been ended on the
+   * server" over a PUT that was refused or never arrived. The session outlives
+   * the message, and an operator on a shared machine acts on the message.
+   */
+  it('does not claim the server session ended when the site never confirmed it', async () => {
+    const store = new FileTokenStore(join(dir, 'unconfirmed.json'));
+    const said: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((m: unknown) => {
+      said.push(String(m));
+    });
+
+    await logoutAction(
+      { tokenStore: store, auth: { logout: async () => 'unconfirmed' as const } },
+      passwordEnv,
+    );
+    log.mockRestore();
+
+    expect(said.join(' ')).not.toMatch(/has been ended on the server/);
+    expect(said.join(' ')).toMatch(/did not confirm/i);
+    // And the local half still happened, exactly as before.
     expect(await store.loadRaw()).toBeNull();
   });
 
