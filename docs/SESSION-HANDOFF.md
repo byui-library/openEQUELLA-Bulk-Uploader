@@ -47,6 +47,26 @@ institution:
   live password provider. A plain one-shot `oeq-upload logout` holds none and
   makes no request; it says so rather than claiming a logout it did not do.
 
+### The whole flow was driven by hand, end to end — 2026-08-13
+
+**The operator ran the desktop app against `content-test.byui.edu`, signed in
+with an ordinary openEQUELLA account, listed collections, chose one, and
+uploaded a real batch.** Not a unit test, not a probe: the application, doing
+its actual job, at an institution's real instance, with password sign-in.
+
+That is the first end-to-end confirmation this branch has, and it is the only
+kind that has ever caught anything here — **six defects came out of one
+screenshot of an empty dropdown**, with all 1236 tests passing throughout:
+
+1. `UsernamePasswordAuth` kept only `JSESSIONID` (below).
+2. `currentUser()` discarded `guest`, so `check` reported *"Identity ok —
+   logged in as guest"*.
+3. `parseCollections` could not tell a withheld list from an empty one.
+4. `listCollections` omitted `full=true`, so no collection carried its schema.
+5. The live-site checkbox and the attachment field were never rendered on the
+   add-a-site pass — the one pass every operator makes.
+6. The identifier pre-flight resolved nothing and said nothing.
+
 ### Password auth: VERIFIED live, 2026-08-12 — and it found a defect
 
 **Superseded.** This section used to read *"password auth is unverified
