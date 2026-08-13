@@ -875,3 +875,61 @@ describe('the way back out of Setup', () => {
     expect(calls).toEqual({ back: 1, save: 0 });
   });
 });
+
+/**
+ * The standing note under the attachment field.
+ *
+ * It exists because the operator arrived at this screen holding openEQUELLA's
+ * own sync documentation, which names `item/attachments/attachment/uuid` --
+ * and typing that here is wrong. It is not in the schema, so this screen would
+ * answer their site's documented path with "not declared", which reads as the
+ * tool being broken rather than as the path being generated elsewhere.
+ *
+ * So the note must appear WHATEVER the verdict says: the operator who most
+ * needs it is the one looking at a field that has just been filled in for them
+ * with something different from what they expected.
+ */
+describe('the sync caveat under the attachment field', () => {
+  const STATES: [string, Partial<SetupProps>][] = [
+    ['no collection chosen', {}],
+    ['schema read, field blank', { schemaPaths: ['MWDL/title'] }],
+    [
+      'filled in from the schema',
+      {
+        schemaPaths: ['BYUI_extended/attachments/attachment'],
+        fields: fields({ attachmentUuidPath: 'BYUI_extended/attachments/attachment' }),
+        attachmentPathFilled: true,
+      },
+    ],
+    [
+      'a path the schema does not declare',
+      { schemaPaths: ['MWDL/title'], fields: fields({ attachmentUuidPath: 'nope/at/all' }) },
+    ],
+  ];
+
+  for (const [state, over] of STATES) {
+    it(`is shown when ${state}`, () => {
+      expect(setupMarkup(props(over))).toContain('item/attachments/attachment/uuid');
+    });
+  }
+
+  /**
+   * The path is named as somewhere openEQUELLA generates, never as a value to
+   * enter. If it ever migrates into the verdict line -- the line that says
+   * whether what is typed is valid -- it becomes a recommendation the same
+   * screen then rejects.
+   */
+  it('names the generated path as generated, not as something to type', () => {
+    const html = setupMarkup(props({ schemaPaths: ['MWDL/title'] }));
+    expect(html).toMatch(/generated when the file is\s+attached/);
+    expect(html).toMatch(/needs nothing here/);
+    // Not inside the verdict paragraph, which is about what has been typed.
+    const verdictLine = /<p class="hint verdict[^"]*">([^<]*)</.exec(html)?.[1] ?? '';
+    expect(verdictLine).not.toContain('item/attachments/attachment/uuid');
+  });
+
+  /** The answer that settles it without needing this tool to be right. */
+  it('points at the wizard as the thing to match', () => {
+    expect(setupMarkup(props())).toMatch(/own web interface and match whatever it writes/);
+  });
+});
