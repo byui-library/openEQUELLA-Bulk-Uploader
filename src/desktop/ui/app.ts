@@ -754,9 +754,15 @@ async function handleSignIn(): Promise<void> {
  * token, and the token store holds no instance of its own (handlers.ts).
  *
  * THE SCREEN CHANGES EVEN IF THE HANDLER THROWS. The operator asked to be
- * signed out, and leaving them on a screen that says they are signed in
- * because a PUT failed would be the same lie in the other direction; the error
- * is surfaced on the sign-in screen they land on.
+ * signed out, and leaving them on a screen that says they are signed in would
+ * be the same lie in the other direction; the error is surfaced on the sign-in
+ * screen they land on.
+ *
+ * A throw here does NOT mean the logout PUT failed -- that case cannot reach
+ * this catch, and is handled in the paragraph below. This catches the
+ * unexpected: the IPC call itself rejecting, or clearing the local token store
+ * failing. Both leave the operator signed out on this machine regardless,
+ * which is why the screen still changes.
  *
  * AND IT CHANGES WHEN THE LOGOUT WAS MERELY UNCONFIRMED -- with a notice. That
  * case does not throw and never will (core/passwordAuth.ts's `logout()` is
