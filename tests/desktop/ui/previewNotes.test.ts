@@ -21,8 +21,8 @@ describe('previewNotes', () => {
   });
 
   it('names the file a note belongs to', () => {
-    expect(previewNotes([row('Brandon Lythoe Obituary.pdf', ['no date found'])])).toContain(
-      'Brandon Lythoe Obituary.pdf',
+    expect(previewNotes([row('Alden Larkspar Obituary.pdf', ['no date found'])])).toContain(
+      'Alden Larkspar Obituary.pdf',
     );
   });
 

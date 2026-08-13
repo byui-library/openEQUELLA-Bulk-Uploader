@@ -7,9 +7,9 @@
  *
  * - `[...]` is an OPTIONAL GROUP. If any placeholder inside it is empty, the
  *   whole group goes, punctuation included -- so a missing residence cannot
- *   leave `Died January 9, 2024: `.
+ *   leave `Died March 5, 2019: `.
  * - A `;`-separated CLAUSE whose placeholders are all empty is dropped
- *   entirely, so the output is never `Died January 9, 2024; ;`.
+ *   entirely, so the output is never `Died March 5, 2019; ;`.
  *
  * An unknown name is treated as empty rather than printed. A template naming a
  * column that does not exist is rejected when the profile loads (profile.ts),

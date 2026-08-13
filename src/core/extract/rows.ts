@@ -234,7 +234,7 @@ function resolve(source: Source, context: Context): Resolved {
     return {
       value: found[0] ?? '',
       // An obituary almost always names someone else's death -- "preceded in
-      // death by his wife Ruth, who passed away on March 2, 1998" appears in
+      // death by his wife Ivy, who passed away on November 8, 1994" appears in
       // nearly every one. Nothing can reliably tell whose death a sentence
       // describes, so the first is taken and the row says what else was there.
       note:
@@ -377,13 +377,13 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   }
 
   // For a templated collection there is usually one field the template exists
-  // to find. Brandon Lythoe -- the one obituary of ten with no date at all --
+  // to find. Alden Larkspar -- the one obituary of ten with no date at all --
   // was flagged only because his filename happened to be misspelled too;
   // correct the filename and the batch's single genuine failure looked clean.
   for (const column of profile.columns) {
     if (column.flagIfEmpty && (cells[column.path] ?? '') === '') {
-      // Says what to do, and that a blank may be the RIGHT answer. Brandon
-      // Lythoe's obituary states no date anywhere -- only "the early hours of
+      // Says what to do, and that a blank may be the RIGHT answer. Alden
+      // Larkspar's obituary states no date anywhere -- only "the early hours of
       // Saturday morning" -- so leaving his blank is correct, not a failure to
       // fix. A note that only reported the absence invited someone to invent a
       // value, which is the failure this whole tool is built to avoid. The

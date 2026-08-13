@@ -9,7 +9,7 @@ import { composeValue } from '../../src/core/extract/compose.js';
  */
 describe('composeValue', () => {
   it('substitutes a value', () => {
-    expect(composeValue('Died {death}', { death: 'January 9, 2024' })).toBe('Died January 9, 2024');
+    expect(composeValue('Died {death}', { death: 'March 5, 2019' })).toBe('Died March 5, 2019');
   });
 
   it('substitutes several', () => {
