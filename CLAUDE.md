@@ -38,13 +38,22 @@ never code. One ships: `templates/alumni-obituary.profile.json`.
 `feature/institution-agnostic`. Username/password sign-in, collections and
 schemas discovered from the API, an operator-managed instance list, nothing
 BYU-Idaho-specific read at runtime, and `check` grown into a compatibility
-probe. **1197 tests across 78 files**, typecheck clean, `build:desktop` clean.
+probe. **1236 tests across 79 files**, typecheck clean, `build:desktop` clean.
 Spec 1 of two; publishing the repository (licence, an outsider-facing README,
 the audit of ~196 commits of history) is spec 2 and **has not started**.
 
-**Password auth is unverified against a live instance.** BYU-Idaho's accounts
-are Okta-backed, so the one site available could not test it. Do not describe
-it as working.
+**Password auth is VERIFIED against a live instance** — 2026-08-13,
+`content-test.byui.edu`, an ordinary openEQUELLA account, driven through the
+desktop app's own stored credentials and code path: `POST /api/auth/login`
+returned 200, `currentuser` identified the real user, and all 29 contributable
+collections came back. This file previously said it was unverified and must not
+be described as working; that is superseded.
+
+**It took a defect to get there, and hand-testing is what found it.** The
+provider kept only `JSESSIONID` from the sign-in response and discarded the
+load balancer's `AWSALB`/`ROUTEID` cookies, so every request landed on a
+backend that had never seen the session — served as **guest, 200, empty list**.
+The whole test suite passed throughout. See the cookie-jar fact below.
 
 Description extraction is tiered — a stated field, then a named section
 (`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
