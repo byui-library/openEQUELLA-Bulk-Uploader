@@ -38,6 +38,7 @@
 //   5. Each attachment also carries an `md5`. Not used yet, but it would
 //      catch a renamed re-upload that a filename comparison would miss.
 import { loadConfig, createAuthProvider } from '../src/core/config.js';
+import { instanceEndpoint } from '../src/core/instanceUrl.js';
 
 const title = process.env.OEQ_PROBE_TITLE;
 if (!title) {
@@ -59,7 +60,9 @@ async function probe(label: string, clause: string): Promise<void> {
     `collections=${enc(cfg.collectionUuid)}` +
     `&where=${enc(clause)}` +
     `&info=attachment&showall=true&length=5`;
-  const res = await fetch(new URL(`/api/search?${qs}`, cfg.baseUrl), { headers });
+  // instanceEndpoint(), not `new URL(path, base)` -- the latter drops any
+  // hosting prefix on cfg.baseUrl. See src/core/instanceUrl.ts.
+  const res = await fetch(instanceEndpoint(cfg.baseUrl, `/api/search?${qs}`), { headers });
   const body = await res.text();
   console.log(`\n=== ${label}`);
   console.log(`clause: ${clause}`);

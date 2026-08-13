@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { OeqClient, escapeWhereValue } from '../src/core/client.js';
 import { parseCollections } from '../src/core/discovery.js';
@@ -523,5 +523,67 @@ describe('escapeWhereValue', () => {
 
   it('handles an empty string', () => {
     expect(escapeWhereValue('')).toBe('');
+  });
+});
+
+/**
+ * EVERY API call funnels through `OeqClient.request()`, so this one line is
+ * the whole tool's exposure to the prefix defect: `new URL(path, base)` with
+ * an absolute `path` discards the base's path, and openEQUELLA is very
+ * commonly deployed under one.
+ *
+ * These assert on the URL actually fetched, including the query string --
+ * `path` carries it already (`/api/collection?privilege=...&full=true`), so a
+ * naive fix that rebuilt the URL could drop it and break search and discovery
+ * at a prefixed site only.
+ */
+describe('OeqClient — an instance hosted under a path prefix', () => {
+  const PREFIXED = 'https://library.example.edu/oeq';
+
+  /** Enough of an AuthProvider to make a request; the header is irrelevant here. */
+  const stubAuth = {
+    getToken: async () => 'tok',
+    authHeader: async () => ({ 'X-Authorization': 'access_token=tok' }),
+    invalidate: () => {},
+  };
+
+  const captureFetch = (body: unknown): string[] => {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (input: string | URL) => {
+      seen.push(String(input));
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    return seen;
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('requests under the prefix rather than at the host root', async () => {
+    const seen = captureFetch({ username: 'jsmith', firstName: 'J', lastName: 'S', guest: false });
+    await new OeqClient(PREFIXED, stubAuth).currentUser();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.startsWith('https://library.example.edu/oeq/')).toBe(true);
+    expect(new URL(seen[0]!).pathname).toBe('/oeq/api/content/currentuser');
+  });
+
+  it('keeps the query string intact under a prefix', async () => {
+    const seen = captureFetch({ start: 0, length: 0, available: 0, results: [], resumptionToken: '' });
+    await new OeqClient(PREFIXED, stubAuth).listCollections({ privilege: 'CREATE_ITEM' });
+    const url = new URL(seen[0]!);
+    expect(url.pathname).toBe('/oeq/api/collection');
+    expect(url.searchParams.get('privilege')).toBe('CREATE_ITEM');
+    expect(url.searchParams.get('full')).toBe('true');
+    expect(url.searchParams.get('length')).toBe('100');
+  });
+
+  it('still hits the host root when the base has no prefix', async () => {
+    const seen = captureFetch({ start: 0, length: 0, available: 0, results: [], resumptionToken: '' });
+    await new OeqClient('https://oeq.example.edu', stubAuth).listCollections({});
+    expect(new URL(seen[0]!).pathname).toBe('/api/collection');
   });
 });

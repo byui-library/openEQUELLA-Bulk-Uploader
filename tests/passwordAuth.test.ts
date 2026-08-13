@@ -682,3 +682,73 @@ describe('the password never escapes', () => {
     expect(findsSecret(calls.map((c) => new URL(c).pathname))).toBe(false);
   });
 });
+
+/**
+ * openEQUELLA is very commonly deployed under a path prefix
+ * (`https://library.example.edu/equella` is the vendor's own default in many
+ * installs), and `normaliseInstanceUrl` deliberately keeps one. Every URL
+ * this class built then threw it away again, because `new URL(path, base)`
+ * with an absolute `path` replaces the base's path outright -- so at such a
+ * site sign-in, confirmation and logout all went to the host root.
+ *
+ * The assertions are on the URLs the provider actually fetches. Nothing
+ * short of that would have caught it.
+ */
+describe('UsernamePasswordAuth — an instance hosted under a path prefix', () => {
+  const PREFIXED = 'https://library.example.edu/oeq';
+
+  /** As above, but keyed to the prefixed paths. */
+  const prefixedStub = () => {
+    const calls: string[] = [];
+    const impl = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (new URL(url).pathname.endsWith('/api/content/currentuser')) return userResponse();
+      return new Response('', {
+        status: 200,
+        headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/; HttpOnly' },
+      });
+    });
+    return { impl: impl as unknown as typeof fetch, calls };
+  };
+
+  it('signs in, confirms and logs out entirely under the prefix', async () => {
+    const { impl, calls } = prefixedStub();
+    const auth = new UsernamePasswordAuth(PREFIXED, 'jsmith', 'hunter2', impl);
+    await auth.authHeader();
+    await auth.logout();
+
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      expect(call.startsWith('https://library.example.edu/oeq/')).toBe(true);
+    }
+    expect(calls.map((c) => new URL(c).pathname)).toEqual([
+      '/oeq/api/auth/login',
+      '/oeq/api/content/currentuser',
+      '/oeq/api/auth/logout',
+    ]);
+  });
+
+  it('still hits the host root when there is no prefix', async () => {
+    const { impl, calls } = loginStub();
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+    await auth.authHeader();
+    await auth.logout();
+    expect(calls.map((c) => new URL(c).pathname)).toEqual([
+      '/api/auth/login',
+      '/api/content/currentuser',
+      '/api/auth/logout',
+    ]);
+  });
+
+  it('names the prefixed endpoint when the network fails, and never the password', async () => {
+    const impl = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const auth = new UsernamePasswordAuth(PREFIXED, 'jsmith', 'hunter2', impl);
+    const err = await auth.authHeader().catch((e: unknown) => e as Error);
+    expect((err as Error).message).toContain('https://library.example.edu/oeq/api/auth/login');
+    expect((err as Error).message).not.toContain('hunter2');
+    expect((err as Error).message).not.toContain('?');
+  });
+});

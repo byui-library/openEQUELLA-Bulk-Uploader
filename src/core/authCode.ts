@@ -1,6 +1,7 @@
 import { OeqError, ApiError } from './errors.js';
 import type { AuthProvider } from './auth.js';
 import { FileTokenStore, type TokenStore } from './tokenStore.js';
+import { instanceEndpoint } from './instanceUrl.js';
 import { redactSecret } from './redact.js';
 
 /**
@@ -79,9 +80,11 @@ export class AuthorizationCodeAuth implements AuthProvider {
     this.tokenStore = tokenStore;
   }
 
-  /** The URL the operator opens in a browser to authenticate via SSO. */
+  /** The URL the operator opens in a browser to authenticate via SSO.
+   *  The ENDPOINT is resolved against the instance (prefix and all); the
+   *  `redirect_uri` below is not -- it is sent verbatim, per the class doc. */
   getAuthorizeUrl(): string {
-    const url = new URL('/oauth/authorise', this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, '/oauth/authorise');
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', this.clientId);
     url.searchParams.set('redirect_uri', this.redirectUri);
@@ -94,7 +97,7 @@ export class AuthorizationCodeAuth implements AuthProvider {
    * can use it too).
    */
   async exchangeCode(code: string): Promise<void> {
-    const url = new URL('/oauth/access_token', this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, '/oauth/access_token');
     url.searchParams.set('grant_type', 'authorization_code');
     url.searchParams.set('code', code);
     url.searchParams.set('redirect_uri', this.redirectUri);
@@ -241,9 +244,11 @@ export class AuthorizationCodeAuth implements AuthProvider {
     this.tokenStore.clearSync();
   }
 
-  /** Origin + path only -- no query string, so it can never carry the secret. */
+  /** Origin + path only -- no query string, so it can never carry the secret.
+   *  `pathname` (not `origin` alone) is what keeps a hosting prefix here: this
+   *  must name the endpoint the code actually called. */
   private safeEndpoint(): string {
-    const url = new URL('/oauth/access_token', this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, '/oauth/access_token');
     return `${url.origin}${url.pathname}`;
   }
 

@@ -32,6 +32,20 @@ const has = (name) => process.argv.includes(`--${name}`);
 
 const base = (arg('base') ?? process.env.OEQ_BASE_URL ?? '').replace(/\/+$/, '');
 
+/**
+ * The .mjs twin of `instanceEndpoint()` in src/core/instanceUrl.ts -- copied
+ * rather than imported because this script runs under plain `node`, with no
+ * build step, and cannot import TypeScript.
+ *
+ * `new URL('/api/collection', 'https://host/oeq')` answers
+ * `https://host/api/collection`: an absolute path replaces the base's path,
+ * so a hosting prefix vanishes. openEQUELLA is commonly deployed under one,
+ * and this script exists precisely to be pointed at an unfamiliar instance --
+ * exactly when that matters. Note that `--urls` below already concatenates
+ * correctly; only the live path got this wrong.
+ */
+const endpoint = (path) => new URL(path.replace(/^\/+/, ''), `${base.replace(/\/+$/, '')}/`);
+
 const collectionUuid = arg('collection') ?? process.env.OEQ_COLLECTION_UUID ?? '';
 const schemaUuid = arg('schema') ?? process.env.OEQ_SCHEMA_UUID ?? '';
 
@@ -105,7 +119,7 @@ if (!arg('user')) {
 }
 
 // --- live path: password sign-in, then three GETs ------------------------
-const loginUrl = new URL('/api/auth/login', base);
+const loginUrl = endpoint('/api/auth/login');
 loginUrl.searchParams.set('username', arg('user'));
 loginUrl.searchParams.set('password', arg('pass') ?? '');
 
@@ -132,7 +146,7 @@ if (!loginRes.ok || !jsession) {
 const headers = { Cookie: cookies.map((c) => c.split(';')[0]).join('; ') };
 const get = async (path) => {
   if (!path) return null;
-  const res = await fetch(new URL(path, base), { headers });
+  const res = await fetch(endpoint(path), { headers });
   const text = await res.text();
   try {
     return JSON.parse(text);
