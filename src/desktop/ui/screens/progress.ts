@@ -23,7 +23,7 @@ export interface ProgressProps {
  * already finished -- rather than a bare spinner the operator has to take on
  * faith.
  */
-export function renderProgress(root: HTMLElement, props: ProgressProps): void {
+export function progressMarkup(props: ProgressProps): string {
   const pct = progressPercent(props.done, props.total);
   const logItems = props.log
     .slice()
@@ -35,7 +35,7 @@ export function renderProgress(root: HTMLElement, props: ProgressProps): void {
     })
     .join('');
 
-  root.innerHTML = `
+  return `
     <section class="screen">
       <h1>Uploading…</h1>
       <p class="muted">
@@ -44,8 +44,10 @@ export function renderProgress(root: HTMLElement, props: ProgressProps): void {
       </p>
 
       <p class="progress-count">${props.done} / ${props.total}</p>
+      <!-- No style attribute here on purpose: index.html's CSP blocks inline
+           styles, so the width is assigned in renderProgress below. -->
       <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
-        <div class="progress-bar__fill" style="width: ${pct}%"></div>
+        <div class="progress-bar__fill"></div>
       </div>
 
       <p class="progress-current">
@@ -55,4 +57,23 @@ export function renderProgress(root: HTMLElement, props: ProgressProps): void {
       <ul class="progress-log">${logItems}</ul>
     </section>
   `;
+}
+
+export function renderProgress(root: HTMLElement, props: ProgressProps): void {
+  root.innerHTML = progressMarkup(props);
+
+  // The bar's width is set here, through the DOM API, rather than as a
+  // `style="width: N%"` attribute in the markup above. index.html's CSP is
+  // `default-src 'self'` with no `style-src`, so it inherits `'self'` and
+  // Chromium refuses inline style attributes -- verified in Electron against
+  // the shipped page, where setting `style="width: 42%"` on an element left
+  // `style.width` as `""`. The attribute version shipped from v0.1.0 and the
+  // bar never moved once. A CSP does not govern the DOM API, so this works,
+  // and adding `'unsafe-inline'` instead would weaken a policy that guards a
+  // UI rendering operator-supplied spreadsheet and document text.
+  //
+  // Done after the render for the same reason as every other screen's
+  // listener wiring: the element does not exist until innerHTML is assigned.
+  const fill = root.querySelector<HTMLElement>('.progress-bar__fill');
+  if (fill) fill.style.width = `${progressPercent(props.done, props.total)}%`;
 }
