@@ -7,9 +7,20 @@ import { redactSecret } from './redact.js';
  * openEQUELLA's own username/password sign-in.
  *
  * This is the default for institutions that are not behind SSO. It posts to
- * `/api/auth/login` and keeps the returned JSESSIONID, presenting it as a
- * Cookie header so `client.ts` needs no changes: the client merges whatever
- * `authHeader()` returns into every request.
+ * `/api/auth/login` and keeps EVERY cookie the response set, presenting them
+ * as a Cookie header so `client.ts` needs no changes: the client merges
+ * whatever `authHeader()` returns into every request.
+ *
+ * KEEPING THE WHOLE JAR IS NOT OPTIONAL. Measured against
+ * https://content-test.byui.edu on 2026-08-12 with a real account: the
+ * sign-in response set AWSALB, AWSALBCORS, JSESSIONID and ROUTEID. Sending
+ * JSESSIONID back on its own authenticated as `guest`; sending all four
+ * authenticated as the real user. The instance sits behind an AWS load
+ * balancer, and AWSALB/ROUTEID are the routing state that lands a request on
+ * the backend actually holding the session -- without them it reaches one
+ * that has never seen it. openEQUELLA does not answer that with a 401. It
+ * serves it as guest, 200, with empty-but-plausible data, so the failure is
+ * silent: the desktop app's collection list simply looked empty.
  *
  * SESSION EXPIRY IS NOT HANDLED HERE. A lapsed session produces a 401, and
  * client.ts already responds to a 401 by calling `invalidate()` and retrying
@@ -28,9 +39,27 @@ const LOGIN_PATH = '/api/auth/login';
 /** Confirmed in the captured schema/swagger.json. PUT, and it takes no body. */
 const LOGOUT_PATH = '/api/auth/logout';
 
+/**
+ * One established session: the cookies to send back, plus the JSESSIONID
+ * value pulled out of them.
+ *
+ * The two are kept together deliberately. They must always come from the SAME
+ * sign-in response -- a JSESSIONID paired with another session's routing
+ * cookies is worse than either alone, because it looks valid and routes to a
+ * backend that will treat it as a guest.
+ */
+interface Session {
+  /** JSESSIONID's value. Proof a session was established, and what
+   *  `getToken()` returns. */
+  readonly id: string;
+  /** Every cookie from the sign-in response, ready to use as a Cookie header:
+   *  `name=value` pairs joined by `'; '`, in the order the server set them. */
+  readonly jar: string;
+}
+
 export class UsernamePasswordAuth implements AuthProvider {
-  private session: string | null = null;
-  private inFlight: Promise<string> | null = null;
+  private session: Session | null = null;
+  private inFlight: Promise<Session> | null = null;
   /** Generation the current `inFlight` sign-in was started under. */
   private inFlightGeneration: number | null = null;
   /**
@@ -51,7 +80,22 @@ export class UsernamePasswordAuth implements AuthProvider {
     this.baseUrl = normaliseInstanceUrl(baseUrl);
   }
 
+  /**
+   * The JSESSIONID value, NOT the cookie jar.
+   *
+   * `AuthProvider.getToken()` means "the credential identifying this session"
+   * across all three providers, and under password auth that is JSESSIONID --
+   * the routing cookies alongside it identify a backend, not a session, and
+   * are meaningless to a caller. Callers use it that way: `preflight.ts` only
+   * awaits it to force a sign-in, and nothing outside this class builds a
+   * request header from it. `authHeader()` is the single place that knows a
+   * session is carried by a whole jar, and it reads the jar directly.
+   */
   async getToken(): Promise<string> {
+    return (await this.getSession()).id;
+  }
+
+  private async getSession(): Promise<Session> {
     if (this.session) return this.session;
     // Collapse concurrent sign-ins into one request -- but only join one that
     // started in the current generation.
@@ -76,7 +120,7 @@ export class UsernamePasswordAuth implements AuthProvider {
     return this.inFlight;
   }
 
-  private async login(startedInGeneration: number): Promise<string> {
+  private async login(startedInGeneration: number): Promise<Session> {
     const url = new URL(LOGIN_PATH, this.baseUrl);
     url.searchParams.set('username', this.username);
     url.searchParams.set('password', this.password);
@@ -107,8 +151,12 @@ export class UsernamePasswordAuth implements AuthProvider {
       );
     }
 
-    const session = readJsessionId(res.headers);
-    if (!session) {
+    const cookies = readCookies(res.headers);
+    // JSESSIONID specifically, not merely "some cookies": a load balancer
+    // hands out AWSALB and ROUTEID to anyone, so a jar without JSESSIONID
+    // proves no session was established.
+    const id = cookies.get('JSESSIONID');
+    if (!id) {
       throw new ApiError(
         'Signed in, but the site did not return a session. ' +
           'The address may not be an openEQUELLA site.',
@@ -116,6 +164,11 @@ export class UsernamePasswordAuth implements AuthProvider {
         '',
       );
     }
+
+    const session: Session = {
+      id,
+      jar: [...cookies].map(([name, value]) => `${name}=${value}`).join('; '),
+    };
 
     // Only cache if nothing invalidated us while this sign-in was in flight.
     if (startedInGeneration === this.generation) {
@@ -135,7 +188,7 @@ export class UsernamePasswordAuth implements AuthProvider {
   }
 
   async authHeader(): Promise<Record<string, string>> {
-    return { Cookie: `JSESSIONID=${await this.getToken()}` };
+    return { Cookie: (await this.getSession()).jar };
   }
 
   invalidate(): void {
@@ -171,7 +224,10 @@ export class UsernamePasswordAuth implements AuthProvider {
     try {
       await this.fetchImpl(new URL(LOGOUT_PATH, this.baseUrl), {
         method: 'PUT',
-        headers: { Cookie: `JSESSIONID=${session}` },
+        // The whole jar, for the same reason every other request carries it:
+        // without the routing cookies the PUT reaches a backend that does not
+        // hold this session, and ends nothing.
+        headers: { Cookie: session.jar },
       });
     } catch {
       // Deliberately empty -- see the doc comment. A non-2xx response is
@@ -182,22 +238,44 @@ export class UsernamePasswordAuth implements AuthProvider {
 }
 
 /**
- * Pull JSESSIONID out of the response's Set-Cookie headers.
+ * Read every cookie the response set, as name -> value, in the order the
+ * server set them.
  *
- * `getSetCookie()` and not `get('set-cookie')`: openEQUELLA sets several
+ * `getSetCookie()` and not `get('set-cookie')`: a response sets several
  * cookies, and `get()` returns them comma-joined into one string, which both
  * defeats the `(?:^|;\s*)` anchor below and makes an individual cookie
- * impossible to isolate. `getSetCookie()` has existed since Node 19.7 and
- * this module only ever runs in a Node 22 process, so there is nothing to
- * fall back to.
+ * impossible to isolate -- an `Expires=Wed, 19 Aug 2026 ...` attribute
+ * contains a comma of its own, so the joined string cannot even be split back
+ * apart reliably. `getSetCookie()` has existed since Node 19.7 and this module
+ * only ever runs in a Node 22 process, so there is nothing to fall back to.
  *
- * The `(?:^|;\s*)` anchor is load-bearing: without it `MYJSESSIONID=nope`
- * matches and the wrong value is returned as the session.
+ * Only the leading `name=value` of each header is kept. Everything after the
+ * first `;` -- Path, Expires, HttpOnly, Secure, SameSite -- tells a BROWSER
+ * how to store the cookie and is never sent back; echoing those would turn
+ * each into a bogus cookie named `Path`, `Expires`, and so on.
+ *
+ * The decoy this must survive is `MYJSESSIONID=nope`, which a substring search
+ * for `JSESSIONID=` accepts as the session. The old code fended that off with
+ * the `(?:^|;\s*)` anchor on a JSESSIONID-specific pattern. What defeats it
+ * now is the exact-key `jar.get('JSESSIONID')` in login(): the NAME is
+ * captured and compared whole, so `MYJSESSIONID` simply is not the key looked
+ * up. That is the stronger guard, and mutating it -- not the anchor -- is what
+ * turns the decoy test red.
+ *
+ * The anchor is kept anyway. Under a single non-global `exec` it is now
+ * belt-and-braces, because leftmost-match already pins the capture to the
+ * header's opening pair; it stops earning its keep the moment someone reaches
+ * for `matchAll` to collect every pair, at which point `Path=/` and
+ * `Secure=...` would start being read as cookies. Cheap insurance against an
+ * edit that looks harmless.
  */
-function readJsessionId(headers: Headers): string | null {
+function readCookies(headers: Headers): Map<string, string> {
+  const jar = new Map<string, string>();
   for (const cookie of headers.getSetCookie()) {
-    const match = /(?:^|;\s*)JSESSIONID=([^;]+)/.exec(cookie);
-    if (match?.[1]) return match[1];
+    const match = /(?:^|;\s*)([^=;\s]+)=([^;]*)/.exec(cookie);
+    const name = match?.[1];
+    const value = match?.[2];
+    if (name && value) jar.set(name, value);
   }
-  return null;
+  return jar;
 }

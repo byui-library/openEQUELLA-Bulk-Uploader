@@ -173,6 +173,27 @@ shape, never as a value the code may assume.
   with an empty `results`.** A failed `POST /api/auth/login` *does* return 401 --
   but it still issues a JSESSIONID, and that cookie yields a guest session, so
   holding a cookie is not proof either.
+- **A session is the WHOLE cookie jar, not just `JSESSIONID`.** Measured on
+  `content-test.byui.edu`, 2026-08-12, with a real account. One sign-in
+  response set four cookies, and which of them went back decided who the
+  instance thought you were:
+
+  ```text
+  Set-Cookie: AWSALB (124 chars), AWSALBCORS (124), JSESSIONID (32), ROUTEID (2)
+
+  JSESSIONID alone -> username=guest,  guest=true
+  all four         -> username=milesm, guest=false
+  ```
+
+  The instance is behind an AWS load balancer; `AWSALB` and `ROUTEID` carry the
+  routing state that reaches the backend actually holding the session, and
+  without them the request lands on one that has never seen it. **openEQUELLA
+  serves that as guest -- 200, empty-but-plausible data -- rather than
+  rejecting it**, which is the previous bullet's failure mode arriving through
+  a different door and is why this went unnoticed: the desktop collection list
+  simply looked empty. `passwordAuth.ts` therefore keeps every cookie the
+  sign-in set and sends them all back. Any future cookie-carrying auth path
+  must do the same.
 - *(BYU-Idaho's configuration)* **Authentication is SSO-backed** (Okta via
   `id.churchofjesuschrist.org`). Interactive login cannot be automated. The API
   client needs `CREATE_ITEM` on the target collection; `VIEW_APIDOCS` gates

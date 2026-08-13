@@ -154,17 +154,157 @@ describe('UsernamePasswordAuth', () => {
   it('finds JSESSIONID when it is not the first Set-Cookie header', async () => {
     const impl = multiCookieStub(['other=1; Path=/', 'JSESSIONID=xyz; Path=/; HttpOnly']);
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
-    expect(await auth.authHeader()).toEqual({ Cookie: 'JSESSIONID=xyz' });
+    // Both cookies come back -- see the `cookie jar` block below -- but the
+    // point here is that the session was found in the SECOND header, so an
+    // implementation reading only the first would throw instead.
+    expect(await auth.getToken()).toBe('xyz');
+    expect((await auth.authHeader()).Cookie).toContain('JSESSIONID=xyz');
   });
 
   /**
-   * The decoy is what makes the `(?:^|;\s*)` anchor earn its place: a
-   * substring match would return 'nope' and every later request would 401.
+   * The decoy is what makes an exact-name match earn its place: a substring
+   * match would take 'nope' as the session and every later request would 401.
+   *
+   * The decoy cookie is itself carried in the Cookie header, which is correct
+   * -- a browser would send it back too, and the server set it for a reason.
+   * What must not happen is it being MISTAKEN for the session, so this asserts
+   * on the session value rather than on the jar.
    */
   it('is not fooled by a cookie whose name merely ends in JSESSIONID', async () => {
     const impl = multiCookieStub(['MYJSESSIONID=nope; Path=/', 'JSESSIONID=yes; Path=/']);
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
-    expect(await auth.authHeader()).toEqual({ Cookie: 'JSESSIONID=yes' });
+    expect(await auth.getToken()).toBe('yes');
+  });
+
+  /**
+   * A cookie whose name merely ENDS in JSESSIONID is not a session, so a
+   * response carrying only that one established nothing. Without the
+   * `(?:^|;\s*)` anchor this is accepted and 'nope' is sent as the session --
+   * the same defect as the test above, but with no real cookie present to
+   * mask it, so it fails on the error rather than on the value.
+   */
+  it('does not accept MYJSESSIONID alone as a session', async () => {
+    const impl = multiCookieStub(['MYJSESSIONID=nope; Path=/']);
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+    await expect(auth.authHeader()).rejects.toThrow(/did not return a session/i);
+  });
+
+  /**
+   * The whole cookie jar, not just JSESSIONID.
+   *
+   * MEASURED against https://content-test.byui.edu on 2026-08-12 with a real
+   * account. One sign-in response set four cookies -- AWSALB, AWSALBCORS,
+   * JSESSIONID and ROUTEID -- and the identity the instance then reported
+   * depended entirely on which of them were sent back:
+   *
+   *   JSESSIONID alone -> username=guest,  guest=true
+   *   all four         -> username=milesm, guest=false
+   *
+   * The instance is behind an AWS load balancer; AWSALB and ROUTEID carry the
+   * routing state that lands a request on the backend holding the session.
+   * Without them the request reaches a backend that has never seen it -- and
+   * openEQUELLA does not answer that with a 401. It serves it as guest, 200,
+   * with empty-but-plausible data, which is why this was invisible: the
+   * desktop app's collection list simply looked empty.
+   */
+  describe('cookie jar', () => {
+    /** The four cookies exactly as the live instance set them, values elided
+     *  to the measured lengths. */
+    const LIVE_SET_COOKIES = [
+      `AWSALB=${'a'.repeat(124)}; Expires=Wed, 19 Aug 2026 17:02:11 GMT; Path=/`,
+      `AWSALBCORS=${'b'.repeat(124)}; Expires=Wed, 19 Aug 2026 17:02:11 GMT; Path=/; SameSite=None; Secure`,
+      `JSESSIONID=${'0123456789abcdef0123456789abcdef'}; Path=/; HttpOnly`,
+      `ROUTEID=.1; Path=/`,
+    ];
+
+    it('sends back every cookie the sign-in set, not just JSESSIONID', async () => {
+      const auth = new UsernamePasswordAuth(
+        BASE,
+        'jsmith',
+        'hunter2',
+        multiCookieStub(LIVE_SET_COOKIES),
+      );
+      const cookie = (await auth.authHeader()).Cookie ?? '';
+      const names = cookie.split('; ').map((pair) => pair.split('=')[0]);
+      expect(names).toEqual(['AWSALB', 'AWSALBCORS', 'JSESSIONID', 'ROUTEID']);
+    });
+
+    /**
+     * Path, Expires, HttpOnly, Secure and SameSite are instructions to a
+     * browser about how to STORE a cookie. Echoing them back turns each into
+     * a bogus extra cookie named `Path`, `Expires`, ... and some servers
+     * reject the header outright.
+     */
+    it('emits name=value pairs joined by "; " and no cookie attributes', async () => {
+      const auth = new UsernamePasswordAuth(
+        BASE,
+        'jsmith',
+        'hunter2',
+        multiCookieStub(LIVE_SET_COOKIES),
+      );
+      const cookie = (await auth.authHeader()).Cookie;
+      expect(cookie).toBe(
+        `AWSALB=${'a'.repeat(124)}; ` +
+          `AWSALBCORS=${'b'.repeat(124)}; ` +
+          `JSESSIONID=0123456789abcdef0123456789abcdef; ` +
+          `ROUTEID=.1`,
+      );
+      for (const attribute of ['Path', 'Expires', 'HttpOnly', 'Secure', 'SameSite']) {
+        expect(cookie).not.toContain(attribute);
+      }
+    });
+
+    /** The simple case must not regress: one cookie in, one cookie out. */
+    it('handles a response that set only JSESSIONID', async () => {
+      const auth = new UsernamePasswordAuth(
+        BASE,
+        'jsmith',
+        'hunter2',
+        multiCookieStub(['JSESSIONID=only; Path=/; HttpOnly']),
+      );
+      expect(await auth.authHeader()).toEqual({ Cookie: 'JSESSIONID=only' });
+    });
+
+    /**
+     * Keeping the jar must not weaken the JSESSIONID requirement. Routing
+     * cookies alone prove nothing: they say which backend to talk to, not
+     * that a session exists on it. A 200 carrying only those is exactly the
+     * "authenticated-looking but not authenticated" state the check exists
+     * to catch.
+     */
+    it('still rejects a 200 whose cookies include no JSESSIONID', async () => {
+      const auth = new UsernamePasswordAuth(
+        BASE,
+        'jsmith',
+        'hunter2',
+        multiCookieStub([`AWSALB=${'a'.repeat(124)}; Path=/`, 'ROUTEID=.1; Path=/']),
+      );
+      await expect(auth.authHeader()).rejects.toThrow(/did not return a session/i);
+    });
+
+    /**
+     * A stale AWSALB pins requests to the backend of a session that is gone.
+     * Merging jars would keep it alive past the invalidate() that was
+     * supposed to end it, so the replacement has to be wholesale.
+     */
+    it('replaces the whole jar on re-sign-in rather than merging with the old one', async () => {
+      let signIn = 0;
+      const impl = vi.fn(async () => {
+        signIn += 1;
+        const headers = new Headers();
+        headers.append('set-cookie', `AWSALB=lb-${signIn}; Path=/`);
+        headers.append('set-cookie', `JSESSIONID=session-${signIn}; Path=/; HttpOnly`);
+        // Only the first sign-in sets ROUTEID; the second must not inherit it.
+        if (signIn === 1) headers.append('set-cookie', 'ROUTEID=.1; Path=/');
+        return new Response('', { status: 200, headers });
+      }) as unknown as typeof fetch;
+
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      expect((await auth.authHeader()).Cookie).toBe('AWSALB=lb-1; JSESSIONID=session-1; ROUTEID=.1');
+
+      auth.invalidate();
+      expect((await auth.authHeader()).Cookie).toBe('AWSALB=lb-2; JSESSIONID=session-2');
+    });
   });
 
   /**
