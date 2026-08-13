@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   chooseCollectionSection,
+  renderChoose,
   WITHHELD_COLLECTIONS_MESSAGE,
   type ChooseProps,
 } from '../../../src/desktop/ui/screens/choose.js';
+import { FakeElement } from '../../helpers/fakeDom.js';
 
 /**
  * The collection section is asserted as the markup it produces, not as a DOM:
@@ -11,6 +13,7 @@ import {
  * The callbacks are never invoked here, so they are no-ops.
  */
 const props = (over: Partial<ChooseProps> = {}): ChooseProps => ({
+  instanceLabel: 'Library',
   collections: null,
   collectionsError: null,
   collectionsWithheld: false,
@@ -29,7 +32,77 @@ const props = (over: Partial<ChooseProps> = {}): ChooseProps => ({
   onSaveStarterKit: () => {},
   onContinue: () => {},
   onExtract: () => {},
+  onSiteSettings: () => {},
   ...over,
+});
+
+function render(over: Partial<ChooseProps> = {}): { root: FakeElement; siteSettings: number } {
+  const root = new FakeElement();
+  const counters = { siteSettings: 0 };
+  renderChoose(root as unknown as HTMLElement, props({ onSiteSettings: () => (counters.siteSettings += 1), ...over }));
+  return {
+    root,
+    get siteSettings() {
+      return counters.siteSettings;
+    },
+  };
+}
+
+/**
+ * REPORTED BY THE OPERATOR while installing the tool: "There isn't a way to go
+ * back to setup once you are on the main screen where you select a collection."
+ *
+ * And it was circular. Setup names a suggested attachment path only once a
+ * collection has been chosen, because that is when its schema can be read --
+ * and the collection is chosen HERE, on the screen with no route back. The
+ * guidance was reachable only from the screen the operator had to leave in
+ * order to produce it.
+ */
+describe('the route back to Setup', () => {
+  it('offers a settings link naming the site', () => {
+    const { root } = render();
+    expect(root.has('#choose-site-settings')).toBe(true);
+    expect(root.innerHTML).toContain('Library');
+  });
+
+  it('calls onSiteSettings, and nothing else, when it is clicked', () => {
+    const rendered = render();
+    rendered.root.fire('#choose-site-settings');
+    expect(rendered.siteSettings).toBe(1);
+  });
+
+  /**
+   * WORDING. "Settings" alone leaves an operator mid-task guessing whether the
+   * link will cost them the collection, spreadsheet and folder they have
+   * already picked -- and an operator who guesses wrong skips the setting,
+   * which is the failure this whole change exists to remove. So it names the
+   * attachment field (the setting they are being sent for) and says plainly
+   * that the three choices survive.
+   */
+  it('says what the link is for and that the work in progress survives', () => {
+    const { root } = render();
+    expect(root.innerHTML).toMatch(/attachment ID/i);
+    expect(root.innerHTML).toMatch(/collection, spreadsheet and folder are kept/i);
+  });
+
+  // It must not compete with Continue: same low-emphasis treatment Sign-in
+  // gives its own settings link, and below the primary action rather than
+  // among the numbered steps.
+  it('is a link-button below Continue, not a button beside it', () => {
+    const { root } = render();
+    expect(root.innerHTML).toContain('class="link-button"');
+    expect(root.innerHTML.indexOf('choose-site-settings')).toBeGreaterThan(
+      root.innerHTML.indexOf('choose-continue-btn'),
+    );
+  });
+
+  // The label comes off the operator's own store and lands in a template
+  // assigned to innerHTML.
+  it('escapes a site label containing markup', () => {
+    const { root } = render({ instanceLabel: '<img src=x onerror=alert(1)>' });
+    expect(root.innerHTML).not.toContain('<img src=x');
+    expect(root.innerHTML).toContain('&lt;img');
+  });
 });
 
 /**

@@ -1,7 +1,7 @@
 import type { OeqApi, ColumnReport, InstanceChoice, PlanReport, RunProgress, RunReport } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
 import type { ItemState } from '../../core/types.js';
-import { initialScreen, nextScreen, type Screen } from './state.js';
+import { initialScreen, nextScreen, settingsReturnTo, type Screen } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
 import { renderSetup, type SetupFields, type SetupTextField } from './screens/setup.js';
@@ -55,6 +55,11 @@ interface AppState extends BatchState {
   // are per instance (secrets.ts), and Setup must be able to configure one
   // site while the rest of the app is pointed at another.
   setupInstanceId: string;
+  // Which screen Setup was opened FROM, so saving can put the operator back
+  // there. Null for the ordinary route, which lands on Sign-in as it always
+  // has. Reset by seedSetupForm, so pointing Setup at another site drops it
+  // and the return falls back to Sign-in (see settingsReturnTo).
+  setupEnteredFrom: Screen | null;
   // Everything typed on Setup. Held here rather than in the DOM because the
   // screen re-renders on every keystroke and on every change of sign-in
   // method, and an innerHTML re-render destroys the inputs (screens/setup.ts).
@@ -154,6 +159,7 @@ function initialState(): AppState {
     instances: [...UI_INSTANCES],
     instanceId: '',
     setupInstanceId: '',
+    setupEnteredFrom: null,
     setupFields: blankSetupFields(),
     setupRedirectTouched: false,
     setupStoredUsername: null,
@@ -277,12 +283,13 @@ function render(): void {
         onSignOut: handleSignOut,
         onContinue: handleSigninContinue,
         onAddCredentials: handleAddCredentials,
-        onSiteSettings: handleSiteSettings,
+        onSiteSettings: () => handleSiteSettings('signin'),
         onResetSettings: handleResetSettings,
       });
       break;
     case 'choose':
       renderChoose(app, {
+        instanceLabel: currentInstance()?.label ?? state.instanceId,
         collections: state.collections,
         collectionsError: state.collectionsError,
         collectionsWithheld: state.collectionsWithheld,
@@ -300,6 +307,10 @@ function render(): void {
         onChooseFolder: handleChooseFolder,
         onSaveStarterKit: handleSaveStarterKit,
         onContinue: handleChooseContinue,
+        // The NON-DESTRUCTIVE route, exactly as Sign-in's own settings link.
+        // Wiring this to handleResetSettings would wipe every saved site from
+        // the middle of a batch.
+        onSiteSettings: () => handleSiteSettings('choose'),
         onExtract: () => {
           // The extract flow owns its own state and render loop; app.ts hands
           // over the root element and gets it back on exit. Deliberately not
@@ -409,6 +420,11 @@ function renderFatal(message: string): void {
 function seedSetupForm(id: string): void {
   state.setupInstanceId = id;
   state.setupError = null;
+  // Whoever is sending the operator to Setup says where they came from, right
+  // after this call. Cleared here so pointing Setup at a DIFFERENT site drops
+  // the return: the collection, spreadsheet and folder waiting on Choose
+  // belong to the site the app was pointed at, not to this one.
+  state.setupEnteredFrom = null;
   // Both belong to whichever site was previously selected. Left standing they
   // would have the attachment path checked against another site's schema, and
   // a wrong "found in the schema" is worse than no answer at all.
@@ -625,6 +641,16 @@ async function handleSaveSettings(
     // entry that was written -- including when the operator typed a spelling
     // that normalised onto a site they had already added.
     const saved = await window.oeq.saveInstance(instance, settings);
+    // Decided BEFORE state.instanceId is repointed below, because the question
+    // is whether this save stayed on the site the waiting Choose selections
+    // belong to. A save that landed somewhere else goes to Sign-in, where a
+    // site is chosen, rather than back to a batch built against another one.
+    const returnTo = settingsReturnTo({
+      enteredFrom: state.setupEnteredFrom,
+      savedInstanceId: saved.id,
+      activeInstanceId: state.instanceId,
+    });
+    state.setupEnteredFrom = null;
     state.instances = withSaved(await window.oeq.listInstances());
     state.setupSaving = false;
     state.setupError = null;
@@ -643,9 +669,14 @@ async function handleSaveSettings(
     // landing back on Sign-in still pointed at a DIFFERENT (uncredentialed)
     // instance would look like nothing had happened.
     state.instanceId = saved.id;
-    state.screen = nextScreen('setup', { type: 'settingsSaved' });
+    state.screen = nextScreen('setup', { type: 'settingsSaved', returnTo });
     render();
-    void checkInstanceState();
+    // Back on Choose, the collection list is re-read rather than trusted: the
+    // address, the account or the credentials may have just changed under it.
+    // The chosen uuid survives in state, so the dropdown comes back with the
+    // same collection selected, and the spreadsheet and folder never moved.
+    if (returnTo === 'choose') void loadCollections();
+    else void checkInstanceState();
   } catch (err) {
     state.setupSaving = false;
     state.setupError = errorMessage(err);
@@ -707,18 +738,31 @@ function handleAddCredentials(): void {
 }
 
 /**
- * Sign-in's "Settings for {site}…" -- Setup for the selected site, with
- * nothing cleared.
+ * "Settings for {site}…" / "Site settings for {site}…" -- Setup for the
+ * selected site, with nothing cleared.
  *
- * The same non-destructive transition as `handleAddCredentials` above, and
- * deliberately so: the site's per-site settings (which collection's schema,
- * where the attachment uuid goes, whether it is live) live on Setup, and the
- * only other route there was "Change credentials…", which wipes every saved
- * site first.
+ * NON-DESTRUCTIVE, and that is the whole point of it existing separately from
+ * `handleResetSettings` below: the per-site settings (which collection's
+ * schema, where the attachment uuid goes, whether it is live) live on Setup,
+ * and the only other route there was "Change credentials…", which wipes every
+ * saved site first. A setting an operator can only change by destroying their
+ * credentials is a setting they will not change.
+ *
+ * `from` is the screen the operator is standing on, passed rather than assumed
+ * because there are now two of them. It is what the transition table is told
+ * (state.ts is the record of how this app moves, and hardcoding 'signin' from
+ * Choose would make that record a lie) and it is what decides where saving
+ * puts them back -- see `settingsReturnTo`.
+ *
+ * REACHABLE FROM CHOOSE because the operator found the gap circular while
+ * installing the tool: Setup can only suggest an attachment path once a
+ * collection has been chosen, since that is when a schema can be read, and the
+ * collection is chosen on Choose -- which had no way back.
  */
-function handleSiteSettings(): void {
+function handleSiteSettings(from: Screen): void {
   seedSetupForm(state.instanceId);
-  state.screen = nextScreen('signin', { type: 'addCredentials' });
+  state.setupEnteredFrom = from;
+  state.screen = nextScreen(from, { type: 'siteSettings' });
   render();
   void refreshStoredUsername();
   void refreshSetupCollections();
