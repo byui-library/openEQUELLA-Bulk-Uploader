@@ -1,6 +1,7 @@
 import { ApiError } from './errors.js';
 import type { AuthProvider } from './auth.js';
-import { normaliseInstanceUrl } from './instanceUrl.js';
+import { GUEST_SESSION_EXPLANATION } from './identity.js';
+import { instanceEndpoint, normaliseInstanceUrl } from './instanceUrl.js';
 import { redactSecret } from './redact.js';
 
 /**
@@ -22,11 +23,22 @@ import { redactSecret } from './redact.js';
  * serves it as guest, 200, with empty-but-plausible data, so the failure is
  * silent: the desktop app's collection list simply looked empty.
  *
- * SESSION EXPIRY IS NOT HANDLED HERE. A lapsed session produces a 401, and
- * client.ts already responds to a 401 by calling `invalidate()` and retrying
- * once. See the long comment in auth.ts for why expiry is handled reactively
- * rather than on a timer -- the reasoning is identical, and duplicating it
- * with a timer here would put expiry logic in two places.
+ * A SESSION IS NOT SIGNED IN UNTIL IT SAYS WHO IT IS. `login()` therefore
+ * spends one more request confirming the session it just established --
+ * `GET /api/content/currentuser`, `guest !== true` -- and throws when it does
+ * not. "200 plus a JSESSIONID" was the old proof of sign-in, and the bug
+ * above is what it is worth: the login returned 200, set cookies, and the
+ * session was guest. openEQUELLA never answers that with a 401, so without
+ * this check the failure surfaces nowhere. One request per sign-in, not per
+ * call -- it lives inside login(), which runs once per session.
+ *
+ * SESSION EXPIRY IS NOT HANDLED HERE, and cannot be handled by a 401: this
+ * instance answers a lapsed session with 200 and guest data. `client.ts` does
+ * invalidate-and-retry-once on 401, which fires under OAuth but effectively
+ * never under password auth. The layer that must not be fooled by a stale
+ * session is the duplicate check, and it verifies identity itself, once per
+ * batch (see duplicates.ts#findDuplicates). See the long comment in auth.ts
+ * for why expiry is reactive rather than on a timer.
  *
  * THE PASSWORD TRAVELS IN THE QUERY STRING. That is openEQUELLA's API, not a
  * choice made here. It means the password reaches server access logs, so:
@@ -38,6 +50,10 @@ import { redactSecret } from './redact.js';
 const LOGIN_PATH = '/api/auth/login';
 /** Confirmed in the captured schema/swagger.json. PUT, and it takes no body. */
 const LOGOUT_PATH = '/api/auth/logout';
+/** CONFIRMED in schema/swagger.json and measured live: the one endpoint that
+ *  answers "who is this session", and the only way to tell a real sign-in from
+ *  a guest one -- see the guest fixture in tests/fixtures/api/. */
+const CURRENT_USER_PATH = '/api/content/currentuser';
 
 /**
  * One established session: the cookies to send back, plus the JSESSIONID
@@ -121,7 +137,7 @@ export class UsernamePasswordAuth implements AuthProvider {
   }
 
   private async login(startedInGeneration: number): Promise<Session> {
-    const url = new URL(LOGIN_PATH, this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, LOGIN_PATH);
     url.searchParams.set('username', this.username);
     url.searchParams.set('password', this.password);
 
@@ -170,6 +186,11 @@ export class UsernamePasswordAuth implements AuthProvider {
       jar: [...cookies].map(([name, value]) => `${name}=${value}`).join('; '),
     };
 
+    // BEFORE caching, and before any caller is handed it. A guest session that
+    // reached the cache would be presented as a valid one for the rest of the
+    // process, and every request made with it would come back 200.
+    await this.confirmSignedIn(session);
+
     // Only cache if nothing invalidated us while this sign-in was in flight.
     if (startedInGeneration === this.generation) {
       this.session = session;
@@ -177,9 +198,81 @@ export class UsernamePasswordAuth implements AuthProvider {
     return session;
   }
 
-  /** Origin + path only — never the query string, which carries the password. */
+  /**
+   * Confirm the session just established belongs to a real user, and throw if
+   * it does not.
+   *
+   * WHY THIS COSTS A REQUEST AND IS WORTH IT. Sign-in used to be judged by
+   * "200 with a JSESSIONID", which is satisfied by a session authenticated as
+   * `guest`: measured against content-test.byui.edu, sending back JSESSIONID
+   * alone did exactly that. Nothing downstream can notice -- openEQUELLA
+   * answers a guest request with 200 and empty-but-plausible data, never a
+   * 401 -- so the alternative to one request here is a whole run that uploads
+   * nothing and reports every duplicate check clean.
+   *
+   * An answer that cannot be READ is not a confirmation either. A non-2xx, an
+   * unreachable server, or a body that is not the expected JSON all mean the
+   * same thing: nobody has established who this session is. Accepting any of
+   * them would restore the assumption this method exists to remove.
+   *
+   * The whole jar goes with it, exactly as `authHeader()` would send it. A
+   * confirmation carrying only JSESSIONID would be answered as guest by the
+   * live instance and fail every sign-in for the wrong reason.
+   */
+  private async confirmSignedIn(session: Session): Promise<void> {
+    const url = instanceEndpoint(this.baseUrl, CURRENT_USER_PATH);
+    let res: Response;
+    let body: string;
+    try {
+      res = await this.fetchImpl(url, { headers: { Cookie: session.jar } });
+      body = await res.text();
+    } catch {
+      throw new ApiError(
+        `Signed in, but could not confirm who the session belongs to: ${url.origin}` +
+          `${url.pathname} could not be reached. Check the address and your network connection.`,
+        0,
+        '',
+      );
+    }
+
+    if (!res.ok) {
+      throw new ApiError(
+        `Signed in, but could not confirm who the session belongs to (${res.status} from ` +
+          `${url.pathname}). The address may not be an openEQUELLA site.`,
+        res.status,
+        this.redact(body),
+      );
+    }
+
+    let user: unknown;
+    try {
+      user = JSON.parse(body);
+    } catch {
+      throw new ApiError(
+        `Signed in, but could not confirm who the session belongs to: ${url.pathname} did not ` +
+          'answer with an account. The address may not be an openEQUELLA site.',
+        res.status,
+        this.redact(body),
+      );
+    }
+
+    // `=== true` and not truthiness: a response that does not mention `guest`
+    // is a real account, which is how client.ts reads it too.
+    if ((user as { guest?: unknown } | null)?.guest === true) {
+      throw new ApiError(
+        'Signed in, but the site does not recognise the session as anybody. ' +
+          GUEST_SESSION_EXPLANATION,
+        res.status,
+        '',
+      );
+    }
+  }
+
+  /** Origin + path only — never the query string, which carries the password.
+   *  `pathname` (not `origin` alone) is what keeps a hosting prefix here: this
+   *  must name the endpoint the code actually called. */
   private safeEndpoint(): string {
-    const url = new URL(LOGIN_PATH, this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, LOGIN_PATH);
     return `${url.origin}${url.pathname}`;
   }
 
@@ -222,7 +315,7 @@ export class UsernamePasswordAuth implements AuthProvider {
     if (!session) return;
 
     try {
-      await this.fetchImpl(new URL(LOGOUT_PATH, this.baseUrl), {
+      await this.fetchImpl(instanceEndpoint(this.baseUrl, LOGOUT_PATH), {
         method: 'PUT',
         // The whole jar, for the same reason every other request carries it:
         // without the routing cookies the PUT reaches a backend that does not

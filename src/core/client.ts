@@ -82,6 +82,7 @@
  */
 import type { AuthProvider } from './auth.js';
 import { ApiError, ValidationError } from './errors.js';
+import { instanceEndpoint } from './instanceUrl.js';
 import {
   displayName,
   parseCollections,
@@ -243,7 +244,12 @@ export class OeqClient {
     // programming bug, not a network failure, and must not be reported as a
     // retryable ApiError(status 0) -- that would tell a caller to retry an
     // error that will never succeed no matter how many times it's retried.
-    const url = new URL(path, this.baseUrl);
+    //
+    // instanceEndpoint(), not `new URL(path, base)`: the latter drops any
+    // hosting prefix on the base, and this line is EVERY API call the tool
+    // makes. `path` arrives with its query string already attached; the
+    // helper preserves it. See instanceUrl.ts.
+    const url = instanceEndpoint(this.baseUrl, path);
     const headers = { ...(init.headers ?? {}), ...(await this.auth.authHeader()) };
 
     let res: Response;

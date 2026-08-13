@@ -1,4 +1,5 @@
 import { ApiError } from './errors.js';
+import { instanceEndpoint } from './instanceUrl.js';
 import { redactSecret } from './redact.js';
 
 export interface AuthProvider {
@@ -84,7 +85,7 @@ export class OAuthClientCredentials implements AuthProvider {
   }
 
   private async fetchToken(startedInGeneration: number): Promise<string> {
-    const url = new URL(TOKEN_PATH, this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, TOKEN_PATH);
     url.searchParams.set('grant_type', 'client_credentials');
     url.searchParams.set('client_id', this.clientId);
     url.searchParams.set('client_secret', this.clientSecret);
@@ -135,9 +136,11 @@ export class OAuthClientCredentials implements AuthProvider {
     return parsed.access_token;
   }
 
-  /** Origin + path only — no query string, so it can never carry the secret. */
+  /** Origin + path only — no query string, so it can never carry the secret.
+   *  `pathname` (not `origin` alone) is what keeps a hosting prefix here: this
+   *  must name the endpoint the code actually called. */
   private safeEndpoint(): string {
-    const url = new URL(TOKEN_PATH, this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, TOKEN_PATH);
     return `${url.origin}${url.pathname}`;
   }
 
