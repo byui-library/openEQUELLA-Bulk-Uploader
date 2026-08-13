@@ -286,6 +286,20 @@ shape, never as a value the code may assume.
   in both a numeric header and a sentence. OCR destroyed the header on 7 of 10
   files while every spelled-out date survived -- letters carry more redundancy
   than digits. Reading the prose took recovery from 3 of 10 to 9 of 10.
+- **A session can only be ended by the provider that holds it, and the desktop
+  builds a new one per IPC call.** `UsernamePasswordAuth.logout()` PUTs
+  `/api/auth/logout` with its own cookie jar; a provider that never signed in
+  makes no request at all. So in password mode every desktop handler call
+  signs in again -- one live server session per call -- and before
+  `src/desktop/session.ts`'s registry there was nothing left to log out.
+  Building a provider from the stored credential to log out would have signed
+  in FIRST and then ended that brand-new session, leaving the real one alive;
+  the CLI reached the same conclusion and declined (`LogoutDeps.auth`). The
+  registry keeps every provider reachable by instance id so Forget and quit can
+  end the sessions that actually exist. **Reusing one provider per instance
+  would also stop the leak, and is deliberately NOT done**: one long-lived
+  session would serve every later request, and a session openEQUELLA has since
+  expired is answered as the guest with 200 and empty data, never a 401.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.

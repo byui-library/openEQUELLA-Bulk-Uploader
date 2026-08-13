@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { registerHandlers } from './handlers.js';
+import { registerQuitLogout } from './quit.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -112,3 +113,10 @@ void app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+// A session established during a run would otherwise outlive the app, staying
+// live on the server until openEQUELLA times it out. Registered at module
+// scope, not inside whenReady(), so a quit that arrives before the app has
+// finished starting is still covered. See quit.ts for why this cannot simply
+// `await` in a listener, and why the wait is bounded.
+registerQuitLogout(app);

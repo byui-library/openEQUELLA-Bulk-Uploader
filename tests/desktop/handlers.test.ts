@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,22 +11,45 @@ import {
   registerHandlers,
   requireSignedIn,
 } from '../../src/desktop/handlers.js';
+import { forgetLiveSessions, rememberSession } from '../../src/desktop/session.js';
+import { SecretStore, type Cipher } from '../../src/desktop/secrets.js';
 import { saveManifest, loadManifest } from '../../src/core/state.js';
 import { SchemaCache } from '../../src/core/schemaCache.js';
 import type { SchemaInfo } from '../../src/core/discovery.js';
 import type { Sheet, Manifest } from '../../src/core/types.js';
 
-// registerHandlers ends up calling registerExtractHandlers, which resolves the
-// bundled schema path via `app.isPackaged` -- unmocked, 'electron' resolves to
-// nothing but a path string outside a real Electron process, so every named
-// export (app, dialog, safeStorage) comes back undefined and that read
-// throws. This is the smallest mock that lets registration complete: just
-// enough of `app` to pick the unpackaged branch, nothing else touched.
+/**
+ * registerHandlers ends up calling registerExtractHandlers, which resolves the
+ * bundled schema path via `app.isPackaged` -- unmocked, 'electron' resolves to
+ * nothing but a path string outside a real Electron process, so every named
+ * export (app, dialog, safeStorage) comes back undefined and that read throws.
+ *
+ * `getPath` and `safeStorage` are here for the handlers that reach the
+ * credential store (forgetPassword below). The "cipher" is deliberately the
+ * identity transform: what is under test is which credentials survive a
+ * handler, and a real DPAPI round trip is neither available nor relevant in a
+ * bare Node process. `hoisted.userData` is repointed per test so each gets its
+ * own store file.
+ */
+const hoisted = vi.hoisted(() => ({ userData: '' }));
+
 vi.mock('electron', () => ({
-  app: { isPackaged: false },
+  app: { isPackaged: false, getPath: () => hoisted.userData },
   dialog: {},
-  safeStorage: {},
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (s: string) => Buffer.from(s, 'utf8'),
+    decryptString: (b: Buffer) => b.toString('utf8'),
+  },
 }));
+
+/** The same transform the mocked safeStorage above applies, so a test can read
+ *  back what a handler wrote. */
+const plainCipher: Cipher = {
+  isAvailable: () => true,
+  encrypt: (s) => Buffer.from(s, 'utf8'),
+  decrypt: (b) => b.toString('utf8'),
+};
 
 /** A stand-in for Electron's ipcMain that just records the handlers. Copied from extractHandlers.test.ts. */
 function fakeIpcMain() {
@@ -227,6 +250,125 @@ describe('requireSignedIn', () => {
 
   it('passes a real account straight through', () => {
     expect(requireSignedIn(real, 'Live')).toBe(real);
+  });
+});
+
+/**
+ * "FORGET THIS PASSWORD" USED TO BE A HALF-LOGOUT.
+ *
+ * It removed the stored credential and left the openEQUELLA session live on
+ * the server until the instance timed it out. An operator who clicks it --
+ * plausibly because they are on a shared machine, or handing the laptop back
+ * -- was told the credential was gone while a usable session carried on.
+ *
+ * The server session is ended FIRST, because it is the half that can fail; the
+ * local forget then happens unconditionally. The operator asked for the
+ * password to be gone, and that is not conditional on the network.
+ */
+describe('forgetPassword', () => {
+  const SITE = 'https://oeq.example.edu';
+
+  beforeEach(async () => {
+    hoisted.userData = await mkdtemp(join(tmpdir(), 'oeq-forget-'));
+    forgetLiveSessions();
+  });
+
+  /** A store pointed at the same file the handlers use, so this reads exactly
+   *  what they wrote. */
+  const store = () => new SecretStore(join(hoisted.userData, 'settings.enc'), plainCipher);
+
+  async function savePassword(): Promise<void> {
+    await store().saveInstance(
+      { label: 'Live', baseUrl: SITE },
+      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+    );
+  }
+
+  it('removes the stored password', async () => {
+    await savePassword();
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:forgetPassword', SITE);
+
+    expect(await store().getPassword(SITE)).toBeNull();
+  });
+
+  /**
+   * THE MUTATION GUARD. Make the local forget conditional on the server
+   * logout, and this goes red: the operator would be left with the credential
+   * still on disk because a machine that is offline -- or a site that is down
+   * -- said so.
+   */
+  it('removes the stored password even when ending the server session fails', async () => {
+    await savePassword();
+    rememberSession(SITE, {
+      logout: async () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await expect(ipc.call('oeq:forgetPassword', SITE)).resolves.toBeUndefined();
+    expect(await store().getPassword(SITE)).toBeNull();
+  });
+
+  it('ends the live session for that site', async () => {
+    await savePassword();
+    const ended = vi.fn(async () => {});
+    rememberSession(SITE, { logout: ended });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:forgetPassword', SITE);
+
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Order, observed from inside the logout: the credential is still on disk
+   * while the server session is being ended, and gone afterwards. Asserting
+   * only the end state would pass against a handler that forgot first.
+   */
+  it('ends the server session before forgetting the credential', async () => {
+    await savePassword();
+    const seen: string[] = [];
+    rememberSession(SITE, {
+      logout: async () => {
+        seen.push((await store().getPassword(SITE)) ? 'still stored' : 'already gone');
+      },
+    });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:forgetPassword', SITE);
+
+    expect(seen).toEqual(['still stored']);
+    expect(await store().getPassword(SITE)).toBeNull();
+  });
+
+  // Nothing signed in during this app run: there is no session to end, and
+  // nothing may be signed in on the way to ending one.
+  it('forgets the password with no session to end, and signs nothing in to do it', async () => {
+    await savePassword();
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await expect(ipc.call('oeq:forgetPassword', SITE)).resolves.toBeUndefined();
+    expect(await store().getPassword(SITE)).toBeNull();
+  });
+
+  // The site itself, its name and its address survive: Forget removes a
+  // credential, not a configured instance.
+  it('leaves the site configured', async () => {
+    await savePassword();
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:forgetPassword', SITE);
+
+    expect((await store().loadInstance(SITE))?.label).toBe('Live');
   });
 });
 
