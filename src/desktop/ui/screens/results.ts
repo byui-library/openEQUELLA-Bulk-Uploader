@@ -12,11 +12,34 @@ export interface ResultsProps {
   collectionUrl: string;
   /** Named in the "another spreadsheet" hint, so it is clear what is kept. */
   collectionName: string | null;
+  /**
+   * The operator's own name for the site this batch went to, for the two links
+   * below. Named for the same reason Choose and Sign-in name it: a link reading
+   * only "Settings" or "Sign out" leaves the operator guessing which site it
+   * acts on, and this screen is where they are most likely to be about to
+   * switch.
+   */
+  instanceLabel: string;
   retrying: boolean;
   error: string | null;
   onRetryFailed(): void;
   /** Back to Choose for another spreadsheet, without restarting the app. */
   onAnotherBatch(): void;
+  /**
+   * Setup for this site, clearing nothing -- app.ts's `handleSiteSettings`,
+   * never the destructive "Change credentials…" route.
+   */
+  onSiteSettings(): void;
+  /**
+   * End this site's session and go back to Sign-in, through the SAME handler
+   * Sign-in's own Sign out uses (app.ts's `handleSignOut`), which ends the
+   * openEQUELLA session on the server and reports honestly when the site would
+   * not confirm it.
+   *
+   * Safe here because the batch is over. The same control is on Choose, which
+   * is pre-run, and deliberately on neither Progress nor anything between.
+   */
+  onSignOut(): void;
 }
 
 /**
@@ -113,6 +136,24 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
         selected. You will choose a new spreadsheet and folder, and the draft/live
         choice starts again from Draft.
       </p>
+
+      <p class="reset-row">
+        <button id="results-site-settings" type="button" class="link-button">
+          Site settings for ${escapeHtml(props.instanceLabel)}…
+        </button>
+        <button id="results-sign-out" type="button" class="link-button">
+          Sign out of ${escapeHtml(props.instanceLabel)}…
+        </button>
+      </p>
+      <p class="hint">
+        Site settings: change the attachment ID field, the address or the sign-in details
+        for this site. Your batch is finished, so nothing is uploaded again either way.
+      </p>
+      <p class="hint">
+        Sign out: end this session and go back to the sign-in screen, where you can pick a
+        different site. This summary is not kept, so open the collection above first if you
+        still need it.
+      </p>
     </section>
   `;
 
@@ -120,4 +161,8 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
   root
     .querySelector<HTMLButtonElement>('#results-another-btn')
     ?.addEventListener('click', () => props.onAnotherBatch());
+  root
+    .querySelector<HTMLButtonElement>('#results-site-settings')
+    ?.addEventListener('click', () => props.onSiteSettings());
+  root.querySelector<HTMLButtonElement>('#results-sign-out')?.addEventListener('click', () => props.onSignOut());
 }

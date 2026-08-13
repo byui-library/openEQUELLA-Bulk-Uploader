@@ -37,8 +37,14 @@ never code. One ships: `templates/alumni-obituary.profile.json`.
 **The institution-agnostic work is MERGED** (PRs #7, #8, #9). Username/password
 sign-in, collections and schemas discovered from the API, an operator-managed
 instance list, nothing BYU-Idaho-specific read at runtime, and `check` grown
-into a compatibility probe. **1359 tests across 86 files**, typecheck clean,
-`build:desktop` clean. `main` carries everything and no PR is open.
+into a compatibility probe. Typecheck clean, `build:desktop` clean. `main`
+carries everything and no PR is open.
+
+**Every screen but Progress now has a way off it.** Choose and Results both
+carry "Site settings for {site}…" and "Sign out of {site}…", and Setup has a
+Back that saves nothing, offered only when it was opened from somewhere.
+Progress deliberately has none: signing out under a running batch would end the
+session the runner uploads through. **1423 tests across 88 files.**
 
 That is spec 1 of two. Publishing the repository — a licence, a README written
 for outside readers, and the audit of ~196 commits of history — is spec 2 and

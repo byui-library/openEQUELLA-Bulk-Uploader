@@ -260,6 +260,10 @@ function render(): void {
         schemaPaths: state.setupSchemaPaths,
         error: state.setupError,
         saving: state.setupSaving,
+        // Null on first run and after "Change credentials…", where there is
+        // nowhere behind Setup and no Back is rendered at all.
+        returnTo: state.setupEnteredFrom,
+        onBack: handleSetupBack,
         onInstanceChange: handleSetupInstanceChange,
         onFieldChange: handleSetupFieldChange,
         onAuthModeChange: handleSetupAuthModeChange,
@@ -311,6 +315,11 @@ function render(): void {
         // Wiring this to handleResetSettings would wipe every saved site from
         // the middle of a batch.
         onSiteSettings: () => handleSiteSettings('choose'),
+        // The SAME handler Sign-in's Sign out uses -- it ends the openEQUELLA
+        // session on the server, not just the local token, and says so when the
+        // site would not confirm it. A second sign-out path written for this
+        // screen is exactly how a live session gets left behind.
+        onSignOut: handleSignOut,
         onExtract: () => {
           // The extract flow owns its own state and render loop; app.ts hands
           // over the root element and gets it back on exit. Deliberately not
@@ -381,10 +390,17 @@ function render(): void {
           interrupted: state.interruptedEntries,
           collectionUrl: collectionUrl(currentInstance()?.baseUrl ?? '', state.collectionUuid ?? ''),
           collectionName: state.collectionName,
+          instanceLabel: currentInstance()?.label ?? state.instanceId,
           retrying: state.retrying,
           error: state.resultsError,
           onRetryFailed: handleRetryFailed,
           onAnotherBatch: handleAnotherBatch,
+          // Both non-destructive, both the same handlers Choose uses. Done was
+          // a dead end: another spreadsheet, a collection link, and nothing
+          // else -- so changing a setting or moving to another site meant
+          // closing and reopening the app.
+          onSiteSettings: () => handleSiteSettings('results'),
+          onSignOut: handleSignOut,
         });
       }
       break;
@@ -768,6 +784,39 @@ function handleSiteSettings(from: Screen): void {
   void refreshSetupCollections();
 }
 
+/**
+ * Setup's Back: leave for the screen the operator came in from, saving nothing.
+ *
+ * SETUP WAS A ONE-WAY DOOR. "Save credentials" was its only control, so an
+ * operator who opened it from Choose to check one setting could leave only by
+ * saving -- which is what somebody who came to LOOK does not want to do, and
+ * which repoints the whole app at whatever site the form happens to name.
+ *
+ * NOTHING IS CLEARED AND NOTHING IS WRITTEN. Not the store, not the stored
+ * password, not the instance list. The typed form IS discarded, and the button
+ * says so; every other route out of a screen in this app that discards typed
+ * work (Review's Back, Confirm's Back) reads the same way.
+ *
+ * NOT ROUTED THROUGH `nextScreen`, and deliberately: it moves to a screen
+ * carried in state rather than one the transition table decides, which is
+ * exactly what `handleReviewBack` and `handleConfirmBack` already do. An event
+ * whose answer is "whatever the caller was holding" would add a row to that
+ * table that describes nothing.
+ *
+ * `setupEnteredFrom` is null on first run and after "Change credentials…", and
+ * the button is not rendered in either case (screens/setup.ts). The guard is
+ * belt and braces for a click that arrives anyway.
+ */
+function handleSetupBack(): void {
+  const back = state.setupEnteredFrom;
+  if (back === null) return;
+  state.setupEnteredFrom = null;
+  // A validation message about a save that is no longer happening.
+  state.setupError = null;
+  state.screen = back;
+  render();
+}
+
 async function handleSignIn(): Promise<void> {
   // Defensive: the Sign-in button is only ever rendered when credentials
   // exist for this instance (ui/signin.ts), but a doomed sign-in attempt
@@ -817,6 +866,20 @@ async function handleSignIn(): Promise<void> {
  * blocks and nothing is claimed that has not been established.
  */
 async function handleSignOut(): Promise<void> {
+  // NEVER MID-BATCH. Sign out is now offered from Choose and Results as well as
+  // Sign-in, and the runner uploads through the very session this ends: cutting
+  // it half way through a batch strands rows in `uploading` -- the status the
+  // runner deliberately refuses to guess about, which then has to be checked by
+  // hand in openEQUELLA, item by item, with no undo available for the ones that
+  // did land.
+  //
+  // The real protection is that the Progress screen renders no such control
+  // (screens/progress.ts has no buttons at all, and a test pins that). This is
+  // the second line: a stale listener surviving a re-render, or a control added
+  // to that screen later by somebody applying the pattern uniformly, still
+  // cannot end the session under a running batch. Same shape as the
+  // `instanceHasSettings` guard in handleSignIn above.
+  if (state.screen === 'progress' || state.uploading) return;
   try {
     // Null on a clean sign-out, which also clears any error left from an
     // earlier attempt -- see ui/signout.ts.

@@ -33,6 +33,12 @@ describe('nextScreen', () => {
     expect(nextScreen('choose', { type: 'signedOut' })).toBe('signin');
   });
 
+  // Post-run, and safe for the same reason Choose is pre-run: there is no
+  // batch in flight to interrupt. Sign-in is where a different site is picked.
+  it('returns Results to Sign-in after signing out', () => {
+    expect(nextScreen('results', { type: 'signedOut' })).toBe('signin');
+  });
+
   it('sends any screen back to Setup on editSettings', () => {
     expect(nextScreen('choose', { type: 'editSettings' })).toBe('setup');
     expect(nextScreen('signin', { type: 'editSettings' })).toBe('setup');
@@ -72,6 +78,13 @@ describe('reaching Setup from a task screen', () => {
 
   it('sends Sign-in to Setup on siteSettings too -- one event for one move', () => {
     expect(nextScreen('signin', { type: 'siteSettings' })).toBe('setup');
+  });
+
+  // The third origin. Done used to offer another spreadsheet, a collection
+  // link, and nothing else; an operator who finished a batch and then wanted a
+  // setting changed had to close and reopen the app.
+  it('sends Results to Setup on siteSettings', () => {
+    expect(nextScreen('results', { type: 'siteSettings' })).toBe('setup');
   });
 
   // The distinction the whole change rests on: 'editSettings' is the

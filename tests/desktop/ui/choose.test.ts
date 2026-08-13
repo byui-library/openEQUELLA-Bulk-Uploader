@@ -33,17 +33,32 @@ const props = (over: Partial<ChooseProps> = {}): ChooseProps => ({
   onContinue: () => {},
   onExtract: () => {},
   onSiteSettings: () => {},
+  onSignOut: () => {},
   ...over,
 });
 
-function render(over: Partial<ChooseProps> = {}): { root: FakeElement; siteSettings: number } {
+function render(over: Partial<ChooseProps> = {}): {
+  root: FakeElement;
+  siteSettings: number;
+  signOut: number;
+} {
   const root = new FakeElement();
-  const counters = { siteSettings: 0 };
-  renderChoose(root as unknown as HTMLElement, props({ onSiteSettings: () => (counters.siteSettings += 1), ...over }));
+  const counters = { siteSettings: 0, signOut: 0 };
+  renderChoose(
+    root as unknown as HTMLElement,
+    props({
+      onSiteSettings: () => (counters.siteSettings += 1),
+      onSignOut: () => (counters.signOut += 1),
+      ...over,
+    }),
+  );
   return {
     root,
     get siteSettings() {
       return counters.siteSettings;
+    },
+    get signOut() {
+      return counters.signOut;
     },
   };
 }
@@ -102,6 +117,62 @@ describe('the route back to Setup', () => {
     const { root } = render({ instanceLabel: '<img src=x onerror=alert(1)>' });
     expect(root.innerHTML).not.toContain('<img src=x');
     expect(root.innerHTML).toContain('&lt;img');
+  });
+});
+
+/**
+ * THE BANNER NAMES THE SITE; THIS IS HOW THE OPERATOR LEAVES IT.
+ *
+ * The red banner exists to tell an operator which site they are pointed at,
+ * because a collection uuid can be byte-identical on two of them and there is
+ * no undo. An operator who reads it, realises it is the wrong one, and wants to
+ * move had no route short of restarting the app: a safety cue with no
+ * corresponding action is half a safety feature.
+ *
+ * Sign-in is where a site is chosen, and `nextScreen('choose', signedOut)`
+ * already routed there -- nothing on this screen fired it.
+ */
+describe('the route back to Sign-in', () => {
+  it('offers a sign-out control naming the site', () => {
+    const { root } = render();
+    expect(root.has('#choose-sign-out')).toBe(true);
+    expect(root.innerHTML).toContain('Sign out of Library');
+  });
+
+  it('calls onSignOut, and nothing else, when it is clicked', () => {
+    const rendered = render();
+    rendered.root.fire('#choose-sign-out');
+    expect(rendered.signOut).toBe(1);
+    expect(rendered.siteSettings).toBe(0);
+  });
+
+  /**
+   * WORDING. Choose is pre-run, so nothing has been uploaded and the click
+   * costs only the three selections -- and an operator who cannot tell those
+   * two apart will not click it at all. Say both.
+   */
+  it('says the session ends, that a different site can be picked, and what it costs', () => {
+    const { root } = render();
+    expect(root.innerHTML).toMatch(/sign-in screen/i);
+    expect(root.innerHTML).toMatch(/different site/i);
+    expect(root.innerHTML).toMatch(/nothing has been uploaded/i);
+  });
+
+  // Same low-emphasis treatment as the settings link beside it: neither may
+  // compete with Continue, which is the action this screen exists for.
+  it('is a link-button below Continue, beside the settings link', () => {
+    const { root } = render();
+    expect(root.innerHTML.indexOf('choose-sign-out')).toBeGreaterThan(
+      root.innerHTML.indexOf('choose-continue-btn'),
+    );
+    expect(root.innerHTML.indexOf('choose-sign-out')).toBeGreaterThan(
+      root.innerHTML.indexOf('choose-site-settings'),
+    );
+  });
+
+  it('escapes a site label containing markup', () => {
+    const { root } = render({ instanceLabel: '<img src=x onerror=alert(1)>' });
+    expect(root.innerHTML).not.toContain('<img src=x');
   });
 });
 

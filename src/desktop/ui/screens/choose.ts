@@ -51,6 +51,27 @@ export interface ChooseProps {
    * never to "Change credentials…", which wipes every saved site.
    */
   onSiteSettings(): void;
+  /**
+   * End this site's session and go back to Sign-in, which is where a different
+   * site is chosen.
+   *
+   * THE BANNER'S MISSING HALF. The red bar at the top of every screen exists to
+   * tell the operator which site they are pointed at, because a collection uuid
+   * can be byte-identical on two of them and there is no undo. An operator who
+   * read it, realised it was the wrong one and wanted to move had no route
+   * short of restarting the app -- a safety cue with no corresponding action is
+   * half a safety feature.
+   *
+   * Wired to app.ts's `handleSignOut`, the SAME handler Sign-in's own Sign out
+   * uses: it ends the openEQUELLA session on the server and says so when the
+   * site would not confirm it (ui/signout.ts). A second sign-out path that only
+   * changed screen would leave a live session behind on a shared machine.
+   *
+   * Safe here because Choose is pre-run. It is deliberately absent from
+   * Progress, where ending the session the runner is uploading through would
+   * strand a half-created batch.
+   */
+  onSignOut(): void;
 }
 
 /**
@@ -163,10 +184,18 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
         <button id="choose-site-settings" type="button" class="link-button">
           Site settings for ${escapeHtml(props.instanceLabel)}…
         </button>
+        <button id="choose-sign-out" type="button" class="link-button">
+          Sign out of ${escapeHtml(props.instanceLabel)}…
+        </button>
       </p>
       <p class="hint">
-        Change the attachment ID field, the address or the sign-in details for this site.
-        Your collection, spreadsheet and folder are kept.
+        Site settings: change the attachment ID field, the address or the sign-in details
+        for this site. Your collection, spreadsheet and folder are kept.
+      </p>
+      <p class="hint">
+        Sign out: end this session and go back to the sign-in screen, where you can pick a
+        different site. Nothing has been uploaded yet, and you will choose the collection,
+        spreadsheet and folder again.
       </p>
     </section>
   `;
@@ -197,4 +226,5 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
   root
     .querySelector<HTMLButtonElement>('#choose-site-settings')
     ?.addEventListener('click', () => props.onSiteSettings());
+  root.querySelector<HTMLButtonElement>('#choose-sign-out')?.addEventListener('click', () => props.onSignOut());
 }

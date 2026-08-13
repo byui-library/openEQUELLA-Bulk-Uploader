@@ -4,6 +4,7 @@ import type { CollectionSummary } from '../../../core/client.js';
 // the sandboxed renderer. A type-only import is erased at compile time and
 // never becomes a runtime require -- see tests/desktop/rendererPurity.test.ts.
 import type { Settings, SettingsAuthMode } from '../../secrets.js';
+import type { Screen } from '../state.js';
 import { escapeHtml, keepCaret } from '../dom.js';
 import { setupNotice } from '../setupNotice.js';
 // One wording for "the server withheld this list", shared with the Choose
@@ -100,6 +101,31 @@ export interface SetupProps {
   schemaPaths: string[] | null;
   error: string | null;
   saving: boolean;
+  /**
+   * The screen Setup was opened from, or null when there is nowhere to go back
+   * to -- which is the case on first run, where Setup IS the launch screen, and
+   * after "Change credentials…", which wipes every saved site and leaves a
+   * Sign-in screen listing none.
+   *
+   * A Back offered in either of those states would do nothing or invent a
+   * destination, so it is not offered. app.ts's `setupEnteredFrom` already
+   * carried exactly this and is what feeds it.
+   */
+  returnTo: Screen | null;
+  /**
+   * Leave without saving.
+   *
+   * SETUP WAS A ONE-WAY DOOR: its only control was "Save credentials", so an
+   * operator who came from Choose to check one setting could only leave by
+   * saving -- which is precisely what somebody who came to LOOK does not want
+   * to do, and which repoints the whole app at whatever site the form happens
+   * to name.
+   *
+   * MUST CLEAR NOTHING. Not the store, not the form, not the stored password.
+   * The destructive route stays where it is, on Sign-in, labelled
+   * "Change credentials…" and behind a confirm.
+   */
+  onBack(): void;
   onInstanceChange(id: string): void;
   onFieldChange(field: SetupTextField, value: string): void;
   onAuthModeChange(mode: SettingsAuthMode): void;
@@ -134,6 +160,31 @@ export const TEXT_INPUTS = [
   '#setup-redirect-uri',
   '#setup-attachment-path',
 ] as const;
+
+/**
+ * What Back says it goes back to.
+ *
+ * NAMES THE DESTINATION rather than saying "Back". Three screens can open
+ * Setup now -- Sign-in, Choose and Results -- and an operator part-way through
+ * a batch needs to know which one a click returns them to before they take it.
+ *
+ * Pure and exported for the same reason `bannerClass` is: this project has no
+ * jsdom, so the wording is asserted directly.
+ */
+export function backLabel(returnTo: Screen): string {
+  switch (returnTo) {
+    case 'choose':
+      return 'Back to choosing what to upload';
+    case 'results':
+      return 'Back to the upload summary';
+    case 'signin':
+      return 'Back to sign in';
+    default:
+      // No other screen opens Setup today. A bare "Back" is the honest answer
+      // for one that starts to: vague, but never wrong about where it lands.
+      return 'Back';
+  }
+}
 
 /** What the screen can say about a typed attachment-uuid path. */
 export interface AttachmentPathVerdict {
@@ -621,10 +672,29 @@ export function setupMarkup(props: SetupProps): string {
         ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
         <div class="button-row">
+          ${
+            props.returnTo === null
+              ? ''
+              : // type="button" is load-bearing: this sits INSIDE #setup-form,
+                // and a default-type button in a form submits it -- which would
+                // save, the one thing Back exists to avoid, failing in the most
+                // expensive direction available.
+                `<button id="setup-back" type="button" class="secondary">
+            ${escapeHtml(backLabel(props.returnTo))}
+          </button>`
+          }
           <button type="submit" ${props.saving ? 'disabled' : ''}>
             ${props.saving ? 'Saving…' : 'Save credentials'}
           </button>
         </div>
+        ${
+          props.returnTo === null
+            ? ''
+            : `<p class="hint">
+          Back leaves without saving: nothing you have typed here is kept, and
+          nothing already saved is changed or removed.
+        </p>`
+        }
       </form>
     </section>
   `;
@@ -748,6 +818,8 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   root
     .querySelector<HTMLButtonElement>('#setup-forget-password')
     ?.addEventListener('click', () => props.onForgetPassword());
+
+  root.querySelector<HTMLButtonElement>('#setup-back')?.addEventListener('click', () => props.onBack());
 
   root.querySelector<HTMLFormElement>('#setup-form')?.addEventListener('submit', (e) => {
     e.preventDefault();

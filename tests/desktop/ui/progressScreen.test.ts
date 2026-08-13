@@ -49,6 +49,30 @@ describe('progressMarkup', () => {
   });
 });
 
+/**
+ * A RUN IN PROGRESS MUST NOT BE INTERRUPTIBLE. Choose and Results both carry
+ * "Sign out of {site}…" and "Site settings for {site}…", and this screen is the
+ * one place between them where either would be a data hazard: signing out under
+ * a running batch ends the openEQUELLA session the runner is uploading through,
+ * mid-file, with items already created and no undo.
+ *
+ * The protection is that this screen renders no such control -- not a disabled
+ * one, not a hidden one. Asserted as the absence of any button at all, which is
+ * both what is true today and the shape that catches a control added here later
+ * by somebody applying the pattern uniformly.
+ */
+describe('the Progress screen offers no way off it', () => {
+  it('renders no buttons at all', () => {
+    expect(progressMarkup(props({ done: 5 }))).not.toMatch(/<button/i);
+  });
+
+  it('renders neither of the site-level actions the other screens carry', () => {
+    const html = progressMarkup(props({ done: 5 }));
+    expect(html).not.toMatch(/sign out/i);
+    expect(html).not.toMatch(/site settings/i);
+  });
+});
+
 describe('renderProgress', () => {
   it('sets the fill width to 0% at the start', () => {
     const { root, fill } = fakeRoot();
