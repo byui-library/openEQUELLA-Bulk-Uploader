@@ -25,7 +25,10 @@ import type { OeqApi, RunProgress } from './ipc.js';
  * time (no runtime `require` is emitted for a type-only import), so this
  * still gets compile-time checking that this object matches the real
  * contract. If CHANNELS in ipc.ts ever changes, update the copy below to
- * match -- there is no automated check tying the two together.
+ * match -- `tests/desktop/preload-channels.test.ts` reads this file as text
+ * and asserts that the set of 'oeq:...' literals in it is EXACTLY the set of
+ * values in ipc.ts's CHANNELS, so a drift fails the build rather than
+ * needing anyone to remember. No manual cross-checking required.
  */
 const CHANNELS = {
   listInstances: 'oeq:listInstances',

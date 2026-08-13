@@ -182,6 +182,22 @@ describe('datePair', () => {
     ).toBe('');
   });
 
+  /**
+   * The gap's docstring has always said no SENTENCE TERMINATOR may appear
+   * between the two halves, but the class excluded only the full stop, so a
+   * sentence ending in '!' or '?' reopened exactly the hole the paragraph-break
+   * case above closes -- a birth date paired with an unrelated later one.
+   */
+  it('does not pair across an exclamation mark', () => {
+    expect(datePair('What a life he led from March 9, 2146! December 4, 2211', 'second')).toBe('');
+  });
+
+  it('does not pair across a question mark', () => {
+    expect(datePair('Was he born March 9, 2146? December 4, 2211 was the funeral', 'second')).toBe(
+      '',
+    );
+  });
+
   // Pins PAIR_GAP itself: 14 characters of punctuation, just over the bound.
   it('does not pair across a gap slightly larger than the limit', () => {
     expect(datePair(`October 12, 1946${' -'.repeat(7)}April 9, 2018`, 'second')).toBe('');
