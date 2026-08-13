@@ -47,14 +47,14 @@ first, then run it from there.
 Two versions of the program are provided. They are the same program — the
 difference is only in how it gets onto the computer.
 
-- **`openEQUELLA Bulk Uploader 1.1.0.exe`** — a single file. Double-click it
+- **`openEQUELLA Bulk Uploader 1.1.1.exe`** — a single file. Double-click it
   to run; nothing is installed anywhere.
-- **`openEQUELLA Bulk Uploader Setup 1.1.0.exe`** — an installer. Adds a Start
+- **`openEQUELLA Bulk Uploader Setup 1.1.1.exe`** — an installer. Adds a Start
   Menu shortcut and an entry in Add or Remove Programs, like a normal Windows
   program.
 
 The number in the filename is the version. If the copy on the share is newer
-than 1.1.0, take that one — everything below still applies.
+than 1.1.1, take that one — everything below still applies.
 
 ### Which one should I use?
 
