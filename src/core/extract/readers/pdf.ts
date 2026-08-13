@@ -85,6 +85,14 @@ export async function readPdf(path: string): Promise<DocumentData> {
   try {
     doc = await task.promise;
   } catch (cause) {
+    // The task owns a worker, and this path used to throw before reaching the
+    // `finally` below, so an unreadable PDF leaked one. Extraction runs over a
+    // whole folder, so a batch with several bad files leaked several.
+    //
+    // A cleanup failure must never replace the parse error: the operator needs
+    // to know WHICH FILE was unreadable, not that tearing down a worker went
+    // wrong afterwards.
+    await task.destroy().catch(() => {});
     throw new ValidationError(`'${path}' is not a readable PDF.`, { cause });
   }
 
