@@ -2,6 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!--
+      There is no `style-src`, so it falls back to `default-src 'self'`, and
+      that means Chromium BLOCKS INLINE STYLE ATTRIBUTES. Verified empirically
+      in Electron against this very page: setting `style="width: 42%"` on an
+      element left `style.width` as `""`. The progress bar shipped with exactly
+      that markup from v0.1.0 and consequently never moved.
+
+      So: no `style="..."` anywhere in this UI's markup. Set the property
+      through the DOM API after the render instead (see screens/progress.ts) --
+      a CSP does not govern the DOM API.
+
+      Do NOT add `'unsafe-inline'` to make an inline style work. This UI renders
+      metadata that came from operator-supplied spreadsheets and documents into
+      the DOM, so this policy is load-bearing.
+    -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'" />
     <title>openEQUELLA Bulk Uploader</title>
     <link rel="stylesheet" href="./styles.css" />

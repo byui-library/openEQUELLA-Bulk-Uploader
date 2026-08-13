@@ -37,11 +37,25 @@ interface ToolResult {
   [key: string]: unknown;
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
+  /**
+   * The machine-readable half of a result, as defined by MCP's CallToolResult.
+   * Only set where a tool has data a consumer should not have to parse back
+   * out of the prose. No tool here declares an `outputSchema`, so the SDK
+   * performs no validation against one (server/mcp.js#validateToolOutput
+   * returns immediately without it) and this stays purely additive.
+   */
+  structuredContent?: Record<string, unknown>;
 }
 
 const text = (s: string, isError = false): ToolResult => ({
   content: [{ type: 'text', text: s }],
   ...(isError ? { isError: true } : {}),
+});
+
+/** Same result, plus its structured half. */
+const withStructured = (result: ToolResult, structured: Record<string, unknown>): ToolResult => ({
+  ...result,
+  structuredContent: structured,
 });
 
 /**
@@ -340,12 +354,30 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
     // skipping a row is a decision for whoever uploads, made on the Review
     // screen or equivalent, not here.
     if (duplicates.length > 0) {
-      lines.push(`Possible duplicates: ${duplicates.length} row(s) -- see the duplicates field.`);
+      lines.push(
+        `Possible duplicates: ${duplicates.length} row(s) -- listed below, and in ` +
+          'structuredContent.duplicates.',
+      );
       for (const d of duplicates) {
         lines.push(`  Row ${d.rowNumber}: ${d.fileName} -- ${d.tier}: ${d.detail}`);
       }
     }
-    return text(redactSecret(lines.join('\n'), env));
+    const result = text(redactSecret(lines.join('\n'), env));
+    // The prose used to promise "the duplicates field" and there was none, so
+    // a consumer had to scrape verdicts out of a sentence. These decide
+    // whether a row is uploaded into a collection with NO moderation queue,
+    // which is not a decision to make by string-matching. Attached only when
+    // there is something to attach, so an empty array never reads as a
+    // finding.
+    //
+    // Redacted through the same helper as the prose, for the same reason given
+    // over redactSecret: a tool result lands in a conversation transcript, and
+    // this half is the one a consumer is most likely to log wholesale.
+    return duplicates.length > 0
+      ? withStructured(result, {
+          duplicates: JSON.parse(redactSecret(JSON.stringify(duplicates), env)) as unknown,
+        })
+      : result;
   } catch (err) {
     return text(redactSecret(errorMessage(err), env), true);
   }
