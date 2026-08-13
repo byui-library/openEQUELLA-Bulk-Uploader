@@ -1,7 +1,18 @@
-import { describe, it, expect } from 'vitest';
-import { buildConfig, requireInstance } from '../../src/desktop/session.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  buildAuth,
+  buildConfig,
+  endAllSessions,
+  endSessionsFor,
+  forgetLiveSessions,
+  requireInstance,
+} from '../../src/desktop/session.js';
 import type { Instance, Settings } from '../../src/desktop/secrets.js';
 import { createAuthProvider } from '../../src/core/config.js';
+import { FileTokenStore } from '../../src/core/tokenStore.js';
 import { UsernamePasswordAuth } from '../../src/core/passwordAuth.js';
 import { AuthorizationCodeAuth } from '../../src/core/authCode.js';
 
@@ -208,5 +219,126 @@ describe('requireInstance', () => {
   it('rejects an unknown instance id rather than guessing', () => {
     expect(() => requireInstance('https://staging.example.edu', null)).toThrow(/instance/i);
     expect(() => requireInstance('https://staging.example.edu', null)).toThrow(/staging.example.edu/);
+  });
+});
+
+/**
+ * ENDING A SESSION MEANS ENDING THE ONE THAT ALREADY EXISTS.
+ *
+ * `UsernamePasswordAuth.logout()` can only end the session held by the
+ * provider it is called on, and a provider that has never signed in makes no
+ * request at all (tests/passwordAuth.test.ts, "makes no request at all when
+ * there was never a session"). So a desktop that discards every provider the
+ * moment a handler returns has nothing left to log out: building a fresh one
+ * to log out with would sign in first and then end THAT session, leaving the
+ * real one alive on the server. The registry is what keeps the providers
+ * reachable, so nothing ever has to sign in in order to sign out.
+ */
+describe('live session registry', () => {
+  const PASSWORD: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+  const OAUTH: Settings = {
+    authMode: 'code',
+    clientId: 'cid',
+    clientSecret: 'sec',
+    redirectUri: 'https://oeq.example.edu',
+  };
+
+  let dir: string;
+  beforeEach(async () => {
+    forgetLiveSessions();
+    dir = await mkdtemp(join(tmpdir(), 'oeq-live-sessions-'));
+  });
+  afterEach(async () => {
+    forgetLiveSessions();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const store = () => new FileTokenStore(join(dir, 'token.json'));
+
+  /** Spy on the real provider's own logout, so the object under test is the
+   *  one the handlers actually got back. With no session established it makes
+   *  no request, so nothing here touches the network. */
+  function watchLogout(provider: unknown): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(async () => {});
+    (provider as { logout: () => Promise<void> }).logout = spy;
+    return spy;
+  }
+
+  it('keeps the provider a password-mode sign-in would establish its session on', async () => {
+    const provider = buildAuth(buildConfig(LIVE, PASSWORD, 'coll'), store(), LIVE.id);
+    const logout = watchLogout(provider);
+
+    expect(await endSessionsFor(LIVE.id)).toBe(1);
+    expect(logout).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * An OAuth provider holds a bearer token, not a server session, and has no
+   * `logout()` at all. Registering one would mean the quit hook reporting
+   * sessions it did not end.
+   */
+  it('keeps nothing for an OAuth instance, which holds no server session', async () => {
+    buildAuth(buildConfig(LIVE, OAUTH, 'coll'), store(), LIVE.id);
+    expect(await endSessionsFor(LIVE.id)).toBe(0);
+  });
+
+  it('ends nothing for an instance that was never signed in to', async () => {
+    expect(await endSessionsFor(LIVE.id)).toBe(0);
+  });
+
+  // Credentials are per instance and so are sessions. Forgetting one site's
+  // password must not end the session the operator has open on another.
+  it('ends only the instance asked for', async () => {
+    const live = watchLogout(buildAuth(buildConfig(LIVE, PASSWORD, 'coll'), store(), LIVE.id));
+    const sandbox = watchLogout(buildAuth(buildConfig(SANDBOX, PASSWORD, 'coll'), store(), SANDBOX.id));
+
+    expect(await endSessionsFor(SANDBOX.id)).toBe(1);
+    expect(sandbox).toHaveBeenCalledTimes(1);
+    expect(live).not.toHaveBeenCalled();
+  });
+
+  // Every handler call builds its own provider, so a site can hold several
+  // sessions at once. Ending "the" session would leave the rest alive.
+  it('ends every session an instance accumulated, not just the newest', async () => {
+    const first = watchLogout(buildAuth(buildConfig(LIVE, PASSWORD, 'coll'), store(), LIVE.id));
+    const second = watchLogout(buildAuth(buildConfig(LIVE, PASSWORD, 'coll'), store(), LIVE.id));
+
+    expect(await endSessionsFor(LIVE.id)).toBe(2);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets what it has ended, so a second call ends nothing again', async () => {
+    const logout = watchLogout(buildAuth(buildConfig(LIVE, PASSWORD, 'coll'), store(), LIVE.id));
+    await endSessionsFor(LIVE.id);
+
+    expect(await endSessionsFor(LIVE.id)).toBe(0);
+    expect(logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends every instance at once for the quit hook', async () => {
+    const live = watchLogout(buildAuth(buildConfig(LIVE, PASSWORD, 'coll'), store(), LIVE.id));
+    const sandbox = watchLogout(buildAuth(buildConfig(SANDBOX, PASSWORD, 'coll'), store(), SANDBOX.id));
+
+    expect(await endAllSessions()).toBe(2);
+    expect(live).toHaveBeenCalledTimes(1);
+    expect(sandbox).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The registry REPORTS a failure rather than swallowing it -- the callers
+   * decide, and both of them (the forgetPassword handler and the quit hook)
+   * have to carry on regardless. What it must not do is hand the same dead
+   * provider back on the next call: the session is gone from this process
+   * either way, exactly as `logout()` itself drops it locally first.
+   */
+  it('drops a session whose logout failed, and does not hide the failure', async () => {
+    const provider = buildAuth(buildConfig(LIVE, PASSWORD, 'coll'), store(), LIVE.id);
+    (provider as unknown as { logout: () => Promise<void> }).logout = async () => {
+      throw new Error('connect ECONNREFUSED');
+    };
+
+    await expect(endSessionsFor(LIVE.id)).rejects.toThrow(/ECONNREFUSED/);
+    expect(await endSessionsFor(LIVE.id)).toBe(0);
   });
 });

@@ -15,7 +15,14 @@ import type { CurrentUser } from '../core/client.js';
 import { assertNotGuest } from '../core/identity.js';
 import { SchemaCache } from '../core/schemaCache.js';
 import type { SchemaInfo } from '../core/discovery.js';
-import { buildAuth, buildCodeAuth, buildClient, buildConfig, requireInstance } from './session.js';
+import {
+  buildAuth,
+  buildCodeAuth,
+  buildClient,
+  buildConfig,
+  endSessionsFor,
+  requireInstance,
+} from './session.js';
 import { readSheet } from '../core/sheet.js';
 import {
   extractDefinition,
@@ -373,10 +380,40 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     },
   );
 
+  /**
+   * "Forget this password" -- which has to end the SESSION too, not just the
+   * credential.
+   *
+   * This used to remove the stored password and leave the openEQUELLA session
+   * live on the server until the instance timed it out. An operator clicking
+   * it -- plausibly because they are on a shared machine, or handing the
+   * laptop back -- was told the credential was gone while a usable session
+   * carried on: a half-logout presented as a complete one.
+   *
+   * THE SERVER FIRST, because it is the half that can fail, and it needs the
+   * session to still be reachable. Nothing signs in to do it: `endSessionsFor`
+   * ends the sessions this run already established and does nothing at all
+   * when there are none (session.ts).
+   *
+   * THE LOCAL FORGET IS UNCONDITIONAL. The operator asked for the password to
+   * be gone, and that is not conditional on the network -- so a failed logout
+   * is swallowed here rather than propagated, exactly as
+   * `UsernamePasswordAuth.logout()` swallows its own. Making the forget
+   * conditional on the logout would leave the credential on disk because a
+   * machine was offline, which is the outcome this handler exists to prevent.
+   */
   ipcMain.handle(
     CHANNELS.forgetPassword,
-    async (_e, instanceId: Parameters<OeqApi['forgetPassword']>[0]) =>
-      secrets().forgetPassword(instanceId),
+    async (_e, instanceId: Parameters<OeqApi['forgetPassword']>[0]) => {
+      try {
+        await endSessionsFor(instanceId);
+      } catch {
+        // Deliberately empty. See above: the part the operator asked for
+        // still has to happen, and openEQUELLA times an abandoned session out
+        // regardless.
+      }
+      await secrets().forgetPassword(instanceId);
+    },
   );
 
   ipcMain.handle(
@@ -390,7 +427,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       // error (core/passwordAuth.ts). Opening an SSO window here would present
       // an institution that has no SSO with a login page they cannot use.
       if (cfg.authMode === 'password') {
-        const user = await buildClient(cfg, buildAuth(cfg, tokens())).currentUser();
+        const user = await buildClient(cfg, buildAuth(cfg, tokens(), inst.id)).currentUser();
         // Guest is a refusal, not a user -- see requireSignedIn.
         return requireSignedIn(user, inst.label);
       }
@@ -414,7 +451,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const settings = await secrets().loadSettings(inst.id);
       if (!settings) return null;
       const cfg = buildConfig(inst, settings, 'unused');
-      const auth = buildAuth(cfg, tokens());
+      const auth = buildAuth(cfg, tokens(), inst.id);
       try {
         const user = await buildClient(cfg, auth).currentUser();
         // A guest session is nobody. This channel answers "is anyone signed
@@ -433,7 +470,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     async (_e, instanceId: Parameters<OeqApi['listCollections']>[0]) => {
       const { inst, settings } = await requireSettings(instanceId);
       const cfg = buildConfig(inst, settings, 'unused');
-      const auth = buildAuth(cfg, tokens());
+      const auth = buildAuth(cfg, tokens(), inst.id);
       // NOTE the signature: listCollections takes an OPTIONS OBJECT, not a
       // positional string. `listCollections('CREATE_ITEM')` does not compile.
       return buildClient(cfg, auth).listCollections({ privilege: 'CREATE_ITEM', length: 100 });
@@ -447,7 +484,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     async (_e, args: Parameters<OeqApi['fetchSchema']>[0]): Promise<SchemaSummary> => {
       const { inst, settings } = await requireSettings(args.instanceId);
       const cfg = buildConfig(inst, settings, 'unused');
-      const client = buildClient(cfg, buildAuth(cfg, tokens()));
+      const client = buildClient(cfg, buildAuth(cfg, tokens(), inst.id));
       return fetchAndCacheSchema(client, schemas(), inst.baseUrl, args.schemaUuid);
     },
   );
@@ -531,7 +568,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     async (_e, args: Parameters<OeqApi['plan']>[0]): Promise<PlanReport> => {
       const { inst, settings } = await requireSettings(args.instanceId);
       const cfg = buildConfig(inst, settings, args.collectionUuid);
-      const auth = buildAuth(cfg, tokens());
+      const auth = buildAuth(cfg, tokens(), inst.id);
       const client = buildClient(cfg, auth);
 
       const sheet = applyOverrides(await readSheet(args.sheetPath), args.overrides ?? {});
@@ -605,7 +642,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const { inst, settings } = await requireSettings(args.instanceId);
       const manifest = await loadManifest(args.manifestPath);
       const cfg = buildConfig(inst, settings, manifest.collectionUuid);
-      const auth = buildAuth(cfg, tokens());
+      const auth = buildAuth(cfg, tokens(), inst.id);
       const client = buildClient(cfg, auth);
 
       const summary = await runManifest(client, args.manifestPath, {

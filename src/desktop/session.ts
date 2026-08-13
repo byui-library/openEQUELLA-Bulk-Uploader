@@ -91,6 +91,103 @@ export function buildConfig(instance: Instance, settings: Settings, collectionUu
 }
 
 /**
+ * A provider holding an openEQUELLA session that can be ended on the server.
+ *
+ * Structural, not `UsernamePasswordAuth`, because it is a capability rather
+ * than a class: `AuthProvider` (core/auth.ts) does not declare `logout()`, and
+ * only password auth has one. `AuthorizationCodeAuth` holds a bearer token,
+ * not a server session, and clearing the token store is a complete logout for
+ * it -- which the signOut handler already does.
+ */
+interface EndableSession {
+  logout(): Promise<void>;
+}
+
+/**
+ * Every provider built for an instance during this app run, so its session can
+ * actually be ended.
+ *
+ * WHY THIS HAS TO EXIST. `UsernamePasswordAuth.logout()` can only end the
+ * session held by the provider it is called on, and a provider that never
+ * signed in makes no request at all (see its doc comment, and
+ * tests/passwordAuth.test.ts). Every IPC handler builds its own provider and
+ * drops it on return, so before this registry the desktop had nothing left to
+ * log out: constructing a provider from the stored credential in order to end
+ * a session would have SIGNED IN first and then ended that brand-new session,
+ * leaving the real one alive. The CLI reached the same conclusion and declined
+ * (`LogoutDeps.auth` in cli/index.ts). Holding the providers is what makes
+ * ending a session possible without creating one.
+ *
+ * A SITE CAN HOLD SEVERAL AT ONCE, which is why the value is a Set rather than
+ * one provider: each handler call signs in again, so a site accumulates one
+ * server session per call. Ending "the" session would leave the rest live.
+ * Reusing one provider per instance instead would fix that too, but it would
+ * also make one long-lived session serve every later request -- and a session
+ * openEQUELLA has since expired is answered as the guest with 200 and empty
+ * data, never a 401 (see CLAUDE.md). That is a separate decision from being
+ * able to log out, and is deliberately not taken here.
+ *
+ * Keyed by INSTANCE ID, passed in explicitly rather than derived from
+ * `cfg.baseUrl`: the two are the same string today (an id is `instanceKey` of
+ * the address), and quietly depending on that would make a mismatch look like
+ * "there was no session".
+ */
+const liveSessions = new Map<string, Set<EndableSession>>();
+
+function canEndSession(provider: unknown): provider is EndableSession {
+  return typeof (provider as EndableSession | null | undefined)?.logout === 'function';
+}
+
+/**
+ * Note that a provider now exists for `instanceId`, so its session can be
+ * ended later. Providers with no `logout()` are ignored rather than stored:
+ * counting one would have the quit hook report sessions it did not end.
+ *
+ * Exported so a test can seed a live session without a network round trip;
+ * production code reaches it through `buildAuth` below.
+ */
+export function rememberSession(instanceId: string, provider: unknown): void {
+  if (!canEndSession(provider)) return;
+  const existing = liveSessions.get(instanceId);
+  if (existing) existing.add(provider);
+  else liveSessions.set(instanceId, new Set([provider]));
+}
+
+/**
+ * End every session held for one instance, and report how many there were.
+ *
+ * THE REGISTRY ENTRY IS DROPPED FIRST, and unconditionally -- the same rule
+ * `logout()` itself follows locally. Whatever happens on the wire, this
+ * process is no longer holding those sessions, and a retry would only re-send
+ * a PUT for a session it can no longer prove anything about.
+ *
+ * A failure is REPORTED, not swallowed. Both callers have to carry on
+ * regardless (the credential is forgotten either way; the app quits either
+ * way), but that is their decision to take visibly rather than one hidden
+ * here.
+ */
+export async function endSessionsFor(instanceId: string): Promise<number> {
+  const sessions = liveSessions.get(instanceId);
+  if (!sessions) return 0;
+  liveSessions.delete(instanceId);
+  await Promise.all([...sessions].map((s) => s.logout()));
+  return sessions.size;
+}
+
+/** Every instance's sessions, for the quit hook. Same rules as above. */
+export async function endAllSessions(): Promise<number> {
+  const counts = await Promise.all([...liveSessions.keys()].map((id) => endSessionsFor(id)));
+  return counts.reduce((total, n) => total + n, 0);
+}
+
+/** Drop every remembered session WITHOUT ending it. Exists for tests, which
+ *  share one module instance across cases; nothing in the app should forget a
+ *  session it has not ended. */
+export function forgetLiveSessions(): void {
+  liveSessions.clear();
+}
+
+/**
  * The provider for everything that just needs to be authenticated: current
  * user, collection list, plan, run.
  *
@@ -99,9 +196,17 @@ export function buildConfig(instance: Instance, settings: Settings, collectionUu
  * `AuthorizationCodeAuth` unconditionally, which meant a password-mode
  * config produced an OAuth provider with an empty client id and openEQUELLA's
  * misleading "client_id (null)" error.
+ *
+ * `instanceId` is REQUIRED, and is not optional-with-a-fallback on purpose:
+ * this is the one choke point every desktop provider passes through, and a
+ * call site that omitted the id would silently leave its session unendable --
+ * exactly the half-logout this registry exists to remove, and invisible until
+ * somebody checked the server.
  */
-export function buildAuth(cfg: Config, store: TokenStore): AuthProvider {
-  return createAuthProvider(cfg, {}, store);
+export function buildAuth(cfg: Config, store: TokenStore, instanceId: string): AuthProvider {
+  const provider = createAuthProvider(cfg, {}, store);
+  rememberSession(instanceId, provider);
+  return provider;
 }
 
 /**
