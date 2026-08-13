@@ -294,6 +294,72 @@ describe('oeq_plan duplicate pre-flight', () => {
     expect(textOf(result)).toContain('near-certain');
     expect(textOf(result)).toContain('clip1.mp4');
   });
+
+  /**
+   * The prose used to end "see the duplicates field", and there was no such
+   * field -- the result carried only `content` and `isError`. A consumer was
+   * told to read something that did not exist, leaving it to parse verdicts
+   * out of a sentence. Duplicate verdicts decide whether a row gets uploaded
+   * into a collection with no moderation queue; that is not a decision to base
+   * on string-scraping.
+   */
+  it('attaches the duplicate findings as structured data, not only as prose', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeIdentifierSheet(dir);
+
+    const result = await planTool(
+      { sheet: sheetPath, filesDir: dir, manifestPath: join(dir, 'job.json') },
+      mockEnv(),
+    );
+
+    const structured = result.structuredContent as { duplicates?: unknown[] } | undefined;
+    expect(structured?.duplicates).toHaveLength(1);
+    expect(structured?.duplicates?.[0]).toMatchObject({
+      fileName: 'clip1.mp4',
+      tier: 'near-certain',
+      rowNumber: expect.any(Number),
+    });
+    // The sentence must point at the field that is really there.
+    expect(textOf(result)).toContain('structuredContent.duplicates');
+  });
+
+  /**
+   * A tool result lands in a conversation transcript, and the structured half
+   * is the part a consumer is most likely to log wholesale -- so it gets the
+   * same redaction the prose has always had. The secret is set to a string
+   * that genuinely appears in the findings, since a secret that appears
+   * nowhere would prove nothing.
+   */
+  it('redacts the client secret from the structured duplicates too', async () => {
+    mock.state.existingItems = [
+      { uuid: 'existing-1', version: 1, title: 'Test Clip One', attachmentNames: ['clip1.mp4'] },
+    ];
+    const sheetPath = await writeIdentifierSheet(dir);
+
+    const result = await planTool(
+      { sheet: sheetPath, filesDir: dir, manifestPath: join(dir, 'job.json') },
+      { ...mockEnv(), OEQ_CLIENT_SECRET: 'clip1.mp4' },
+    );
+
+    const serialised = JSON.stringify(result.structuredContent);
+    expect(serialised).not.toContain('clip1.mp4');
+    expect(serialised).toContain('[REDACTED]');
+  });
+
+  it('carries no duplicates field when nothing was flagged', async () => {
+    mock.state.existingItems = [];
+    const sheetPath = await writeIdentifierSheet(dir);
+
+    const result = await planTool(
+      { sheet: sheetPath, filesDir: dir, manifestPath: join(dir, 'job.json') },
+      mockEnv(),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toBeUndefined();
+  });
 });
 
 describe('oeq_retry_failed and a live lock', () => {
