@@ -24,7 +24,9 @@ describe('missingFilenameWords', () => {
    * full name would flag nine rows out of ten.
    */
   it('does not require the words to be adjacent', () => {
-    expect(missingFilenameWords('Rosalind Willow.pdf', 'Rosalind Maren Vess Willow', [])).toEqual([]);
+    expect(missingFilenameWords('Rosalind Willow.pdf', 'Rosalind Maren Vess Willow', [])).toEqual(
+      [],
+    );
   });
 
   it('ignores case', () => {
@@ -32,15 +34,15 @@ describe('missingFilenameWords', () => {
   });
 
   it('ignores words the caller asks it to', () => {
-    expect(missingFilenameWords('Gideon Alder Obituary.pdf', 'Gideon Alder died', ['Obituary'])).toEqual(
-      [],
-    );
+    expect(
+      missingFilenameWords('Gideon Alder Obituary.pdf', 'Gideon Alder died', ['Obituary']),
+    ).toEqual([]);
   });
 
   it('ignores those words case-insensitively too', () => {
-    expect(missingFilenameWords('Gideon Alder OBITUARY.pdf', 'Gideon Alder died', ['obituary'])).toEqual(
-      [],
-    );
+    expect(
+      missingFilenameWords('Gideon Alder OBITUARY.pdf', 'Gideon Alder died', ['obituary']),
+    ).toEqual([]);
   });
 
   // Initials and stray single characters carry no signal and appear everywhere.

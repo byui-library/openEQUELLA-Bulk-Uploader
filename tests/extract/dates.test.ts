@@ -20,7 +20,9 @@ describe('dateNear', () => {
    * date of death.
    */
   it('tolerates a space before the comma', () => {
-    expect(dateNear('died Thursday, April 13 , 2211 at home', ['died'])).toBe('April 13 , 2211');
+    expect(dateNear('died Thursday, April 13 , 2211 at home', ['died'])).toBe(
+      'April 13 , 2211',
+    );
   });
 
   it('tolerates a missing comma', () => {
