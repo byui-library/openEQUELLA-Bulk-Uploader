@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import {
@@ -480,6 +481,32 @@ describe('loginAction', () => {
     expect(out).toContain('Logged in as jdoe (Jane Doe).');
     expect(out).toContain(`Token cached at ${store.path}.`);
     expect(await store.loadRaw()).not.toBeNull();
+  });
+
+  /**
+   * "Logged in as guest ( )" was a SUCCESS line. The code exchanged fine, the
+   * token was cached, and nothing said the operator could create nothing --
+   * because openEQUELLA answers an unauthenticated session as the guest
+   * identity rather than refusing it (core/identity.ts).
+   */
+  it('refuses a guest session rather than printing it as a successful login', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    mock.state.currentUser = JSON.parse(
+      readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+    );
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const err = await captureLogs(() =>
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'the-code',
+      }),
+    ).catch((e: unknown) => e as Error);
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/guest/i);
+    expect((err as Error).message).toMatch(/oeq-upload login/);
   });
 
   it('continues gracefully (still logs in) when opening the browser fails -- headless/SSH use', async () => {

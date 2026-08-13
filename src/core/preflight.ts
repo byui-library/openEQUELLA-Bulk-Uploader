@@ -1,5 +1,5 @@
 import type { AuthProvider } from './auth.js';
-import type { CollectionSummary, OeqClient } from './client.js';
+import type { CollectionList, CurrentUser, OeqClient } from './client.js';
 import { ApiError } from './errors.js';
 import type { AuthMode, Config } from './config.js';
 import type { SchemaInfo } from './discovery.js';
@@ -132,12 +132,7 @@ export async function runPreflight(
   }
 
   try {
-    const user = await client.currentUser();
-    checks.push({
-      label: 'Identity',
-      pass: true,
-      message: `logged in as ${user.username} (${user.firstName} ${user.lastName}). Created items will be owned by this user.`,
-    });
+    checks.push(identityCheck(await client.currentUser()));
   } catch (err) {
     checks.push({ label: 'Identity', pass: false, message: errorMessage(err) });
   }
@@ -172,7 +167,7 @@ export async function runPreflight(
   // remedies, but the same answer already contains both. Issuing it twice
   // would double the cost for no new information, and could report two
   // different truths if the answer changed between them.
-  let creatable: CollectionSummary[] | null = null;
+  let creatable: CollectionList | null = null;
   let creatableError = '';
   try {
     creatable = await client.listCollections({ privilege: 'CREATE_ITEM', length: 100 });
@@ -185,20 +180,32 @@ export async function runPreflight(
   if (creatable === null) {
     checks.push({ label: 'Permission', pass: false, message: creatableError });
   } else {
-    const target = creatable.find((c) => c.uuid === cfg.collectionUuid);
+    const rows = creatable.collections;
+    const target = rows.find((c) => c.uuid === cfg.collectionUuid);
     if (target) {
       checks.push({
         label: 'Permission',
         pass: true,
         message: `CREATE_ITEM confirmed on '${target.name}'.`,
       });
-    } else if (creatable.length > 0) {
+    } else if (rows.length > 0) {
       checks.push({
         label: 'Permission',
         pass: false,
         message:
           `CREATE_ITEM not confirmed on ${cfg.collectionUuid}. Collections you CAN contribute to:\n` +
-          creatable.map((c) => `    - ${c.name} (${c.uuid})`).join('\n'),
+          rows.map((c) => `    - ${c.name} (${c.uuid})`).join('\n'),
+      });
+    } else if (creatable.withheld) {
+      // Not "you hold it on nothing": the server said collections exist and
+      // handed none over. See collectionsAvailableCheck.
+      checks.push({
+        label: 'Permission',
+        pass: false,
+        message:
+          `CREATE_ITEM could not be confirmed on ${cfg.collectionUuid}, or on anything else: the ` +
+          `server withheld the whole list (see the Collections available check above). This says ` +
+          `nothing about what this account can do -- only that nobody asked as this account.`,
       });
     } else {
       checks.push({
@@ -351,6 +358,47 @@ function signInCheck(cfg: Config, signedIn: boolean): PreflightCheck {
 }
 
 /**
+ * Who created items will be owned by -- and, first, whether anybody is signed
+ * in at all.
+ *
+ * A SUCCESSFUL CALL IS NOT PROOF OF SIGN-IN, which is what this check used to
+ * treat it as. openEQUELLA never answers an unauthenticated request with 401:
+ * it answers 200 as the guest identity (client.ts's `CurrentUser.guest`), so
+ * `pass: true` on any answer at all produced
+ *
+ *     Identity   ok   logged in as guest ( ). Created items will be owned by this user.
+ *
+ * A PASS, from the one report built to tell a new institution whether this
+ * tool works against their instance. Nothing anywhere else in the report would
+ * have said otherwise either: the collection list comes back empty for a guest
+ * too, which reads as a privilege to ask an administrator for.
+ *
+ * So guest FAILS, and the message says what it means for a real run -- that
+ * nothing can be created, and that the sign-in step did not do what it
+ * appeared to.
+ */
+function identityCheck(user: CurrentUser): PreflightCheck {
+  if (user.guest) {
+    return {
+      label: 'Identity',
+      pass: false,
+      message:
+        `openEQUELLA answered as the GUEST identity ('${user.username}'), which means this ` +
+        `session is NOT signed in. Nothing can be created: every contribution would be refused, ` +
+        `and the list of collections comes back empty even where collections exist. This is not ` +
+        `an error the server reports -- an unauthenticated request is answered with a normal, ` +
+        `plausible-looking response and no 401 -- so a sign-in that appeared to succeed can end ` +
+        `up here. Check the sign-in method above and sign in again.`,
+    };
+  }
+  return {
+    label: 'Identity',
+    pass: true,
+    message: `logged in as ${user.username} (${user.firstName} ${user.lastName}). Created items will be owned by this user.`,
+  };
+}
+
+/**
  * How many collections this account can create in AT ALL.
  *
  * ZERO IS A REAL, DIAGNOSABLE STATE, not an error: the account authenticated
@@ -362,9 +410,16 @@ function signInCheck(cfg: Config, signedIn: boolean): PreflightCheck {
  * A list that could NOT BE READ must never render as an empty one. Those two
  * have no fix in common -- one is a permission to be granted, the other is a
  * host that cannot be reached -- so the failure says which it is.
+ *
+ * AND NEITHER IS A LIST THE SERVER WITHHELD. There is a third state, and it
+ * arrives as a perfectly successful 200: `available: 29` with zero rows,
+ * measured against the live test instance with no credentials at all. Reported
+ * as zero it reads as a privilege to go and ask an administrator for -- so a
+ * site would ask for one they already hold, and never look at their sign-in.
+ * See `CollectionList.withheld`.
  */
 function collectionsAvailableCheck(
-  creatable: CollectionSummary[] | null,
+  creatable: CollectionList | null,
   error: string,
 ): PreflightCheck {
   if (creatable === null) {
@@ -378,7 +433,21 @@ function collectionsAvailableCheck(
     };
   }
 
-  if (creatable.length === 0) {
+  if (creatable.withheld) {
+    return {
+      label: 'Collections available',
+      pass: false,
+      message:
+        `the server reports that ${creatable.available} collection(s) exist for this query and ` +
+        `returned NONE of them. That is what openEQUELLA does for a session that is not signed ` +
+        `in: it answers 200 with an empty list rather than refusing the request, so this looks ` +
+        `exactly like an account with no collections and is not one. See the Identity check ` +
+        `above -- if it names the guest user, nothing here is a permissions problem and no ` +
+        `administrator needs to grant anything. Sign in and run this again.`,
+    };
+  }
+
+  if (creatable.collections.length === 0) {
     return {
       label: 'Collections available',
       pass: false,
@@ -394,8 +463,8 @@ function collectionsAvailableCheck(
     label: 'Collections available',
     pass: true,
     message:
-      `${creatable.length} collection(s) accept contributions from this account: ` +
-      creatable.map((c) => `${c.name} (${c.uuid})`).join(', '),
+      `${creatable.collections.length} collection(s) accept contributions from this account: ` +
+      creatable.collections.map((c) => `${c.name} (${c.uuid})`).join(', '),
   };
 }
 

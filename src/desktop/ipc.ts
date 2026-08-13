@@ -1,5 +1,5 @@
 import type { ItemState, Manifest } from '../core/types.js';
-import type { CollectionSummary, CurrentUser } from '../core/client.js';
+import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
 import type { ExtractedRow } from '../core/extract/types.js';
@@ -168,11 +168,35 @@ export interface OeqApi {
   /** Behind Setup's "Forget this password". Removing what is absent is not an error. */
   forgetPassword(instanceId: string): Promise<void>;
 
+  /**
+   * Sign in to one site and confirm who that made you.
+   *
+   * REJECTS on a guest session rather than resolving one. openEQUELLA answers
+   * an unauthenticated request 200 as the guest identity, so a sign-in that
+   * never took still produces a perfectly good `CurrentUser` -- and the app
+   * would advance to the next screen reporting success. See handlers.ts's
+   * `requireSignedIn`.
+   */
   signIn(instanceId: string): Promise<CurrentUser>;
   signOut(): Promise<void>;
+  /**
+   * Who is signed in on this instance, or null.
+   *
+   * NULL FOR A GUEST SESSION as well as for no token at all: this answers "is
+   * anyone signed in", and guest is openEQUELLA's way of saying no. Returning
+   * the guest user would put "Signed in as guest" and a Continue button in
+   * front of the operator (ui/signin.ts).
+   */
   currentUser(instanceId: string): Promise<CurrentUser | null>;
 
-  listCollections(instanceId: string): Promise<CollectionSummary[]>;
+  /**
+   * The collections this account can contribute to -- WITH the server's own
+   * `available` count, not just the rows. An unauthenticated session gets 200
+   * and an empty list, and the count is the only thing that tells that apart
+   * from an account that genuinely holds CREATE_ITEM on nothing. See
+   * `CollectionList.withheld`.
+   */
+  listCollections(instanceId: string): Promise<CollectionList>;
 
   /**
    * Read one schema from the site and remember it.

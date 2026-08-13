@@ -7,6 +7,12 @@ export interface ChooseProps {
   /** null while listCollections() is in flight. */
   collections: CollectionSummary[] | null;
   collectionsError: string | null;
+  /**
+   * The server said collections exist for this account and returned none of
+   * them -- which means the session is not signed in, not that there are none.
+   * See core/discovery.ts's `CollectionList.withheld`.
+   */
+  collectionsWithheld: boolean;
   query: string;
   collectionUuid: string | null;
   sheetPath: string | null;
@@ -27,27 +33,59 @@ export interface ChooseProps {
 }
 
 /**
+ * What the collection section says when the server withheld the whole list.
+ *
+ * REPORTED BY THE OPERATOR, live. This screen showed "showing 0 of 0 -- No
+ * collections match" for a session that was not signed in, which is
+ * indistinguishable from an account that genuinely has no collections --
+ * and nothing anywhere on the screen said they were not signed in.
+ * openEQUELLA does not refuse an unauthenticated request; it answers 200 with
+ * the true count and none of the rows.
+ *
+ * Exported as a string so it can be asserted on without a DOM (this project
+ * has no jsdom), the same way the other screens' copy is.
+ */
+export const WITHHELD_COLLECTIONS_MESSAGE =
+  'You are signed in as guest — these collections exist, but this session cannot see them. ' +
+  'That means the sign-in did not take, not that you have no collections. Go back and sign in ' +
+  'again, or check this site’s sign-in details in Setup.';
+
+/**
  * Collection dropdown + spreadsheet/folder pickers. `listCollections`
  * returns 29 collections on production, unsorted, with entries like "Sample"
  * ahead of anything a real user wants -- filterCollections (ui/filter.ts,
  * unit tested) sorts by name and supports a live filter so the list is
  * usable rather than a wall of options to scroll through.
  */
-export function renderChoose(root: HTMLElement, props: ChooseProps): void {
-  let collectionSection: string;
+/**
+ * The collection half of the screen, as markup.
+ *
+ * Pulled out as a pure function so its states can be asserted without a DOM
+ * -- this project has no jsdom, so `renderChoose` itself cannot be exercised
+ * by a test at all, and "which state is this list actually in" is precisely
+ * what shipped wrong. Same reasoning as `bannerClass` (ui/banner.ts) and
+ * `setupMarkup` (screens/setup.ts).
+ */
+export function chooseCollectionSection(props: ChooseProps): string {
   if (props.collectionsError) {
-    collectionSection = `<p class="error" role="alert">${escapeHtml(props.collectionsError)}</p>`;
-  } else if (props.collections === null) {
-    collectionSection = `<p class="muted">Loading collections…</p>`;
-  } else {
-    const filtered = filterCollections(props.collections, props.query);
-    const rows = filtered
-      .map(
-        (c) =>
-          `<option value="${escapeHtml(c.uuid)}"${c.uuid === props.collectionUuid ? ' selected' : ''}>${escapeHtml(c.name)}</option>`,
-      )
-      .join('');
-    collectionSection = `
+    return `<p class="error" role="alert">${escapeHtml(props.collectionsError)}</p>`;
+  }
+  // BEFORE the empty-list branch below, and never rendered as a filter result:
+  // an empty dropdown here would be the same silence that shipped.
+  if (props.collectionsWithheld) {
+    return `<p class="error" role="alert">${escapeHtml(WITHHELD_COLLECTIONS_MESSAGE)}</p>`;
+  }
+  if (props.collections === null) {
+    return `<p class="muted">Loading collections…</p>`;
+  }
+  const filtered = filterCollections(props.collections, props.query);
+  const rows = filtered
+    .map(
+      (c) =>
+        `<option value="${escapeHtml(c.uuid)}"${c.uuid === props.collectionUuid ? ' selected' : ''}>${escapeHtml(c.name)}</option>`,
+    )
+    .join('');
+  return `
       <label for="collection-filter">Filter</label>
       <input id="collection-filter" type="text" placeholder="Type to filter…" value="${escapeHtml(props.query)}" autocomplete="off" />
       <label for="collection-select">Collection (showing ${filtered.length} of ${props.collections.length})</label>
@@ -55,7 +93,10 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
         ${rows || '<option disabled>No collections match.</option>'}
       </select>
     `;
-  }
+}
+
+export function renderChoose(root: HTMLElement, props: ChooseProps): void {
+  const collectionSection = chooseCollectionSection(props);
 
   const restoreCaret = keepCaret(root, '#collection-filter');
 

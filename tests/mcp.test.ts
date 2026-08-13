@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -531,6 +531,27 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(result.isError).toBeFalsy();
       expect(textOf(result)).toBe('Logged in as jdoe (Jane Doe).');
       expect(await tokenStore.loadRaw()).not.toBeNull();
+    });
+
+    /**
+     * A code that exchanged cleanly is not a sign-in. openEQUELLA answers an
+     * unauthenticated session as the guest identity rather than refusing it,
+     * so this used to report "Logged in as guest ( )" as a SUCCESS -- and an
+     * MCP caller would go straight on to start a job that can create nothing.
+     */
+    it('refuses a guest session rather than reporting it as a login', async () => {
+      mock.state.validAuthCodes.add('the-code');
+      mock.state.currentUser = JSON.parse(
+        readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+      );
+      const tokenStore = new FileTokenStore(join(dir, 'token.json'));
+
+      const result = await loginCompleteTool({ code: 'the-code' }, env(), { tokenStore });
+
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).not.toMatch(/^Logged in as/);
+      expect(textOf(result)).toMatch(/guest/i);
+      expect(textOf(result)).toMatch(/oeq_login_url/);
     });
 
     it('reports a clear error for an invalid or already-used code', async () => {

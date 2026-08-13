@@ -647,6 +647,33 @@ describe('SecretStore — per-site settings', () => {
     expect((await s.loadInstance(instanceKey(SANDBOX)))?.live).toBe(false);
   });
 
+  /**
+   * AN EXPLICIT BOOLEAN ON DISK, not a value inferred at read time.
+   *
+   * The operator's real store had no `live` key at all, so `undefined` reached
+   * the banner and it was loud by accident rather than by decision -- and a
+   * default applied when reading leaves nothing to distinguish "assumed live"
+   * from "the operator said live". Asserted against the bytes rather than
+   * through `loadInstance`, which would default it back and hide exactly this.
+   */
+  it('writes the live flag into the file as an explicit boolean', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    const onDisk = JSON.parse(fakeCipher.decrypt(await readFile(path)));
+    const entry = onDisk.instances[instanceKey(LIVE)];
+    expect(Object.keys(entry)).toContain('live');
+    expect(entry.live).toBe(true);
+  });
+
+  it('writes an unticked live flag as false, not as an absence', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await s.saveInstance({ label: 'Sandbox', baseUrl: SANDBOX, live: false }, { ...CODE, redirectUri: SANDBOX });
+    const onDisk = JSON.parse(fakeCipher.decrypt(await readFile(path)));
+    expect(onDisk.instances[instanceKey(SANDBOX)].live).toBe(false);
+  });
+
   // The address of the cached schema -- see Instance.schemaUuid.
   it('round-trips the chosen collection’s schema uuid', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);

@@ -15,6 +15,7 @@ import { saveManifest, loadManifest } from '../core/state.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { OeqClient } from '../core/client.js';
+import { assertNotGuest } from '../core/identity.js';
 import { runManifest } from '../core/runner.js';
 import { runPreflight, summarise } from '../core/preflight.js';
 import { checkLock } from '../core/lock.js';
@@ -514,7 +515,15 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
   await auth.exchangeCode(code);
 
   const client = new OeqClient(cfg.baseUrl, auth);
-  const user = await client.currentUser();
+  // A token exchange that succeeded is still not a sign-in: openEQUELLA
+  // answers as the guest identity rather than refusing, so without this the
+  // command prints "Logged in as guest ( )" and caches a token that can create
+  // nothing. See core/identity.ts.
+  const user = assertNotGuest(
+    await client.currentUser(),
+    'Run `oeq-upload login` again, and check OEQ_CLIENT_ID, OEQ_CLIENT_SECRET and OEQ_REDIRECT_URI ' +
+      'against what your administrator registered for this site.',
+  );
   console.log(`\nLogged in as ${user.username} (${user.firstName} ${user.lastName}).`);
 
   const raw = await tokenStore.loadRaw();

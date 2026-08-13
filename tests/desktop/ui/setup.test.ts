@@ -4,6 +4,7 @@ import {
   instanceFrom,
   setupMarkup,
   settingsFrom,
+  suggestAttachmentPath,
   TEXT_INPUTS,
   type SetupFields,
   type SetupProps,
@@ -48,6 +49,7 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   storedUsername: null,
   collections: null,
   collectionsError: null,
+  collectionsWithheld: false,
   schemaPaths: null,
   error: null,
   saving: false,
@@ -266,6 +268,20 @@ describe('the collection dropdown', () => {
     expect(html).toMatch(/save your sign-in details first/i);
   });
 
+  /**
+   * WITHHELD IS NOT EMPTY, and it is not a read failure either. openEQUELLA
+   * answers an unauthenticated request 200 with the true count and zero rows,
+   * so this state arrives looking like a perfectly successful call. Reported
+   * as "you hold CREATE_ITEM on nothing" it sends the operator to an
+   * administrator over their own sign-in.
+   */
+  it('says the list was withheld rather than that the account holds nothing', () => {
+    const html = setupMarkup(props({ collections: [], collectionsWithheld: true }));
+    expect(html).toMatch(/guest/i);
+    expect(html).not.toContain('holds <strong>CREATE_ITEM</strong> on no collection');
+    expect(html).not.toContain('id="setup-collection"');
+  });
+
   // The names come off the wire and this markup is assigned to innerHTML.
   it('escapes a collection name containing markup', () => {
     const html = setupMarkup(
@@ -374,6 +390,79 @@ describe('the live-site flag', () => {
     const html = setupMarkup(props({ collections: COLLECTIONS, fields: fields({ live: false }) }));
     expect(html).toMatch(/id="setup-live"/);
     expect(html).not.toMatch(/id="setup-live"[\s\S]*?checked/);
+  });
+
+  /**
+   * ON THE SCREEN WHERE A SITE IS ADDED, which is the one Setup pass every
+   * operator definitely makes. This checkbox and the attachment path used to
+   * live inside the collection section, which returns early for a site that
+   * has not been saved yet -- so neither was rendered at all, and saving went
+   * straight on to Sign-in. Unless the operator later found "Settings for
+   * {site}…", the live flag was never a decision and the attachment path was
+   * never even mentioned; both were blank in the operator's real store.
+   *
+   * Neither needs the network or a saved site. Only the collection dropdown
+   * does, and it still waits.
+   */
+  it('is on screen for a site that has not been saved yet', () => {
+    const html = setupMarkup(props({ instanceId: '', collections: null }));
+    expect(html).toContain('id="setup-live"');
+    expect(html).toContain('id="setup-attachment-path"');
+    // ...and the dropdown still waits for credentials to ask with.
+    expect(html).not.toContain('id="setup-collection"');
+  });
+});
+
+/**
+ * BLANK MUST BE A CHOICE, NOT AN ACCIDENT. The operator's real store had this
+ * empty with nothing on screen having ever mentioned it, so every item they
+ * created silently lost the field. Reachable at all only now the collection
+ * list asks for `full=true`: without it no collection carries a schema uuid,
+ * so no schema was ever read and there was nothing to offer.
+ */
+describe('suggestAttachmentPath', () => {
+  it('names the schema path that looks like the attachment field', () => {
+    expect(
+      suggestAttachmentPath(['MWDL/title', 'BYUI_extended/attachments/attachment', 'MWDL/date']),
+    ).toBe('BYUI_extended/attachments/attachment');
+  });
+
+  it('offers nothing when the schema declares nothing like one', () => {
+    expect(suggestAttachmentPath(['MWDL/title', 'MWDL/description'])).toBeNull();
+  });
+
+  /**
+   * A guess made without a schema would be BYU-Idaho's answer at every
+   * institution -- the exact class of bug this work exists to remove. Null in,
+   * null out.
+   */
+  it('guesses nothing when no schema has been read', () => {
+    expect(suggestAttachmentPath(null)).toBeNull();
+  });
+
+  // Shortest wins, then alphabetical, so a deeply nested near-miss cannot
+  // outrank the obvious one and the answer does not depend on server order.
+  it('picks the shortest candidate, deterministically', () => {
+    expect(suggestAttachmentPath(['a/b/c/deep/attachment', 'local/attachments'])).toBe(
+      'local/attachments',
+    );
+    // Equal length: alphabetical, so the answer does not depend on server order.
+    expect(suggestAttachmentPath(['bb/attachment', 'aa/attachment'])).toBe('aa/attachment');
+  });
+
+  it('tells the operator what blank means, and names the candidate', () => {
+    const verdict = attachmentPathVerdict('', ['MWDL/title', 'local/attachments/attachment']);
+    expect(verdict.kind).toBe('blank');
+    expect(verdict.message).toContain('local/attachments/attachment');
+    // Still says blank is legitimate -- it is, for most schemas.
+    expect(verdict.message).toMatch(/no attachment-uuid field is written/);
+  });
+
+  // Nothing is ever filled in on the operator's behalf: blank is a real answer
+  // and writing metadata they did not ask for goes on every item in every batch.
+  it('does not fill the field in', () => {
+    expect(instanceFrom(props({ schemaPaths: ['local/attachments/attachment'] })).attachmentUuidPath)
+      .toBe('');
   });
 });
 

@@ -82,7 +82,15 @@
  */
 import type { AuthProvider } from './auth.js';
 import { ApiError, ValidationError } from './errors.js';
-import { displayName, parseCollections, parseSchema, type SchemaInfo } from './discovery.js';
+import {
+  displayName,
+  parseCollections,
+  parseSchema,
+  type CollectionList,
+  type SchemaInfo,
+} from './discovery.js';
+
+export type { CollectionList } from './discovery.js';
 
 export interface AttachmentSpec {
   filename: string;
@@ -107,9 +115,28 @@ export interface CreateItemResult {
 
 /** Who the current OAuth token authenticates as -- see `CurrentUserDetails` in swagger.json. */
 export interface CurrentUser {
+  /** The account's own id. `'guest'` on an unauthenticated session. */
+  id: string;
   username: string;
   firstName: string;
   lastName: string;
+  /**
+   * THE FIELD THAT SAYS WHETHER ANYONE IS SIGNED IN.
+   *
+   * openEQUELLA never answers an unauthenticated request with 401. Measured
+   * against content-test.byui.edu with no credentials at all, this endpoint
+   * returned 200 and `{"id":"guest","username":"guest","guest":true,...}`
+   * (recorded verbatim in tests/fixtures/api/currentuser-guest.json). This
+   * client used to read only username/firstName/lastName and discard `guest`,
+   * which made "not signed in at all" and "signed in" the same success --
+   * and `oeq-upload check` reported "Identity ok -- logged in as guest ( )"
+   * as a PASS.
+   *
+   * A SUCCESSFUL CALL IS THEREFORE NOT PROOF OF SIGN-IN. Every caller has to
+   * read this. `true` only when the response says so explicitly; a response
+   * that does not mention it is read as a real account.
+   */
+  guest: boolean;
 }
 
 export interface CollectionSummary {
@@ -522,8 +549,24 @@ export class OeqClient {
    */
   async currentUser(): Promise<CurrentUser> {
     const res = await this.request('/api/content/currentuser');
-    const body = (await res.json()) as { username: string; firstName: string; lastName: string };
-    return { username: body.username, firstName: body.firstName, lastName: body.lastName };
+    const body = (await res.json()) as {
+      id?: unknown;
+      username?: unknown;
+      firstName?: unknown;
+      lastName?: unknown;
+      guest?: unknown;
+    };
+    const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    return {
+      id: str(body.id),
+      username: str(body.username),
+      firstName: str(body.firstName),
+      lastName: str(body.lastName),
+      // `=== true`, not truthiness: only the server saying so makes this a
+      // guest session. See CurrentUser.guest -- this is the field that tells a
+      // 200 from a sign-in.
+      guest: body.guest === true,
+    };
   }
 
   /**
@@ -574,11 +617,29 @@ export class OeqClient {
    * `schema.uuid` -- the single fact that lets a chosen collection resolve to
    * its schema without a second request, which is exactly what Setup needs to
    * offer or check an attachment-uuid path. See parseCollections.
+   *
+   * `full=true` IS NOT OPTIONAL. CONFIRMED against the live instance: without
+   * it every entry comes back as `uuid, name, nameStrings, readonly, links`
+   * and carries no `schema` field whatsoever, so `schemaUuid` was '' for every
+   * collection and the entire discovery design -- choose a collection, get its
+   * schema in one hop -- silently produced nothing. The declared title path,
+   * the attachment-field check and the offline schema cache all degraded
+   * without a single error. It was missing here for exactly as long as
+   * nothing asserted on the request.
+   *
+   * Returns the whole `CollectionList`, not just the rows: an empty list from
+   * an unauthenticated session is not an empty list, and only the `available`
+   * count that comes back beside the rows can tell those apart. Callers decide
+   * what to say about it -- see `CollectionList.withheld`.
    */
-  async listCollections(opts: { privilege?: string; length?: number } = {}): Promise<CollectionSummary[]> {
+  async listCollections(
+    opts: { privilege?: string; length?: number } = {},
+  ): Promise<CollectionList> {
     const params = new URLSearchParams();
     if (opts.privilege) params.set('privilege', opts.privilege);
     params.set('length', String(opts.length ?? 100));
+    // See above: without this, no entry carries a schema.
+    params.set('full', 'true');
     const res = await this.request(`/api/collection?${params.toString()}`);
     return parseCollections(await res.json());
   }

@@ -103,6 +103,25 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+/**
+ * `GET /api/content/currentuser`'s body, as this mock serves it.
+ *
+ * `id` and `guest` are OPTIONAL here only so the existing tests that assign a
+ * three-field literal keep compiling; the real response always carries both,
+ * and the guest one is recorded verbatim in
+ * tests/fixtures/api/currentuser-guest.json. `guest` is the field that matters:
+ * openEQUELLA answers an UNAUTHENTICATED request to this route with 200 and
+ * `{"username":"guest","guest":true,...}`, never with 401, which is how a
+ * pre-flight came to report a not-signed-in session as "logged in as guest".
+ */
+export interface MockCurrentUser {
+  username: string;
+  firstName: string;
+  lastName: string;
+  id?: string;
+  guest?: boolean;
+}
+
 export interface MockState {
   /** Tokens handed out, newest last. */
   issuedTokens: string[];
@@ -143,7 +162,7 @@ export interface MockState {
    * created items will be owned by. Mutate directly in a test to change who
    * "is logged in".
    */
-  currentUser: { username: string; firstName: string; lastName: string };
+  currentUser: MockCurrentUser;
   /**
    * Additive test scaffolding for `GET /api/collection/{uuid}` and
    * `GET /api/collection`, backing `check`/`oeq_check`'s "does the
@@ -189,6 +208,22 @@ export interface MockState {
   titlePath: string;
   /** Every `/api/search` request line, in order, so a test can assert on the URL itself. */
   searchUrls: string[];
+  /**
+   * Every `/api/collection` LIST request line, in order. `full=true` is the
+   * difference between an entry that carries `schema: { uuid }` and one that
+   * does not (confirmed live), and the only way to prove it is sent is to
+   * look at the request.
+   */
+  collectionUrls: string[];
+  /**
+   * Answer the collection list the way an UNAUTHENTICATED openEQUELLA does:
+   * 200, the real `available` count, and ZERO results. Recorded verbatim in
+   * tests/fixtures/api/collections-unauthenticated.json (`available: 29`,
+   * `results: []`). Not an error path -- it is indistinguishable from "you
+   * have no collections" unless the count is read, which is exactly the
+   * defect this models.
+   */
+  withholdCollections: boolean;
 }
 
 export interface MockServer {
@@ -242,6 +277,8 @@ export async function startMockServer(): Promise<MockServer> {
     existingItems: [],
     titlePath: 'MWDL/title',
     searchUrls: [],
+    collectionUrls: [],
+    withholdCollections: false,
   };
 
   let counter = 0;
@@ -486,21 +523,36 @@ export async function startMockServer(): Promise<MockServer> {
       // mock collection's `privileges`) rather than every combination swagger
       // permits.
       if (path === '/api/collection' && req.method === 'GET') {
+        state.collectionUrls.push(req.url ?? '');
         const privileges = url.searchParams.getAll('privilege');
         const length = Number(url.searchParams.get('length') ?? '10');
         const filtered =
           privileges.length > 0
             ? state.collections.filter((c) => privileges.every((p) => c.privileges.includes(p)))
             : state.collections;
-        // Each entry carries `schema: { uuid }`, exactly as the recorded
-        // tests/fixtures/api/collections.json does on every one of its 29
-        // entries. The mock used to omit it -- mirroring the inline parse in
-        // client.listCollections, which read only uuid and name -- so no test
-        // could have noticed the field being dropped.
+        // The unauthenticated answer: the true count, and none of the rows.
+        // See MockState.withholdCollections.
+        if (state.withholdCollections) {
+          return send(res, 200, {
+            start: 0,
+            length: 0,
+            available: filtered.length,
+            results: [],
+            resumptionToken: '',
+          });
+        }
+        // `schema: { uuid }` IS GATED ON `full=true`, exactly as the live
+        // instance gates it. Without that parameter a real entry carries only
+        // `uuid, name, nameStrings, readonly, links` -- recorded verbatim in
+        // tests/fixtures/api/collections-test-instance.json -- and every
+        // collection resolves to no schema at all. The mock used to hand the
+        // schema over unconditionally, so no test could have noticed the
+        // parameter was missing from the request.
+        const full = url.searchParams.get('full') === 'true';
         const results = filtered.slice(0, length).map((c) => ({
           uuid: c.uuid,
           name: c.name,
-          ...(c.schemaUuid ? { schema: { uuid: c.schemaUuid } } : {}),
+          ...(full && c.schemaUuid ? { schema: { uuid: c.schemaUuid } } : {}),
         }));
         return send(res, 200, {
           start: 0,

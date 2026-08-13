@@ -40,6 +40,41 @@ export function displayName(name: unknown, fallback: string): string {
 }
 
 /**
+ * A collection list as read from one response: the rows, and what the server
+ * said about them.
+ *
+ * `available` AND the rows, not just the rows. The count is the only thing in
+ * the response that tells "you can create in nothing" apart from "you are not
+ * authenticated" -- see `withheld`.
+ */
+export interface CollectionList {
+  collections: CollectionSummary[];
+  /**
+   * The response's own `available`: how many the server says exist for this
+   * query. -1 when the response declared no count at all, which is not
+   * evidence of anything either way.
+   */
+  available: number;
+  /**
+   * The server reported that collections exist and returned NONE of them.
+   *
+   * That can only mean it kept them back, and in practice it means one thing:
+   * the session is not authenticated. openEQUELLA does not answer an
+   * unauthenticated request with 401 -- measured against content-test.byui.edu
+   * with no credentials at all, `GET /collection?privilege=CREATE_ITEM` came
+   * back 200 with `available: 29` and `results: []` (recorded verbatim in
+   * tests/fixtures/api/collections-unauthenticated.json).
+   *
+   * FALSE when `available` is 0: an account that genuinely holds CREATE_ITEM
+   * on nothing is a real, legitimate state -- it is what a viewer-only account
+   * looks like -- and it has a different remedy (an administrator grants a
+   * privilege) from a sign-in that did not take. Also false when the response
+   * declared no count, because nothing was claimed.
+   */
+  withheld: boolean;
+}
+
+/**
  * Read `GET /api/collection?privilege=CREATE_ITEM&full=true`.
  *
  * THE ONLY PARSER FOR THIS RESPONSE. `client.listCollections` used to have a
@@ -49,17 +84,29 @@ export function displayName(name: unknown, fallback: string): string {
  * parsers for one endpoint is two places for a field to go missing; this is
  * the one.
  *
- * Each entry carries `schema: { uuid }`, so choosing a collection also
- * determines its schema with no further request. That was verified by probe,
- * not assumed.
+ * Each entry carries `schema: { uuid }` -- BUT ONLY WITH `full=true` ON THE
+ * REQUEST. Confirmed against the live instance: without that parameter an
+ * entry carries `uuid, name, nameStrings, readonly, links` and no `schema`
+ * field at all, so every collection resolves to no schema and everything
+ * downstream of one degrades in silence. See `client.listCollections`, which
+ * is the only caller and does send it.
  *
- * An empty list is a legitimate answer meaning "this account can create
- * nothing", so it is returned rather than thrown. Entries missing a uuid are
- * dropped: an option that cannot be selected is worse than an absent one.
+ * DOES NOT THROW, on any input. It is a pure parser and its callers depend on
+ * that; what it does instead is hand back everything the response said,
+ * including the `available` count, so each caller can decide what an empty
+ * list means for what IT is doing (see `CollectionList.withheld`). Entries
+ * missing a uuid are dropped: an option that cannot be selected is worse than
+ * an absent one.
  */
-export function parseCollections(body: unknown): CollectionSummary[] {
-  const results = (body as { results?: unknown } | null)?.results;
-  if (!Array.isArray(results)) return [];
+export function parseCollections(body: unknown): CollectionList {
+  const raw = body as { results?: unknown; available?: unknown } | null;
+  const available = typeof raw?.available === 'number' ? raw.available : -1;
+  const results = raw?.results;
+  if (!Array.isArray(results)) {
+    // No rows to read at all. A body this shapeless is not evidence that
+    // anything was withheld, whatever it happens to claim is available.
+    return { collections: [], available, withheld: false };
+  }
   const collections: CollectionSummary[] = [];
   for (const entry of results) {
     const row = entry as { uuid?: unknown; name?: unknown; schema?: { uuid?: unknown } };
@@ -70,7 +117,13 @@ export function parseCollections(body: unknown): CollectionSummary[] {
       schemaUuid: typeof row.schema?.uuid === 'string' ? row.schema.uuid : '',
     });
   }
-  return collections.sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    collections: collections.sort((a, b) => a.name.localeCompare(b.name)),
+    available,
+    // Measured on the RAW rows, not on the parsed ones: a response that sent
+    // rows this parser then dropped was not withholding anything.
+    withheld: available > 0 && results.length === 0,
+  };
 }
 
 export interface SchemaInfo {

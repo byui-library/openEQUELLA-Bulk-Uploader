@@ -24,6 +24,7 @@ import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { redactSecret as redactAllForms } from '../core/redact.js';
 import { OeqClient } from '../core/client.js';
+import { assertNotGuest } from '../core/identity.js';
 import { runPreflight, summarise } from '../core/preflight.js';
 import type { ItemState } from '../core/types.js';
 
@@ -564,7 +565,16 @@ export async function loginCompleteTool(
     const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
     await auth.exchangeCode(args.code);
     const client = new OeqClient(cfg.baseUrl, auth);
-    const user = await client.currentUser();
+    // Exchanging the code is not the same as being signed in -- openEQUELLA
+    // answers an unauthenticated session as the guest rather than refusing it,
+    // so this would otherwise report "Logged in as guest ( )" as a success and
+    // the caller would go on to start a job that can create nothing. Throws,
+    // and the catch below turns it into an error result. See core/identity.ts.
+    const user = assertNotGuest(
+      await client.currentUser(),
+      'Call oeq_login_url again and complete the sign-in in the browser, then pass the new code ' +
+        'to oeq_login_complete.',
+    );
     return text(`Logged in as ${user.username} (${user.firstName} ${user.lastName}).`);
   } catch (err) {
     return text(redactSecret(errorMessage(err), env), true);

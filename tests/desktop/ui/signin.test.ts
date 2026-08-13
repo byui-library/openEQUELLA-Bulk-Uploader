@@ -3,7 +3,18 @@ import { signinMode } from '../../../src/desktop/ui/signin.js';
 import { signinBusyLabel, signinHint } from '../../../src/desktop/ui/screens/signin.js';
 import type { CurrentUser } from '../../../src/core/client.js';
 
-const user: CurrentUser = { username: 'alovelace', firstName: 'Ada', lastName: 'Lovelace' };
+// A REAL account: `guest: false`. openEQUELLA answers an unauthenticated
+// request as the guest identity rather than refusing it, so a CurrentUser on
+// its own is no longer proof that anyone signed in -- handlers.ts refuses a
+// guest at the sign-in channel and reports null from the currentUser one, and
+// this screen's states are all about a user who got past that.
+const user: CurrentUser = {
+  id: 'u-42',
+  username: 'alovelace',
+  firstName: 'Ada',
+  lastName: 'Lovelace',
+  guest: false,
+};
 
 describe('signinMode', () => {
   it('is missing-credentials when the selected instance has no saved credentials', () => {
