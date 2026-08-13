@@ -4,17 +4,48 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **1236 passing across 79 files**.
+1. `npm install && npm test` — expect **1450 passing across 88 files**.
    `npm run typecheck` and `npm run build:desktop` are both clean.
-2. **You are on `feature/institution-agnostic`, and it is NOT merged.** It is
-   the only branch with work on it; `main` still carries v1.0.0. Nothing else
-   is in flight, and there is no open PR.
-3. **Two things you must not assume.** Both are below in full; they are here
-   because assuming either one would be an expensive mistake:
+2. **The institution-agnostic work is merged and released.** `main` carries
+   **v1.1.0** (tagged 2026-08-13, both installers built by CI). PRs #7–#11 are
+   in; the branches are pruned.
+3. **Open, awaiting the operator:** PR #12 (Apache 2.0 licence) and
+   `fix/attachment-field-wording` (the Setup changes below). The repository is
+   **still private** — making it public is the last step of spec 2 and is the
+   operator's to take.
+4. **Three things you must not assume.** All are below in full; each would be
+   an expensive mistake:
    - **A session behind a load balancer needs EVERY cookie, not just
      JSESSIONID** — and openEQUELLA serves an unroutable session as *guest*,
      200, rather than rejecting it.
-   - **Spec 2 — publishing the repository — has not started.**
+   - **A 200 from openEQUELLA is not proof anybody is signed in.** `guest: true`
+     on `/api/content/currentuser`, and `available > 0` with an empty
+     `results`, are the two reliable signals.
+   - **The attachment-uuid field is institution-specific and not required by
+     openEQUELLA.** The file attaches through the attachment API regardless.
+     BYU-Idaho needs it because BYU-Idaho's *own web wizard* writes it — that
+     is the test, and it generalises: contribute one item through openEQUELLA's
+     interface and match what it produces. `item/attachments/attachment/uuid`,
+     which the sync documentation names, is **generated** by openEQUELLA and is
+     not in the schema; nothing writes it.
+
+### What v1.1.1 adds, and why
+
+Every item came from the operator installing v1.1.0 and using it — none from a
+test. Recorded because the pattern is the point: the wording that confused
+them is also what emptied their stored setting.
+
+- The attachment field says what it *is* (a metadata copy of an ID openEQUELLA
+  already holds), **fills itself** from the chosen collection's schema when
+  that schema declares exactly one candidate, and carries a note about the
+  sync path so a reader of openEQUELLA's own documentation is not misled.
+- **Blank is no longer called correct before anything has been checked.** On
+  the first pass through Setup there is no collection, so no schema — and the
+  field used to answer "correct for most schemas" anyway. That is how the
+  operator's real stored path ended up empty.
+- **Setup is reachable from Choose and from Results**, has a Back that clears
+  nothing, and both screens can sign out. The app had a red banner naming the
+  site with no way to act on it.
 
 ### What this branch built
 
@@ -552,7 +583,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            1236 tests, 79 files
+npm test            1450 tests, 88 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/

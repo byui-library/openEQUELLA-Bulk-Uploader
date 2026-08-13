@@ -956,7 +956,7 @@ contract) together.
 ## Development
 
 ```bash
-npm test               # vitest, 1236 tests across 79 files
+npm test               # vitest, 1450 tests across 88 files
 npm run typecheck
 npm run build          # emits dist/cli/index.js and dist/mcp/index.js
 npm run build:desktop  # Electron -> dist-desktop/

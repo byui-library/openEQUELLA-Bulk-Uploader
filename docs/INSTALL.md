@@ -47,14 +47,14 @@ first, then run it from there.
 Two versions of the program are provided. They are the same program — the
 difference is only in how it gets onto the computer.
 
-- **`openEQUELLA Bulk Uploader 1.1.0.exe`** — a single file. Double-click it
+- **`openEQUELLA Bulk Uploader 1.1.1.exe`** — a single file. Double-click it
   to run; nothing is installed anywhere.
-- **`openEQUELLA Bulk Uploader Setup 1.1.0.exe`** — an installer. Adds a Start
+- **`openEQUELLA Bulk Uploader Setup 1.1.1.exe`** — an installer. Adds a Start
   Menu shortcut and an entry in Add or Remove Programs, like a normal Windows
   program.
 
 The number in the filename is the version. If the copy on the share is newer
-than 1.1.0, take that one — everything below still applies.
+than 1.1.1, take that one — everything below still applies.
 
 ### Which one should I use?
 
@@ -161,17 +161,40 @@ A few things worth knowing about this screen:
 Three more settings appear on this screen **only after the site has been saved
 and you have signed in** — the program has to ask openEQUELLA for them, so they
 cannot be shown before that. Reach it again from the Sign-in screen's
-**Settings for …** button.
+**Settings for …** button, or from **Site settings for …** at the foot of the
+screen where you choose a collection or the one that reports a finished batch.
+Saving from there puts you straight back where you were, with your collection,
+spreadsheet and folder still chosen — and if you only came to look, the
+**Back to …** button leaves without saving anything. None of those routes
+touches your saved password. (**Change credentials…**, beside the first of
+them, is the one that does: it clears every site you have added.)
+
+**Pointed at the wrong site?** The bar across the top names the site you are
+about to upload to, and **Sign out of …** — at the foot of the same two
+screens — ends that session and returns you to Sign-in, where you can pick a
+different one. It is offered only before a batch starts and after one has
+finished; while files are uploading there is deliberately no way off that
+screen.
 
 - **Collection you contribute to** — a dropdown of the collections your account
   is actually allowed to add to, read from your site. You never have to find or
   type a long identifier. If it says this account can contribute nowhere, that
   is a permission your administrator grants, not something you have typed
   wrongly.
-- **Field that holds the attachment ID** — **leave this blank** unless your
-  administrator tells you otherwise. Most schemas have no such field, and blank
-  means the program writes none. It tells you, underneath the box, whether what
-  you typed really exists in your collection's schema.
+- **Field that records the attachment ID** — usually you do not have to touch
+  this. Your files are attached to their items whether or not it is filled in.
+  Some schemas *also* keep that ID as a metadata field of their own, so it can
+  be searched and exported, and where yours declares exactly one such field the
+  program fills it in for you as soon as you choose a collection above. The
+  line underneath the box says so when it has, and you are free to change it or
+  clear it.
+
+  Where your schema declares **no** such field the box stays blank and the line
+  says the schema has none — nothing is missing and there is nothing to do.
+  Where it declares **more than one**, the program fills in nothing and names
+  them all: only your institution knows which one it uses, and you can pick from
+  the box's own dropdown. Whatever ends up in the box, that line tells you
+  whether it really exists in your collection's schema.
 - **"This is a live site — items created here are real"** — leave this ticked
   unless you know the address is a test or training instance. When it is
   ticked, the bar across the top of every screen stays loud and red, which is

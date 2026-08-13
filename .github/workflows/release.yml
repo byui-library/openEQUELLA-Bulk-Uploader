@@ -97,13 +97,22 @@ jobs:
           be read and are discarded rather than half-understood. The Setup screen
           says so when it happens. Enter them again and it will not ask twice.
 
-          **Check the "Field that holds the attachment ID" box on Setup.** It is
-          new, and it must say ``BYUI_extended/attachments/attachment`` for
-          BYU-Idaho. Left blank, your contributions are created without that
-          field and nothing warns you.
+          **The attachment ID field now fills itself in.** Choose your
+          collection on Setup and it reads that collection's schema and enters
+          the right path -- for BYU-Idaho, ``BYUI_extended/attachments/attachment``.
+          Check it looks right; you no longer have to work it out. Your files
+          are attached either way, so what this affects is the metadata copy of
+          the attachment's ID, not the file.
 
           ### What is fixed
 
+          - **Setup no longer traps you.** You can reach it from the upload
+            screen and from the summary, leave it again without saving, and
+            sign out from either -- the coloured bar told you which site you
+            were on with no way to act on it.
+          - **The attachment ID box no longer says blank is correct before it
+            has checked anything.** On a first run there is no collection yet,
+            so there is no schema to check against, and it now says so.
           - **The progress bar was lying.** It showed a full, completed bar from
             the moment every run started -- it had never worked. Now it moves.
           - **Sign out and Forget now actually end your openEQUELLA session**, not

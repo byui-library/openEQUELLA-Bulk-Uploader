@@ -1,10 +1,15 @@
 import type { OeqApi, ColumnReport, InstanceChoice, PlanReport, RunProgress, RunReport } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
 import type { ItemState } from '../../core/types.js';
-import { initialScreen, nextScreen, type Screen } from './state.js';
+import { initialScreen, nextScreen, settingsReturnTo, type Screen } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
-import { renderSetup, type SetupFields, type SetupTextField } from './screens/setup.js';
+import {
+  attachmentPathToFill,
+  renderSetup,
+  type SetupFields,
+  type SetupTextField,
+} from './screens/setup.js';
 // `import type`: secrets.ts reaches `node:fs` and this module runs in the
 // sandboxed renderer, where a runtime import of it would blank the window.
 import type { Settings, SettingsAuthMode } from '../secrets.js';
@@ -55,6 +60,11 @@ interface AppState extends BatchState {
   // are per instance (secrets.ts), and Setup must be able to configure one
   // site while the rest of the app is pointed at another.
   setupInstanceId: string;
+  // Which screen Setup was opened FROM, so saving can put the operator back
+  // there. Null for the ordinary route, which lands on Sign-in as it always
+  // has. Reset by seedSetupForm, so pointing Setup at another site drops it
+  // and the return falls back to Sign-in (see settingsReturnTo).
+  setupEnteredFrom: Screen | null;
   // Everything typed on Setup. Held here rather than in the DOM because the
   // screen re-renders on every keystroke and on every change of sign-in
   // method, and an innerHTML re-render destroys the inputs (screens/setup.ts).
@@ -80,6 +90,14 @@ interface AppState extends BatchState {
   // checked". Fetched through window.oeq.fetchSchema, which also leaves the
   // schema in the on-disk cache extraction reads offline (ipc.ts).
   setupSchemaPaths: string[] | null;
+  // Whether the attachment path in the form was put there by this tool rather
+  // than typed, so the screen can say so (screens/setup.ts's `filled` verdict).
+  //
+  // IT IS ALSO THE ONLY RECORD THAT A FILL HAS HAPPENED. Nothing else can tell
+  // "filled and then cleared" from "never filled": both are an empty box beside
+  // a schema with one candidate. Set only by handleSetupCollectionChange, and
+  // cleared the moment the operator touches the field.
+  setupAttachmentPathFilled: boolean;
   setupSaving: boolean;
   setupError: string | null;
   // Whether credentials written by an older version of the store were found
@@ -133,8 +151,10 @@ function blankSetupFields(): SetupFields {
     redirectUri: '',
     username: '',
     password: '',
-    // Blank means "write no such field", which is right for most schemas and
-    // is a choice, not an unfilled box. It is never guessed at.
+    // Blank means "write no such field" -- a choice, not an unfilled box, and
+    // never guessed at from nothing. It is filled in only once a collection has
+    // been chosen and its schema turns out to declare exactly one such field
+    // (handleSetupCollectionChange), which is evidence rather than a guess.
     attachmentUuidPath: '',
     collectionUuid: '',
     // A new site is assumed LIVE until the operator says otherwise: being
@@ -154,6 +174,7 @@ function initialState(): AppState {
     instances: [...UI_INSTANCES],
     instanceId: '',
     setupInstanceId: '',
+    setupEnteredFrom: null,
     setupFields: blankSetupFields(),
     setupRedirectTouched: false,
     setupStoredUsername: null,
@@ -161,6 +182,7 @@ function initialState(): AppState {
     setupCollectionsError: null,
     setupCollectionsWithheld: false,
     setupSchemaPaths: null,
+    setupAttachmentPathFilled: false,
     setupSaving: false,
     setupError: null,
     credentialsDropped: false,
@@ -252,8 +274,13 @@ function render(): void {
         collectionsError: state.setupCollectionsError,
         collectionsWithheld: state.setupCollectionsWithheld,
         schemaPaths: state.setupSchemaPaths,
+        attachmentPathFilled: state.setupAttachmentPathFilled,
         error: state.setupError,
         saving: state.setupSaving,
+        // Null on first run and after "Change credentials…", where there is
+        // nowhere behind Setup and no Back is rendered at all.
+        returnTo: state.setupEnteredFrom,
+        onBack: handleSetupBack,
         onInstanceChange: handleSetupInstanceChange,
         onFieldChange: handleSetupFieldChange,
         onAuthModeChange: handleSetupAuthModeChange,
@@ -277,12 +304,13 @@ function render(): void {
         onSignOut: handleSignOut,
         onContinue: handleSigninContinue,
         onAddCredentials: handleAddCredentials,
-        onSiteSettings: handleSiteSettings,
+        onSiteSettings: () => handleSiteSettings('signin'),
         onResetSettings: handleResetSettings,
       });
       break;
     case 'choose':
       renderChoose(app, {
+        instanceLabel: currentInstance()?.label ?? state.instanceId,
         collections: state.collections,
         collectionsError: state.collectionsError,
         collectionsWithheld: state.collectionsWithheld,
@@ -300,6 +328,15 @@ function render(): void {
         onChooseFolder: handleChooseFolder,
         onSaveStarterKit: handleSaveStarterKit,
         onContinue: handleChooseContinue,
+        // The NON-DESTRUCTIVE route, exactly as Sign-in's own settings link.
+        // Wiring this to handleResetSettings would wipe every saved site from
+        // the middle of a batch.
+        onSiteSettings: () => handleSiteSettings('choose'),
+        // The SAME handler Sign-in's Sign out uses -- it ends the openEQUELLA
+        // session on the server, not just the local token, and says so when the
+        // site would not confirm it. A second sign-out path written for this
+        // screen is exactly how a live session gets left behind.
+        onSignOut: handleSignOut,
         onExtract: () => {
           // The extract flow owns its own state and render loop; app.ts hands
           // over the root element and gets it back on exit. Deliberately not
@@ -370,10 +407,17 @@ function render(): void {
           interrupted: state.interruptedEntries,
           collectionUrl: collectionUrl(currentInstance()?.baseUrl ?? '', state.collectionUuid ?? ''),
           collectionName: state.collectionName,
+          instanceLabel: currentInstance()?.label ?? state.instanceId,
           retrying: state.retrying,
           error: state.resultsError,
           onRetryFailed: handleRetryFailed,
           onAnotherBatch: handleAnotherBatch,
+          // Both non-destructive, both the same handlers Choose uses. Done was
+          // a dead end: another spreadsheet, a collection link, and nothing
+          // else -- so changing a setting or moving to another site meant
+          // closing and reopening the app.
+          onSiteSettings: () => handleSiteSettings('results'),
+          onSignOut: handleSignOut,
         });
       }
       break;
@@ -409,12 +453,20 @@ function renderFatal(message: string): void {
 function seedSetupForm(id: string): void {
   state.setupInstanceId = id;
   state.setupError = null;
+  // Whoever is sending the operator to Setup says where they came from, right
+  // after this call. Cleared here so pointing Setup at a DIFFERENT site drops
+  // the return: the collection, spreadsheet and folder waiting on Choose
+  // belong to the site the app was pointed at, not to this one.
+  state.setupEnteredFrom = null;
   // Both belong to whichever site was previously selected. Left standing they
   // would have the attachment path checked against another site's schema, and
   // a wrong "found in the schema" is worse than no answer at all.
   state.setupCollections = null;
   state.setupCollectionsError = null;
   state.setupSchemaPaths = null;
+  // The path below is about to be seeded from this site's own saved settings,
+  // which this tool did not fill in on this pass -- it read it back off disk.
+  state.setupAttachmentPathFilled = false;
   const selected = instanceById(id);
   state.setupFields = {
     ...blankSetupFields(),
@@ -496,10 +548,26 @@ async function refreshSetupCollections(): Promise<void> {
  * A schema that cannot be read leaves `setupSchemaPaths` null, which the
  * screen reports as "not checked" -- never as a path that turned out to be
  * fine.
+ *
+ * THIS IS ALSO THE ONE PLACE THE ATTACHMENT PATH IS FILLED IN, and it is here
+ * rather than in the renderer for a reason that is easy to get wrong. Setup
+ * re-renders on every keystroke anywhere on it, so a fill performed while
+ * rendering would run again immediately after the operator cleared the box --
+ * they would clear it, type a character in the site's name, and watch the path
+ * come back. Recording nothing on purpose would be impossible.
+ *
+ * Arriving with the schema makes it a consequence of CHOOSING A COLLECTION,
+ * which happens once, is something the operator did, and is the only moment new
+ * evidence about the field exists.
  */
 function handleSetupCollectionChange(uuid: string): void {
   state.setupFields = { ...state.setupFields, collectionUuid: uuid };
   state.setupSchemaPaths = null;
+  // Whatever is in the box now belongs to the previous collection's schema, if
+  // anything filled it at all. Nothing here empties the FIELD -- a value the
+  // operator can see is theirs to keep or clear -- only the claim that this
+  // tool put it there.
+  state.setupAttachmentPathFilled = false;
   render();
   const chosen = state.setupCollections?.find((c) => c.uuid === uuid);
   const schemaUuid = chosen?.schemaUuid ?? '';
@@ -509,10 +577,18 @@ function handleSetupCollectionChange(uuid: string): void {
     (schema) => {
       if (state.setupInstanceId !== instanceId || state.setupFields.collectionUuid !== uuid) return;
       state.setupSchemaPaths = schema.paths;
+      // Null unless the schema declares exactly one such field AND the box is
+      // empty; screens/setup.ts's attachmentPathToFill holds both rules and
+      // says why each one is there.
+      const fill = attachmentPathToFill(schema.paths, state.setupFields.attachmentUuidPath);
+      if (fill !== null) {
+        state.setupFields = { ...state.setupFields, attachmentUuidPath: fill };
+        state.setupAttachmentPathFilled = true;
+      }
       render();
     },
     () => {
-      // Unread stays unread. See this function's doc comment.
+      // Unread stays unread, and unread fills nothing. See the doc comment.
     },
   );
 }
@@ -525,6 +601,11 @@ function handleSetupLiveChange(live: boolean): void {
 function handleSetupFieldChange(field: SetupTextField, value: string): void {
   state.setupFields = { ...state.setupFields, [field]: value };
   if (field === 'redirectUri') state.setupRedirectTouched = true;
+  // Once they have touched it, it is theirs -- whether they changed it, or
+  // cleared it to record nothing. Clearing this is what stops the screen
+  // claiming to have filled in a value the operator has since edited, and
+  // nothing sets it again short of another collection change.
+  if (field === 'attachmentUuidPath') state.setupAttachmentPathFilled = false;
   // Keep the redirect URL following the address until the operator edits it
   // themselves, so what is saved is always exactly what is on screen.
   if (field === 'baseUrl' && !state.setupRedirectTouched) {
@@ -625,6 +706,16 @@ async function handleSaveSettings(
     // entry that was written -- including when the operator typed a spelling
     // that normalised onto a site they had already added.
     const saved = await window.oeq.saveInstance(instance, settings);
+    // Decided BEFORE state.instanceId is repointed below, because the question
+    // is whether this save stayed on the site the waiting Choose selections
+    // belong to. A save that landed somewhere else goes to Sign-in, where a
+    // site is chosen, rather than back to a batch built against another one.
+    const returnTo = settingsReturnTo({
+      enteredFrom: state.setupEnteredFrom,
+      savedInstanceId: saved.id,
+      activeInstanceId: state.instanceId,
+    });
+    state.setupEnteredFrom = null;
     state.instances = withSaved(await window.oeq.listInstances());
     state.setupSaving = false;
     state.setupError = null;
@@ -643,9 +734,14 @@ async function handleSaveSettings(
     // landing back on Sign-in still pointed at a DIFFERENT (uncredentialed)
     // instance would look like nothing had happened.
     state.instanceId = saved.id;
-    state.screen = nextScreen('setup', { type: 'settingsSaved' });
+    state.screen = nextScreen('setup', { type: 'settingsSaved', returnTo });
     render();
-    void checkInstanceState();
+    // Back on Choose, the collection list is re-read rather than trusted: the
+    // address, the account or the credentials may have just changed under it.
+    // The chosen uuid survives in state, so the dropdown comes back with the
+    // same collection selected, and the spreadsheet and folder never moved.
+    if (returnTo === 'choose') void loadCollections();
+    else void checkInstanceState();
   } catch (err) {
     state.setupSaving = false;
     state.setupError = errorMessage(err);
@@ -707,21 +803,67 @@ function handleAddCredentials(): void {
 }
 
 /**
- * Sign-in's "Settings for {site}…" -- Setup for the selected site, with
- * nothing cleared.
+ * "Settings for {site}…" / "Site settings for {site}…" -- Setup for the
+ * selected site, with nothing cleared.
  *
- * The same non-destructive transition as `handleAddCredentials` above, and
- * deliberately so: the site's per-site settings (which collection's schema,
- * where the attachment uuid goes, whether it is live) live on Setup, and the
- * only other route there was "Change credentials…", which wipes every saved
- * site first.
+ * NON-DESTRUCTIVE, and that is the whole point of it existing separately from
+ * `handleResetSettings` below: the per-site settings (which collection's
+ * schema, where the attachment uuid goes, whether it is live) live on Setup,
+ * and the only other route there was "Change credentials…", which wipes every
+ * saved site first. A setting an operator can only change by destroying their
+ * credentials is a setting they will not change.
+ *
+ * `from` is the screen the operator is standing on, passed rather than assumed
+ * because there are now two of them. It is what the transition table is told
+ * (state.ts is the record of how this app moves, and hardcoding 'signin' from
+ * Choose would make that record a lie) and it is what decides where saving
+ * puts them back -- see `settingsReturnTo`.
+ *
+ * REACHABLE FROM CHOOSE because the operator found the gap circular while
+ * installing the tool: Setup can only suggest an attachment path once a
+ * collection has been chosen, since that is when a schema can be read, and the
+ * collection is chosen on Choose -- which had no way back.
  */
-function handleSiteSettings(): void {
+function handleSiteSettings(from: Screen): void {
   seedSetupForm(state.instanceId);
-  state.screen = nextScreen('signin', { type: 'addCredentials' });
+  state.setupEnteredFrom = from;
+  state.screen = nextScreen(from, { type: 'siteSettings' });
   render();
   void refreshStoredUsername();
   void refreshSetupCollections();
+}
+
+/**
+ * Setup's Back: leave for the screen the operator came in from, saving nothing.
+ *
+ * SETUP WAS A ONE-WAY DOOR. "Save credentials" was its only control, so an
+ * operator who opened it from Choose to check one setting could leave only by
+ * saving -- which is what somebody who came to LOOK does not want to do, and
+ * which repoints the whole app at whatever site the form happens to name.
+ *
+ * NOTHING IS CLEARED AND NOTHING IS WRITTEN. Not the store, not the stored
+ * password, not the instance list. The typed form IS discarded, and the button
+ * says so; every other route out of a screen in this app that discards typed
+ * work (Review's Back, Confirm's Back) reads the same way.
+ *
+ * NOT ROUTED THROUGH `nextScreen`, and deliberately: it moves to a screen
+ * carried in state rather than one the transition table decides, which is
+ * exactly what `handleReviewBack` and `handleConfirmBack` already do. An event
+ * whose answer is "whatever the caller was holding" would add a row to that
+ * table that describes nothing.
+ *
+ * `setupEnteredFrom` is null on first run and after "Change credentials…", and
+ * the button is not rendered in either case (screens/setup.ts). The guard is
+ * belt and braces for a click that arrives anyway.
+ */
+function handleSetupBack(): void {
+  const back = state.setupEnteredFrom;
+  if (back === null) return;
+  state.setupEnteredFrom = null;
+  // A validation message about a save that is no longer happening.
+  state.setupError = null;
+  state.screen = back;
+  render();
 }
 
 async function handleSignIn(): Promise<void> {
@@ -773,6 +915,20 @@ async function handleSignIn(): Promise<void> {
  * blocks and nothing is claimed that has not been established.
  */
 async function handleSignOut(): Promise<void> {
+  // NEVER MID-BATCH. Sign out is now offered from Choose and Results as well as
+  // Sign-in, and the runner uploads through the very session this ends: cutting
+  // it half way through a batch strands rows in `uploading` -- the status the
+  // runner deliberately refuses to guess about, which then has to be checked by
+  // hand in openEQUELLA, item by item, with no undo available for the ones that
+  // did land.
+  //
+  // The real protection is that the Progress screen renders no such control
+  // (screens/progress.ts has no buttons at all, and a test pins that). This is
+  // the second line: a stale listener surviving a re-render, or a control added
+  // to that screen later by somebody applying the pattern uniformly, still
+  // cannot end the session under a running batch. Same shape as the
+  // `instanceHasSettings` guard in handleSignIn above.
+  if (state.screen === 'progress' || state.uploading) return;
   try {
     // Null on a clean sign-out, which also clears any error left from an
     // earlier attempt -- see ui/signout.ts.

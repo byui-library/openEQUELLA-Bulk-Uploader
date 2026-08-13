@@ -398,10 +398,15 @@ button.link-button:hover:not(:disabled) {
 
 /* The verdict under the attachment-uuid path. Deliberately three different
    readings and not two: "undeclared" is a problem, "declared" is confirmed,
-   and blank/unchecked are neither -- blank is the right answer for most
-   schemas, and unchecked has to look like the absence of evidence it is,
-   never like a pass. */
-.verdict--declared {
+   and blank/unchecked are neither -- blank means nothing is recorded, which is
+   a real answer, and unchecked has to look like the absence of evidence it is,
+   never like a pass.
+
+   "filled" takes the confirmed treatment because it IS confirmed -- the value
+   came out of the schema being checked against. It is a separate kind only
+   because its wording differs: it has to say who put the value there. */
+.verdict--declared,
+.verdict--filled {
   color: var(--valid-text);
 }
 
