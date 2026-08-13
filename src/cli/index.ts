@@ -8,16 +8,16 @@ import { createInterface } from 'node:readline/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
+import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
-import { OAuthClientCredentials } from '../core/auth.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import { OeqClient } from '../core/client.js';
+import { assertNotGuest } from '../core/identity.js';
 import { runManifest } from '../core/runner.js';
-import { runPreflight } from '../core/preflight.js';
+import { runPreflight, summarise } from '../core/preflight.js';
 import { checkLock } from '../core/lock.js';
 import { OeqError, ValidationError } from '../core/errors.js';
 import type { ItemState } from '../core/types.js';
@@ -58,20 +58,29 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
   const cfg = loadConfig(env);
 
   const sheet = await readSheet(resolve(o.sheet));
-  const paths = parseSchemaPaths(extractDefinition(await readFile(o.schemaFile, 'utf8')));
+  const schemaXml = await readFile(o.schemaFile, 'utf8');
+  const paths = parseSchemaPaths(extractDefinition(schemaXml));
+  // Which field holds the title is read from the same schema export the paths
+  // come from, never assumed: it is `MWDL/title` at BYU-Idaho and something
+  // else at every other institution, and the duplicate check searches on it.
+  const titleHeader = extractItemNamePath(schemaXml);
   const manifest = await buildManifest(sheet, resolve(o.files), paths, {
     baseUrl: cfg.baseUrl,
     collectionUuid: cfg.collectionUuid,
     schemaUuid: cfg.schemaUuid,
     itemState,
+    attachmentUuidPath: cfg.attachmentUuidPath,
   });
 
   if (!o.skipDuplicateCheck) {
     const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
-    const dupWarnings = await preflightDuplicates(client, manifest);
+    // The schema, not a literal: which field holds the identifier is resolved
+    // from these paths (see resolveIdentifierPath), and a hardcoded
+    // `MWDL/identifier` checked nothing at all anywhere else.
+    const dupWarnings = await preflightDuplicates(client, manifest, { titleHeader, paths });
     manifest.warnings.push(...dupWarnings);
 
-    const findings = await findDuplicates(client, manifest);
+    const findings = await findDuplicates(client, manifest, titleHeader);
     for (const f of findings) {
       console.log(`  Row ${f.rowNumber}: ${f.fileName} -- ${f.tier}: ${f.detail}`);
     }
@@ -381,6 +390,22 @@ function defaultCaptureLoopbackCode(redirectUri: string): Promise<string> {
   });
 }
 
+/**
+ * `login` REFUSES in password mode rather than quietly succeeding.
+ *
+ * There is nothing for it to do: no browser flow, no cached token, and the
+ * credentials are read from the environment on every run. Exiting 0 would be
+ * the worse option -- `oeq-upload login` reporting success while verifying
+ * nothing is precisely the kind of confidently-wrong signal this project has
+ * already been bitten by, and a script chaining `login && run` would take it
+ * as "credentials confirmed". `check` is the command that actually confirms
+ * them, so the message points there.
+ */
+const PASSWORD_MODE_NO_LOGIN =
+  'Sign-in is not needed in password mode -- your username and password are read from ' +
+  'OEQ_USERNAME and OEQ_PASSWORD on every run, so there is no browser flow and no token to ' +
+  'cache. Run `oeq-upload check` to confirm they work.';
+
 export interface LoginDeps {
   tokenStore?: TokenStore;
   openBrowser?: (url: string) => void;
@@ -423,6 +448,7 @@ export interface LoginDeps {
  */
 export async function loginAction(env: Env = process.env, deps: LoginDeps = {}): Promise<void> {
   const cfg = loadConfig(env);
+  if (cfg.authMode === 'password') throw new OeqError(PASSWORD_MODE_NO_LOGIN);
   const tokenStore = deps.tokenStore ?? new FileTokenStore();
   const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
 
@@ -489,7 +515,15 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
   await auth.exchangeCode(code);
 
   const client = new OeqClient(cfg.baseUrl, auth);
-  const user = await client.currentUser();
+  // A token exchange that succeeded is still not a sign-in: openEQUELLA
+  // answers as the guest identity rather than refusing, so without this the
+  // command prints "Logged in as guest ( )" and caches a token that can create
+  // nothing. See core/identity.ts.
+  const user = assertNotGuest(
+    await client.currentUser(),
+    'Run `oeq-upload login` again, and check OEQ_CLIENT_ID, OEQ_CLIENT_SECRET and OEQ_REDIRECT_URI ' +
+      'against what your administrator registered for this site.',
+  );
   console.log(`\nLogged in as ${user.username} (${user.firstName} ${user.lastName}).`);
 
   const raw = await tokenStore.loadRaw();
@@ -512,11 +546,55 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
 
 export interface LogoutDeps {
   tokenStore?: TokenStore;
+  /**
+   * A live password-mode provider whose openEQUELLA session should be ended.
+   *
+   * Optional, and a plain `oeq-upload logout` run holds none: password mode
+   * signs in once per process, so by the time this command starts there is no
+   * JSESSIONID in THIS process to end -- building a provider here would only
+   * mint a fresh session in order to destroy it. A caller that DOES hold one
+   * (a long-lived front end, or a test) passes it, and the session is ended
+   * on the server rather than left to time out there.
+   */
+  auth?: { logout(): Promise<void> };
 }
 
-export async function logoutAction(deps: LogoutDeps = {}): Promise<void> {
+/**
+ * `env` is the SECOND parameter, unusually, because `deps` was already first
+ * and every existing caller passes it positionally.
+ *
+ * Unlike `login`, this still does its work in password mode instead of
+ * refusing: clearing the store is the one genuinely useful thing left, since
+ * an operator who switched over from an OAuth mode can still have a stale
+ * token file on disk. What changes is only the message -- announcing "the
+ * cached token has been removed" to someone whose mode never cached one is a
+ * small lie that invites them to believe they had a session.
+ */
+export async function logoutAction(deps: LogoutDeps = {}, env: Env = process.env): Promise<void> {
   const tokenStore = deps.tokenStore ?? new FileTokenStore();
   await tokenStore.clear();
+  // Reads the raw variable rather than going through loadConfig: logging out
+  // must keep working when the config is incomplete or invalid, which is
+  // exactly when someone reaches for it.
+  if (env.OEQ_AUTH_MODE === 'password') {
+    if (deps.auth) {
+      // Before the message, not after: under password auth the JSESSIONID
+      // stays valid on the SERVER until openEQUELLA times it out, so "logged
+      // out" is not true until this has run. It never throws.
+      await deps.auth.logout();
+      console.log(
+        'Logged out, and the openEQUELLA session has been ended on the server. ' +
+          'Any token left over from an earlier OAuth setup has been removed.',
+      );
+      return;
+    }
+    console.log(
+      'Password mode does not cache a token -- your username and password are read from ' +
+        'OEQ_USERNAME and OEQ_PASSWORD on every run, so this command had no live session to ' +
+        'end. Any token left over from an earlier OAuth setup has been removed.',
+    );
+    return;
+  }
   console.log('Logged out. The cached token has been removed.');
 }
 
@@ -526,26 +604,29 @@ export interface CheckDeps {
 }
 
 /**
- * Read-only pre-flight (see core/preflight.ts): confirms a token, identity,
- * that the target collection exists on THIS host, and that this user can
- * actually contribute to it. Creates nothing. Returns the process exit code.
+ * Read-only pre-flight (see core/preflight.ts): confirms the address, a
+ * token, which sign-in method produced it, identity, that the target
+ * collection exists on THIS host, that this user can contribute to it at
+ * all, and that its schema declares the fields duplicate detection and the
+ * attachment-uuid field depend on. Creates nothing.
+ *
+ * It is also the compatibility probe a new institution reports back with, so
+ * every line is rendered -- including the ones that passed. Returns the
+ * process exit code.
  */
 export async function checkAction(env: Env = process.env, deps: CheckDeps = {}): Promise<number> {
   const cfg = loadConfig(env);
   console.log(`OEQ_BASE_URL: ${cfg.baseUrl}`);
   console.log(`OEQ_COLLECTION_UUID: ${cfg.collectionUuid}\n`);
 
-  const auth =
-    cfg.authMode === 'client_credentials'
-      ? new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret)
-      : new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, deps.tokenStore);
+  const auth = createAuthProvider(cfg, env, deps.tokenStore);
   const client = deps.client ?? new OeqClient(cfg.baseUrl, auth);
 
   const result = await runPreflight(cfg, auth, client);
   for (const c of result.checks) {
     console.log(`[${c.pass ? 'PASS' : 'FAIL'}] ${c.label}: ${c.message}`);
   }
-  console.log(result.ok ? '\nAll checks passed.' : '\nOne or more checks failed -- see above.');
+  console.log(`\n${summarise(result)}`);
   return result.ok ? 0 : 1;
 }
 
@@ -606,15 +687,21 @@ export function buildProgram(env: Env = process.env): Command {
 
   program
     .command('logout')
-    .description('Remove the cached OAuth token.')
+    .description(
+      'Remove the cached OAuth token. In password mode there is no cached token to remove and ' +
+        'no session held between runs, so this reports that rather than claiming a logout.',
+    )
     .action(async () => {
-      await logoutAction();
+      await logoutAction({}, env);
     });
 
   program
     .command('check')
     .description(
-      'Read-only pre-flight: confirms auth, identity, and CREATE_ITEM on the target collection. Creates nothing.',
+      'Read-only pre-flight and compatibility probe. Nine checks: https, authentication, sign-in ' +
+        'method, identity, collections available, the target collection, CREATE_ITEM on it, the ' +
+        'attachment-uuid field, and whether duplicate detection can work. Run this first at a new ' +
+        'institution -- each failure says what it means for a real run. Creates nothing.',
     )
     .action(async () => {
       process.exitCode = await checkAction(env);

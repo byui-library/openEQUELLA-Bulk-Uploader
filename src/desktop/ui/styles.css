@@ -224,6 +224,17 @@ button.link-button:hover:not(:disabled) {
   font-weight: 600;
 }
 
+/* Something the operator needs to READ before filling the form in -- not a
+   failure, so not `.error`, but not skippable either. Setup's explanation of
+   why credentials from an older version are gone is the one that matters:
+   without it the blank form reads as a broken app (ui/setupNotice.ts). */
+.notice {
+  background: var(--panel-bg);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+}
+
 .muted,
 .hint {
   color: var(--muted);
@@ -350,8 +361,57 @@ button.link-button:hover:not(:disabled) {
   margin: 0.5rem 0;
 }
 
+/* Setup's "Advanced: OAuth client credentials" disclosure. Shut by default:
+   most institutions sign in with an ordinary username and password, and the
+   OAuth fields are for the SSO-backed sites only. */
+.auth-method details {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+}
+
+.auth-method summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .radio-label input {
   margin-right: 0.5rem;
+}
+
+/* Setup's per-site settings: which collection, where the attachment uuid is
+   written, and whether the site is live. Facts about the SITE rather than
+   about the credential, so they get their own group. */
+.site-settings {
+  margin-top: 1rem;
+}
+
+.checkbox-label {
+  display: block;
+  font-weight: 400;
+  margin: 1rem 0 0.25rem;
+}
+
+.checkbox-label input {
+  margin-right: 0.5rem;
+}
+
+/* The verdict under the attachment-uuid path. Deliberately three different
+   readings and not two: "undeclared" is a problem, "declared" is confirmed,
+   and blank/unchecked are neither -- blank is the right answer for most
+   schemas, and unchecked has to look like the absence of evidence it is,
+   never like a pass. */
+.verdict--declared {
+  color: var(--valid-text);
+}
+
+.verdict--undeclared {
+  color: var(--error-text);
+  font-weight: 600;
+}
+
+.reset-row .link-button + .link-button {
+  margin-left: 1rem;
 }
 
 .danger-panel {

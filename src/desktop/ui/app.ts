@@ -1,10 +1,13 @@
-import type { OeqApi, ColumnReport, PlanReport, RunProgress, RunReport } from '../ipc.js';
+import type { OeqApi, ColumnReport, InstanceChoice, PlanReport, RunProgress, RunReport } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
 import type { ItemState } from '../../core/types.js';
 import { initialScreen, nextScreen, type Screen } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
-import { renderSetup } from './screens/setup.js';
+import { renderSetup, type SetupFields, type SetupTextField } from './screens/setup.js';
+// `import type`: secrets.ts reaches `node:fs` and this module runs in the
+// sandboxed renderer, where a runtime import of it would blank the window.
+import type { Settings, SettingsAuthMode } from '../secrets.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
 import { renderReview } from './screens/review.js';
@@ -37,18 +40,51 @@ declare global {
  */
 interface AppState extends BatchState {
   screen: Screen;
+  // Every site the operator has added, read from the store at startup and
+  // after every save. UI_INSTANCES (what the app SHIPS with) is empty; this
+  // is the real list -- see ui/instances.ts.
+  instances: InstanceChoice[];
   // The instance the rest of the app (Sign-in beyond the missing-credentials
-  // prompt, Choose, Confirm, Progress, Results) acts against.
+  // prompt, Choose, Confirm, Progress, Results) acts against. '' until the
+  // operator has one.
   instanceId: string;
 
-  // Setup screen -- which instance is being configured. Deliberately a
-  // SEPARATE field from `instanceId`: credentials are per instance
-  // (secrets.ts), and Setup must default to Production (most operators only
-  // ever configure that one) without disturbing `instanceId`'s own
-  // safety-first default -- see initialState().
+  // Setup screen -- which instance is being configured, or '' for a site not
+  // added yet. Deliberately a SEPARATE field from `instanceId`: credentials
+  // are per instance (secrets.ts), and Setup must be able to configure one
+  // site while the rest of the app is pointed at another.
   setupInstanceId: string;
+  // Everything typed on Setup. Held here rather than in the DOM because the
+  // screen re-renders on every keystroke and on every change of sign-in
+  // method, and an innerHTML re-render destroys the inputs (screens/setup.ts).
+  setupFields: SetupFields;
+  // Whether the operator has edited the redirect URL themselves. Until they
+  // do it follows the address, which is the only starting point non-technical
+  // staff can be given for a field they cannot derive.
+  setupRedirectTouched: boolean;
+  // The username of the account stored for `setupInstanceId`, or null. The
+  // password itself never comes back from the main process (ipc.ts).
+  setupStoredUsername: string | null;
+  // The collections `setupInstanceId` can contribute to, and why they could
+  // not be read. Null is "not read"; an EMPTY ARRAY is "this account can
+  // create nothing", which is a real state the screen states plainly rather
+  // than rendering as an empty dropdown (screens/setup.ts).
+  setupCollections: CollectionSummary[] | null;
+  setupCollectionsError: string | null;
+  // Whether the server said collections exist and handed none over -- which
+  // means this session is not signed in, not that there are none. See
+  // core/discovery.ts's CollectionList.withheld.
+  setupCollectionsWithheld: boolean;
+  // Every valid xpath in the chosen collection's schema, or null for "not
+  // checked". Fetched through window.oeq.fetchSchema, which also leaves the
+  // schema in the on-disk cache extraction reads offline (ipc.ts).
+  setupSchemaPaths: string[] | null;
   setupSaving: boolean;
   setupError: string | null;
+  // Whether credentials written by an older version of the store were found
+  // and discarded on this launch -- Setup says so rather than presenting a
+  // blank form that reads as a broken app. See ui/setupNotice.ts.
+  credentialsDropped: boolean;
 
   // Sign-in screen
   // Whether `instanceId` currently has credentials saved at all -- see
@@ -64,6 +100,10 @@ interface AppState extends BatchState {
   // Choose screen
   collections: CollectionSummary[] | null;
   collectionsError: string | null;
+  // As setupCollectionsWithheld: an empty list from a session that is not
+  // signed in is not an empty list, and the dropdown said "No collections
+  // match" to an operator who was not signed in at all.
+  collectionsWithheld: boolean;
   collectionQuery: string;
   collectionUuid: string | null;
   collectionName: string | null;
@@ -73,21 +113,56 @@ interface AppState extends BatchState {
   // Review, Confirm, Progress and Results state all lives in BatchState.
 }
 
-// Defaults to 'test' -- never Production -- so a user who has not yet made a
-// deliberate choice is never one click away from the wrong environment. See
-// the instance banner: it is red specifically because this default (and
-// every subsequent choice) needs a durable, unmissable visual cue.
+/**
+ * An empty Setup form. `authMode: 'password'` is the default because an
+ * ordinary openEQUELLA account is what a new institution can use immediately;
+ * OAuth is for the SSO-backed sites and lives behind Advanced.
+ *
+ * No credential is ever seeded from the store -- not the client secret, and
+ * not the password. A stored password is shown as "Signed in as ..." with a
+ * Forget button (screens/setup.ts) and never rendered back into a field.
+ */
+function blankSetupFields(): SetupFields {
+  return {
+    baseUrl: '',
+    label: '',
+    authMode: 'password',
+    clientId: '',
+    clientSecret: '',
+    redirectUri: '',
+    username: '',
+    password: '',
+    // Blank means "write no such field", which is right for most schemas and
+    // is a choice, not an unfilled box. It is never guessed at.
+    attachmentUuidPath: '',
+    collectionUuid: '',
+    // A new site is assumed LIVE until the operator says otherwise: being
+    // warned about a sandbox is a nuisance; not being warned about production
+    // is an unrecoverable batch (ui/banner.ts).
+    live: true,
+  };
+}
+
+// No instance is selected until the operator has added one, and none is
+// chosen for them: the app ships knowing no addresses at all (ui/instances.ts),
+// and a default pointed at somebody's live site is exactly what the instance
+// banner exists to prevent.
 function initialState(): AppState {
   return {
     screen: 'setup',
-    instanceId: 'test',
-    // Most operators only ever have Production credentials -- see
-    // renderSetup's doc comment. Reassigned to 'production' explicitly
-    // wherever Setup is (re)entered fresh; see init() and
-    // handleResetSettings().
-    setupInstanceId: 'production',
+    instances: [...UI_INSTANCES],
+    instanceId: '',
+    setupInstanceId: '',
+    setupFields: blankSetupFields(),
+    setupRedirectTouched: false,
+    setupStoredUsername: null,
+    setupCollections: null,
+    setupCollectionsError: null,
+    setupCollectionsWithheld: false,
+    setupSchemaPaths: null,
     setupSaving: false,
     setupError: null,
+    credentialsDropped: false,
     instanceHasSettings: false,
     user: null,
     checkingUser: false,
@@ -95,6 +170,7 @@ function initialState(): AppState {
     signinError: null,
     collections: null,
     collectionsError: null,
+    collectionsWithheld: false,
     collectionQuery: '',
     collectionUuid: null,
     collectionName: null,
@@ -134,30 +210,61 @@ function requireEl<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-function currentInstance() {
-  return UI_INSTANCES.find((i) => i.id === state.instanceId);
+/**
+ * The list the dropdowns show: whatever the app ships with (nothing --
+ * ui/instances.ts) plus every site the operator has added. A saved entry wins
+ * over a shipped one with the same id, since the operator's own credentials
+ * and label are the newer truth.
+ */
+function withSaved(saved: InstanceChoice[]): InstanceChoice[] {
+  return [...UI_INSTANCES.filter((s) => !saved.some((i) => i.id === s.id)), ...saved];
+}
+
+function instanceById(id: string): InstanceChoice | null {
+  return state.instances.find((i) => i.id === id) ?? null;
+}
+
+function currentInstance(): InstanceChoice | null {
+  return instanceById(state.instanceId);
 }
 
 function render(): void {
   // On Setup, the banner must reflect the instance being CONFIGURED
   // (setupInstanceId), not the app's separate action-flow instance -- a
-  // form labelled "Client ID (Production)" under a banner reading TEST
+  // form labelled "Client ID (Live)" under a banner naming another site
   // would look broken.
-  renderBanner(requireEl('banner'), state.screen === 'setup' ? state.setupInstanceId : state.instanceId);
+  renderBanner(
+    requireEl('banner'),
+    state.screen === 'setup' ? instanceById(state.setupInstanceId) : currentInstance(),
+  );
 
   const app = requireEl('app');
   switch (state.screen) {
     case 'setup':
       renderSetup(app, {
+        instances: state.instances,
         instanceId: state.setupInstanceId,
+        credentialsDropped: state.credentialsDropped,
+        fields: state.setupFields,
+        storedUsername: state.setupStoredUsername,
+        collections: state.setupCollections,
+        collectionsError: state.setupCollectionsError,
+        collectionsWithheld: state.setupCollectionsWithheld,
+        schemaPaths: state.setupSchemaPaths,
         error: state.setupError,
         saving: state.setupSaving,
         onInstanceChange: handleSetupInstanceChange,
+        onFieldChange: handleSetupFieldChange,
+        onAuthModeChange: handleSetupAuthModeChange,
+        onCollectionChange: handleSetupCollectionChange,
+        onLiveChange: handleSetupLiveChange,
+        onForgetPassword: handleForgetPassword,
         onSave: handleSaveSettings,
       });
       break;
     case 'signin':
       renderSignin(app, {
+        instances: state.instances,
         instanceId: state.instanceId,
         instanceHasSettings: state.instanceHasSettings,
         user: state.user,
@@ -169,6 +276,7 @@ function render(): void {
         onSignOut: handleSignOut,
         onContinue: handleSigninContinue,
         onAddCredentials: handleAddCredentials,
+        onSiteSettings: handleSiteSettings,
         onResetSettings: handleResetSettings,
       });
       break;
@@ -176,6 +284,7 @@ function render(): void {
       renderChoose(app, {
         collections: state.collections,
         collectionsError: state.collectionsError,
+        collectionsWithheld: state.collectionsWithheld,
         query: state.collectionQuery,
         collectionUuid: state.collectionUuid,
         sheetPath: state.sheetPath,
@@ -197,6 +306,10 @@ function render(): void {
           const root = requireEl('app');
           const controller = createExtractController({
             api: window.oeq,
+            // So the columns are validated against THIS site's schema when one
+            // has been cached, rather than the bundled export -- which is
+            // BYU-Idaho's, and correct nowhere else.
+            instanceId: state.instanceId,
             onExit: () => render(),
             render: (s) => renderExtract(root, s, controller, (p) => window.oeq.openPath(p)),
           });
@@ -284,14 +397,220 @@ function renderFatal(message: string): void {
 
 // --- Setup ---------------------------------------------------------------
 
-function handleSetupInstanceChange(id: string): void {
+/**
+ * Point Setup at another saved site (or at "Add another site…").
+ *
+ * The form is reseeded from that site's own address and name, and every
+ * credential field is cleared: a client secret or a password belonging to one
+ * site must never be left sitting in a form that is about to be saved against
+ * a different one.
+ */
+function seedSetupForm(id: string): void {
   state.setupInstanceId = id;
+  state.setupError = null;
+  // Both belong to whichever site was previously selected. Left standing they
+  // would have the attachment path checked against another site's schema, and
+  // a wrong "found in the schema" is worse than no answer at all.
+  state.setupCollections = null;
+  state.setupCollectionsError = null;
+  state.setupSchemaPaths = null;
+  const selected = instanceById(id);
+  state.setupFields = {
+    ...blankSetupFields(),
+    baseUrl: selected?.baseUrl ?? '',
+    label: selected?.label ?? '',
+    // Per-site settings, seeded from what was stored. `live` falls back to
+    // TRUE for a site not saved yet -- assumed live until said otherwise.
+    attachmentUuidPath: selected?.attachmentUuidPath ?? '',
+    live: selected?.live ?? true,
+    // Sensible starting point for a field non-technical staff cannot fill in
+    // from nothing: the site's own address. Pre-filled into the form, where
+    // the operator can see and correct it before saving -- never substituted
+    // behind their back at sign-in time, which is how this value got
+    // hard-coded wrong twice (see secrets.ts's OAuthSettings.redirectUri).
+    redirectUri: selected?.baseUrl ?? '',
+  };
+  state.setupRedirectTouched = false;
+  state.setupStoredUsername = null;
+}
+
+function handleSetupInstanceChange(id: string): void {
+  seedSetupForm(id);
+  render();
+  void refreshStoredUsername();
+  void refreshSetupCollections();
+}
+
+/**
+ * The collections the site Setup is pointed at can actually be contributed
+ * to, for the dropdown that replaced a uuid box.
+ *
+ * Only for a SAVED site: the list comes from openEQUELLA and needs stored
+ * credentials to ask for it, so a site being added for the first time simply
+ * has no list yet -- the screen says so rather than showing an error for a
+ * request that was never sensible to make.
+ *
+ * A failure is recorded as a failure, never as an empty list. "This account
+ * can create nothing" and "the list could not be read" have no fix in common
+ * (an administrator grants a privilege; the other is a host that cannot be
+ * reached), and the same distinction is made in core/preflight.ts.
+ */
+async function refreshSetupCollections(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') {
+    state.setupCollections = null;
+    state.setupCollectionsError = null;
+    return;
+  }
+  state.setupCollections = null;
+  state.setupCollectionsError = null;
+  state.setupCollectionsWithheld = false;
+  render();
+  let collections: CollectionSummary[] | null = null;
+  let withheld = false;
+  let error: string | null = null;
+  try {
+    const list = await window.oeq.listCollections(instanceId);
+    collections = list.collections;
+    withheld = list.withheld;
+  } catch (err) {
+    error = errorMessage(err);
+  }
+  // The operator may have switched sites while this was in flight; another
+  // site's collections must never be attributed to the one now on screen.
+  if (state.setupInstanceId !== instanceId) return;
+  state.setupCollections = collections;
+  state.setupCollectionsError = error;
+  state.setupCollectionsWithheld = withheld;
+  render();
+}
+
+/**
+ * Picking a collection reads its schema -- and that read is what leaves the
+ * schema in the on-disk cache `src/core/extract/` later validates against
+ * offline (ipc.ts's fetchSchema). The schema uuid comes off the collection's
+ * own list entry, so this costs one request and nothing has to be configured
+ * twice.
+ *
+ * A schema that cannot be read leaves `setupSchemaPaths` null, which the
+ * screen reports as "not checked" -- never as a path that turned out to be
+ * fine.
+ */
+function handleSetupCollectionChange(uuid: string): void {
+  state.setupFields = { ...state.setupFields, collectionUuid: uuid };
+  state.setupSchemaPaths = null;
+  render();
+  const chosen = state.setupCollections?.find((c) => c.uuid === uuid);
+  const schemaUuid = chosen?.schemaUuid ?? '';
+  if (schemaUuid === '') return;
+  const instanceId = state.setupInstanceId;
+  void window.oeq.fetchSchema({ instanceId, schemaUuid }).then(
+    (schema) => {
+      if (state.setupInstanceId !== instanceId || state.setupFields.collectionUuid !== uuid) return;
+      state.setupSchemaPaths = schema.paths;
+      render();
+    },
+    () => {
+      // Unread stays unread. See this function's doc comment.
+    },
+  );
+}
+
+function handleSetupLiveChange(live: boolean): void {
+  state.setupFields = { ...state.setupFields, live };
+  render();
+}
+
+function handleSetupFieldChange(field: SetupTextField, value: string): void {
+  state.setupFields = { ...state.setupFields, [field]: value };
+  if (field === 'redirectUri') state.setupRedirectTouched = true;
+  // Keep the redirect URL following the address until the operator edits it
+  // themselves, so what is saved is always exactly what is on screen.
+  if (field === 'baseUrl' && !state.setupRedirectTouched) {
+    state.setupFields.redirectUri = value.trim().replace(/\/+$/, '');
+  }
+  render();
+}
+
+function handleSetupAuthModeChange(mode: SettingsAuthMode): void {
+  state.setupFields = { ...state.setupFields, authMode: mode };
   state.setupError = null;
   render();
 }
 
-async function handleSaveSettings(clientId: string, clientSecret: string, redirectUri: string): Promise<void> {
-  if (clientId === '' || clientSecret === '' || redirectUri === '') {
+/**
+ * Whether the instance Setup is pointed at has an account stored, and whose.
+ *
+ * Fails soft: "nobody is signed in" is the honest answer when the store cannot
+ * say otherwise, and it is also the safe one -- it shows the password fields
+ * rather than a Forget button for a credential that may not exist.
+ */
+async function refreshStoredUsername(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') {
+    state.setupStoredUsername = null;
+    return;
+  }
+  let stored: { username: string } | null = null;
+  try {
+    stored = await window.oeq.getPassword(instanceId);
+  } catch {
+    stored = null;
+  }
+  // The operator may have switched sites while this was in flight; a stale
+  // answer for the previous site must never be attributed to the new one.
+  if (state.setupInstanceId !== instanceId) return;
+  state.setupStoredUsername = stored?.username ?? null;
+  // A stored account is also the honest default for HOW this site signs in:
+  // it is the one thing Setup can see about a saved credential.
+  if (stored) state.setupFields = { ...state.setupFields, authMode: 'password' };
+  render();
+}
+
+/**
+ * "Forget this password". Removes the stored account for this site and puts
+ * the username and password fields back, so the operator can enter another.
+ * Distinct from "Reset settings", which wipes every site the app knows.
+ */
+async function handleForgetPassword(): Promise<void> {
+  try {
+    await window.oeq.forgetPassword(state.setupInstanceId);
+  } catch (err) {
+    state.setupError = errorMessage(err);
+    render();
+    return;
+  }
+  state.setupStoredUsername = null;
+  state.setupFields = { ...state.setupFields, username: '', password: '' };
+  state.setupError = null;
+  render();
+}
+
+async function handleSaveSettings(
+  instance: {
+    label: string;
+    baseUrl: string;
+    attachmentUuidPath: string;
+    live: boolean;
+    schemaUuid: string;
+  },
+  settings: Settings,
+): Promise<void> {
+  if (instance.baseUrl === '') {
+    state.setupError = 'Enter the address of your openEQUELLA site.';
+    render();
+    return;
+  }
+  if (settings.authMode === 'password') {
+    // An empty password is allowed only when one is already stored, which is
+    // the case the form shows as "Signed in as ..." with no password box at
+    // all -- secrets.ts then leaves the stored one alone.
+    if (settings.username === '' || (settings.password === '' && state.setupStoredUsername === null)) {
+      state.setupError = 'Enter the username and password for your openEQUELLA account.';
+      render();
+      return;
+    }
+  } else if (settings.clientId === '' || settings.clientSecret === '' || settings.redirectUri === '') {
     state.setupError = 'Enter the client ID, client secret, and redirect URL.';
     render();
     return;
@@ -300,13 +619,29 @@ async function handleSaveSettings(clientId: string, clientSecret: string, redire
   state.setupError = null;
   render();
   try {
-    await window.oeq.saveSettings(state.setupInstanceId, { clientId, clientSecret, redirectUri });
+    // The main process derives the id from the address (one rule for what an
+    // address's key is) and hands it back, so the app selects exactly the
+    // entry that was written -- including when the operator typed a spelling
+    // that normalised onto a site they had already added.
+    const saved = await window.oeq.saveInstance(instance, settings);
+    state.instances = withSaved(await window.oeq.listInstances());
     state.setupSaving = false;
     state.setupError = null;
+    state.setupInstanceId = saved.id;
+    // Neither secret stays in the renderer once it has been stored. Setup
+    // shows a saved password as "Signed in as ..." (refreshed below), never
+    // back in a field, and the client secret has never been rendered back.
+    state.setupFields = { ...state.setupFields, password: '', clientSecret: '' };
+    void refreshStoredUsername();
+    // The credentials this site needed may only just have arrived, so the
+    // collections it can contribute to are askable for the first time.
+    void refreshSetupCollections();
+    // Nothing left to explain: the discarded store has just been overwritten.
+    state.credentialsDropped = false;
     // Point the rest of the app at the instance that was just configured --
-    // landing back on Sign-in still defaulted to a DIFFERENT (uncredentialed)
+    // landing back on Sign-in still pointed at a DIFFERENT (uncredentialed)
     // instance would look like nothing had happened.
-    state.instanceId = state.setupInstanceId;
+    state.instanceId = saved.id;
     state.screen = nextScreen('setup', { type: 'settingsSaved' });
     render();
     void checkInstanceState();
@@ -357,15 +692,35 @@ function handleInstanceChange(id: string): void {
 /**
  * Sign-in's "Add credentials for {instance}" prompt (ui/signin.ts's
  * signinMode === 'missing-credentials'). Unlike `handleResetSettings`, this
- * clears NOTHING -- it only points Setup at the instance that's missing
- * credentials so the OTHER instance's saved credentials, if any, are left
- * completely untouched.
+ * STORES nothing and DELETES nothing -- it only points Setup at the instance
+ * that's missing credentials, seeding the form from that site's own address,
+ * so the OTHER instance's saved credentials, if any, are left completely
+ * untouched.
  */
 function handleAddCredentials(): void {
-  state.setupInstanceId = state.instanceId;
-  state.setupError = null;
+  seedSetupForm(state.instanceId);
   state.screen = nextScreen('signin', { type: 'addCredentials' });
   render();
+  void refreshStoredUsername();
+  void refreshSetupCollections();
+}
+
+/**
+ * Sign-in's "Settings for {site}…" -- Setup for the selected site, with
+ * nothing cleared.
+ *
+ * The same non-destructive transition as `handleAddCredentials` above, and
+ * deliberately so: the site's per-site settings (which collection's schema,
+ * where the attachment uuid goes, whether it is live) live on Setup, and the
+ * only other route there was "Change credentials…", which wipes every saved
+ * site first.
+ */
+function handleSiteSettings(): void {
+  seedSetupForm(state.instanceId);
+  state.screen = nextScreen('signin', { type: 'addCredentials' });
+  render();
+  void refreshStoredUsername();
+  void refreshSetupCollections();
 }
 
 async function handleSignIn(): Promise<void> {
@@ -429,8 +784,14 @@ async function handleResetSettings(): Promise<void> {
   state.instanceHasSettings = false;
   state.signinError = null;
   state.setupError = null;
-  // Both instances were just wiped -- back to Setup's usual default.
-  state.setupInstanceId = 'production';
+  // Every site was just wiped, addresses included -- Setup starts from the
+  // blank form it shows on a fresh install.
+  state.instances = [...UI_INSTANCES];
+  state.instanceId = '';
+  seedSetupForm('');
+  // The operator cleared this themselves; they do not need a notice telling
+  // them their credentials are gone.
+  state.credentialsDropped = false;
   state.screen = nextScreen(state.screen, { type: 'editSettings' });
   render();
 }
@@ -439,6 +800,7 @@ function handleSigninContinue(): void {
   state.screen = nextScreen('signin', { type: 'signedIn' });
   state.collections = null;
   state.collectionsError = null;
+  state.collectionsWithheld = false;
   state.collectionQuery = '';
   state.collectionUuid = null;
   state.collectionName = null;
@@ -457,9 +819,15 @@ function handleSigninContinue(): void {
 async function loadCollections(): Promise<void> {
   state.collections = null;
   state.collectionsError = null;
+  state.collectionsWithheld = false;
   render();
   try {
-    state.collections = await window.oeq.listCollections(state.instanceId);
+    const list = await window.oeq.listCollections(state.instanceId);
+    state.collections = list.collections;
+    // An empty list the server admits it withheld is not an empty list. The
+    // dropdown used to read "showing 0 of 0 -- No collections match" for a
+    // session that was not signed in at all (screens/choose.ts).
+    state.collectionsWithheld = list.withheld;
   } catch (err) {
     state.collections = [];
     state.collectionsError = errorMessage(err);
@@ -834,23 +1202,32 @@ async function handleRetryFailed(): Promise<void> {
 
 async function init(): Promise<void> {
   requireEl('app').innerHTML = '<p class="muted">Starting…</p>';
-  renderBanner(requireEl('banner'), state.instanceId);
+  renderBanner(requireEl('banner'), currentInstance());
   // Registered exactly once for the lifetime of the app: preload.cts's
   // onProgress adds a NEW ipcRenderer listener on every call, so calling
   // this more than once would fire the handler multiple times per event.
   window.oeq.onProgress(handleProgress);
   try {
-    // "First run" means NEITHER instance has ever been configured -- an
-    // operator who set up Production only (the common case) must land on
-    // Sign-in, not be sent back through Setup just because Test, which they
-    // may never use, has nothing saved.
-    const [hasProduction, hasTest] = await Promise.all([
-      window.oeq.hasSettings('production'),
-      window.oeq.hasSettings('test'),
+    // "First run" means the operator has added no site at all. One who
+    // configured a single site must land on Sign-in, not be sent back through
+    // Setup -- and the app has no opinion about how many sites they ought to
+    // have, because it ships knowing none (ui/instances.ts).
+    const [instances, credentialsDropped] = await Promise.all([
+      window.oeq.listInstances(),
+      window.oeq.credentialsDropped(),
     ]);
-    state.screen = initialScreen(hasProduction || hasTest);
+    state.instances = withSaved(instances);
+    state.credentialsDropped = credentialsDropped;
+    // The first saved site is merely what the dropdown lands on, not a
+    // judgement about which one is safe -- the app cannot know that any more.
+    // The banner names the selected site and its address on every screen, and
+    // it is loud for all of them for exactly this reason (ui/banner.ts).
+    state.instanceId = state.instances[0]?.id ?? '';
+    seedSetupForm(state.instanceId);
+    state.screen = initialScreen(state.instances.length > 0);
     render();
     if (state.screen === 'signin') void checkInstanceState();
+    else void refreshStoredUsername();
   } catch (err) {
     renderFatal(errorMessage(err));
   }

@@ -24,6 +24,7 @@ export function renderExtract(
   if (state.adding && state.profile !== null) {
     renderExtractAddColumn(root, {
       schemaPaths: state.schemaPaths,
+      schemaNamePath: state.schemaNamePath,
       usedPaths: state.profile.columns.map((c) => c.path),
       query: state.addQuery,
       onQueryChange: (q) => controller.setAddQuery(q),

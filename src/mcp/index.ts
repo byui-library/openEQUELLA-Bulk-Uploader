@@ -7,18 +7,25 @@ import { existsSync, openSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import { loadConfig, type Config } from '../core/config.js';
+import { loadConfig, createAuthProvider, type Config } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths, validateHeaders, suggest } from '../core/schema.js';
+import {
+  extractDefinition,
+  extractItemNamePath,
+  parseSchemaPaths,
+  validateHeaders,
+  suggest,
+} from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { findDuplicates, type DuplicateFinding } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
-import { OAuthClientCredentials } from '../core/auth.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
+import { redactSecret as redactAllForms } from '../core/redact.js';
 import { OeqClient } from '../core/client.js';
-import { runPreflight } from '../core/preflight.js';
+import { assertNotGuest } from '../core/identity.js';
+import { runPreflight, summarise } from '../core/preflight.js';
 import type { ItemState } from '../core/types.js';
 
 type Env = Record<string, string | undefined>;
@@ -54,14 +61,34 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
  * land directly in a conversation transcript, so a stray future change that
  * accidentally stringifies the whole config object must not silently leak
  * credentials into it.
+ *
+ * Delegates to core/redact.ts rather than matching the literal secret alone.
+ * The secret travels in a query string, so an ApiError carrying an echoed
+ * request line holds an ENCODED form -- and a literal-only match would sail
+ * straight past it into the transcript. The empty-secret guard lives in the
+ * core helper.
+ *
+ * Exported for test: the wrapper is the shim that binds the core helper to
+ * this layer's env lookup, and that binding is what needs proving.
  */
-function redactSecret(message: string, env: Env): string {
-  const secret = env.OEQ_CLIENT_SECRET;
-  return secret && secret.length > 0 ? message.split(secret).join('[REDACTED]') : message;
+export function redactSecret(message: string, env: Env): string {
+  return redactAllForms(message, env.OEQ_CLIENT_SECRET ?? '');
 }
 
 async function loadPaths(schemaFile: string): Promise<Set<string>> {
   return parseSchemaPaths(extractDefinition(await readFile(schemaFile, 'utf8')));
+}
+
+/**
+ * The title xpath the schema export declares, or null when it declares none.
+ *
+ * The duplicate check searches on this. Assuming `MWDL/title` would make it
+ * match nothing at any institution whose schema says otherwise, and a check
+ * that matches nothing reports every row clean. Null is passed through as
+ * "could not check" rather than replaced by a guess.
+ */
+async function loadTitleHeader(schemaFile: string): Promise<string | null> {
+  return extractItemNamePath(await readFile(schemaFile, 'utf8'));
 }
 
 /**
@@ -71,8 +98,25 @@ async function loadPaths(schemaFile: string): Promise<Set<string>> {
  * manifest for the later `run` step, so `oeq_plan` still can't do anything
  * useful without it.
  */
+/**
+ * Which variables count as "credentials" depends on the auth mode: an
+ * institution using password auth has no OAuth client at all, so gating on
+ * OEQ_CLIENT_ID would make planning permanently credential-less for them and
+ * the skip warning below would name variables they can never set.
+ */
+function isPasswordMode(env: Env): boolean {
+  return env.OEQ_AUTH_MODE === 'password';
+}
+
+/** The variables `hasCredentials` gates on, for use in operator-facing text. */
+function credentialNames(env: Env): string {
+  return isPasswordMode(env) ? 'OEQ_USERNAME/OEQ_PASSWORD' : 'OEQ_CLIENT_ID/OEQ_CLIENT_SECRET';
+}
+
 function hasCredentials(env: Env): boolean {
-  return Boolean(env.OEQ_CLIENT_ID) && Boolean(env.OEQ_CLIENT_SECRET);
+  return isPasswordMode(env)
+    ? Boolean(env.OEQ_USERNAME) && Boolean(env.OEQ_PASSWORD)
+    : Boolean(env.OEQ_CLIENT_ID) && Boolean(env.OEQ_CLIENT_SECRET);
 }
 
 /**
@@ -86,15 +130,23 @@ function hasCredentials(env: Env): boolean {
  *
  * When the real credentials are absent, this substitutes inert placeholders
  * for just the two credential fields so the *real*, unmodified `loadConfig`
- * still computes the real `baseUrl` and its real collection/schema defaults
- * -- there is no local, drift-prone copy of those defaults here. The
- * placeholders must never be trusted for anything network-related; every
- * caller of this function checks `hasCredentials(env)` (the original env,
- * not the patched one) before ever reading `cfg.clientId`/`cfg.clientSecret`.
+ * still computes the real `baseUrl`, collection and attachment-uuid path --
+ * there is no local, drift-prone copy of that logic here. The placeholders
+ * must never be trusted for anything network-related; every caller of this
+ * function checks `hasCredentials(env)` (the original env, not the patched
+ * one) before ever reading `cfg.clientId`/`cfg.clientSecret`.
+ *
+ * `OEQ_COLLECTION_UUID` is NOT substituted, and planning without it fails.
+ * It is target configuration rather than a credential, `buildManifest`
+ * records it for the later `run`, and a manifest without one is rejected at
+ * load -- so a placeholder here would only move the failure to a point where
+ * the operator has already built a plan they cannot run.
  */
 function loadConfigForPlanning(env: Env): Config {
   if (hasCredentials(env)) return loadConfig(env);
-  return loadConfig({ ...env, OEQ_CLIENT_ID: 'unset', OEQ_CLIENT_SECRET: 'unset' });
+  return isPasswordMode(env)
+    ? loadConfig({ ...env, OEQ_USERNAME: 'unset', OEQ_PASSWORD: 'unset' })
+    : loadConfig({ ...env, OEQ_CLIENT_ID: 'unset', OEQ_CLIENT_SECRET: 'unset' });
 }
 
 /**
@@ -246,6 +298,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
       collectionUuid: cfg.collectionUuid,
       schemaUuid: cfg.schemaUuid,
       itemState,
+      attachmentUuidPath: cfg.attachmentUuidPath,
     });
 
     // Mirrors planAction exactly: warnings land in manifest.warnings BEFORE
@@ -254,9 +307,9 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
     if (!skipDuplicateCheck) {
       if (!hasCredentials(env)) {
         manifest.warnings.push(
-          'Duplicate check skipped: OEQ_CLIENT_ID/OEQ_CLIENT_SECRET are not configured, so ' +
-            'existing identifiers in the collection could not be checked. Configure OAuth ' +
-            'credentials and re-plan (or pass skipDuplicateCheck) once ready.',
+          `Duplicate check skipped: ${credentialNames(env)} are not configured, so ` +
+            'existing identifiers in the collection could not be checked. Configure them ' +
+            'and re-plan (or pass skipDuplicateCheck) once ready.',
         );
       } else {
         // Guards only the setup (client construction) -- preflightDuplicates
@@ -264,13 +317,13 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
         // into its own per-row warning; this is a backstop for anything
         // unexpected happening before that point.
         try {
-          const client = new OeqClient(
-            cfg.baseUrl,
-            new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret),
-          );
-          const dupWarnings = await preflightDuplicates(client, manifest);
+          const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
+          const titleHeader = await loadTitleHeader(schemaFile);
+          // Identifier path resolved from the schema, never assumed -- see
+          // resolveIdentifierPath in plan.ts.
+          const dupWarnings = await preflightDuplicates(client, manifest, { titleHeader, paths });
           manifest.warnings.push(...dupWarnings);
-          duplicates = await findDuplicates(client, manifest);
+          duplicates = await findDuplicates(client, manifest, titleHeader);
         } catch (err) {
           manifest.warnings.push(`Duplicate check skipped: ${errorMessage(err)}`);
         }
@@ -442,6 +495,17 @@ export async function retryFailedTool(args: RetryFailedArgs): Promise<ToolResult
   }
 }
 
+/**
+ * Both login tools refuse in password mode for the same reason `oeq-upload
+ * login` does (see cli/index.ts): there is no browser flow to start and no
+ * token to cache, and a success result would read as "credentials verified"
+ * when nothing was verified. `oeq_check` is what actually verifies them.
+ */
+const PASSWORD_MODE_NO_LOGIN =
+  'Sign-in is not needed in password mode -- the username and password are read from ' +
+  'OEQ_USERNAME and OEQ_PASSWORD on every call, so there is no browser flow and no token to ' +
+  'cache. Call oeq_check to confirm they work.';
+
 export interface LoginUrlDeps {
   tokenStore?: TokenStore;
 }
@@ -455,6 +519,7 @@ export interface LoginUrlDeps {
 export async function loginUrlTool(env: Env = process.env, deps: LoginUrlDeps = {}): Promise<ToolResult> {
   try {
     const cfg = loadConfig(env);
+    if (cfg.authMode === 'password') return text(PASSWORD_MODE_NO_LOGIN, true);
     const auth = new AuthorizationCodeAuth(
       cfg.baseUrl,
       cfg.clientId,
@@ -495,11 +560,21 @@ export async function loginCompleteTool(
 ): Promise<ToolResult> {
   try {
     const cfg = loadConfig(env);
+    if (cfg.authMode === 'password') return text(PASSWORD_MODE_NO_LOGIN, true);
     const tokenStore = deps.tokenStore ?? new FileTokenStore();
     const auth = new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, tokenStore);
     await auth.exchangeCode(args.code);
     const client = new OeqClient(cfg.baseUrl, auth);
-    const user = await client.currentUser();
+    // Exchanging the code is not the same as being signed in -- openEQUELLA
+    // answers an unauthenticated session as the guest rather than refusing it,
+    // so this would otherwise report "Logged in as guest ( )" as a success and
+    // the caller would go on to start a job that can create nothing. Throws,
+    // and the catch below turns it into an error result. See core/identity.ts.
+    const user = assertNotGuest(
+      await client.currentUser(),
+      'Call oeq_login_url again and complete the sign-in in the browser, then pass the new code ' +
+        'to oeq_login_complete.',
+    );
     return text(`Logged in as ${user.username} (${user.firstName} ${user.lastName}).`);
   } catch (err) {
     return text(redactSecret(errorMessage(err), env), true);
@@ -520,19 +595,18 @@ export interface CheckDeps {
 const MCP_LOGIN_HINT = 'Call the oeq_login_url tool, then oeq_login_complete with the code';
 
 /**
- * Same four read-only checks `oeq-upload check` runs (see core/preflight.ts
- * -- shared with the CLI so the two front ends can't drift): a usable
- * token, who it belongs to, whether the target collection exists on THIS
- * host, and whether this user can actually contribute to it. Creates
- * nothing.
+ * The same read-only checks `oeq-upload check` runs (see core/preflight.ts
+ * -- shared with the CLI so the two front ends can't drift): the configured
+ * address, a usable token, which sign-in method produced it, who it belongs
+ * to, whether the target collection exists on THIS host, whether this user
+ * can contribute anywhere at all and to that collection in particular, and
+ * whether its schema declares the fields duplicate detection and the
+ * attachment-uuid field depend on. Creates nothing.
  */
 export async function checkTool(env: Env = process.env, deps: CheckDeps = {}): Promise<ToolResult> {
   try {
     const cfg = loadConfig(env);
-    const auth =
-      cfg.authMode === 'client_credentials'
-        ? new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret)
-        : new AuthorizationCodeAuth(cfg.baseUrl, cfg.clientId, cfg.clientSecret, cfg.redirectUri, deps.tokenStore);
+    const auth = createAuthProvider(cfg, env, deps.tokenStore);
     const client = deps.client ?? new OeqClient(cfg.baseUrl, auth);
     const result = await runPreflight(cfg, auth, client, MCP_LOGIN_HINT);
     const lines = [
@@ -541,7 +615,7 @@ export async function checkTool(env: Env = process.env, deps: CheckDeps = {}): P
       '',
       ...result.checks.map((c) => `[${c.pass ? 'PASS' : 'FAIL'}] ${c.label}: ${c.message}`),
       '',
-      result.ok ? 'All checks passed.' : 'One or more checks failed -- see above.',
+      summarise(result),
     ];
     return text(redactSecret(lines.join('\n'), env), !result.ok);
   } catch (err) {
@@ -662,10 +736,14 @@ server.tool(
 
 server.tool(
   'oeq_check',
-  'Read-only pre-flight, run before any upload: confirms a cached token exists, who it belongs ' +
-    'to (whoever runs oeq_login_complete owns every item created), whether the target collection ' +
-    '(OEQ_COLLECTION_UUID) exists on OEQ_BASE_URL, and whether that user actually holds ' +
-    'CREATE_ITEM on it. Creates nothing.',
+  'Read-only pre-flight and compatibility probe, run before any upload. Nine checks: https, ' +
+    'authentication, which sign-in method was used, who the account belongs to (whoever signs ' +
+    'in owns every item created), how many collections that account can contribute to, whether ' +
+    'the target collection (OEQ_COLLECTION_UUID) exists on OEQ_BASE_URL, whether the user holds ' +
+    'CREATE_ITEM on it, whether the configured attachment-uuid field exists in the schema, and ' +
+    'whether duplicate detection can work -- which needs the schema to declare an item name ' +
+    'path, without which every row reports "could not check". Each failure says what it means ' +
+    'for a real run. Creates nothing.',
   {},
   async () => checkTool(),
 );

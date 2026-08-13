@@ -1,6 +1,5 @@
 import type { OeqClient } from './client.js';
 import type { Manifest, ManifestEntry, RowStatus } from './types.js';
-import { ATTACHMENT_UUID_XPATH } from './types.js';
 import { loadManifest, saveManifest } from './state.js';
 import { buildMetadataXml } from './metadata.js';
 import { uploadFile } from './upload.js';
@@ -84,21 +83,29 @@ function describeError(err: unknown): string {
  *
  * ---- Attachment uuid verification ----
  * The attachment uuid is generated here, client-side, so it can be embedded
- * in `ATTACHMENT_UUID_XPATH` and sent in the *same* `createItem` request
- * that also declares the attachment -- avoiding a second round trip to patch
- * the metadata after the fact. `client.ts` flags this as an unverified
- * assumption: "VERIFY the server honours a supplied uuid". If it doesn't --
- * if openEQUELLA silently assigns its own uuid instead of the one we asked
- * for -- then the metadata XML already sent to the server (and now baked
- * into the item) references a uuid that does not match the item's actual
- * attachment. Reporting that row as `created` would hide a real, silent data
- * problem behind a success status. Instead this compares the uuid the
- * server echoes back (`result.attachmentUuids[0]`) against the one we asked
- * for; a mismatch marks the row `incomplete` (a status that exists for
+ * in `manifest.attachmentUuidPath` and sent in the *same* `createItem`
+ * request that also declares the attachment -- avoiding a second round trip
+ * to patch the metadata after the fact. `client.ts` flags this as an
+ * unverified assumption: "VERIFY the server honours a supplied uuid". If it
+ * doesn't -- if openEQUELLA silently assigns its own uuid instead of the one
+ * we asked for -- then the metadata XML already sent to the server (and now
+ * baked into the item) references a uuid that does not match the item's
+ * actual attachment. Reporting that row as `created` would hide a real,
+ * silent data problem behind a success status. Instead this compares the uuid
+ * the server echoes back (`result.attachmentUuids[0]`) against the one we
+ * asked for; a mismatch marks the row `incomplete` (a status that exists for
  * exactly this) with an explanation, and -- critically -- does NOT throw,
  * so the caller's retry loop does not attempt this row again. The item and
  * its file attachment already exist on the server at this point; retrying
  * would create a second, duplicate item rather than fixing anything.
+ *
+ * THAT REASONING ONLY HOLDS WHEN THE FIELD WAS WRITTEN. With no
+ * `attachmentUuidPath` configured (the default -- most schemas declare no
+ * such node, see types.ts) nothing in the item references the uuid we asked
+ * for, so a server-assigned one leaves nothing stale: the item and its
+ * attachment are both correct and the row is simply `created`. Marking it
+ * `incomplete` would report a healthy row as broken and send the operator
+ * into openEQUELLA to hand-correct a field that isn't there.
  *
  * If the server's response omits attachment uuids entirely (an empty/absent
  * array), there is nothing to compare against, so the row is trusted and
@@ -112,10 +119,14 @@ async function processEntry(
   const stagingUuid = await uploadFile(client, entry.filePath, entry.fileName);
 
   const attachmentUuid = randomUUID();
-  const metadata = {
-    ...entry.metadata,
-    [ATTACHMENT_UUID_XPATH]: [attachmentUuid],
-  };
+  // Spread only when a path is configured: an unset path must leave NO trace
+  // in the document, not an empty element or a placeholder under some
+  // fallback name.
+  const uuidPath = manifest.attachmentUuidPath ?? '';
+  const metadata =
+    uuidPath === ''
+      ? entry.metadata
+      : { ...entry.metadata, [uuidPath]: [attachmentUuid] };
 
   const result = await client.createItem({
     collectionUuid: manifest.collectionUuid,
@@ -129,14 +140,14 @@ async function processEntry(
   entry.itemVersion = result.version;
 
   const actualUuid = result.attachmentUuids[0];
-  if (actualUuid !== undefined && actualUuid !== attachmentUuid) {
+  if (uuidPath !== '' && actualUuid !== undefined && actualUuid !== attachmentUuid) {
     entry.attachmentUuid = actualUuid;
     entry.status = 'incomplete';
     entry.error =
       `${rowContext(entry)}: item ${result.uuid} and its attachment were created, but ` +
       `openEQUELLA assigned attachment uuid '${actualUuid}' instead of the requested ` +
       `'${attachmentUuid}'. The metadata already sent to the server still references the ` +
-      `requested uuid, so '${ATTACHMENT_UUID_XPATH}' is now stale on this item. This needs ` +
+      `requested uuid, so '${uuidPath}' is now stale on this item. This needs ` +
       `manual correction in openEQUELLA -- do not re-run this row, it would create a ` +
       `duplicate item.`;
     return 'incomplete';

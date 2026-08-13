@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { categorizeWarnings } from '../../../src/desktop/ui/warnings.js';
+// Imported, not paraphrased: this one is a fixed sentence the core exports, so
+// a reworded warning fails here instead of silently falling into `other`.
+import { NO_IDENTIFIER_PATH_WARNING } from '../../../src/core/plan.js';
 
 // Message shapes copied verbatim from src/core/plan.ts (buildManifest,
 // preflightDuplicates) so the regexes are checked against what the core
@@ -43,6 +46,18 @@ describe('categorizeWarnings', () => {
   it('buckets a failed duplicate-check warning with the duplicates, not as unrecognised', () => {
     const got = categorizeWarnings([DUPLICATE_CHECK_FAILED]);
     expect(got.duplicateIdentifier).toEqual([DUPLICATE_CHECK_FAILED]);
+    expect(got.other).toEqual([]);
+  });
+
+  /**
+   * The schema having no identifier field means the check never ran. It is an
+   * answer to "were there duplicate identifiers?", so it belongs under that
+   * heading -- not in the unrecognised bucket, where it reads as an unrelated
+   * stray and is easy to skim past.
+   */
+  it('buckets the schema-has-no-identifier-field warning with the duplicates', () => {
+    const got = categorizeWarnings([NO_IDENTIFIER_PATH_WARNING]);
+    expect(got.duplicateIdentifier).toEqual([NO_IDENTIFIER_PATH_WARNING]);
     expect(got.other).toEqual([]);
   });
 

@@ -1,7 +1,12 @@
 // src/cli/extract.ts
 import { readFile, readdir } from 'node:fs/promises';
 import { OeqError, ValidationError } from '../core/errors.js';
-import { extractDefinition, parseSchemaPaths } from '../core/schema.js';
+import {
+  extractDefinition,
+  extractItemDescriptionPath,
+  extractItemNamePath,
+  parseSchemaPaths,
+} from '../core/schema.js';
 import { loadProfile, saveProfile, validateAgainstSchema } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
 import { extractFolder } from '../core/extract/extract.js';
@@ -32,10 +37,20 @@ export async function runExtract(
     // description column came out with NO sources at all and the Word files'
     // "Job Description" table was never mapped -- the CLI produced a profile
     // the desktop app would never have proposed.
-    const profile = starterProfile(names, {
-      ...(await scanEvidence(options.dir)),
-      schemaPaths: parseSchemaPaths(extractDefinition(await readFile(options.schemaFile, 'utf8'))),
-    });
+    //
+    // The declared name and description paths come from the export too, not
+    // from a constant: proposing BYU-Idaho's `MWDL/...` against somebody else's
+    // schema put three invalid columns in the operator's first output.
+    const schemaXml = await readFile(options.schemaFile, 'utf8');
+    const profile = starterProfile(
+      names,
+      {
+        titleHeader: extractItemNamePath(schemaXml),
+        descriptionHeader: extractItemDescriptionPath(schemaXml),
+        paths: parseSchemaPaths(extractDefinition(schemaXml)),
+      },
+      await scanEvidence(options.dir),
+    );
     await saveProfile(options.profile, profile);
     log(`Wrote a starter profile to ${options.profile}`);
     log(`Detected pattern: ${profile.pattern}`);

@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import {
@@ -264,6 +265,7 @@ describe('runAction exit code', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
   });
 
   it('returns 0 when nothing failed, even if rows were interrupted', async () => {
@@ -328,6 +330,7 @@ describe('planAction duplicate check', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
     OEQ_AUTH_MODE: 'client_credentials',
   });
 
@@ -453,6 +456,7 @@ describe('loginAction', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: secret,
+    OEQ_COLLECTION_UUID: 'c1',
     OEQ_REDIRECT_URI: 'https://example.test/',
   });
 
@@ -477,6 +481,32 @@ describe('loginAction', () => {
     expect(out).toContain('Logged in as jdoe (Jane Doe).');
     expect(out).toContain(`Token cached at ${store.path}.`);
     expect(await store.loadRaw()).not.toBeNull();
+  });
+
+  /**
+   * "Logged in as guest ( )" was a SUCCESS line. The code exchanged fine, the
+   * token was cached, and nothing said the operator could create nothing --
+   * because openEQUELLA answers an unauthenticated session as the guest
+   * identity rather than refusing it (core/identity.ts).
+   */
+  it('refuses a guest session rather than printing it as a successful login', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    mock.state.currentUser = JSON.parse(
+      readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+    );
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const err = await captureLogs(() =>
+      loginAction(env(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'the-code',
+      }),
+    ).catch((e: unknown) => e as Error);
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/guest/i);
+    expect((err as Error).message).toMatch(/oeq-upload login/);
   });
 
   it('continues gracefully (still logs in) when opening the browser fails -- headless/SSH use', async () => {
@@ -605,6 +635,7 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
         OEQ_BASE_URL: mock.url,
         OEQ_CLIENT_ID: 'good-id',
         OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
         OEQ_REDIRECT_URI: redirectUri,
       },
       { tokenStore: store, openBrowser: () => {} },
@@ -647,6 +678,7 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
         OEQ_BASE_URL: mock.url,
         OEQ_CLIENT_ID: 'good-id',
         OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
         OEQ_REDIRECT_URI: redirectUri,
       },
       { tokenStore: store, openBrowser: () => {} },
@@ -694,6 +726,101 @@ describe('logoutAction', () => {
   });
 });
 
+describe('login and logout in password mode', () => {
+  const passwordEnv = {
+    OEQ_BASE_URL: 'https://oeq.example.edu',
+    OEQ_COLLECTION_UUID: 'c1',
+    OEQ_AUTH_MODE: 'password',
+    OEQ_USERNAME: 'jsmith',
+    OEQ_PASSWORD: 'hunter2',
+  };
+
+  it('refuses to run `login`, naming the variables the credentials come from', async () => {
+    await expect(loginAction(passwordEnv)).rejects.toThrow(/OEQ_USERNAME/);
+  });
+
+  it("points at `check` rather than leaving the operator with nothing to try", async () => {
+    await expect(loginAction(passwordEnv)).rejects.toThrow(/check/);
+  });
+
+  it('never opens a browser or prompts for a code in password mode', async () => {
+    let opened = false;
+    await expect(
+      loginAction(passwordEnv, {
+        openBrowser: () => {
+          opened = true;
+        },
+        promptForCode: () => Promise.reject(new Error('must not prompt')),
+      }),
+    ).rejects.toThrow();
+    expect(opened).toBe(false);
+  });
+
+  /**
+   * Clearing the local store is a complete logout under OAuth, where the token
+   * IS the session. Under password auth the JSESSIONID stays valid on the
+   * SERVER until openEQUELLA times it out, so a caller holding a live session
+   * must have it ended before this command claims anything.
+   */
+  it('ends the openEQUELLA session, not just the local token', async () => {
+    const store = new FileTokenStore(join(dir, 'password-session.json'));
+    const ended: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await logoutAction(
+      {
+        tokenStore: store,
+        auth: {
+          logout: async () => {
+            ended.push('logout');
+          },
+        },
+      },
+      passwordEnv,
+    );
+    log.mockRestore();
+
+    expect(ended).toEqual(['logout']);
+    // And the store is still cleared -- an operator who moved over from an
+    // OAuth mode can have a stale token file, and stranding it would be worse.
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  /** Reads OEQ_AUTH_MODE directly, never through loadConfig: logging out has to
+   *  keep working when the config is broken, which is when someone reaches for
+   *  it. A config missing OEQ_COLLECTION_UUID would fail loadConfig outright. */
+  it('logs out even when the rest of the configuration is unusable', async () => {
+    const store = new FileTokenStore(join(dir, 'broken-config.json'));
+    await store.save({ accessToken: 'stale', baseUrl: 'https://oeq.example.edu' });
+    const ended: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await logoutAction(
+      { tokenStore: store, auth: { logout: async () => void ended.push('logout') } },
+      { OEQ_AUTH_MODE: 'password' },
+    );
+    log.mockRestore();
+
+    expect(ended).toEqual(['logout']);
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  it('still clears a token left over from an earlier OAuth setup, but says password mode cached none', async () => {
+    const store = new FileTokenStore(join(dir, 'stale.json'));
+    await store.save({ accessToken: 'stale', baseUrl: 'https://oeq.example.edu' });
+    const said: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((m: unknown) => {
+      said.push(String(m));
+    });
+
+    await logoutAction({ tokenStore: store }, passwordEnv);
+    log.mockRestore();
+
+    expect(await store.loadRaw()).toBeNull();
+    expect(said.join(' ')).toContain('OEQ_USERNAME');
+  });
+});
+
 describe('checkAction', () => {
   let mock: MockServer;
   beforeEach(async () => {
@@ -726,7 +853,12 @@ describe('checkAction', () => {
       uuid: 'c1',
       name: 'BYU-Idaho Faculty Content',
       privileges: ['CREATE_ITEM'],
+      schemaUuid: 's1',
     });
+    // "Everything lines up" now includes a readable schema that declares an
+    // item name path -- without one, duplicate detection reports could-not-
+    // check for every row, which is not a full success by any reading.
+    mock.state.schemas.push({ uuid: 's1', namePath: '/MWDL/title', paths: ['MWDL/title'] });
     const store = await loggedInStore();
 
     let code = -1;
@@ -738,14 +870,18 @@ describe('checkAction', () => {
     const out = logs.join('\n');
     expect(out).toContain(`OEQ_BASE_URL: ${mock.url}`);
     expect(out).toContain('OEQ_COLLECTION_UUID: c1');
+    expect(out).toContain('[PASS] HTTPS:');
     expect(out).toContain('[PASS] Token: present and usable.');
+    expect(out).toContain('[PASS] Sign-in method: signed in with OEQ_AUTH_MODE=code');
     expect(out).toContain(
       '[PASS] Identity: logged in as jdoe (Jane Doe). Created items will be owned by this user.',
     );
     expect(out).toContain(
       `[PASS] Collection: 'BYU-Idaho Faculty Content' (c1) exists on ${mock.url}.`,
     );
+    expect(out).toContain('[PASS] Collections available: 1 collection(s)');
     expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'BYU-Idaho Faculty Content'.");
+    expect(out).toContain("[PASS] Duplicate detection: existing items will be matched on 'MWDL/title'");
     expect(out).toContain('All checks passed.');
   });
 
@@ -833,6 +969,7 @@ describe('stripBomFromEnvKeys', () => {
       [`${BOM}OEQ_BASE_URL`]: 'https://example.test',
       OEQ_CLIENT_ID: 'id',
       OEQ_CLIENT_SECRET: 'secret',
+      OEQ_COLLECTION_UUID: 'c1',
     };
     expect(() => loadConfig(raw)).toThrow(/OEQ_BASE_URL/);
 

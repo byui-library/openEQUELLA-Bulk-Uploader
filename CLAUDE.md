@@ -4,7 +4,9 @@ A local tool for bulk-creating openEQUELLA contributions from a directory of fil
 plus a metadata spreadsheet. One file becomes one attachment on one contribution —
 a strict 1:1 relationship.
 
-Targets the BYU-Idaho instance at `https://content.byui.edu`.
+Works at any openEQUELLA institution. BYU-Idaho (`https://content.byui.edu`) is
+one configuration of it, not the only one it fits — but it is the **only** one
+it has ever been run against.
 
 Replaces an older, no-longer-working tool by Jim Kurian.
 
@@ -32,9 +34,26 @@ hand -- core, `oeq-upload extract`, and three desktop screens.
 a profile JSON in `templates/`; supporting a new collection is configuration,
 never code. One ships: `templates/alumni-obituary.profile.json`.
 
-**Nothing is in flight.** `main` carries everything, every feature branch has
-been pruned, and there is no open PR. **925 tests across 69 files**, typecheck
-clean.
+**The institution-agnostic work is built and UNMERGED**, on
+`feature/institution-agnostic`. Username/password sign-in, collections and
+schemas discovered from the API, an operator-managed instance list, nothing
+BYU-Idaho-specific read at runtime, and `check` grown into a compatibility
+probe. **1236 tests across 79 files**, typecheck clean, `build:desktop` clean.
+Spec 1 of two; publishing the repository (licence, an outsider-facing README,
+the audit of ~196 commits of history) is spec 2 and **has not started**.
+
+**Password auth is VERIFIED against a live instance** — 2026-08-13,
+`content-test.byui.edu`, an ordinary openEQUELLA account, driven through the
+desktop app's own stored credentials and code path: `POST /api/auth/login`
+returned 200, `currentuser` identified the real user, and all 29 contributable
+collections came back. This file previously said it was unverified and must not
+be described as working; that is superseded.
+
+**It took a defect to get there, and hand-testing is what found it.** The
+provider kept only `JSESSIONID` from the sign-in response and discarded the
+load balancer's `AWSALB`/`ROUTEID` cookies, so every request landed on a
+backend that had never seen the session — served as **guest, 200, empty list**.
+The whole test suite passed throughout. See the cookie-jar fact below.
 
 Description extraction is tiered — a stated field, then a named section
 (`Abstract`, `Summary`, …), then the opening paragraph, then eventually a
@@ -65,17 +84,32 @@ The spec lives at
 ```text
 files/            Batch inputs — MP4s + spreadsheet. GITIGNORED (size + student names).
 src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by every front end.
+  discovery.ts      Parses /api/collection and /api/schema. PURE — never fetches, so every
+                    response shape is pinned against a recorded fixture.
+  schemaCache.ts    A fetched schema on disk, keyed (instance url, schema uuid). Exists so
+                    extract/ stays offline. Every read failure returns null, never throws.
+  passwordAuth.ts   UsernamePasswordAuth. Cookie-based; no expiry logic — a 401 goes through
+                    client.ts's existing invalidate-and-retry-once path.
+  instanceUrl.ts    Validate/normalise an operator-typed address. HTTPS enforcement lives here.
+  redact.ts         One redactor for secrets on the wire. Used by every error path.
 src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
-src/cli/          plan | run | status | retry | login | logout | check
+src/cli/          plan | run | status | retry | login | logout | check | extract
 src/mcp/          Nine MCP tools
 src/desktop/      Electron app. Renderer is sandboxed: NO Node access, no `node:` imports.
 src/desktop/ui/extract/  The extract flow's own state, controller and screens.
+scripts/
+  probe-instance.mjs  Read-only live probe. Committed so any institution can run it against
+                      their own site and answer the response-shape questions themselves.
 schema/           openEQUELLA schema reference material (committed).
-  _entity.xml       BYUI_MWDL schema export, uuid c93181f3-a443-41bf-9afe-ac9f7daf90b7
+  _entity.xml       BYU-Idaho's BYUI_MWDL export, uuid c93181f3-a443-41bf-9afe-ac9f7daf90b7.
+                    Still `--schema-file`'s default, so it is the one institution-specific
+                    default left in the CLI; elsewhere, export and pass your own.
   sample.xml        A real contributed item, used as the golden target for output
   oai_dc_limb.xsl   OAI Dublin Core export transform
 docs/             Specs and design docs.
 tests/fixtures/   Anonymized test data. Never put real student names here.
+tests/fixtures/api/  Real /api/collection and /api/schema responses, recorded by the probe on
+                     2026-08-12 and trimmed (security blocks and owner uuids stripped).
 ```
 
 ## Key domain facts
@@ -83,31 +117,158 @@ tests/fixtures/   Anonymized test data. Never put real student names here.
 These were established by inspecting the instance and existing data. They are
 easy to get wrong from first principles.
 
-- **Schema**: `BYUI_MWDL`, uuid `c93181f3-a443-41bf-9afe-ac9f7daf90b7`. Item name
-  comes from `/MWDL/title`, description from `/MWDL/description`. Roughly 200
-  valid xpaths.
-- **Target collection**: "BYU-Idaho Faculty Content", itemdef
-  `bb348ab1-7a81-4e37-8ef7-adc095ade4f9`. **No moderation workflow** — publishing
-  puts an item live immediately, with no queue to catch mistakes. Draft is the
-  default for this reason.
+**Some of them are BYU-Idaho's configuration, not properties of openEQUELLA.**
+They are marked. Reading one as universal is how `MWDL/title` came to be
+hardcoded into duplicate detection; treat every marked fact as an example of a
+shape, never as a value the code may assume.
+
+- **A schema declares its own name and description paths, and the tool reads
+  them.** `namePath` / `descriptionPath` over REST, `<itemNamePath>` /
+  `<itemDescriptionPath>` in an `_entity.xml` export — note the REST spelling
+  differs from the export's, and the probe of 2026-08-12 is the only reason we
+  know. Where a schema declares no name path the answer is **null**, and every
+  consumer must report "could not check" rather than substitute a guess.
+- **A collection LIST entry already carries `schema: { uuid }`.** So a chosen
+  collection resolves to its schema in one hop, with no per-collection
+  follow-up request. Confirmed live 2026-08-12.
+- **A schema's `definition` comes back over REST as nested JSON, not XML**, so
+  `parseSchemaPaths` (which parses the export) cannot be reused on that path —
+  `discovery.ts` walks the tree instead. The two must agree: parse
+  `schema/_entity.xml` one way, walk `tests/fixtures/api/schema.json` the
+  other, and assert the results match. They describe one schema, so any
+  disagreement is a bug in one of them. That cross-check found three: the `xml`
+  root must be stripped, containers must not be emitted (openEQUELLA cannot
+  store a value at one), and `@attr` keys are addressable segments while `_`
+  keys are metadata.
+- *(BYU-Idaho's configuration)* **Schema**: `BYUI_MWDL`, uuid
+  `c93181f3-a443-41bf-9afe-ac9f7daf90b7`. Declares `/MWDL/title` and
+  `/MWDL/description`. 158 valid xpaths from the export, 98 of them under
+  `BYUI_extended`. **Target collection**: "BYU-Idaho Faculty Content", itemdef
+  `bb348ab1-7a81-4e37-8ef7-adc095ade4f9`, one of 29 the account can contribute
+  to, across two distinct schemas — an institution really can have more than
+  one. **That collection has no moderation workflow**, so publishing puts an
+  item live immediately with no queue to catch mistakes. Draft is the default
+  for this reason, and nothing in the code knows whether any other collection
+  is the same.
 - **Spreadsheet convention**: row 1 headers are literal schema xpaths
   (`MWDL/title`, `MWDL/creators/creator`, …). `attachment name` is a reserved
   header naming the file on disk; it is never written as metadata.
-- **`BYUI_extended/attachments/attachment` holds the attachment UUID**, not the
-  filename — even though incoming spreadsheets put the filename there. The tool
-  substitutes the real UUID. Note that `schema/sample.xml` shows ~170 UUIDs on a
-  single-attachment item; that is accreted junk from repeated bulk edits, not the
-  intended pattern.
-- **Authentication is SSO-backed** (Okta via `id.churchofjesuschrist.org`).
-  Interactive login cannot be automated, so unattended runs require OAuth
-  client credentials. The API client needs `CREATE_ITEM` on the target
-  collection; `VIEW_APIDOCS` gates `/api/swagger.json`.
-- **The duplicate check matches `/xml/MWDL/title` exactly** via the search
-  API's `where` clause, not free-text `q` -- `q`'s matching semantics are
-  unconfirmed and would raise false alarms. CONFIRMED against production: the
-  clause filters, and an attachment's filename is at `attachments[].filename`.
-  A result carries NO `name` field, even with `info=basic`. `showall=true` is
+- **The attachment-uuid field is configuration, and defaults to written-nowhere.**
+  `OEQ_ATTACHMENT_UUID_PATH` names it; BYU-Idaho sets it to
+  `BYUI_extended/attachments/attachment`, which holds the attachment UUID, not
+  the filename — even though incoming spreadsheets put the filename there. The
+  tool substitutes the real UUID. Left blank, no such field is written at all:
+  it is a convenience index a schema may declare, the attachment is linked
+  through the attachment API regardless, and writing a guessed path would put
+  metadata outside the collection's schema on every item. Note that
+  `schema/sample.xml` shows ~170 UUIDs on a single-attachment item; that is
+  accreted junk from repeated bulk edits, not the intended pattern.
+- **openEQUELLA answers an unauthenticated request with 200, not 401.** Probed
+  against `content-test.byui.edu` on 2026-08-13 with no credentials at all:
+
+  ```text
+  GET /api/content/currentuser  -> 200  { "username": "guest", "guest": true }
+  GET /api/collection?privilege=CREATE_ITEM
+                                -> 200  { "available": 29, "results": [] }
+  ```
+
+  Note `available: 29` beside **zero** rows -- the server says "there are 29,
+  you get none". **This cost four defects at once**, all the same shape: a
+  successful HTTP call taken as proof of sign-in. `currentUser()` dropped the
+  `guest` field, so `check` reported *"Identity ok -- logged in as guest"*, and
+  the collection dropdown rendered "No collections match", indistinguishable
+  from an account that genuinely has none. **Two reliable signals exist and
+  must be used: `guest: true` on `/api/content/currentuser`, and `available > 0`
+  with an empty `results`.** A failed `POST /api/auth/login` *does* return 401 --
+  but it still issues a JSESSIONID, and that cookie yields a guest session, so
+  holding a cookie is not proof either.
+- **A session is the WHOLE cookie jar, not just `JSESSIONID`.** Measured on
+  `content-test.byui.edu`, 2026-08-12, with a real account. One sign-in
+  response set four cookies, and which of them went back decided who the
+  instance thought you were:
+
+  ```text
+  Set-Cookie: AWSALB (124 chars), AWSALBCORS (124), JSESSIONID (32), ROUTEID (2)
+
+  JSESSIONID alone -> username=guest,  guest=true
+  all four         -> username=milesm, guest=false
+  ```
+
+  The instance is behind an AWS load balancer; `AWSALB` and `ROUTEID` carry the
+  routing state that reaches the backend actually holding the session, and
+  without them the request lands on one that has never seen it. **openEQUELLA
+  serves that as guest -- 200, empty-but-plausible data -- rather than
+  rejecting it**, which is the previous bullet's failure mode arriving through
+  a different door and is why this went unnoticed: the desktop collection list
+  simply looked empty. `passwordAuth.ts` therefore keeps every cookie the
+  sign-in set and sends them all back. Any future cookie-carrying auth path
+  must do the same.
+- *(BYU-Idaho's configuration)* **Authentication is SSO-backed** (Okta via
+  `id.churchofjesuschrist.org`). Interactive login cannot be automated. The API
+  client needs `CREATE_ITEM` on the target collection; `VIEW_APIDOCS` gates
+  `/api/swagger.json`. Everywhere else, `OEQ_AUTH_MODE=password` is the
+  expected route.
+- **`OEQ_AUTH_MODE` defaults to `code`, NOT to `password`.** The desktop's
+  Setup screen offers username and password first, with OAuth behind an
+  Advanced disclosure -- that is the UI default, and it is a different thing
+  from the env default. A site that sets `OEQ_USERNAME`/`OEQ_PASSWORD` and
+  nothing else silently gets OAuth, and openEQUELLA answers with `No OAuth
+  client can be found with the supplied client_id (null)`, naming neither the
+  variables they set nor the one they didn't. `runPreflight` detects exactly
+  that combination and says so; do not describe password mode as "the default"
+  without saying which surface.
+- **The password travels in the query string.** `POST /api/auth/login?username=&password=`
+  is openEQUELLA's API and cannot be changed from here. So https is *refused*
+  rather than warned about (loopback exempted), and nothing may put a login URL
+  into a log, a message or the manifest. `tests/passwordAuth.test.ts` walks
+  every string reachable from a thrown error for the password in literal and
+  percent-encoded form; that guard exists because a debug line added later
+  would leak passwords into a file the operator emails around asking for help.
+- **BYU-Idaho's OAuth client cannot do the client-credentials grant.** Probed
+  2026-08-12: it answers `invalid_client` — *"To use the Client Credentials
+  flow your client must be registered with a fixed user"*. This file previously
+  said unattended runs require that grant; they cannot use it as registered.
+  `OEQ_AUTH_MODE=code` (authorization code, interactive) is the working path
+  here, and `password` is the path for institutions that are not behind SSO.
+- **The duplicate check matches the schema's declared item name path exactly**
+  -- `/xml/<namePath>` in the search API's `where` clause, not free-text `q`,
+  whose matching semantics are unconfirmed and would raise false alarms. At
+  BYU-Idaho that resolves to `/xml/MWDL/title`, which is what this file used to
+  state as the literal; hardcoding it made the clause match nothing anywhere
+  else, so every row came back clean from a check that never looked. **With no
+  declared name path, no search is issued at all and every pending row is
+  `could-not-check`** -- returning an empty list there would borrow the
+  vocabulary of "checked, all clean". CONFIRMED against production: the clause
+  filters, and an attachment's filename is at `attachments[].filename`. A
+  result carries NO `name` field, even with `info=basic`. `showall=true` is
   mandatory or it cannot see this tool's own drafts.
+- **The identifier path is resolved by matching leaf name, and reports "not
+  checked" when it cannot be.** Unlike the title, openEQUELLA declares no
+  identifier path -- a schema declares a name path and a description path and
+  nothing else -- so `resolveIdentifierPath` matches the schema's REAL paths on
+  the leaf `identifier`, ties going to the top-level section the declared name
+  path lives in. At BYU-Idaho that yields `MWDL/identifier`, the literal it used
+  to hardcode. Where nothing matches, the batch gets **one warning saying the
+  check did not run and why**, never an empty warning list. That distinction is
+  the whole point: **a check that reports success without running is the bug
+  this codebase has now had twice** -- first `MWDL/identifier` against a column
+  the extractor never produced, then `MWDL/title` at any institution but this
+  one. Both reported "no duplicates" by never having looked.
+- **Stored desktop credentials were a clean break at v3, not a migration.** v2
+  keyed entries by the literal ids `production` and `test` -- the names of two
+  addresses this tool no longer ships. `loadAll`'s existing "unrecognised shape
+  -> empty" path discards them with no rekeying step, and Setup shows a
+  one-sentence notice explaining the blank form, because a silently empty Setup
+  reads as a broken app. Migration was the only option that could lose what it
+  existed to protect, and it would have faithfully preserved credentials the
+  operator was resetting anyway.
+- **The instance list ships EMPTY, and each site carries a "live" flag
+  defaulting to ON.** Deleting BYU-Idaho's two hardcoded addresses left the
+  banner shouting red on every configured site, and a warning that fires on
+  everything stops being a warning. The flag is per-instance configuration; the
+  banner reads it rather than inferring from an id that no longer exists. Note
+  the banner shows the operator's own label for the site, uppercased, not the
+  word PRODUCTION.
 - **A collection template is just a profile JSON** in `templates/`. Supporting a
   new collection is configuration, never code -- a code pack per collection
   would need a developer each time. `dateNear`, `datePair` and `compose` are
@@ -135,6 +296,17 @@ easy to get wrong from first principles.
   in Node. `tests/desktop/rendererPurity.test.ts` now walks the import graph and
   fails the build instead. If the renderer needs something a Node-dependent
   module computes, compute it in the main process and send it over IPC.
+- **Mutation testing has a trap here: source files are CRLF in the working
+  copy.** A `perl` or `sed` pattern containing `\n` silently matches nothing,
+  so the mutation never applies, the suite comes back green, and the result is
+  indistinguishable from a well-covered test. This has produced a false "all
+  passing" twice. Apply mutations with the Edit tool and confirm the file
+  actually changed before believing a green run. The same CRLF issue already
+  broke multi-line `node -e` string replaces once.
+- **`noUnusedLocals` is NOT enabled.** `tsconfig.json` sets `strict` and
+  `noUncheckedIndexedAccess` only. Do not rely on the typecheck to find a dead
+  import — it will not. Stated here because a plan and several task briefs
+  asserted otherwise.
 - **Any input whose `input` event triggers a re-render must call
   `ui/dom.ts#keepCaret`.** Screens render by replacing `innerHTML`, so the input
   is destroyed and recreated on every keystroke; without it the field loses
@@ -164,4 +336,20 @@ easy to get wrong from first principles.
   spelling); `/oauth/authorize` 302-redirects to it. The registered
   `redirectUrl` is the site root, and the server strips its trailing slash.
 - `OEQ_SCHEMA_UUID` is recorded in the manifest but **never sent anywhere**.
-  Schema validation reads the local `schema/_entity.xml`. Don't chase it.
+  Don't chase it. (It used to be true that schema validation always read the
+  local `schema/_entity.xml`. It no longer is: the desktop fetches the chosen
+  collection's schema and caches it per instance, and `runPreflight` reads it
+  from the API. `plan` and `extract` still read `--schema-file`.)
+- **`plan` and `check` read the schema from different sources**, and can
+  disagree — `plan` from the local `--schema-file` export, `runPreflight` from
+  the API. A schema edited on the server since the export was taken is the case
+  where they diverge. Known seam, deliberately left open on
+  `feature/institution-agnostic`. If it is closed, **the API is the authority
+  and the local file is the offline fallback**, not the other way round.
+- **Extraction must stay offline.** `src/core/extract/` never touches the
+  network, which is what lets an operator build a spreadsheet without signing
+  in to anything. Moving the schema onto the API threatened that, which is the
+  entire reason `schemaCache.ts` exists. With no cache, extraction still runs
+  against the bundled export and reports columns as unvalidated — blocking the
+  offline half of the tool on a network call nobody asked for would trade a
+  real capability for a check.

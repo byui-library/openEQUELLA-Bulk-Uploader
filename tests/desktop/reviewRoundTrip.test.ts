@@ -9,7 +9,12 @@ import { writeCsv } from '../../src/core/extract/csv.js';
 import { starterProfile } from '../../src/core/extract/suggest.js';
 import { readSheet } from '../../src/core/sheet.js';
 import { buildManifest } from '../../src/core/plan.js';
-import { extractDefinition, parseSchemaPaths } from '../../src/core/schema.js';
+import {
+  extractDefinition,
+  extractItemDescriptionPath,
+  extractItemNamePath,
+  parseSchemaPaths,
+} from '../../src/core/schema.js';
 import { makePdf, makeDocx } from '../fixtures/extract/make.js';
 
 /**
@@ -34,13 +39,31 @@ async function schemaPaths(): Promise<Set<string>> {
   return parseSchemaPaths(extractDefinition(await readFile('schema/_entity.xml', 'utf8')));
 }
 
+/**
+ * The bundled export, in the shape `starterProfile` reads -- the same thing the
+ * desktop flow hands it (extractHandlers.ts#bundledSchemaOnce). The columns the
+ * starter proposes come out of this, so the round trip is only meaningful if
+ * the schema the profile was built from is the schema Review validates against.
+ */
+async function starterSchema() {
+  const xml = await readFile('schema/_entity.xml', 'utf8');
+  return {
+    titleHeader: extractItemNamePath(xml),
+    descriptionHeader: extractItemDescriptionPath(xml),
+    paths: parseSchemaPaths(extractDefinition(xml)),
+  };
+}
+
 /** Extract a real folder to a real CSV, exactly as the desktop flow does. */
 async function extractToCsv(): Promise<{ dir: string; csvPath: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'oeq-roundtrip-'));
   await writeFile(join(dir, 'Ibanez_Sergio_Recital.pdf'), makePdf({ text: 'x', title: 'A Recital', author: 'Sergio J. Ibáñez, Markel Rico and José Pino' }));
   await writeFile(join(dir, 'Ash_Quinn_Jury.docx'), makeDocx({ text: 'y', title: 'A Jury', creator: 'Dixon, Matt' }));
 
-  const profile = starterProfile(['Ibanez_Sergio_Recital.pdf', 'Ash_Quinn_Jury.docx']);
+  const profile = starterProfile(
+    ['Ibanez_Sergio_Recital.pdf', 'Ash_Quinn_Jury.docx'],
+    await starterSchema(),
+  );
   const { rows } = await extractFolder(dir, profile);
   const csvPath = join(dir, 'extracted.csv');
   await writeCsv(csvPath, profile, rows);

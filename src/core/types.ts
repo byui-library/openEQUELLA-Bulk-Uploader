@@ -34,7 +34,7 @@ export interface ManifestEntry {
   itemUuid?: string;
   /** openEQUELLA items are versioned; this is the version this row created. */
   itemVersion?: number;
-  /** uuid of this row's single attachment, written back into ATTACHMENT_UUID_XPATH. */
+  /** uuid of this row's single attachment, as it exists on the server. */
   attachmentUuid?: string;
   error?: string;
   /** Cumulative attempts across all resumed runs; retry resets status, not this. */
@@ -50,6 +50,14 @@ export interface Manifest {
   itemState: ItemState;
   /** Reserved header naming the file on disk. */
   attachmentColumn: string;
+  /**
+   * Metadata xpath that receives each item's attachment uuid, or absent/empty
+   * for "write no such field" (the default -- see config.ts). Carried on the
+   * manifest rather than read from the environment at run time so a batch
+   * planned today runs the same way tomorrow, exactly like `collectionUuid`
+   * and `itemState`.
+   */
+  attachmentUuidPath?: string;
   entries: ManifestEntry[];
   /** Non-fatal problems surfaced at plan time. */
   warnings: string[];
@@ -57,11 +65,39 @@ export interface Manifest {
 
 export const ATTACHMENT_COLUMN = 'attachment name';
 
-/** Field that must receive the real attachment uuid, not the filename. */
-export const ATTACHMENT_UUID_XPATH = 'BYUI_extended/attachments/attachment';
+/*
+ * There is deliberately NO default attachment-uuid xpath here.
+ *
+ * `BYUI_extended/attachments/attachment` used to live at this spot, and the
+ * runner wrote it on EVERY item it created. That node exists in one
+ * institution's schema; anywhere else the tool was writing metadata to a path
+ * outside the collection's schema on every contribution -- storing junk or
+ * failing the create, with nothing in either outcome to point at the cause.
+ *
+ * It is configuration now (`OEQ_ATTACHMENT_UUID_PATH` -> `Config.attachmentUuidPath`
+ * -> `Manifest.attachmentUuidPath`), defaulting to unset, and unset means the
+ * field is omitted entirely rather than replaced by a guess. The attachment
+ * itself is unaffected either way: attachments are linked through the
+ * attachment API, and this field is only a convenience index that a schema may
+ * or may not declare.
+ */
 
-/** Item name comes from here; the duplicate check matches on it. */
-export const TITLE_XPATH = 'MWDL/title';
+/*
+ * There is deliberately NO default title xpath here.
+ *
+ * `MWDL/title` used to live at this spot, and hardcoding it is what made
+ * duplicate detection silently blind anywhere but BYU-Idaho: the `where`
+ * clause matched nothing, so every row came back clean from a check that never
+ * looked. It was briefly kept as a "fallback for a hand-made spreadsheet",
+ * then removed once nothing referenced it -- a fallback nobody uses is just an
+ * attractive nuisance, and `noUnusedLocals` is off here so nothing would flag
+ * it.
+ *
+ * The path is READ, from whichever source is available: `parseSchema` in
+ * discovery.ts for the REST representation, `extractItemNamePath` in schema.ts
+ * for an `_entity.xml` export. When neither declares one, the answer is
+ * `could-not-check` (see findDuplicates) -- never a guess, and never `clean`.
+ */
 
 /**
  * How this tool decides two filenames are the same file.

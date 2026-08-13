@@ -4,12 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   applyOverrides,
+  fetchAndCacheSchema,
   reportColumns,
   resolveSchemaPath,
   missingCredentialsMessage,
   registerHandlers,
+  requireSignedIn,
 } from '../../src/desktop/handlers.js';
 import { saveManifest, loadManifest } from '../../src/core/state.js';
+import { SchemaCache } from '../../src/core/schemaCache.js';
+import type { SchemaInfo } from '../../src/core/discovery.js';
 import type { Sheet, Manifest } from '../../src/core/types.js';
 
 // registerHandlers ends up calling registerExtractHandlers, which resolves the
@@ -164,25 +168,65 @@ describe('reportColumns', () => {
 });
 
 describe('missingCredentialsMessage', () => {
-  // The exact wording an operator sees when they pick an instance that has
-  // never had credentials saved -- it must name the instance so "no
-  // credentials" isn't ambiguous between production and test.
-  it('names Production when that instance has no saved credentials', () => {
-    expect(missingCredentialsMessage('production')).toBe(
-      'No credentials saved for Production. Enter the client ID and secret for that instance in Setup.',
+  // The exact wording an operator sees when they pick a site that has never
+  // had credentials saved -- it must name the site, so "no credentials" is
+  // not ambiguous between the several they may have added. It is given the
+  // LABEL rather than the id, because the label is what they picked from the
+  // dropdown; the id is the address.
+  it('names the site the operator chose', () => {
+    expect(missingCredentialsMessage('Production')).toBe(
+      'No credentials saved for Production. Add your sign-in details for that site in Setup.',
+    );
+    expect(missingCredentialsMessage('Test')).toBe(
+      'No credentials saved for Test. Add your sign-in details for that site in Setup.',
     );
   });
 
-  it('names Test when that instance has no saved credentials', () => {
-    expect(missingCredentialsMessage('test')).toBe(
-      'No credentials saved for Test. Enter the client ID and secret for that instance in Setup.',
+  // An operator who left the name blank gets the host as their label
+  // (secrets.ts), so there is always something to name here -- the message
+  // never degrades to a bare "no credentials".
+  it('names a host-derived label just as readably', () => {
+    expect(missingCredentialsMessage('oeq.example.edu')).toBe(
+      'No credentials saved for oeq.example.edu. Add your sign-in details for that site in Setup.',
     );
   });
+});
 
-  it('falls back to the raw id for an unrecognised instance rather than crashing', () => {
-    expect(missingCredentialsMessage('staging')).toBe(
-      'No credentials saved for staging. Enter the client ID and secret for that instance in Setup.',
-    );
+/**
+ * A SIGN-IN THAT PRODUCED THE GUEST IS NOT A SIGN-IN. openEQUELLA never
+ * answers an unauthenticated request with 401 -- it answers 200 as the guest
+ * identity -- so without this the desktop's sign-in handler resolved a
+ * perfectly good user object, the app advanced to the next screen reporting
+ * success, and the first the operator heard of it was a collection dropdown
+ * reading "No collections match".
+ */
+describe('requireSignedIn', () => {
+  const guest = { id: 'guest', username: 'guest', firstName: 'guest', lastName: 'guest', guest: true };
+  const real = { id: 'u-1', username: 'jdoe', firstName: 'Jane', lastName: 'Doe', guest: false };
+
+  it('refuses a guest session rather than reporting it as a sign-in', () => {
+    expect(() => requireSignedIn(guest, 'Live')).toThrow(/guest/i);
+  });
+
+  // Names the site: credentials are per instance, and the operator picked
+  // theirs from a dropdown of their own names for them.
+  it('names the site and what to do about it', () => {
+    const message = (() => {
+      try {
+        requireSignedIn(guest, 'Live');
+        return '';
+      } catch (err) {
+        return (err as Error).message;
+      }
+    })();
+    expect(message).toContain('Live');
+    expect(message).toMatch(/setup/i);
+    // ...and says what it means for a run, not just that something is wrong.
+    expect(message).toMatch(/nothing can be created/i);
+  });
+
+  it('passes a real account straight through', () => {
+    expect(requireSignedIn(real, 'Live')).toBe(real);
   });
 });
 
@@ -280,5 +324,87 @@ describe('applyDuplicateChoices', () => {
     await ipc.call<number>('oeq:applyDuplicateChoices', { manifestPath, skipRows: [2] });
     const reread = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
     expect(reread.entries[0]?.status).toBe('skipped');
+  });
+});
+
+/**
+ * The write half of the offline schema cache.
+ *
+ * `src/core/extract/` never touches the network -- that is what lets an
+ * operator build a spreadsheet without signing in to anything -- but the
+ * schema it validates columns against comes from the API. This is the moment
+ * those two are reconciled: whoever DID sign in leaves the schema on disk,
+ * keyed by (instance url, schema uuid), and extraction reads it later.
+ */
+describe('fetchAndCacheSchema', () => {
+  const SITE = 'https://oeq.example.edu';
+  const schema: SchemaInfo = {
+    uuid: 'schema-1',
+    namePath: '/MWDL/title',
+    titleHeader: 'MWDL/title',
+    descriptionPath: '/MWDL/description',
+    descriptionHeader: 'MWDL/description',
+    paths: new Set(['MWDL/title', 'MWDL/description']),
+  };
+  const fakeClient = { getSchema: async () => schema };
+
+  it('writes the fetched schema where extraction reads it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const cache = new SchemaCache(dir);
+    await fetchAndCacheSchema(fakeClient, cache, SITE, 'schema-1');
+    // Read back through the cache's OWN key, which is what the extract
+    // handlers use. A write under any other key is a write nobody can find.
+    expect(await cache.load(SITE, 'schema-1')).toEqual(schema);
+  });
+
+  /**
+   * KEYED ON THE INSTANCE AS WELL AS THE SCHEMA. Schema uuids are not globally
+   * unique across institutions, and one institution's test and production
+   * instances routinely share them outright -- keying on the uuid alone would
+   * let one site's schema answer for another's, silently, with paths that look
+   * entirely real.
+   */
+  it('does not let one site’s schema answer for another’s', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const cache = new SchemaCache(dir);
+    await fetchAndCacheSchema(fakeClient, cache, SITE, 'schema-1');
+    expect(await cache.load('https://oeq-test.example.edu', 'schema-1')).toBeNull();
+  });
+
+  it('answers with the schema flattened for the IPC boundary', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const summary = await fetchAndCacheSchema(fakeClient, new SchemaCache(dir), SITE, 'schema-1');
+    // An array, not a Set: JSON.stringify renders a Set as `{}`, and every
+    // valid xpath would be lost while the payload still looked plausible.
+    expect(summary.paths).toEqual(['MWDL/description', 'MWDL/title']);
+    expect(summary.titleHeader).toBe('MWDL/title');
+  });
+
+  /**
+   * The operator asked to see a schema, not to populate a cache. A full or
+   * read-only disk must not turn "here are your collection's fields" into an
+   * error dialog -- all that is actually lost is a later offline validation
+   * that degrades to the bundled export anyway.
+   */
+  it('still answers when the cache cannot be written', async () => {
+    const brokenCache = {
+      save: async () => {
+        throw new Error('disk full');
+      },
+    };
+    const summary = await fetchAndCacheSchema(fakeClient, brokenCache, SITE, 'schema-1');
+    expect(summary.uuid).toBe('schema-1');
+  });
+
+  // A fetch that fails is a real failure and is reported as one -- unlike the
+  // cache write above, there is no answer to give.
+  it('does not swallow a failure to read the schema itself', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-sc-'));
+    const failing = {
+      getSchema: async () => {
+        throw new Error('404 not found');
+      },
+    };
+    await expect(fetchAndCacheSchema(failing, new SchemaCache(dir), SITE, 'nope')).rejects.toThrow(/404/);
   });
 });

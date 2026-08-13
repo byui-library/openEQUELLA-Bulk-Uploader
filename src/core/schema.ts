@@ -40,6 +40,56 @@ export function extractDefinition(entityXml: string): string {
 }
 
 /**
+ * The path an exported schema declares as the item's name, in spreadsheet-header
+ * form (`MWDL/title`, no leading slash) -- or null when the export declares
+ * none.
+ *
+ * THE DUPLICATE CHECK SEARCHES ON THIS. The XML export spells it
+ * `<itemNamePath>`; the REST representation spells the same thing `namePath`
+ * and is parsed by discovery.ts#parseSchema. Both exist so a front end can read
+ * the declared path from whichever source it has, rather than assuming
+ * BYU-Idaho's `MWDL/title` -- an assumption that makes the check match nothing
+ * anywhere else and report every row clean.
+ *
+ * Null is returned rather than a fallback, deliberately: findDuplicates turns
+ * an unknown path into `could-not-check`, which is the only honest answer.
+ */
+export function extractItemNamePath(entityXml: string): string | null {
+  return declaredPath(entityXml, 'itemNamePath');
+}
+
+/**
+ * The path an exported schema declares as the item's description, in
+ * spreadsheet-header form (`MWDL/description`) -- or null when none is
+ * declared.
+ *
+ * THE STARTER PROFILE PROPOSES THIS COLUMN. It used to propose the literal
+ * `MWDL/description` whatever schema it was handed, so at any institution
+ * without an MWDL section the extractor's very first output contained a column
+ * the picker immediately flagged invalid. `discovery.ts#parseSchema` reads the
+ * same declaration from the REST response, where it is spelt
+ * `descriptionPath`; this reads it from the export, where it is
+ * `<itemDescriptionPath>`. Both exist for the same reason the two name-path
+ * readers do: extraction runs offline against the bundled export as well as
+ * online against the API, and a column proposed from one source has to match
+ * the schema the other validates against.
+ */
+export function extractItemDescriptionPath(entityXml: string): string | null {
+  return declaredPath(entityXml, 'itemDescriptionPath');
+}
+
+/** One declared `<item...Path>` off the exported entity, header form or null. */
+function declaredPath(entityXml: string, field: string): string | null {
+  const parser = new XMLParser(parserOptions);
+  const doc = parser.parse(entityXml) as Record<string, unknown>;
+  const pack = doc['com.tle.common.ImportExportPack'] as Record<string, unknown> | undefined;
+  const entity = pack?.['entity'] as Record<string, unknown> | undefined;
+  const declared = entity?.[field];
+  if (typeof declared !== 'string' || declared.trim() === '') return null;
+  return declared.trim().replace(/^\/+/, '');
+}
+
+/**
  * Walk the definition tree and collect every *leaf* element path below the
  * <xml> root — the paths that actually hold a value. A container element
  * (e.g. 'MWDL/creators', wrapping one-or-more <creator> children) is not
@@ -118,6 +168,58 @@ function normalizedDistance(a: string, b: string): number {
 function lastSegment(path: string): string {
   const i = path.lastIndexOf('/');
   return i === -1 ? path : path.slice(i + 1);
+}
+
+/**
+ * The schema field a human-written name refers to, or null.
+ *
+ * Real evidence is named for people: a Word table heading says "Job Title", not
+ * "MWDL/title". Matching the LAST WORD of the name against the schema's leaf
+ * element reads those without guessing at meaning — "Job Title" is a title,
+ * "Job Description" is a description, and "Company" and "Pay" match nothing, so
+ * nothing is proposed for them.
+ *
+ * Where several fields share a leaf name, one section wins: `MWDL/description`
+ * rather than `BYUI_extended/…/description`. That section holds the
+ * descriptive fields nearly every item needs; the others are specialised.
+ *
+ * WHICH section is not a constant. `preferSection` is the top-level section the
+ * schema's own declared item-name path lives in -- `MWDL` at BYU-Idaho, so the
+ * behaviour there is unchanged, and whatever the local schema calls its main
+ * section anywhere else. Hardcoding `MWDL/` meant the tie-break simply never
+ * fired at another institution, quietly falling through to the shortest match.
+ * With no section to prefer that fallback is still what happens.
+ *
+ * IT LIVES HERE, not in extract/, because two unrelated callers need it and
+ * there must be exactly one of it: `extract/suggest.ts` proposes the starter
+ * profile's creator column with it, and `plan.ts` resolves the duplicate
+ * pre-flight's identifier path with it. A schema declares a name path and a
+ * description path and nothing else, so every OTHER field either gets matched
+ * by leaf name or gets hardcoded to BYU-Idaho's spelling -- and the hardcoded
+ * version is the bug this codebase has now shipped twice.
+ */
+export function matchSchemaPath(
+  name: string,
+  schemaPaths: Set<string>,
+  preferSection?: string | null,
+): string | null {
+  const lastWord = name.trim().split(/\s+/).pop()?.toLowerCase();
+  if (lastWord === undefined || lastWord === '') return null;
+
+  const matches = [...schemaPaths].filter((p) => lastSegment(p).toLowerCase() === lastWord);
+  if (matches.length === 0) return null;
+
+  const shortestFirst = (a: string, b: string): number => a.length - b.length;
+  if (preferSection) {
+    const preferred = matches.filter((p) => p.startsWith(`${preferSection}/`)).sort(shortestFirst);
+    if (preferred[0]) return preferred[0];
+  }
+  return matches.sort(shortestFirst)[0]!;
+}
+
+/** The top-level section a header sits in: `MWDL/title` -> `MWDL`. */
+export function topSection(header: string | null): string | null {
+  return header?.split('/')[0] ?? null;
 }
 
 /**

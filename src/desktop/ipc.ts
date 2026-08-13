@@ -1,35 +1,79 @@
 import type { ItemState, Manifest } from '../core/types.js';
-import type { CollectionSummary, CurrentUser } from '../core/client.js';
+import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
 import type { ExtractedRow } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
+// `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
+// this module is reachable from the sandboxed renderer. A type-only import is
+// erased at compile time and never becomes a runtime require (see
+// tests/desktop/rendererPurity.test.ts).
+import type { Settings, SettingsAuthMode } from './secrets.js';
 
+/**
+ * One saved site, as the renderer sees it. Mirrors secrets.ts's `Instance`
+ * exactly and carries NO credential: not the client secret, not the password.
+ * See `toInstance` there for why the mapping is field-by-field.
+ */
 export interface InstanceChoice {
-  id: 'production' | 'test';
+  /** `instanceKey` of the base url -- see core/instanceUrl.ts. */
+  id: string;
   label: string;
   baseUrl: string;
+  /**
+   * How this site signs in. The renderer needs it for wording that would
+   * otherwise be a lie -- Sign-in says "this opens an openEQUELLA sign-in
+   * window", which is true of the authorization-code flow and false of
+   * password mode, where the handler signs in directly with no browser.
+   */
+  authMode: SettingsAuthMode;
+  /** Where the attachment uuid is written, or '' for no such field. See Instance. */
+  attachmentUuidPath: string;
+  /** Whether this is a live site. Drives the banner (ui/banner.ts). Defaults true. */
+  live: boolean;
+  /** The chosen collection's schema, or ''. The key to the offline schema cache. */
+  schemaUuid: string;
 }
 
 /**
- * Both instances are declared here rather than typed by the user. The
- * collection uuid is byte-identical on test and production, so the base url is
- * the ONLY thing distinguishing them -- a free-text field would be a footgun.
+ * A fetched schema, flattened for the IPC boundary: `SchemaInfo.paths` is a
+ * `Set`, and this crosses a process boundary where an array is the shape every
+ * consumer can rely on.
+ */
+export interface SchemaSummary {
+  uuid: string;
+  /** As declared, with a leading slash: `/MWDL/title`. Null if undeclared. */
+  namePath: string | null;
+  /** The same path in spreadsheet-header form: `MWDL/title`. Null if undeclared. */
+  titleHeader: string | null;
+  /** Every valid xpath, leaves only, in spreadsheet-header form. */
+  paths: string[];
+}
+
+/**
+ * Instances that ship WITH the app. There are none, and that is the point:
+ * this list used to declare BYU-Idaho's production and test addresses, and a
+ * tool handed to another institution must not arrive knowing them. An
+ * operator adds their own site on Setup and it is remembered per Windows
+ * account (secrets.ts). `listInstances` below is where the app's real list
+ * comes from.
+ *
+ * The empty literal and its mirror in ui/instances.ts are kept rather than
+ * deleted: they are the mechanism by which anything ever shipped would reach
+ * both the main process and the sandboxed renderer, and
+ * tests/desktop/ui/instances.test.ts is the tripwire that stops the two
+ * copies drifting.
  *
  * `redirectUri` is deliberately NOT a field here. It used to be, hard-coded
- * per instance -- and been guessed wrong TWICE in this project: production
- * has no trailing slash, one test OAuth client had one, the operator's next
- * dedicated test client doesn't. It is registered per OAuth client by an
- * administrator and is not derivable from the base url at all, so it is now
- * per-instance STORED CONFIGURATION, collected in Setup alongside the client
- * ID/secret and persisted in secrets.ts's `Settings` (see that module's doc
- * comment for the migration story). `buildConfig` (session.ts) reads it from
- * there, never from here.
+ * per instance -- and been guessed wrong TWICE in this project: one OAuth
+ * client's registered value has no trailing slash, another's does. It is
+ * registered per OAuth client by an administrator and is not derivable from
+ * the base url at all, so it is per-instance STORED CONFIGURATION, collected
+ * in Setup alongside the client ID/secret and persisted in secrets.ts's
+ * `Settings` (see that module's doc comment). `buildConfig` (session.ts)
+ * reads it from there, never from here.
  */
-export const INSTANCES: InstanceChoice[] = [
-  { id: 'production', label: 'Production', baseUrl: 'https://content.byui.edu' },
-  { id: 'test', label: 'Test', baseUrl: 'https://content-test.byui.edu' },
-];
+export const INSTANCES: InstanceChoice[] = [];
 
 export interface ColumnReport {
   header: string;
@@ -73,18 +117,103 @@ export interface RunReport {
 }
 
 export interface OeqApi {
+  /** Every instance the operator has added, newest state from disk. Empty on a fresh install. */
+  listInstances(): Promise<InstanceChoice[]>;
+  /**
+   * Whether credentials written by an older version of the store were found
+   * and discarded on this launch, so Setup can explain the blank form rather
+   * than looking broken. See secrets.ts's `credentialsDropped`.
+   */
+  credentialsDropped(): Promise<boolean>;
   hasSettings(instanceId: string): Promise<boolean>;
-  saveSettings(
-    instanceId: string,
-    s: { clientId: string; clientSecret: string; redirectUri: string },
-  ): Promise<void>;
+  /**
+   * Add or update one instance, its per-site settings and its credentials. The
+   * address comes from the operator; the id is derived from it in the main
+   * process (one rule for what an address's key is) and returned, so the caller
+   * can select what it just saved.
+   *
+   * The per-site fields are optional and an omitted one keeps whatever is
+   * stored (secrets.ts). An explicit `''` attachment path is not an omission:
+   * blank means "write no such field" and is stored as given.
+   */
+  saveInstance(
+    instance: {
+      label: string;
+      baseUrl: string;
+      attachmentUuidPath?: string;
+      live?: boolean;
+      schemaUuid?: string;
+    },
+    s: Settings,
+  ): Promise<InstanceChoice>;
   clearSettings(): Promise<void>;
 
+  /**
+   * Store the openEQUELLA account for one instance. The password crosses into
+   * the main process because the operator typed it here; it never comes back
+   * -- see `getPassword`.
+   */
+  setPassword(args: { instanceId: string; username: string; password: string }): Promise<void>;
+  /**
+   * Who is signed in on this instance, or null when nothing is stored.
+   *
+   * DELIBERATELY NOT the password. Setup needs one thing from a stored
+   * credential -- the name to show beside "Signed in as" and the fact that
+   * there is something to forget -- and handing the renderer a plaintext
+   * password it has no use for is an exposure with nothing bought for it. The
+   * password stays in the main process, which is the only place that signs in
+   * with it (session.ts's buildConfig).
+   */
+  getPassword(instanceId: string): Promise<{ username: string } | null>;
+  /** Behind Setup's "Forget this password". Removing what is absent is not an error. */
+  forgetPassword(instanceId: string): Promise<void>;
+
+  /**
+   * Sign in to one site and confirm who that made you.
+   *
+   * REJECTS on a guest session rather than resolving one. openEQUELLA answers
+   * an unauthenticated request 200 as the guest identity, so a sign-in that
+   * never took still produces a perfectly good `CurrentUser` -- and the app
+   * would advance to the next screen reporting success. See handlers.ts's
+   * `requireSignedIn`.
+   */
   signIn(instanceId: string): Promise<CurrentUser>;
   signOut(): Promise<void>;
+  /**
+   * Who is signed in on this instance, or null.
+   *
+   * NULL FOR A GUEST SESSION as well as for no token at all: this answers "is
+   * anyone signed in", and guest is openEQUELLA's way of saying no. Returning
+   * the guest user would put "Signed in as guest" and a Continue button in
+   * front of the operator (ui/signin.ts).
+   */
   currentUser(instanceId: string): Promise<CurrentUser | null>;
 
-  listCollections(instanceId: string): Promise<CollectionSummary[]>;
+  /**
+   * The collections this account can contribute to -- WITH the server's own
+   * `available` count, not just the rows. An unauthenticated session gets 200
+   * and an empty list, and the count is the only thing that tells that apart
+   * from an account that genuinely holds CREATE_ITEM on nothing. See
+   * `CollectionList.withheld`.
+   */
+  listCollections(instanceId: string): Promise<CollectionList>;
+
+  /**
+   * Read one schema from the site and remember it.
+   *
+   * Two jobs, on purpose. It answers Setup -- which needs the chosen
+   * collection's valid xpaths to offer or check an attachment-uuid path
+   * instead of making the operator know one -- and, on the way, it writes the
+   * schema into the on-disk `SchemaCache` (core/schemaCache.ts). That cache is
+   * what lets `src/core/extract/` validate the columns it produces WITHOUT a
+   * network call, which is the whole reason the extract flow works for an
+   * operator who has not signed in to anything.
+   *
+   * The schema uuid comes from the collection list entry
+   * (`CollectionSummary.schemaUuid`), so choosing a collection resolves its
+   * schema in one hop and nothing has to be configured twice.
+   */
+  fetchSchema(args: { instanceId: string; schemaUuid: string }): Promise<SchemaSummary>;
 
   chooseSpreadsheet(): Promise<string | null>;
   chooseFolder(): Promise<string | null>;
@@ -121,14 +250,38 @@ export interface OeqApi {
   retryFailed(manifestPath: string): Promise<void>;
   loadManifest(manifestPath: string): Promise<Manifest>;
 
-  /** Read a folder: what is there, and what can be mapped from. Samples the first few documents. */
-  extractScan(dir: string): Promise<ExtractScan>;
+  /**
+   * Read a folder: what is there, and what can be mapped from. Samples the
+   * first few documents. `instanceId` picks whose schema the proposed starter
+   * profile is built against -- same cached-then-bundled resolution as
+   * `schemaPaths`, so the starter and the Add-column picker cannot disagree
+   * about which columns are valid.
+   */
+  extractScan(dir: string, instanceId?: string): Promise<ExtractScan>;
   /** First few rows for the live preview. Cheap enough to call on every edit. */
   extractPreview(args: { dir: string; profile: Profile }): Promise<ExtractedRow[]>;
   /** Write the spreadsheet. */
   extractRun(args: { dir: string; profile: Profile; outPath: string }): Promise<ExtractRunReport>;
-  /** Every valid schema xpath, for the Add-column picker. */
-  schemaPaths(): Promise<string[]>;
+  /**
+   * Every valid schema xpath, for the Add-column picker.
+   *
+   * `instanceId` selects WHOSE schema. Given one whose schema has been fetched
+   * and cached (see `fetchSchema`), extraction validates against that site's
+   * real schema, offline. Without a cache -- a fresh install, another
+   * institution's site, an operator who has not signed in -- it falls back to
+   * the schema export bundled with the app rather than refusing: blocking the
+   * offline half of the tool on a network call the operator did not ask for
+   * would trade a real capability for a check.
+   */
+  schemaPaths(instanceId?: string): Promise<string[]>;
+  /**
+   * The xpath the schema declares as the item's name, or null if it declares
+   * none. The Add-column picker offers that path's own section first, since it
+   * holds the fields nearly every item needs. Parsed in the main process:
+   * reading the schema reaches `node:fs`, which the renderer cannot. Same
+   * cached-then-bundled resolution as `schemaPaths`.
+   */
+  schemaNamePath(instanceId?: string): Promise<string | null>;
   /** Templates shipped with the app, for the "start from" choice. */
   listTemplates(): Promise<{ id: string; label: string }[]>;
   /** A shipped template, validated, ready to use as the starting profile. */
@@ -183,13 +336,19 @@ export interface ExtractRunReport {
 }
 
 export const CHANNELS = {
+  listInstances: 'oeq:listInstances',
+  credentialsDropped: 'oeq:credentialsDropped',
   hasSettings: 'oeq:hasSettings',
-  saveSettings: 'oeq:saveSettings',
+  saveInstance: 'oeq:saveInstance',
   clearSettings: 'oeq:clearSettings',
+  setPassword: 'oeq:setPassword',
+  getPassword: 'oeq:getPassword',
+  forgetPassword: 'oeq:forgetPassword',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',
   currentUser: 'oeq:currentUser',
   listCollections: 'oeq:listCollections',
+  fetchSchema: 'oeq:fetchSchema',
   chooseSpreadsheet: 'oeq:chooseSpreadsheet',
   chooseFolder: 'oeq:chooseFolder',
   saveStarterKit: 'oeq:saveStarterKit',
@@ -204,6 +363,7 @@ export const CHANNELS = {
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',
   schemaPaths: 'oeq:schemaPaths',
+  schemaNamePath: 'oeq:schemaNamePath',
   listTemplates: 'oeq:listTemplates',
   loadTemplate: 'oeq:loadTemplate',
   openProfile: 'oeq:openProfile',
