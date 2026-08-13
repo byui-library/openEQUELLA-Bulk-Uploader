@@ -37,8 +37,23 @@ never code. One ships: `templates/alumni-obituary.profile.json`.
 **The institution-agnostic work is MERGED** (PRs #7, #8, #9). Username/password
 sign-in, collections and schemas discovered from the API, an operator-managed
 instance list, nothing BYU-Idaho-specific read at runtime, and `check` grown
-into a compatibility probe. **1359 tests across 86 files**, typecheck clean,
-`build:desktop` clean. `main` carries everything and no PR is open.
+into a compatibility probe. Typecheck clean, `build:desktop` clean. `main`
+carries everything and no PR is open.
+
+**Every screen but Progress now has a way off it.** Choose and Results both
+carry "Site settings for {site}…" and "Sign out of {site}…", and Setup has a
+Back that saves nothing, offered only when it was opened from somewhere.
+Progress deliberately has none: signing out under a running batch would end the
+session the runner uploads through.
+
+**Setup fills the attachment-ID field in from the schema.** Choosing a
+collection reads its schema; where that schema declares exactly one leaf whose
+last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
+`BYUI_extended/attachments/attachment` -- the field is filled and the verdict
+line says it was. Never over what the operator typed, never on a re-render (a
+cleared field has to stay cleared), and never when the schema declares two:
+picking between them would be the institution-specific assumption this branch
+exists to remove. **1450 tests across 88 files.**
 
 That is spec 1 of two. Publishing the repository — a licence, a README written
 for outside readers, and the audit of ~196 commits of history — is spec 2 and
@@ -48,8 +63,10 @@ was kept separate.
 **Not yet released.** `package.json` is still at 1.0.0; nothing has been tagged
 since. Two things staff must be told before v1.1.0 reaches them: **they will
 re-enter their credentials once** (deliberate — the store version changed and
-Setup explains it), and **they must set the attachment field**, or their
-contributions silently lose `BYUI_extended/attachments/attachment`.
+Setup explains it), and **they must choose their collection on Setup**, which is
+what fills the attachment field in from the schema. Skipping it leaves the field
+blank and their contributions silently lose
+`BYUI_extended/attachments/attachment`.
 
 **Password auth is VERIFIED against a live instance** — 2026-08-13,
 `content-test.byui.edu`, an ordinary openEQUELLA account, driven through the
