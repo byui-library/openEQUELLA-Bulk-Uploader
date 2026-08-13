@@ -178,7 +178,18 @@ export interface OeqApi {
    * `requireSignedIn`.
    */
   signIn(instanceId: string): Promise<CurrentUser>;
-  signOut(): Promise<void>;
+  /**
+   * Sign out OF ONE SITE -- which ends the openEQUELLA session on the server,
+   * then clears the cached token.
+   *
+   * `instanceId` is required, and is why this used to take no argument at all:
+   * clearing the token is a complete logout only under the authorization-code
+   * flow. Password mode never writes the token store, so the old handler
+   * cleared a file that had never been written and left the session live while
+   * the app returned to the sign-in screen. Only the renderer knows which site
+   * it is on, so it has to say (handlers.ts).
+   */
+  signOut(instanceId: string): Promise<void>;
   /**
    * Who is signed in on this instance, or null.
    *
