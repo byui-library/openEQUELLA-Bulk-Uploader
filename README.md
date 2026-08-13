@@ -106,14 +106,16 @@ only** — `content.byui.edu` and `content-test.byui.edu`. That is one vendor
 configuration of one openEQUELLA version at one institution. It is the whole
 sample.
 
-**Password sign-in has NOT been confirmed against a live non-SSO instance.**
-`POST /api/auth/login` is present in the swagger captured from BYU-Idaho and
-the provider is covered by unit tests against a stubbed server, but no
-openEQUELLA instance has ever answered a real login request from this code.
-BYU-Idaho's accounts are Okta-backed, so the one site available to test it
-could not. It ships unverified, and this sentence is here rather than in a
-footnote because the alternative — discovering it at a new institution while
-someone waits — is worse.
+**Password sign-in HAS now been confirmed against a live instance** — 2026-08-12,
+`content-test.byui.edu`, an ordinary openEQUELLA account: `POST /api/auth/login`
+returned 200 and authenticated as the real user. It had shipped unverified until
+then, and verifying it immediately found a defect: **the whole cookie jar has to
+go back, not just `JSESSIONID`.** That instance sits behind an AWS load
+balancer, and its `AWSALB`/`ROUTEID` cookies decide which backend a request
+reaches. `JSESSIONID` alone landed on a backend that had never seen the session
+— and openEQUELLA served that as **guest, 200, with empty-but-plausible data**
+rather than a 401, so the desktop app's collection list simply looked empty with
+no error anywhere. Fixed; `tests/passwordAuth.test.ts` carries the measurements.
 
 What the probe of 2026-08-12 **did** confirm live, against `content.byui.edu`:
 
@@ -125,9 +127,8 @@ What the probe of 2026-08-12 **did** confirm live, against `content.byui.edu`:
 | `GET /api/schema/{uuid}` | declares `namePath` and `descriptionPath`; `/MWDL/title` and `/MWDL/description` here |
 | `definition` is nested **JSON**, not XML | so the XML parser cannot be reused on the API path |
 
-What has **not** been confirmed anywhere: password sign-in, other openEQUELLA
-versions, other authentication configurations, and any schema that is not
-BYU-Idaho's MWDL. Apostrophe escaping in a `where` clause is still assumed
+What has **not** been confirmed anywhere: other openEQUELLA versions, other
+authentication configurations, and any schema that is not BYU-Idaho's MWDL. Apostrophe escaping in a `where` clause is still assumed
 (`Bach's Prelude` sends `Bach''s Prelude`; no live title has exercised it).
 
 **`oeq-upload check` is how a new site finds out.** It exists for exactly this

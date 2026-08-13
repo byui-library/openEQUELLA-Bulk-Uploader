@@ -1,17 +1,19 @@
-# Session handoff — updated 2026-08-12
+# Session handoff — updated 2026-08-13
 
 Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **1197 passing across 78 files**.
+1. `npm install && npm test` — expect **1236 passing across 79 files**.
    `npm run typecheck` and `npm run build:desktop` are both clean.
 2. **You are on `feature/institution-agnostic`, and it is NOT merged.** It is
    the only branch with work on it; `main` still carries v1.0.0. Nothing else
    is in flight, and there is no open PR.
 3. **Two things you must not assume.** Both are below in full; they are here
    because assuming either one would be an expensive mistake:
-   - **Password sign-in has never run against a live openEQUELLA instance.**
+   - **A session behind a load balancer needs EVERY cookie, not just
+     JSESSIONID** — and openEQUELLA serves an unroutable session as *guest*,
+     200, rather than rejecting it.
    - **Spec 2 — publishing the repository — has not started.**
 
 ### What this branch built
@@ -45,19 +47,51 @@ institution:
   live password provider. A plain one-shot `oeq-upload logout` holds none and
   makes no request; it says so rather than claiming a logout it did not do.
 
-### DO NOT ASSUME: password auth is unverified live
+### Password auth: VERIFIED live, 2026-08-12 — and it found a defect
 
-`POST /api/auth/login` is in the swagger captured from BYU-Idaho, and
-`UsernamePasswordAuth` is covered by 20-odd unit tests against a stubbed
-server. **No openEQUELLA instance has ever answered a real login request from
-this code.** BYU-Idaho's accounts are Okta-backed, so the one site available
-could not test it. Task 1 Step 3 of the plan was the probe that would have, and
-it was not run for that reason.
+**Superseded.** This section used to read *"password auth is unverified
+live"*: `POST /api/auth/login` was in the captured swagger and
+`UsernamePasswordAuth` had 20-odd unit tests against a stubbed server, but no
+instance had ever answered a real login request from this code. BYU-Idaho's
+accounts are Okta-backed, so the one site then available could not test it, and
+Task 1 Step 3 of the plan — the probe that would have — was not run.
 
-This is stated plainly in the README's *What is and is not verified* and in
-CLAUDE.md. Do not quietly soften it. The staging `?file=` parameter and
-`showall=false` were both believed by the entire test suite until an instance
-said otherwise.
+**It has now run.** On **2026-08-12**, against **`https://content-test.byui.edu`**
+with an ordinary openEQUELLA account, `POST /api/auth/login` returned **200 and
+authenticated as the real user**. The endpoint, the query-string credentials
+and the flow are all confirmed.
+
+**The probe refuted a fourth assumption the entire test suite agreed with.**
+Recorded here the same way `?file=` and `showall=false` were:
+
+- **A session is the WHOLE cookie jar, not JSESSIONID.** One sign-in response
+  set four cookies — `AWSALB` (124 chars), `AWSALBCORS` (124), `JSESSIONID`
+  (32), `ROUTEID` (2). Which of them were sent back decided who the instance
+  thought you were:
+
+  | cookies sent back | identity reported |
+  | --- | --- |
+  | first `JSESSIONID` only | `username=guest`, `guest=true` |
+  | last `JSESSIONID` only | `username=guest`, `guest=true` |
+  | all four | `username=milesm`, `guest=false` |
+
+- **The instance is behind an AWS load balancer**, and `AWSALB`/`ROUTEID` carry
+  the routing state that lands a request on the backend actually holding the
+  session. Without them it reaches one that has never seen it.
+- **openEQUELLA does not answer that with a 401.** It serves it as **guest,
+  200, with empty-but-plausible data.** That is what made this invisible and is
+  the reason the desktop app was unusable with password sign-in: the collection
+  list simply looked empty, with no error anywhere.
+- **Fixed** in `src/core/passwordAuth.ts` — the provider stores every cookie
+  from the sign-in response and `authHeader()` emits all of them. `getToken()`
+  still returns the JSESSIONID value, which is the credential identifying the
+  session; the routing cookies identify a backend and mean nothing to a caller.
+  Guarded by the `cookie jar` block in `tests/passwordAuth.test.ts`, which
+  carries the measured numbers above.
+
+The lesson generalises past this codebase: **a 200 is not proof of identity.**
+If a probe cannot say *which user* the server thinks it is talking to, it has
+not verified sign-in.
 
 ### DO NOT ASSUME: spec 2 has not started
 
@@ -98,7 +132,9 @@ it against their own site.
   (`item/oai/id` was the single path the walk missed; `_`-prefixed keys are
   metadata and *are* skipped). **That cross-check is now the test**: both
   sources describe one schema, so any disagreement is a bug in one of them.
-- **Password login was NOT probed.** See above.
+- **Password login was NOT probed here** — this instance is Okta-backed. It was
+  probed separately on `content-test.byui.edu` the same day; see the password
+  auth section above for what that found.
 
 ### Known seams left open, on purpose
 
