@@ -90,22 +90,38 @@ jobs:
           $notes = @"
           Windows build of the openEQUELLA Bulk Uploader desktop app.
 
-          ### What this version does that v0.1.0 did not
+          ### Read this first if you are upgrading
 
-          - **Builds the spreadsheet for you.** Point it at a folder of PDFs or
-            Word files and it reads out titles, dates, authors and descriptions,
-            so nobody types them by hand. Anything it had to guess at is flagged.
-          - **Stops you uploading the same files twice.** Every row is checked
-            against the collection first. A file already there is flagged and set
-            to skip; a shared title is flagged but still uploads, because two
-            items can legitimately have the same name.
-          - **Collection templates.** Start from a template that knows how one
-            collection is written -- where its dates sit, what its genre and
-            rights always are. An Alumni Obituary template ships with it, and you
-            can make more by saving a profile: no code needed.
-          - **Sign-in works on Windows.** ``oeq-upload login`` used to fail with
-            "No OAuth client can be found"; the URL was being truncated before it
-            reached the browser.
+          **You will be asked for your sign-in details once more.** This version
+          stores them differently, so the ones saved by an earlier version cannot
+          be read and are discarded rather than half-understood. The Setup screen
+          says so when it happens. Enter them again and it will not ask twice.
+
+          **Check the "Field that holds the attachment ID" box on Setup.** It is
+          new, and it must say ``BYUI_extended/attachments/attachment`` for
+          BYU-Idaho. Left blank, your contributions are created without that
+          field and nothing warns you.
+
+          ### What is fixed
+
+          - **The progress bar was lying.** It showed a full, completed bar from
+            the moment every run started -- it had never worked. Now it moves.
+          - **Sign out and Forget now actually end your openEQUELLA session**, not
+            just the copy on this computer. If the site cannot confirm it, the app
+            says so instead of claiming you are signed out.
+          - **Duplicate checking no longer reports "no duplicates" when it could
+            not look.** If it cannot search -- no title field, or a session that
+            has quietly lapsed -- it says "could not check" rather than "clean".
+          - **The check command** (``oeq-upload check``) is now a nine-point
+            report that says what each failure means for a real run.
+
+          ### What is new, mostly for other institutions
+
+          This version works at **any** openEQUELLA site, not only BYU-Idaho.
+          Sign in with an ordinary openEQUELLA username and password; collections
+          and their metadata fields are read from the site itself rather than
+          built in. If you only use BYU-Idaho, this changes nothing for you
+          beyond the two upgrade notes above.
 
           ### Which file do I want?
 
