@@ -71,6 +71,10 @@ interface AppState extends BatchState {
   // than rendering as an empty dropdown (screens/setup.ts).
   setupCollections: CollectionSummary[] | null;
   setupCollectionsError: string | null;
+  // Whether the server said collections exist and handed none over -- which
+  // means this session is not signed in, not that there are none. See
+  // core/discovery.ts's CollectionList.withheld.
+  setupCollectionsWithheld: boolean;
   // Every valid xpath in the chosen collection's schema, or null for "not
   // checked". Fetched through window.oeq.fetchSchema, which also leaves the
   // schema in the on-disk cache extraction reads offline (ipc.ts).
@@ -96,6 +100,10 @@ interface AppState extends BatchState {
   // Choose screen
   collections: CollectionSummary[] | null;
   collectionsError: string | null;
+  // As setupCollectionsWithheld: an empty list from a session that is not
+  // signed in is not an empty list, and the dropdown said "No collections
+  // match" to an operator who was not signed in at all.
+  collectionsWithheld: boolean;
   collectionQuery: string;
   collectionUuid: string | null;
   collectionName: string | null;
@@ -150,6 +158,7 @@ function initialState(): AppState {
     setupStoredUsername: null,
     setupCollections: null,
     setupCollectionsError: null,
+    setupCollectionsWithheld: false,
     setupSchemaPaths: null,
     setupSaving: false,
     setupError: null,
@@ -161,6 +170,7 @@ function initialState(): AppState {
     signinError: null,
     collections: null,
     collectionsError: null,
+    collectionsWithheld: false,
     collectionQuery: '',
     collectionUuid: null,
     collectionName: null,
@@ -239,6 +249,7 @@ function render(): void {
         storedUsername: state.setupStoredUsername,
         collections: state.setupCollections,
         collectionsError: state.setupCollectionsError,
+        collectionsWithheld: state.setupCollectionsWithheld,
         schemaPaths: state.setupSchemaPaths,
         error: state.setupError,
         saving: state.setupSaving,
@@ -273,6 +284,7 @@ function render(): void {
       renderChoose(app, {
         collections: state.collections,
         collectionsError: state.collectionsError,
+        collectionsWithheld: state.collectionsWithheld,
         query: state.collectionQuery,
         collectionUuid: state.collectionUuid,
         sheetPath: state.sheetPath,
@@ -452,11 +464,15 @@ async function refreshSetupCollections(): Promise<void> {
   }
   state.setupCollections = null;
   state.setupCollectionsError = null;
+  state.setupCollectionsWithheld = false;
   render();
   let collections: CollectionSummary[] | null = null;
+  let withheld = false;
   let error: string | null = null;
   try {
-    collections = await window.oeq.listCollections(instanceId);
+    const list = await window.oeq.listCollections(instanceId);
+    collections = list.collections;
+    withheld = list.withheld;
   } catch (err) {
     error = errorMessage(err);
   }
@@ -465,6 +481,7 @@ async function refreshSetupCollections(): Promise<void> {
   if (state.setupInstanceId !== instanceId) return;
   state.setupCollections = collections;
   state.setupCollectionsError = error;
+  state.setupCollectionsWithheld = withheld;
   render();
 }
 
@@ -783,6 +800,7 @@ function handleSigninContinue(): void {
   state.screen = nextScreen('signin', { type: 'signedIn' });
   state.collections = null;
   state.collectionsError = null;
+  state.collectionsWithheld = false;
   state.collectionQuery = '';
   state.collectionUuid = null;
   state.collectionName = null;
@@ -801,9 +819,15 @@ function handleSigninContinue(): void {
 async function loadCollections(): Promise<void> {
   state.collections = null;
   state.collectionsError = null;
+  state.collectionsWithheld = false;
   render();
   try {
-    state.collections = await window.oeq.listCollections(state.instanceId);
+    const list = await window.oeq.listCollections(state.instanceId);
+    state.collections = list.collections;
+    // An empty list the server admits it withheld is not an empty list. The
+    // dropdown used to read "showing 0 of 0 -- No collections match" for a
+    // session that was not signed in at all (screens/choose.ts).
+    state.collectionsWithheld = list.withheld;
   } catch (err) {
     state.collections = [];
     state.collectionsError = errorMessage(err);

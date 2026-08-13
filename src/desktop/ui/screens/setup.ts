@@ -6,6 +6,9 @@ import type { CollectionSummary } from '../../../core/client.js';
 import type { Settings, SettingsAuthMode } from '../../secrets.js';
 import { escapeHtml, keepCaret } from '../dom.js';
 import { setupNotice } from '../setupNotice.js';
+// One wording for "the server withheld this list", shared with the Choose
+// screen so the two cannot drift into describing the same state differently.
+import { WITHHELD_COLLECTIONS_MESSAGE } from './choose.js';
 
 /**
  * Everything the operator can type on this screen, held by the app rather
@@ -82,6 +85,13 @@ export interface SetupProps {
   /** Why the collection list could not be read, if it could not be. */
   collectionsError: string | null;
   /**
+   * The server reported that collections exist and returned none of them --
+   * an unauthenticated session, not an account with nothing. A THIRD state,
+   * distinct from both the empty array above and from `collectionsError`; see
+   * core/discovery.ts's `CollectionList.withheld`.
+   */
+  collectionsWithheld: boolean;
+  /**
    * Every valid xpath in the chosen collection's schema, or null when no
    * collection is chosen or its schema could not be read. Null means the
    * attachment path is UNCHECKED, which is reported as unchecked -- never as
@@ -132,6 +142,36 @@ export interface AttachmentPathVerdict {
 }
 
 /**
+ * The path in this collection's schema that looks like the field an
+ * attachment uuid belongs in, or null if none does.
+ *
+ * OFFERED, NEVER APPLIED. Blank is a legitimate answer -- it means "write no
+ * such field", which is right for most schemas -- so nothing here fills the
+ * box in. What it must not be is an ACCIDENT: the operator's real store had
+ * this empty with nothing on screen having ever mentioned it, so every item
+ * they created silently lost the field. Naming the candidate makes blank a
+ * decision.
+ *
+ * Only ever offered from a schema that was actually read (null in, null out):
+ * a guess made without one would be BYU-Idaho's answer at every institution,
+ * which is the exact class of bug this branch exists to remove. Reachable at
+ * all only because the collection list now asks for `full=true` -- without it
+ * no collection carries a schema uuid, so `schemaPaths` was null for
+ * everybody.
+ *
+ * The last segment is what identifies it (`.../attachments/attachment`), and
+ * the shortest match wins so a deeply nested near-miss cannot outrank the
+ * obvious one. Ties break alphabetically so the answer is stable.
+ */
+export function suggestAttachmentPath(schemaPaths: string[] | null): string | null {
+  if (schemaPaths === null) return null;
+  const candidates = schemaPaths.filter((p) => /(^|\/)attachments?$/i.test(p.trim()));
+  return (
+    [...candidates].sort((a, b) => a.length - b.length || a.localeCompare(b))[0] ?? null
+  );
+}
+
+/**
  * Whether the attachment-uuid path the operator typed is a node the chosen
  * collection's schema actually has.
  *
@@ -153,11 +193,17 @@ export interface AttachmentPathVerdict {
 export function attachmentPathVerdict(path: string, schemaPaths: string[] | null): AttachmentPathVerdict {
   const trimmed = path.trim();
   if (trimmed === '') {
+    const suggestion = suggestAttachmentPath(schemaPaths);
     return {
       kind: 'blank',
       message:
         'Left blank, so no attachment-uuid field is written into item metadata. ' +
-        'That is correct for most schemas — the attachment itself is unaffected.',
+        'That is correct for most schemas — the attachment itself is unaffected.' +
+        (suggestion === null
+          ? ''
+          : ` This collection’s schema does declare ‘${suggestion}’, which is the kind of field ` +
+            `that holds one. If that is where your attachment IDs belong, choose it from the box ` +
+            `above — otherwise leaving this blank is the right answer.`),
     };
   }
   if (schemaPaths === null) {
@@ -317,6 +363,15 @@ function authSection(props: SetupProps, forWhat: string): string {
  *    belongs to an administrator, not to this screen. An empty `<select>`
  *    would read as a broken app and send the operator looking in the wrong
  *    place entirely.
+ *
+ * ONLY THE DROPDOWN WAITS FOR A SAVED SITE. The attachment path and the
+ * live-site flag below used to be inside the same early return, so neither was
+ * on screen during the one Setup pass every operator definitely makes -- the
+ * one where they add their site. Saving from that screen went straight on to
+ * Sign-in, so unless somebody later found "Settings for {site}…", the live
+ * flag was never a decision and the attachment path was never even mentioned.
+ * Both were blank in the operator's real store. Neither needs the network and
+ * neither needs a saved site, so neither waits for one.
  */
 function collectionSection(props: SetupProps): string {
   const legend = '<legend>What this site is for</legend>';
@@ -329,12 +384,19 @@ function collectionSection(props: SetupProps): string {
           Save your sign-in details first. This tool then lists the collections
           your account can contribute to, and reads the schema they use.
         </p>
+        ${attachmentSection(props)}
+        ${liveSection(props)}
       </fieldset>`;
   }
 
   const body = ((): string => {
     if (props.collectionsError !== null) {
       return `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`;
+    }
+    if (props.collectionsWithheld) {
+      // Not the "you hold CREATE_ITEM on nothing" copy below: that one sends
+      // the operator to an administrator, and this is their own sign-in.
+      return `<p class="error" role="alert">${escapeHtml(WITHHELD_COLLECTIONS_MESSAGE)}</p>`;
     }
     if (props.collections === null) {
       return '<p class="muted">Reading the collections you can contribute to…</p>';

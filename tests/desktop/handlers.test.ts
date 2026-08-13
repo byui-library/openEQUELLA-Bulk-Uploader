@@ -9,6 +9,7 @@ import {
   resolveSchemaPath,
   missingCredentialsMessage,
   registerHandlers,
+  requireSignedIn,
 } from '../../src/desktop/handlers.js';
 import { saveManifest, loadManifest } from '../../src/core/state.js';
 import { SchemaCache } from '../../src/core/schemaCache.js';
@@ -188,6 +189,44 @@ describe('missingCredentialsMessage', () => {
     expect(missingCredentialsMessage('oeq.example.edu')).toBe(
       'No credentials saved for oeq.example.edu. Add your sign-in details for that site in Setup.',
     );
+  });
+});
+
+/**
+ * A SIGN-IN THAT PRODUCED THE GUEST IS NOT A SIGN-IN. openEQUELLA never
+ * answers an unauthenticated request with 401 -- it answers 200 as the guest
+ * identity -- so without this the desktop's sign-in handler resolved a
+ * perfectly good user object, the app advanced to the next screen reporting
+ * success, and the first the operator heard of it was a collection dropdown
+ * reading "No collections match".
+ */
+describe('requireSignedIn', () => {
+  const guest = { id: 'guest', username: 'guest', firstName: 'guest', lastName: 'guest', guest: true };
+  const real = { id: 'u-1', username: 'jdoe', firstName: 'Jane', lastName: 'Doe', guest: false };
+
+  it('refuses a guest session rather than reporting it as a sign-in', () => {
+    expect(() => requireSignedIn(guest, 'Live')).toThrow(/guest/i);
+  });
+
+  // Names the site: credentials are per instance, and the operator picked
+  // theirs from a dropdown of their own names for them.
+  it('names the site and what to do about it', () => {
+    const message = (() => {
+      try {
+        requireSignedIn(guest, 'Live');
+        return '';
+      } catch (err) {
+        return (err as Error).message;
+      }
+    })();
+    expect(message).toContain('Live');
+    expect(message).toMatch(/setup/i);
+    // ...and says what it means for a run, not just that something is wrong.
+    expect(message).toMatch(/nothing can be created/i);
+  });
+
+  it('passes a real account straight through', () => {
+    expect(requireSignedIn(real, 'Live')).toBe(real);
   });
 });
 

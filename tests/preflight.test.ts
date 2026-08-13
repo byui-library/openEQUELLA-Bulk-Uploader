@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -394,6 +395,51 @@ describe('runPreflight', () => {
       });
     });
 
+    /**
+     * THE WORST FAILURE THIS REPORT EVER HAD. openEQUELLA answers an
+     * unauthenticated request with 200 and the guest identity -- never 401 --
+     * and this check passed on any answer at all, so `oeq-upload check` said
+     *
+     *     Identity   ok   logged in as guest ( ). Created items will be owned...
+     *
+     * A PASS. The pre-flight built to tell a new institution whether the tool
+     * works confirmed they were signed in when they were not.
+     */
+    describe('Identity', () => {
+      it('fails on a guest session, and says what it means for a real run', async () => {
+        const cfg = cfgFor(mock, 'c1');
+        mock.state.currentUser = JSON.parse(
+          readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+        );
+        mock.state.collections.push(contributable);
+        const auth = await loggedInAuth(cfg);
+        const result = await runPreflight(cfg, auth, new OeqClient(cfg.baseUrl, auth));
+
+        const check = result.checks.find((c) => c.label === 'Identity')!;
+        expect(check.pass).toBe(false);
+        expect(result.ok).toBe(false);
+        // Names the state...
+        expect(check.message).toMatch(/guest/i);
+        // ...says it is not signed in...
+        expect(check.message).toMatch(/not signed in|signed in/i);
+        // ...and names the consequence, which is that nothing can be created.
+        expect(check.message).toMatch(/nothing|no item|cannot be created|created/i);
+      });
+
+      it('passes, and names the owner, for a real named account', async () => {
+        const cfg = cfgFor(mock, 'c1');
+        mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+        mock.state.collections.push(contributable);
+        const auth = await loggedInAuth(cfg);
+        const result = await runPreflight(cfg, auth, new OeqClient(cfg.baseUrl, auth));
+
+        const check = result.checks.find((c) => c.label === 'Identity')!;
+        expect(check.pass).toBe(true);
+        expect(check.message).toContain('jdoe');
+        expect(check.message).toMatch(/owned by/i);
+      });
+    });
+
     describe('Collections available', () => {
       it('reports how many collections this account can create in', async () => {
         const cfg = cfgFor(mock, 'c1');
@@ -426,6 +472,31 @@ describe('runPreflight', () => {
         expect(check.pass).toBe(false);
         expect(check.message).toMatch(/CREATE_ITEM/);
         expect(check.message).toMatch(/permission|viewer|contribute/i);
+      });
+
+      /**
+       * A THIRD STATE, and it looked exactly like the second. The live
+       * instance answers an unauthenticated collection list with `available:
+       * 29` and zero results -- "there are 29; you get none". Reported as zero
+       * it reads as a privilege an administrator must grant, and a site would
+       * go and ask for one they already have.
+       */
+      it('fails as withheld, not as zero, when the server kept the list back', async () => {
+        const cfg = cfgFor(mock, 'c1');
+        mock.state.collections.push(contributable);
+        mock.state.withholdCollections = true;
+        const auth = await loggedInAuth(cfg);
+        const result = await runPreflight(cfg, auth, new OeqClient(cfg.baseUrl, auth));
+
+        const check = result.checks.find((c) => c.label === 'Collections available')!;
+        expect(check.pass).toBe(false);
+        // The server's own count, which is the whole evidence for this verdict.
+        expect(check.message).toMatch(/\b1\b/);
+        // Points at the sign-in, not at an administrator.
+        expect(check.message).toMatch(/sign|signed in|guest/i);
+        // ...and must NOT repeat the "you hold CREATE_ITEM on nothing" line,
+        // which would send them to the wrong person entirely.
+        expect(check.message).not.toMatch(/holds CREATE_ITEM on no collection/);
       });
 
       /**

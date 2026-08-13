@@ -1,0 +1,15 @@
+{
+  "id": "guest",
+  "username": "guest",
+  "firstName": "guest",
+  "lastName": "guest",
+  "emailAddress": "guest",
+  "guest": true,
+  "autoLoggedIn": false,
+  "isSystem": false,
+  "roles": [
+    "aec65baa-d573-4038-a2fe-4ab5ae70dec7",
+    "TLE_GUEST_USER_ROLE",
+    "5babd4a6-55de-32aa-ea21-d5d3635cb42d"
+  ]
+}

@@ -11,6 +11,8 @@ import {
   type SchemaSummary,
 } from './ipc.js';
 import { SecretStore, EncryptedTokenStore, type Instance } from './secrets.js';
+import type { CurrentUser } from '../core/client.js';
+import { assertNotGuest } from '../core/identity.js';
 import { SchemaCache } from '../core/schemaCache.js';
 import type { SchemaInfo } from '../core/discovery.js';
 import { buildAuth, buildCodeAuth, buildClient, buildConfig, requireInstance } from './session.js';
@@ -126,6 +128,28 @@ export function missingCredentialsMessage(label: string): string {
   // (secrets.ts), and naming the OAuth credential would send most
   // institutions looking for something they do not have and cannot get.
   return `No credentials saved for ${label}. Add your sign-in details for that site in Setup.`;
+}
+
+/**
+ * The user a sign-in produced -- or a refusal, if it produced the guest.
+ *
+ * A SUCCESSFUL `currentUser()` IS NOT PROOF OF SIGN-IN. openEQUELLA never
+ * answers an unauthenticated request with 401; it answers 200 as the guest
+ * identity (core/client.ts's `CurrentUser.guest`). Without this, a sign-in
+ * that silently failed -- an SSO window closed early, a session that did not
+ * stick, a password rejected in a way that still left a usable cookie --
+ * resolved a perfectly good user object, the app advanced to the next screen
+ * reporting success, and the first the operator heard of it was a collection
+ * dropdown reading "No collections match".
+ *
+ * Names the site, because credentials are per instance and the operator picked
+ * theirs from a dropdown of their own names for them.
+ */
+export function requireSignedIn(user: CurrentUser, label: string): CurrentUser {
+  return assertNotGuest(
+    user,
+    `Check the sign-in details for ${label} in Setup, then try signing in again.`,
+  );
 }
 
 /** The instance record the operator saved, or a refusal naming the id. */
@@ -366,13 +390,15 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       // error (core/passwordAuth.ts). Opening an SSO window here would present
       // an institution that has no SSO with a login page they cannot use.
       if (cfg.authMode === 'password') {
-        return buildClient(cfg, buildAuth(cfg, tokens())).currentUser();
+        const user = await buildClient(cfg, buildAuth(cfg, tokens())).currentUser();
+        // Guest is a refusal, not a user -- see requireSignedIn.
+        return requireSignedIn(user, inst.label);
       }
       // buildCodeAuth, not buildAuth: this handler IS the authorization-code
       // browser flow, and signInInteractive needs that flow's own API.
       const auth = buildCodeAuth(cfg, tokens());
       await signInInteractive(cfg.baseUrl, auth, getWindow() ?? undefined);
-      return buildClient(cfg, auth).currentUser();
+      return requireSignedIn(await buildClient(cfg, auth).currentUser(), inst.label);
     },
   );
 
@@ -390,7 +416,12 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const cfg = buildConfig(inst, settings, 'unused');
       const auth = buildAuth(cfg, tokens());
       try {
-        return await buildClient(cfg, auth).currentUser();
+        const user = await buildClient(cfg, auth).currentUser();
+        // A guest session is nobody. This channel answers "is anyone signed
+        // in", and openEQUELLA says no by answering as the guest rather than
+        // by failing -- so reporting the guest here would show the operator
+        // "Signed in as guest" and a Continue button (ui/signin.ts).
+        return user.guest ? null : user;
       } catch {
         return null;
       }
