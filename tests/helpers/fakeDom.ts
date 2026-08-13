@@ -20,13 +20,11 @@ type Listener = (event: unknown) => void;
 export class FakeElement {
   private html = '';
   /**
-   * One stub per selector, discarded whenever `innerHTML` is replaced -- the
-   * real DOM destroys and recreates every child on that assignment, and a
-   * listener left over from the previous render would make a stale control
-   * look live.
+   * One stub per occurrence of a selector, discarded whenever `innerHTML` is
+   * replaced -- the real DOM destroys and recreates every child on that
+   * assignment, and a listener left over from the previous render would make a
+   * stale control look live.
    */
-  private children = new Map<string, FakeElement>();
-  /** As `children`, for the group `querySelectorAll` returns. Cleared with it. */
   private groups = new Map<string, FakeElement[]>();
 
   className = '';
@@ -52,7 +50,6 @@ export class FakeElement {
 
   set innerHTML(next: string) {
     this.html = next;
-    this.children.clear();
     this.groups.clear();
   }
 
@@ -80,14 +77,23 @@ export class FakeElement {
     this.selectionStart = start;
   }
 
+  /**
+   * The FIRST match -- which is the same element `querySelectorAll` puts at
+   * index 0, not a different one.
+   *
+   * This used to keep its own cache, so the two methods handed out different
+   * objects for the same selector. A listener wired through one path was then
+   * invisible through the other: a renderer that used `querySelectorAll` to
+   * wire a repeated control would leave `fire()` reporting "no click listener"
+   * on a control that plainly had one, and the failure would look like a bug
+   * in the screen rather than in this helper. Delegating removes the class
+   * rather than special-casing `fire()`.
+   *
+   * `present()` and `occurrences()` share `token()`, so "matches at all" and
+   * "matches at least once" cannot disagree, and the null case is unchanged.
+   */
   querySelector(selector: string): FakeElement | null {
-    if (!present(this.html, selector)) return null;
-    const existing = this.children.get(selector);
-    if (existing) return existing;
-    const el = new FakeElement();
-    el.ownerDocument = this.ownerDocument;
-    this.children.set(selector, el);
-    return el;
+    return this.querySelectorAll(selector)[0] ?? null;
   }
 
   /**
@@ -97,8 +103,11 @@ export class FakeElement {
    * ONE STUB PER OCCURRENCE, counted in the markup, rather than an empty array:
    * a fake that answered "no matches" to a selector the markup really does
    * carry would let a renderer stop wiring a whole group of controls with every
-   * test still green. Nothing here fires one -- the group exists so the
-   * renderers run at all.
+   * test still green.
+   *
+   * This is now the single source of stubs -- `querySelector` returns element
+   * zero of whatever this produces, so a listener wired through either method
+   * is visible through both.
    */
   querySelectorAll(selector: string): FakeElement[] {
     const existing = this.groups.get(selector);
