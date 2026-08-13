@@ -379,6 +379,26 @@ describe('attachmentPathVerdict', () => {
     expect(attachmentPathVerdict('   ', PATHS).kind).toBe('blank');
   });
 
+  /**
+   * THE REGRESSION THAT EMPTIED A REAL STORE. On the first pass through Setup
+   * no collection is chosen, so there is no schema to check against -- and the
+   * blank branch used to answer "correct for most schemas" regardless. That is
+   * a statement about schemas in general, made to someone who has been told
+   * nothing about their own, and it reads as settled. The operator's stored
+   * attachment path was empty for exactly this reason.
+   *
+   * Blank stays legitimate (kind is still `blank`, not an error), but the
+   * message must not claim correctness it has not established.
+   */
+  it('does not call blank correct when it has no schema to check against', () => {
+    const verdict = attachmentPathVerdict('', null);
+    expect(verdict.kind).toBe('blank');
+    expect(verdict.message).toMatch(/not been checked/i);
+    expect(verdict.message).toMatch(/choose one above/i);
+    // The reassurance offered when a schema WAS read must not appear here.
+    expect(verdict.message).not.toMatch(/correct for most schemas/i);
+  });
+
   it('confirms a path the schema declares', () => {
     expect(attachmentPathVerdict('BYUI_extended/attachments/attachment', PATHS).kind).toBe('declared');
   });

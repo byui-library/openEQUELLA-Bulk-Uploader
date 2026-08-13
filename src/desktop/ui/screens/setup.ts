@@ -201,6 +201,22 @@ export function suggestAttachmentPath(schemaPaths: string[] | null): string | nu
 export function attachmentPathVerdict(path: string, schemaPaths: string[] | null): AttachmentPathVerdict {
   const trimmed = path.trim();
   if (trimmed === '') {
+    // BLANK AND UNCHECKED IS NOT BLANK AND FINE. Before a collection is
+    // chosen there is no schema to look in, so "correct for most schemas" is a
+    // reassurance about schemas in general offered to someone who has not been
+    // told anything about theirs. That is how a real store ended up with this
+    // empty: on the first pass through Setup -- which is the pass every
+    // operator makes -- the field reads as settled when nothing has been
+    // checked. Say what is and is not known, in that order.
+    if (schemaPaths === null) {
+      return {
+        kind: 'blank',
+        message:
+          'Nothing will be recorded, and this has not been checked yet — no collection is ' +
+          'chosen, so there is no schema to look in. Choose one above and this line will say ' +
+          'whether it has such a field. Your files are attached either way.',
+      };
+    }
     const suggestion = suggestAttachmentPath(schemaPaths);
     return {
       kind: 'blank',
