@@ -161,7 +161,11 @@ A few things worth knowing about this screen:
 Three more settings appear on this screen **only after the site has been saved
 and you have signed in** — the program has to ask openEQUELLA for them, so they
 cannot be shown before that. Reach it again from the Sign-in screen's
-**Settings for …** button.
+**Settings for …** button, or from **Site settings for …** at the foot of the
+screen where you choose a collection. Saving from there puts you straight back
+where you were, with your collection, spreadsheet and folder still chosen —
+neither route touches your saved password. (**Change credentials…**, beside the
+first of those, is the one that does: it clears every site you have added.)
 
 - **Collection you contribute to** — a dropdown of the collections your account
   is actually allowed to add to, read from your site. You never have to find or

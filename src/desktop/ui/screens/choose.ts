@@ -4,6 +4,13 @@ import { canContinueChoose } from '../state.js';
 import { escapeHtml, keepCaret } from '../dom.js';
 
 export interface ChooseProps {
+  /**
+   * The operator's own name for the site this batch is going to, for the
+   * settings link. Named for the same reason Sign-in names it: a link that
+   * says only "Settings" leaves an operator guessing which site it will open
+   * and what it will cost them.
+   */
+  instanceLabel: string;
   /** null while listCollections() is in flight. */
   collections: CollectionSummary[] | null;
   collectionsError: string | null;
@@ -30,6 +37,20 @@ export interface ChooseProps {
   onSaveStarterKit(): void;
   onContinue(): void;
   onExtract(): void;
+  /**
+   * Back to Setup for this site, clearing nothing.
+   *
+   * REPORTED BY THE OPERATOR: "There isn't a way to go back to setup once you
+   * are on the main screen where you select a collection." It was circular,
+   * not merely inconvenient -- Setup names a suggested attachment path only
+   * once a collection is chosen, because that is when its schema can be read,
+   * and the collection is chosen HERE. The guidance was reachable only from
+   * the screen the operator had to leave to produce it.
+   *
+   * Must be wired to the NON-DESTRUCTIVE route (app.ts's handleSiteSettings),
+   * never to "Change credentials…", which wipes every saved site.
+   */
+  onSiteSettings(): void;
 }
 
 /**
@@ -137,6 +158,16 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
           Continue
         </button>
       </div>
+
+      <p class="reset-row">
+        <button id="choose-site-settings" type="button" class="link-button">
+          Site settings for ${escapeHtml(props.instanceLabel)}…
+        </button>
+      </p>
+      <p class="hint">
+        Change the attachment ID field, the address or the sign-in details for this site.
+        Your collection, spreadsheet and folder are kept.
+      </p>
     </section>
   `;
 
@@ -163,4 +194,7 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
     .querySelector<HTMLButtonElement>('#choose-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
   root.querySelector<HTMLButtonElement>('#choose-extract')?.addEventListener('click', props.onExtract);
+  root
+    .querySelector<HTMLButtonElement>('#choose-site-settings')
+    ?.addEventListener('click', () => props.onSiteSettings());
 }
