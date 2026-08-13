@@ -44,6 +44,18 @@ const WINDOW = 80;
 const PAIR_GAP = 12;
 
 /**
+ * The sentence terminators the gap above refuses, as regex-class contents.
+ *
+ * The rule was always stated as "no sentence terminator", but the class named
+ * only the full stop, so a sentence ending in `!` or `?` reopened the very hole
+ * the paragraph-break case closes: `...from June 19, 1957! January 6, 2024`
+ * paired a BIRTH date with an unrelated later one. Widened to match what the
+ * rule has always claimed, rather than narrowing the claim to match the code --
+ * these documents are eulogies, and an exclamation mark is at home in one.
+ */
+const SENTENCE_END = '.!?';
+
+/**
  * Every distinct date the phrases find, in the order encountered.
  *
  * More than one means the document states several dates near these phrases,
@@ -100,7 +112,10 @@ export function dateNear(text: string, phrases: readonly string[]): string {
  * profile's ordered source list, not by either knowing about the other.
  */
 export function datePair(text: string, which: 'first' | 'second'): string {
-  const pair = new RegExp(`(${DATE})[^A-Za-z0-9.\\n\\r]{0,${PAIR_GAP}}(${DATE})`, 'i').exec(text);
+  const pair = new RegExp(
+    `(${DATE})[^A-Za-z0-9${SENTENCE_END}\\n\\r]{0,${PAIR_GAP}}(${DATE})`,
+    'i',
+  ).exec(text);
   if (!pair) return '';
   return (which === 'first' ? pair[1] : pair[2]) ?? '';
 }

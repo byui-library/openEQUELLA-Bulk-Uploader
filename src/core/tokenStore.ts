@@ -99,10 +99,15 @@ export class FileTokenStore implements TokenStore {
     // Write-to-temp-then-rename: a crash mid-write must never leave a
     // truncated/corrupt token file. Deliberately lighter-weight than
     // state.ts's saveManifest() (no fsync, no cross-process lock, no
-    // Windows rename-collision retry loop) -- this file holds one small,
-    // low-stakes, short-lived credential, not the one record of what a
-    // multi-hour job has already uploaded; losing it in the rare crash
-    // window just means logging in again.
+    // Windows rename-collision retry loop) -- this file holds one small
+    // credential that can be replaced by logging in again, not the one record
+    // of what a multi-hour job has already uploaded; losing it in the rare
+    // crash window costs a login, not a batch.
+    //
+    // "Low-stakes" is about LOSING it, not about leaking it: see the note at
+    // the top of this module. This instance returns Long.MAX_VALUE for
+    // `expires_in`, so the token does not expire, and the file is worth as
+    // much to anyone who reads it as it is to us.
     const tmp = `${this.filePath}.tmp.${process.pid}.${randomUUID()}`;
     await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
     try {
