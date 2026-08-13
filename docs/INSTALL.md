@@ -168,10 +168,14 @@ cannot be shown before that. Reach it again from the Sign-in screen's
   type a long identifier. If it says this account can contribute nowhere, that
   is a permission your administrator grants, not something you have typed
   wrongly.
-- **Field that holds the attachment ID** — **leave this blank** unless your
-  administrator tells you otherwise. Most schemas have no such field, and blank
-  means the program writes none. It tells you, underneath the box, whether what
-  you typed really exists in your collection's schema.
+- **Field that records the attachment ID** — your files are attached to their
+  items whether or not this is filled in. Some schemas *also* keep that ID as a
+  metadata field of their own, so it can be searched and exported. If the line
+  underneath the box names a field your schema declares, that is almost
+  certainly the one to choose — it looks like `local/attachments/attachment`.
+  If it names none, leave the box blank: most schemas have no such field, and
+  blank means the program writes none. Either way that line tells you whether
+  what you typed really exists in your collection's schema.
 - **"This is a live site — items created here are real"** — leave this ticked
   unless you know the address is a test or training instance. When it is
   ticked, the bar across the top of every screen stays loud and red, which is

@@ -321,6 +321,41 @@ describe('the attachment-uuid path', () => {
     expect(html).not.toContain('<datalist');
     expect(html).not.toContain('list="setup-schema-paths"');
   });
+
+  /**
+   * THE SHAPE, SHOWN. The datalist helps only an operator who already knows
+   * what they are looking for; a placeholder shows what one of these looks
+   * like before they have chosen a collection at all.
+   *
+   * It must be a MADE-UP path. A real `BYUI_extended/...` in shipped UI is
+   * exactly what this codebase spent a branch removing, and a placeholder is
+   * the one place a hardcoded institution path would look like a default.
+   */
+  it('shows an example of the shape, and never this institution’s own path', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS, schemaPaths: null }));
+    const input = /<input[^>]*id="setup-attachment-path"[^>]*>/.exec(html)?.[0];
+    expect(input).toBeDefined();
+    const placeholder = /placeholder="([^"]*)"/.exec(input ?? '')?.[1];
+    expect(placeholder).toBeDefined();
+    expect(placeholder).toContain('attachments/attachment');
+    expect(placeholder).not.toMatch(/BYUI/i);
+  });
+
+  /**
+   * TWO THINGS SHARE THE WORD "ATTACHMENT" and the label has to separate
+   * them. The file is attached through openEQUELLA's attachment API whatever
+   * this box says; only some schemas ALSO declare a metadata field recording
+   * that attachment's ID. An operator who read the old label ("Field that
+   * holds the attachment ID") concluded the attachment itself depended on it.
+   */
+  it('says what the field is, and that the file is attached either way', () => {
+    const html = setupMarkup(props());
+    const label = /<label for="setup-attachment-path">([\s\S]*?)<\/label>/.exec(html)?.[1];
+    expect(label).toBeDefined();
+    const text = (label ?? '').replace(/\s+/g, ' ').trim();
+    expect(text).toMatch(/records the attachment ID/i);
+    expect(text).toMatch(/attached either way/i);
+  });
 });
 
 /**
@@ -336,7 +371,8 @@ describe('attachmentPathVerdict', () => {
   it('treats blank as the deliberate choice it is', () => {
     const verdict = attachmentPathVerdict('', PATHS);
     expect(verdict.kind).toBe('blank');
-    expect(verdict.message).toMatch(/no attachment-uuid field is written/i);
+    expect(verdict.message).toMatch(/left blank/i);
+    expect(verdict.message).toMatch(/most schemas/i);
   });
 
   it('treats whitespace as blank', () => {
@@ -455,7 +491,35 @@ describe('suggestAttachmentPath', () => {
     expect(verdict.kind).toBe('blank');
     expect(verdict.message).toContain('local/attachments/attachment');
     // Still says blank is legitimate -- it is, for most schemas.
-    expect(verdict.message).toMatch(/no attachment-uuid field is written/);
+    expect(verdict.message).toMatch(/most schemas/i);
+  });
+
+  /**
+   * LEAD WITH THE ANSWER. For the operator whose schema DOES declare the field
+   * -- the one case where blank is silent data loss -- opening with "that is
+   * correct for most schemas" answers a question they did not ask, and buries
+   * the only fact that applies to them. When there is a candidate it comes
+   * first; the general reassurance follows it.
+   */
+  it('names the candidate before any reassurance that blank is normal', () => {
+    const verdict = attachmentPathVerdict('', ['MWDL/title', 'local/attachments/attachment']);
+    expect(verdict.kind).toBe('blank');
+    const named = verdict.message.indexOf('local/attachments/attachment');
+    const reassurance = verdict.message.search(/most schemas/i);
+    expect(named).toBeGreaterThanOrEqual(0);
+    expect(reassurance).toBeGreaterThanOrEqual(0);
+    expect(named).toBeLessThan(reassurance);
+  });
+
+  /**
+   * ...and where there is no candidate, the reassurance IS the answer. It must
+   * name no path at all: a guessed one would be BYU-Idaho's answer everywhere.
+   */
+  it('reassures and names nothing when the schema declares no such field', () => {
+    const verdict = attachmentPathVerdict('', ['MWDL/title', 'MWDL/description']);
+    expect(verdict.kind).toBe('blank');
+    expect(verdict.message).toMatch(/most schemas/i);
+    expect(verdict.message).not.toMatch(/[A-Za-z_]+\/[A-Za-z_]+/);
   });
 
   // Nothing is ever filled in on the operator's behalf: blank is a real answer

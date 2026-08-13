@@ -97,10 +97,11 @@ jobs:
           be read and are discarded rather than half-understood. The Setup screen
           says so when it happens. Enter them again and it will not ask twice.
 
-          **Check the "Field that holds the attachment ID" box on Setup.** It is
-          new, and it must say ``BYUI_extended/attachments/attachment`` for
+          **Check the "Field that records the attachment ID" box on Setup.** It
+          is new, and it must say ``BYUI_extended/attachments/attachment`` for
           BYU-Idaho. Left blank, your contributions are created without that
-          field and nothing warns you.
+          field and nothing warns you. Your files are attached either way -- it
+          is the metadata copy of the attachment's ID that goes missing.
 
           ### What is fixed
 
