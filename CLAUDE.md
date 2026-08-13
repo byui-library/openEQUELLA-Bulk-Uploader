@@ -154,6 +154,25 @@ shape, never as a value the code may assume.
   metadata outside the collection's schema on every item. Note that
   `schema/sample.xml` shows ~170 UUIDs on a single-attachment item; that is
   accreted junk from repeated bulk edits, not the intended pattern.
+- **openEQUELLA answers an unauthenticated request with 200, not 401.** Probed
+  against `content-test.byui.edu` on 2026-08-13 with no credentials at all:
+
+  ```text
+  GET /api/content/currentuser  -> 200  { "username": "guest", "guest": true }
+  GET /api/collection?privilege=CREATE_ITEM
+                                -> 200  { "available": 29, "results": [] }
+  ```
+
+  Note `available: 29` beside **zero** rows -- the server says "there are 29,
+  you get none". **This cost four defects at once**, all the same shape: a
+  successful HTTP call taken as proof of sign-in. `currentUser()` dropped the
+  `guest` field, so `check` reported *"Identity ok -- logged in as guest"*, and
+  the collection dropdown rendered "No collections match", indistinguishable
+  from an account that genuinely has none. **Two reliable signals exist and
+  must be used: `guest: true` on `/api/content/currentuser`, and `available > 0`
+  with an empty `results`.** A failed `POST /api/auth/login` *does* return 401 --
+  but it still issues a JSESSIONID, and that cookie yields a guest session, so
+  holding a cookie is not proof either.
 - *(BYU-Idaho's configuration)* **Authentication is SSO-backed** (Okta via
   `id.churchofjesuschrist.org`). Interactive login cannot be automated. The API
   client needs `CREATE_ITEM` on the target collection; `VIEW_APIDOCS` gates
