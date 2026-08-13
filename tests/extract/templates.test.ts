@@ -1,6 +1,8 @@
 // tests/extract/templates.test.ts
-import { describe, it, expect } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { listTemplates, loadTemplate } from '../../src/core/extract/templates.js';
 import { parseProfile } from '../../src/core/extract/profile.js';
 import { buildRow } from '../../src/core/extract/rows.js';
@@ -112,5 +114,61 @@ describe('shipped templates', () => {
    */
   it('refuses an id that is not a template name', async () => {
     await expect(loadTemplate('../../package')).rejects.toThrow(/Not a template name/);
+  });
+});
+
+/**
+ * Listing and loading have to agree about what a template id is. They did not:
+ * listTemplates returned every `*.profile.json` basename while loadTemplate
+ * rejects anything outside `[a-z0-9-]+`, so a file saved as
+ * `Alumni_Obituary.profile.json` appeared in the picker and then failed the
+ * moment the operator chose it -- an offer the app could not honour.
+ */
+describe('listTemplates', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'oeq-templates-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** Real profile content, so a listed id genuinely loads rather than
+   *  failing validation for an unrelated reason. */
+  const put = async (name: string) =>
+    writeFile(join(dir, name), await readFile('templates/alumni-obituary.profile.json', 'utf8'));
+
+  it('lists an id loadTemplate accepts', async () => {
+    await put('alumni-obituary.profile.json');
+    expect((await listTemplates(dir)).map((t) => t.id)).toEqual(['alumni-obituary']);
+  });
+
+  it('omits a file whose name loadTemplate would refuse', async () => {
+    await put('good-one.profile.json');
+    await put('Alumni_Obituary.profile.json');
+    await put('faculty content.profile.json');
+    await put('.profile.json');
+
+    expect((await listTemplates(dir)).map((t) => t.id)).toEqual(['good-one']);
+  });
+
+  it('offers nothing it cannot then load', async () => {
+    await put('Alumni_Obituary.profile.json');
+    await put('spaced out.profile.json');
+    await put('alumni-obituary.profile.json');
+
+    const listed = await listTemplates(dir);
+    expect(listed).toHaveLength(1);
+    for (const { id } of listed) {
+      await expect(loadTemplate(id, dir)).resolves.toBeDefined();
+    }
+  });
+
+  it('still ignores files that are not profiles at all', async () => {
+    await put('notes.txt');
+    await put('good-one.profile.json');
+    expect((await listTemplates(dir)).map((t) => t.id)).toEqual(['good-one']);
   });
 });

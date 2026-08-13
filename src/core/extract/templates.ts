@@ -24,6 +24,14 @@ const DIR = 'templates';
 
 const SUFFIX = '.profile.json';
 
+/**
+ * What a template id may be. `loadTemplate` enforces this as a path-traversal
+ * guard on an id that arrives from the renderer over IPC, and `listTemplates`
+ * enforces it so the two agree: a listing that offered `Alumni_Obituary`
+ * showed the operator a template the app then refused to open.
+ */
+const ID = /^[a-z0-9-]+$/;
+
 /** "alumni-obituary" -> "Alumni Obituary" */
 function labelFor(id: string): string {
   return id
@@ -37,6 +45,8 @@ export async function listTemplates(dir = DIR): Promise<TemplateSummary[]> {
   return names
     .filter((n) => n.endsWith(SUFFIX))
     .map((n) => n.slice(0, -SUFFIX.length))
+    // Only ids loadTemplate will accept -- see ID.
+    .filter((id) => ID.test(id))
     .sort()
     .map((id) => ({ id, label: labelFor(id) }));
 }
@@ -47,7 +57,7 @@ export async function listTemplates(dir = DIR): Promise<TemplateSummary[]> {
  * the operator opens one.
  */
 export async function loadTemplate(id: string, dir = DIR): Promise<Profile> {
-  if (!/^[a-z0-9-]+$/.test(id)) throw new OeqError(`Not a template name: '${id}'.`);
+  if (!ID.test(id)) throw new OeqError(`Not a template name: '${id}'.`);
   try {
     return parseProfile(JSON.parse(await readFile(join(dir, id + SUFFIX), 'utf8')));
   } catch (cause) {
