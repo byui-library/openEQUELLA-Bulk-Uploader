@@ -71,7 +71,7 @@ openEQUELLA's `/api/auth/login` takes the password as a *query parameter*, so
 over plain http it travels in clear text in the request line. A loopback
 address (`localhost`, `127.0.0.1`) is the one exemption, because its traffic
 never leaves the machine — and `check` says so out loud rather than printing a
-bare `ok`, so nobody reads it as licence to use http against a real host.
+bare `ok`, so nobody reads it as license to use http against a real host.
 
 There is no default collection: one used to be built in, and an institution
 that never set it silently got BYU-Idaho's collection uuid and a not-found from
@@ -1001,7 +1001,7 @@ parameter, `GET /search` defaulting to `showall=false`, and the schema's name
 path being `namePath` rather than the `itemNamePath` its own XML export uses.
 Tests agreeing with the code prove nothing about the server.
 
-## Licence and contributions
+## License and contributions
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 Copyright 2026 Brigham Young University-Idaho.
