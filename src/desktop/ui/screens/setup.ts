@@ -186,6 +186,14 @@ export function suggestAttachmentPath(schemaPaths: string[] | null): string | nu
  * the many schemas that declare no such node, and the message says so instead
  * of leaving an operator to infer it from silence.
  *
+ * BUT THE CANDIDATE LEADS. Where the schema does declare one, that is named
+ * first and the reassurance follows it. The operator who reported this copy
+ * read "that is correct for most schemas" and stopped there -- and theirs is
+ * the schema that declares the field, so blank is the one silent data-loss
+ * path in this release. Reassurance first answers the general case to the one
+ * reader it is wrong for. With no candidate, the reassurance IS the answer and
+ * stays exactly as it was.
+ *
  * UNCHECKED IS NOT CORRECT. With no schema read, this says it could not check
  * -- the same rule every other check in this tool follows. "Could not check"
  * has never been reported as clean here and is not going to start.
@@ -197,13 +205,13 @@ export function attachmentPathVerdict(path: string, schemaPaths: string[] | null
     return {
       kind: 'blank',
       message:
-        'Left blank, so no attachment-uuid field is written into item metadata. ' +
-        'That is correct for most schemas — the attachment itself is unaffected.' +
-        (suggestion === null
-          ? ''
-          : ` This collection’s schema does declare ‘${suggestion}’, which is the kind of field ` +
-            `that holds one. If that is where your attachment IDs belong, choose it from the box ` +
-            `above — otherwise leaving this blank is the right answer.`),
+        suggestion === null
+          ? 'Left blank, so no attachment ID is recorded in item metadata. That is ' +
+            'correct for most schemas — your files are attached either way.'
+          : `This collection’s schema declares ‘${suggestion}’, which is where an attachment ` +
+            `ID is usually recorded. If that is the field your site uses, choose it from the ` +
+            `box above. Left blank, nothing is recorded there — right for most schemas, and ` +
+            `your files are attached either way.`,
     };
   }
   if (schemaPaths === null) {
@@ -215,13 +223,16 @@ export function attachmentPathVerdict(path: string, schemaPaths: string[] | null
     };
   }
   if (schemaPaths.includes(trimmed)) {
-    return { kind: 'declared', message: 'Found in this collection’s schema.' };
+    return {
+      kind: 'declared',
+      message: 'Found in this collection’s schema. Every item created will record its attachment ID here.',
+    };
   }
   return {
     kind: 'undeclared',
     message:
       `Not declared by this collection’s schema (it has ${schemaPaths.length} valid paths). ` +
-      'Every item created would write metadata to a node outside the schema. ' +
+      'Every item created would record its attachment ID at a field the schema does not have. ' +
       'Correct it, or leave it blank.',
   };
 }
@@ -451,6 +462,19 @@ function collectionSection(props: SetupProps): string {
  * know it. It does NOT restrict what can be typed -- a `<datalist>` suggests,
  * it does not constrain -- because a site whose schema could not be read must
  * still be able to enter the path they know is right.
+ *
+ * THE LABEL HAS TO SEPARATE TWO SENSES OF "ATTACHMENT". The file is attached
+ * through openEQUELLA's attachment API on every item, whatever this box says;
+ * only some schemas ALSO declare a metadata field recording that attachment's
+ * ID, as an index for search and export. The operator who installed this read
+ * the old label ("Field that holds the attachment ID") and concluded the
+ * attachment itself depended on it.
+ *
+ * The placeholder is an INVENTED path (`local/attachments/attachment`), and
+ * must stay invented. The datalist only helps someone who already knows the
+ * shape they are looking for, and it is empty until a collection is chosen --
+ * but a real `BYUI_extended/...` here would be an institution's answer shipped
+ * to every other one, in the one place a placeholder reads as a default.
  */
 function attachmentSection(props: SetupProps): string {
   const verdict = attachmentPathVerdict(props.fields.attachmentUuidPath, props.schemaPaths);
@@ -463,7 +487,9 @@ function attachmentSection(props: SetupProps): string {
 
   return `
         <label for="setup-attachment-path">
-          Field that holds the attachment ID — leave blank unless your schema has one
+          Field that records the attachment ID in the item’s metadata — your files are
+          attached either way. Some schemas keep the ID as a field of their own so it can
+          be searched and exported; if yours does, name that field here.
         </label>
         <input
           id="setup-attachment-path"
@@ -471,6 +497,7 @@ function attachmentSection(props: SetupProps): string {
           type="text"
           autocomplete="off"
           spellcheck="false"
+          placeholder="e.g. local/attachments/attachment"
           ${props.schemaPaths === null ? '' : 'list="setup-schema-paths"'}
           value="${escapeHtml(props.fields.attachmentUuidPath)}"
         />
