@@ -1,6 +1,14 @@
 // tests/duplicates.test.ts
 import { describe, it, expect } from 'vitest';
-import { verdictFor, defaultChoice, findDuplicates, type ExistingItemHit } from '../src/core/duplicates.js';
+import { readFileSync } from 'node:fs';
+import {
+  verdictFor,
+  defaultChoice,
+  findDuplicates,
+  UNAUTHENTICATED_SESSION_DETAIL,
+  type ExistingItemHit,
+  type TitleSearcher,
+} from '../src/core/duplicates.js';
 import type { Manifest } from '../src/core/types.js';
 
 const hit = (title: string, attachmentNames: string[] = []): ExistingItemHit => ({
@@ -9,6 +17,25 @@ const hit = (title: string, attachmentNames: string[] = []): ExistingItemHit => 
   name: title,
   attachmentNames,
 });
+
+/** The real recorded response an UNAUTHENTICATED session gets: 200, not 401. */
+const GUEST_USER = JSON.parse(
+  readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+) as { guest: boolean };
+
+/**
+ * `findDuplicates` against a session that really IS signed in -- the premise
+ * of every test here except the ones about the session itself.
+ *
+ * Spelled out rather than defaulted inside `findDuplicates`: "nobody said
+ * otherwise" must never be read as "signed in", which is the whole point of
+ * the checks below.
+ */
+const findDuplicatesSignedIn = (
+  client: Pick<TitleSearcher, 'searchByTitle'>,
+  manifest: Manifest,
+  titleHeader: string | null,
+) => findDuplicates({ ...client, currentUser: async () => ({ guest: false }) }, manifest, titleHeader);
 
 describe('verdictFor', () => {
   it('reports nothing when the collection has no item with this title', () => {
@@ -150,7 +177,7 @@ describe('findDuplicates', () => {
           ? [{ uuid: 'i1', version: 1, name: 'Taken', attachmentNames: ['a.pdf'] }]
           : [],
     };
-    const found = await findDuplicates(client, manifest, TITLE_PATH);
+    const found = await findDuplicatesSignedIn(client, manifest, TITLE_PATH);
     expect(found).toHaveLength(1);
     expect(found[0]?.rowNumber).toBe(2);
     expect(found[0]?.tier).toBe('near-certain');
@@ -167,7 +194,7 @@ describe('findDuplicates', () => {
         throw new Error('the server said 400');
       },
     };
-    const found = await findDuplicates(client, manifest, TITLE_PATH);
+    const found = await findDuplicatesSignedIn(client, manifest, TITLE_PATH);
     expect(found[0]?.tier).toBe('could-not-check');
     expect(found[0]?.detail).toContain('the server said 400');
   });
@@ -183,14 +210,14 @@ describe('findDuplicates', () => {
         return [{ uuid: 'i1', version: 1, name: 'Taken', attachmentNames: ['b.pdf'] }];
       },
     };
-    const found = await findDuplicates(client, manifest, TITLE_PATH);
+    const found = await findDuplicatesSignedIn(client, manifest, TITLE_PATH);
     expect(found.map((f) => f.tier).sort()).toEqual(['could-not-check', 'near-certain']);
   });
 
   it('says nothing at all when no row is flagged', async () => {
     const manifest = manifestOf([{ rowNumber: 2, fileName: 'a.pdf', title: 'Free' }]);
     const client = { searchByTitle: async () => [] };
-    expect(await findDuplicates(client, manifest, TITLE_PATH)).toEqual([]);
+    expect(await findDuplicatesSignedIn(client, manifest, TITLE_PATH)).toEqual([]);
   });
 
   // An entry already created or skipped by an earlier run is not going to be
@@ -206,7 +233,7 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifest, TITLE_PATH);
+    await findDuplicatesSignedIn(client, manifest, TITLE_PATH);
     expect(calls).toBe(0);
   });
 
@@ -219,7 +246,7 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifest, TITLE_PATH);
+    await findDuplicatesSignedIn(client, manifest, TITLE_PATH);
     expect(seen).toEqual(['c1']);
   });
 
@@ -234,7 +261,7 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    const found = await findDuplicates(client, manifest, TITLE_PATH);
+    const found = await findDuplicatesSignedIn(client, manifest, TITLE_PATH);
     expect(calls).toBe(0);
     expect(found[0]?.tier).toBe('not-checkable');
     expect(found[0]?.rowNumber).toBe(2);
@@ -259,7 +286,7 @@ describe('findDuplicates', () => {
         return [{ uuid: 'i', version: 1, name: title, attachmentNames: [`f${asked.length - 1}.pdf`] }];
       },
     };
-    const found = await findDuplicates(client, manifestOf(rows), TITLE_PATH);
+    const found = await findDuplicatesSignedIn(client, manifestOf(rows), TITLE_PATH);
     expect(asked).toHaveLength(12);
     expect(found).toHaveLength(12);
     expect(found.map((f) => f.rowNumber)).toEqual(rows.map((r) => r.rowNumber));
@@ -282,9 +309,134 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifestOf(rows), TITLE_PATH);
+    await findDuplicatesSignedIn(client, manifestOf(rows), TITLE_PATH);
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(5);
+  });
+
+  /**
+   * THE SILENT FAILURE THIS EXISTS TO PREVENT.
+   *
+   * openEQUELLA answers an unauthenticated request with 200 and no results --
+   * never a 401 (tests/fixtures/api/collections-unauthenticated.json records
+   * the same shape for collections: `available: 29`, `results: []`). So a
+   * session that lapsed, or was guest all along, finds no hits for any title
+   * in the batch, and every row reads CLEAN from a search that could never
+   * have matched. This is the tool whose duplicate check exists because thirty
+   * files were once uploaded twice.
+   *
+   * The remedy is the verdict that already exists: could-not-check. There is
+   * no path where an unchecked row is presented as clean.
+   */
+  describe('when nobody is signed in', () => {
+    const twoRows = () =>
+      manifestOf([
+        { rowNumber: 2, fileName: 'a.pdf', title: 'Taken' },
+        { rowNumber: 3, fileName: 'b.pdf', title: 'Free' },
+      ]);
+
+    /** A searcher that would report the whole batch clean if it were asked. */
+    function guestSearcher() {
+      let searches = 0;
+      let identityChecks = 0;
+      const client: TitleSearcher = {
+        searchByTitle: async () => {
+          searches += 1;
+          return [];
+        },
+        currentUser: async () => {
+          identityChecks += 1;
+          return GUEST_USER;
+        },
+      };
+      return { client, counts: () => ({ searches, identityChecks }) };
+    }
+
+    it('reports every pending row could-not-check, never clean', async () => {
+      const { client } = guestSearcher();
+      const found = await findDuplicates(client, twoRows(), TITLE_PATH);
+      expect(found.map((f) => f.rowNumber)).toEqual([2, 3]);
+      expect(found.map((f) => f.tier)).toEqual(['could-not-check', 'could-not-check']);
+    });
+
+    // There is nothing worth asking: every answer would be the same wrong one.
+    it('issues no search at all', async () => {
+      const { client, counts } = guestSearcher();
+      await findDuplicates(client, twoRows(), TITLE_PATH);
+      expect(counts().searches).toBe(0);
+    });
+
+    it('says what happened and what to do about it', async () => {
+      const { client } = guestSearcher();
+      const found = await findDuplicates(client, twoRows(), TITLE_PATH);
+      expect(found[0]?.detail).toBe(UNAUTHENTICATED_SESSION_DETAIL);
+      expect(found[0]?.detail).toMatch(/signed in/i);
+      expect(found[0]?.detail).toMatch(/by hand|re-plan/i);
+    });
+
+    it('leaves rows an earlier run already handled alone', async () => {
+      const { client } = guestSearcher();
+      const manifest = twoRows();
+      manifest.entries[0]!.status = 'created';
+      const found = await findDuplicates(client, manifest, TITLE_PATH);
+      expect(found.map((f) => f.rowNumber)).toEqual([3]);
+    });
+
+    /**
+     * A verdict that could not even establish who the session is has exactly
+     * the standing of one from a guest session: unchecked. Not clean.
+     */
+    it('reports could-not-check when it cannot tell who the session is', async () => {
+      const client: TitleSearcher = {
+        searchByTitle: async () => [],
+        currentUser: async () => {
+          throw new Error('connect ECONNREFUSED');
+        },
+      };
+      const found = await findDuplicates(client, twoRows(), TITLE_PATH);
+      expect(found.map((f) => f.tier)).toEqual(['could-not-check', 'could-not-check']);
+      expect(found[0]?.detail).toMatch(/ECONNREFUSED/);
+    });
+
+    /** One request per plan, not per row: a 200-row batch would pay 200 times. */
+    it('asks who the session is once for the whole batch', async () => {
+      let identityChecks = 0;
+      const rows = Array.from({ length: 12 }, (_, i) => ({
+        rowNumber: i + 2,
+        fileName: `f${i}.pdf`,
+        title: `Title ${i}`,
+      }));
+      const client: TitleSearcher = {
+        searchByTitle: async () => [],
+        currentUser: async () => {
+          identityChecks += 1;
+          return { guest: false };
+        },
+      };
+      const found = await findDuplicates(client, manifestOf(rows), TITLE_PATH);
+      expect(identityChecks).toBe(1);
+      expect(found).toEqual([]);
+    });
+
+    /** Nothing to check means nothing to ask -- including about the session. */
+    it('asks nobody anything when no row is pending', async () => {
+      const { client, counts } = guestSearcher();
+      const manifest = twoRows();
+      for (const entry of manifest.entries) entry.status = 'created';
+      expect(await findDuplicates(client, manifest, TITLE_PATH)).toEqual([]);
+      expect(counts()).toEqual({ searches: 0, identityChecks: 0 });
+    });
+
+    /**
+     * With no title path there is nothing to search for no matter who is
+     * signed in, so the answer that costs no request wins.
+     */
+    it('does not ask who the session is when there is nothing to search for', async () => {
+      const { client, counts } = guestSearcher();
+      const found = await findDuplicates(client, twoRows(), null);
+      expect(found.map((f) => f.tier)).toEqual(['could-not-check', 'could-not-check']);
+      expect(counts()).toEqual({ searches: 0, identityChecks: 0 });
+    });
   });
 });
 
@@ -330,7 +482,7 @@ describe('the title path is read, not assumed', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifestWithTwoTitles(), 'local/dc/title');
+    await findDuplicatesSignedIn(client, manifestWithTwoTitles(), 'local/dc/title');
     expect(asked).toEqual(['A Thesis']);
   });
 
@@ -342,7 +494,7 @@ describe('the title path is read, not assumed', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifestWithTwoTitles(), 'local/dc/title');
+    await findDuplicatesSignedIn(client, manifestWithTwoTitles(), 'local/dc/title');
     expect(paths).toEqual(['local/dc/title']);
   });
 
@@ -353,7 +505,7 @@ describe('the title path is read, not assumed', () => {
    */
   it('reports could-not-check when no title path is known, never clean', async () => {
     const client = { searchByTitle: async () => [] };
-    const findings = await findDuplicates(client, manifestWithTwoTitles(), null);
+    const findings = await findDuplicatesSignedIn(client, manifestWithTwoTitles(), null);
     expect(findings).toHaveLength(1);
     expect(findings[0]?.tier).toBe('could-not-check');
     expect(findings[0]?.rowNumber).toBe(2);
@@ -362,7 +514,7 @@ describe('the title path is read, not assumed', () => {
 
   it('treats an empty title path the same as none at all', async () => {
     const client = { searchByTitle: async () => [] };
-    const findings = await findDuplicates(client, manifestWithTwoTitles(), '');
+    const findings = await findDuplicatesSignedIn(client, manifestWithTwoTitles(), '');
     expect(findings[0]?.tier).toBe('could-not-check');
   });
 
@@ -374,7 +526,7 @@ describe('the title path is read, not assumed', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifestWithTwoTitles(), null);
+    await findDuplicatesSignedIn(client, manifestWithTwoTitles(), null);
     expect(calls).toBe(0);
   });
 
@@ -382,7 +534,7 @@ describe('the title path is read, not assumed', () => {
   // what to do, not merely that something was missing.
   it('says what to do about it', async () => {
     const client = { searchByTitle: async () => [] };
-    const findings = await findDuplicates(client, manifestWithTwoTitles(), null);
+    const findings = await findDuplicatesSignedIn(client, manifestWithTwoTitles(), null);
     expect(findings[0]?.detail).toMatch(/title/i);
     expect(findings[0]?.detail).toMatch(/by hand/i);
   });
@@ -391,6 +543,6 @@ describe('the title path is read, not assumed', () => {
     const manifest = manifestWithTwoTitles();
     manifest.entries[0]!.status = 'created';
     const client = { searchByTitle: async () => [] };
-    expect(await findDuplicates(client, manifest, null)).toEqual([]);
+    expect(await findDuplicatesSignedIn(client, manifest, null)).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normaliseInstanceUrl, instanceKey } from '../src/core/instanceUrl.js';
+import { normaliseInstanceUrl, instanceKey, instanceEndpoint } from '../src/core/instanceUrl.js';
 
 describe('normaliseInstanceUrl', () => {
   it('strips trailing slashes so callers can concatenate paths', () => {
@@ -48,6 +48,73 @@ describe('normaliseInstanceUrl', () => {
   it('keeps a path prefix, because openEQUELLA can be hosted under one', () => {
     expect(normaliseInstanceUrl('https://library.example.edu/oeq/')).toBe(
       'https://library.example.edu/oeq',
+    );
+  });
+});
+
+/**
+ * The whole reason this helper exists: `new URL('/a/b', 'https://host/oeq')`
+ * silently answers `https://host/a/b`. `normaliseInstanceUrl` above goes to
+ * deliberate trouble to KEEP a path prefix; every one of these cases is a
+ * request that used to throw it away again one line later.
+ */
+describe('instanceEndpoint', () => {
+  it('behaves like plain concatenation when the base has no prefix', () => {
+    expect(instanceEndpoint('https://oeq.example.edu', '/api/auth/login').toString()).toBe(
+      'https://oeq.example.edu/api/auth/login',
+    );
+  });
+
+  it('keeps a path prefix instead of replacing it', () => {
+    expect(instanceEndpoint('https://library.example.edu/oeq', '/api/auth/login').toString()).toBe(
+      'https://library.example.edu/oeq/api/auth/login',
+    );
+  });
+
+  it('keeps a path prefix that was given with a trailing slash, without doubling it', () => {
+    expect(instanceEndpoint('https://library.example.edu/oeq/', '/api/auth/login').toString()).toBe(
+      'https://library.example.edu/oeq/api/auth/login',
+    );
+  });
+
+  /**
+   * `client.ts` funnels EVERY API call through this with the query string
+   * already baked into `path` (`/api/collection?privilege=...&full=true`).
+   * A helper that dropped it would break search, discovery and item creation
+   * at once, and only under a prefix.
+   */
+  it('preserves a query string carried by the path', () => {
+    const url = instanceEndpoint(
+      'https://library.example.edu/oeq',
+      '/api/collection?privilege=CREATE_ITEM&full=true',
+    );
+    expect(url.toString()).toBe(
+      'https://library.example.edu/oeq/api/collection?privilege=CREATE_ITEM&full=true',
+    );
+    expect(url.searchParams.get('privilege')).toBe('CREATE_ITEM');
+    expect(url.searchParams.get('full')).toBe('true');
+  });
+
+  it('accepts a path with no leading slash', () => {
+    expect(instanceEndpoint('https://library.example.edu/oeq', 'api/staging').toString()).toBe(
+      'https://library.example.edu/oeq/api/staging',
+    );
+    expect(instanceEndpoint('https://oeq.example.edu', 'api/staging').toString()).toBe(
+      'https://oeq.example.edu/api/staging',
+    );
+  });
+
+  /**
+   * A deeper prefix is no different -- and neither is a base that arrived
+   * with several trailing slashes, which `normaliseInstanceUrl` strips but
+   * `auth.ts`/`client.ts` accept raw from configuration.
+   */
+  it('handles a multi-segment prefix and redundant slashes on either side', () => {
+    expect(instanceEndpoint('https://example.edu/a/b', '/api/x').toString()).toBe(
+      'https://example.edu/a/b/api/x',
+    );
+    expect(instanceEndpoint('https://example.edu/oeq//', '//api/x').toString()).toBe(
+      'https://example.edu/oeq/api/x',
     );
   });
 });

@@ -219,6 +219,20 @@ export const NO_IDENTIFIER_PATH_WARNING =
   'if this batch relies on identifiers, check them by hand before uploading.';
 
 /**
+ * Shown once for the whole batch when the session searching is the guest one.
+ *
+ * Opens with the same words as its sibling above so the desktop Review screen
+ * groups it with the duplicate warnings rather than among the unrecognised
+ * strays (src/desktop/ui/warnings.ts buckets on wording) -- it is an answer to
+ * "were there duplicate identifiers?", and the answer is "nobody looked".
+ */
+export const GUEST_SESSION_WARNING =
+  'Duplicate identifiers were not checked: nobody is signed in, so the collection could not be ' +
+  'searched. openEQUELLA answers an unauthenticated search with an ordinary 200 and no results, ' +
+  'so every identifier in this batch would have looked unused. Sign in and re-plan, or check ' +
+  'them by hand before uploading.';
+
+/**
  * Advisory pre-flight scan for identifiers that may already exist in the
  * target collection. Returns warnings only -- it never mutates `manifest`
  * and never removes/skips an entry. Whether a hit is a real duplicate is a
@@ -240,6 +254,10 @@ export const NO_IDENTIFIER_PATH_WARNING =
  * That is the same failure recorded in
  * docs/superpowers/specs/2026-08-06-duplicate-prevention-design.md, and this
  * is the second time this codebase has had it.
+ *
+ * WHO IS ASKING IS CHECKED FIRST, once for the batch, for the third variant of
+ * that same failure: a guest session's searches all succeed and all find
+ * nothing. See findDuplicates, which does the same for titles.
  */
 export async function preflightDuplicates(
   client: OeqClient,
@@ -258,14 +276,37 @@ export async function preflightDuplicates(
     return manifest.entries.length > 0 ? [NO_IDENTIFIER_PATH_WARNING] : [];
   }
 
-  for (const entry of manifest.entries) {
-    // Not every batch populates the identifier column; entries without one are
-    // simply not checkable, and that's expected, not a problem to flag. This
-    // is a blank CELL in a field the schema really has -- distinct from the
-    // schema having no such field at all, which is reported above.
-    const identifier = entry.metadata[identifierPath]?.[0]?.trim();
-    if (!identifier) continue;
+  // Not every batch populates the identifier column; entries without one are
+  // simply not checkable, and that's expected, not a problem to flag. This is
+  // a blank CELL in a field the schema really has -- distinct from the schema
+  // having no such field at all, which is reported above. Gathered up front so
+  // that a batch with nothing to check makes no request at all, including the
+  // identity one below.
+  const checkable = manifest.entries
+    .map((entry) => ({ entry, identifier: entry.metadata[identifierPath]?.[0]?.trim() ?? '' }))
+    .filter((e) => e.identifier !== '');
+  if (checkable.length === 0) return [];
 
+  // ONE request, before any search, for the same reason findDuplicates makes
+  // it: an unauthenticated openEQUELLA answers a search with 200 and zero
+  // results rather than refusing it, so every identifier in the batch would
+  // come back unused and this pre-flight would report a batch it never
+  // checked as clean. Once for the batch, not once per row -- the answer
+  // cannot differ between rows, and a repeated sentence is noise.
+  //
+  // The client is the one the caller already holds; nothing is constructed
+  // here, and which identity it carries is not this function's business.
+  try {
+    if ((await client.currentUser()).guest) return [GUEST_SESSION_WARNING];
+  } catch (err) {
+    return [
+      `Duplicate identifiers were not checked: could not confirm anyone is signed in ` +
+        `(${err instanceof Error ? err.message : String(err)}); check them by hand before ` +
+        `uploading.`,
+    ];
+  }
+
+  for (const { entry, identifier } of checkable) {
     try {
       const exists = await client.identifierExists(manifest.collectionUuid, identifier);
       if (exists) {

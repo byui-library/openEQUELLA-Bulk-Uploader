@@ -116,7 +116,9 @@ export function defaultChoice(tier: DuplicateTier): DuplicateChoice {
  * Just the part of the API client this needs.
  *
  * Narrower than the client class on purpose: the rules above are testable
- * without a server, and so is this.
+ * without a server, and so is this. `OeqClient` satisfies it structurally, so
+ * a caller passes the client it already holds and this module still never
+ * constructs one.
  */
 export interface TitleSearcher {
   searchByTitle(
@@ -124,6 +126,11 @@ export interface TitleSearcher {
     title: string,
     titleHeader: string,
   ): Promise<ExistingItemHit[]>;
+  /**
+   * Who the session searching is. Part of this port, not a separate argument,
+   * because a search result cannot be read without it: see findDuplicates.
+   */
+  currentUser(): Promise<{ guest: boolean }>;
 }
 
 /**
@@ -135,6 +142,17 @@ export interface TitleSearcher {
 export const UNKNOWN_TITLE_PATH_DETAIL =
   "this collection's schema does not say which field holds the item title, so existing " +
   'items could not be searched -- check by hand before uploading';
+
+/**
+ * Shown for every pending row when the session searching is the guest one.
+ *
+ * Same shape and same reason as the constant above: the check did not run, so
+ * the row is could-not-check and the operator is told what to do about it.
+ */
+export const UNAUTHENTICATED_SESSION_DETAIL =
+  'nobody is signed in, so existing items could not be searched -- openEQUELLA answers an ' +
+  'unauthenticated search with an ordinary 200 and no results, which would have made every row ' +
+  'in this batch look clean; sign in and re-plan, or check by hand before uploading';
 
 /** How many checks are in flight at once. Enough to be quick, few enough to be polite. */
 const CONCURRENCY = 5;
@@ -152,6 +170,11 @@ const CONCURRENCY = 5;
  * form, and is null when the schema declares none. It is a parameter rather
  * than something fetched here so this function stays pure: it is given the
  * facts, it does not go looking for them.
+ *
+ * WHO IS SEARCHING IS CHECKED FIRST, once for the batch. An unauthenticated
+ * openEQUELLA does not refuse a search; it answers 200 with no results, which
+ * is indistinguishable from a title nobody has used. Every row would read
+ * clean off a check that could never have matched anything.
  */
 export async function findDuplicates(
   client: TitleSearcher,
@@ -173,6 +196,29 @@ export async function findDuplicates(
       fileName: entry.fileName,
       tier: 'could-not-check' as const,
       detail: UNKNOWN_TITLE_PATH_DETAIL,
+      existing: [],
+    }));
+  }
+
+  // Nothing pending means nothing to check and nothing to ask about.
+  if (pending.length === 0) return [];
+
+  // ONE request for the batch, before any search. A search from a session
+  // nobody is signed into does not fail -- openEQUELLA answers 200 with zero
+  // results, exactly as a genuinely-unused title does -- so every row would
+  // come back clean from a check that could never have matched. That is the
+  // failure this whole module exists to prevent, arriving by a different door
+  // than the one Task 8 closed.
+  //
+  // Once, not per row: the answer cannot differ between rows, and a 200-row
+  // batch would otherwise pay for it 200 times.
+  const unchecked = await sessionProblem(client);
+  if (unchecked) {
+    return pending.map((entry) => ({
+      rowNumber: entry.rowNumber,
+      fileName: entry.fileName,
+      tier: 'could-not-check' as const,
+      detail: unchecked,
       existing: [],
     }));
   }
@@ -206,4 +252,25 @@ export async function findDuplicates(
   }
 
   return findings;
+}
+
+/**
+ * Why this session's answers cannot be trusted, or null when they can.
+ *
+ * A session that cannot even be identified counts as untrustworthy too, and
+ * for the same reason: "we could not tell" is not "clean". The error text is
+ * carried through so the operator can see what actually went wrong rather than
+ * being told only that something did.
+ */
+async function sessionProblem(client: TitleSearcher): Promise<string | null> {
+  try {
+    const user = await client.currentUser();
+    return user.guest ? UNAUTHENTICATED_SESSION_DETAIL : null;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return (
+      `could not confirm anyone is signed in (${detail}), so existing items were not ` +
+      'searched -- check by hand before uploading'
+    );
+  }
 }

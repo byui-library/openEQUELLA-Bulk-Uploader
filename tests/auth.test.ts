@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ApiError } from '../src/core/errors.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
@@ -194,5 +194,61 @@ describe('OAuthClientCredentials — secret handling and malformed responses', (
     } finally {
       await probe.close();
     }
+  });
+});
+
+/**
+ * openEQUELLA is very commonly deployed under a path prefix
+ * (`https://library.example.edu/equella` is the vendor's own default in many
+ * installs). `new URL('/oauth/access_token', 'https://host/oeq')` answers
+ * `https://host/oauth/access_token` -- the prefix is gone, because an
+ * absolute path replaces the base's path outright -- so at such a site every
+ * token request went to a URL that does not exist.
+ *
+ * The assertion is on the URL the provider actually fetches, because that is
+ * the only thing that would have caught it.
+ */
+describe('OAuthClientCredentials — an instance hosted under a path prefix', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const captureFetch = (): string[] => {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (input: string | URL) => {
+      seen.push(String(input));
+      return new Response(JSON.stringify({ access_token: 'tok-1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    return seen;
+  };
+
+  it('requests the token under the prefix, not at the host root', async () => {
+    const seen = captureFetch();
+    const auth = new OAuthClientCredentials('https://library.example.edu/oeq', 'id', 'secret');
+    expect(await auth.getToken()).toBe('tok-1');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.startsWith('https://library.example.edu/oeq/')).toBe(true);
+    expect(new URL(seen[0]!).pathname).toBe('/oeq/oauth/access_token');
+  });
+
+  it('still hits the host root when there is no prefix', async () => {
+    const seen = captureFetch();
+    const auth = new OAuthClientCredentials('https://oeq.example.edu', 'id', 'secret');
+    await auth.getToken();
+    expect(new URL(seen[0]!).pathname).toBe('/oauth/access_token');
+  });
+
+  /** The error path names the endpoint too, and it must name the real one. */
+  it('names the prefixed endpoint when the network fails, and still no query string', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    const auth = new OAuthClientCredentials('https://library.example.edu/oeq', 'id', 'secret');
+    const err = await auth.getToken().catch((e: unknown) => e);
+    expect((err as ApiError).message).toContain('https://library.example.edu/oeq/oauth/access_token');
+    expect((err as ApiError).message).not.toContain('client_secret');
   });
 });
