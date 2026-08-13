@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
+  attachmentPathCandidates,
+  attachmentPathToFill,
   attachmentPathVerdict,
   backLabel,
   instanceFrom,
@@ -11,6 +14,7 @@ import {
   type SetupFields,
   type SetupProps,
 } from '../../../src/desktop/ui/screens/setup.js';
+import { parseSchema } from '../../../src/core/discovery.js';
 import { FakeElement } from '../../helpers/fakeDom.js';
 
 /**
@@ -54,6 +58,7 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   collectionsError: null,
   collectionsWithheld: false,
   schemaPaths: null,
+  attachmentPathFilled: false,
   error: null,
   saving: false,
   onInstanceChange: () => {},
@@ -372,13 +377,13 @@ describe('the attachment-uuid path', () => {
 describe('attachmentPathVerdict', () => {
   const PATHS = ['MWDL/title', 'BYUI_extended/attachments/attachment'];
 
-  // Blank is the DEFAULT and correct for most schemas. It is not an error, and
-  // the message says what it means rather than leaving it to be inferred.
+  // Blank is a real answer -- "record no such field" -- and not an error. The
+  // message says what it means rather than leaving it to be inferred.
   it('treats blank as the deliberate choice it is', () => {
     const verdict = attachmentPathVerdict('', PATHS);
     expect(verdict.kind).toBe('blank');
-    expect(verdict.message).toMatch(/left blank/i);
-    expect(verdict.message).toMatch(/most schemas/i);
+    expect(verdict.message).toMatch(/nothing is recorded/i);
+    expect(verdict.message).toContain('BYUI_extended/attachments/attachment');
   });
 
   it('treats whitespace as blank', () => {
@@ -401,8 +406,10 @@ describe('attachmentPathVerdict', () => {
     expect(verdict.kind).toBe('blank');
     expect(verdict.message).toMatch(/not been checked/i);
     expect(verdict.message).toMatch(/choose one above/i);
-    // The reassurance offered when a schema WAS read must not appear here.
+    // Nothing that only a read schema could justify saying -- neither the old
+    // "correct for most schemas" nor a claim about what this schema declares.
     expect(verdict.message).not.toMatch(/correct for most schemas/i);
+    expect(verdict.message).not.toMatch(/declares/i);
   });
 
   it('confirms a path the schema declares', () => {
@@ -516,43 +523,205 @@ describe('suggestAttachmentPath', () => {
     const verdict = attachmentPathVerdict('', ['MWDL/title', 'local/attachments/attachment']);
     expect(verdict.kind).toBe('blank');
     expect(verdict.message).toContain('local/attachments/attachment');
-    // Still says blank is legitimate -- it is, for most schemas.
-    expect(verdict.message).toMatch(/most schemas/i);
+    // Blank is still legitimate: it means nothing is recorded, not that
+    // anything is broken.
+    expect(verdict.message).toMatch(/nothing is recorded/i);
   });
 
   /**
    * LEAD WITH THE ANSWER. For the operator whose schema DOES declare the field
-   * -- the one case where blank is silent data loss -- opening with "that is
-   * correct for most schemas" answers a question they did not ask, and buries
-   * the only fact that applies to them. When there is a candidate it comes
-   * first; the general reassurance follows it.
+   * -- the one case where blank is silent data loss -- opening with a general
+   * remark about blank being normal buries the only fact that applies to them.
+   * The candidate comes first; what blank costs follows it.
    */
-  it('names the candidate before any reassurance that blank is normal', () => {
+  it('names the candidate before saying what blank means', () => {
     const verdict = attachmentPathVerdict('', ['MWDL/title', 'local/attachments/attachment']);
     expect(verdict.kind).toBe('blank');
     const named = verdict.message.indexOf('local/attachments/attachment');
-    const reassurance = verdict.message.search(/most schemas/i);
+    const blank = verdict.message.search(/left blank/i);
     expect(named).toBeGreaterThanOrEqual(0);
-    expect(reassurance).toBeGreaterThanOrEqual(0);
-    expect(named).toBeLessThan(reassurance);
+    expect(blank).toBeGreaterThanOrEqual(0);
+    expect(named).toBeLessThan(blank);
   });
 
   /**
-   * ...and where there is no candidate, the reassurance IS the answer. It must
-   * name no path at all: a guessed one would be BYU-Idaho's answer everywhere.
+   * NO CANDIDATE MEANS THE SCHEMA HAS NO SUCH FIELD, and that is what it must
+   * say. The old copy answered with a reassurance about schemas in general
+   * ("correct for most schemas"), which the operator read as evasion -- "I
+   * thought that the attachment-uuid was a requirement". A fact about THEIR
+   * schema is both plainer and stronger.
+   *
+   * It must still name no path at all: a guessed one would be BYU-Idaho's
+   * answer everywhere.
    */
-  it('reassures and names nothing when the schema declares no such field', () => {
+  it('says the schema declares no such field, rather than reassuring about schemas in general', () => {
     const verdict = attachmentPathVerdict('', ['MWDL/title', 'MWDL/description']);
     expect(verdict.kind).toBe('blank');
-    expect(verdict.message).toMatch(/most schemas/i);
+    expect(verdict.message).toMatch(/declares no field/i);
+    expect(verdict.message).not.toMatch(/most schemas/i);
     expect(verdict.message).not.toMatch(/[A-Za-z_]+\/[A-Za-z_]+/);
   });
 
-  // Nothing is ever filled in on the operator's behalf: blank is a real answer
-  // and writing metadata they did not ask for goes on every item in every batch.
-  it('does not fill the field in', () => {
+  // Nothing is filled in by RENDERING. The one fill this app does is a
+  // consequence of choosing a collection and happens once, in app.ts -- see
+  // attachmentPathToFill below.
+  it('does not fill the field in as a side effect of rendering', () => {
     expect(instanceFrom(props({ schemaPaths: ['local/attachments/attachment'] })).attachmentUuidPath)
       .toBe('');
+    const html = setupMarkup(
+      props({ collections: COLLECTIONS, schemaPaths: ['local/attachments/attachment'] }),
+    );
+    const input = /<input[^>]*id="setup-attachment-path"[^>]*>/.exec(html)?.[0];
+    expect(input).toBeDefined();
+    expect(input).toContain('value=""');
+  });
+});
+
+/**
+ * EVERY field the schema declares that could hold an attachment uuid, not just
+ * the best one. The difference is the whole safety argument for filling the box
+ * in: one candidate is an answer, two are a choice that belongs to the
+ * operator, and `suggestAttachmentPath` alone cannot tell those apart -- it
+ * returns a string either way.
+ */
+describe('attachmentPathCandidates', () => {
+  it('finds the one field a schema declares for it', () => {
+    expect(attachmentPathCandidates(['MWDL/title', 'local/attachments/attachment'])).toEqual([
+      'local/attachments/attachment',
+    ]);
+  });
+
+  it('finds every one when a schema declares more than one', () => {
+    expect(
+      attachmentPathCandidates(['MWDL/title', 'b/attachments/attachment', 'a/attachment']),
+    ).toEqual(['a/attachment', 'b/attachments/attachment']);
+  });
+
+  it('finds none where a schema declares none, and none at all without a schema', () => {
+    expect(attachmentPathCandidates(['MWDL/title'])).toEqual([]);
+    expect(attachmentPathCandidates(null)).toEqual([]);
+  });
+
+  /**
+   * THE CASE THE OPERATOR ACTUALLY HAS, pinned against the schema recorded from
+   * content.byui.edu itself rather than a hand-written list. BYUI_MWDL declares
+   * exactly one such leaf, so the fill below is an answer and not a guess.
+   *
+   * `item/attachments/attachment` is correctly not among them: it has children
+   * (`type`, `attributes/entry/string`), so it is a container, and openEQUELLA
+   * cannot store a value at one -- discovery.ts's walker emits leaves only.
+   */
+  it('yields exactly one candidate for the real BYU-Idaho schema', () => {
+    const schema = parseSchema(JSON.parse(readFileSync('tests/fixtures/api/schema.json', 'utf8')));
+    expect(attachmentPathCandidates([...schema.paths])).toEqual([
+      'BYUI_extended/attachments/attachment',
+    ]);
+  });
+});
+
+/**
+ * THE DECISION TO FILL THE BOX IN, kept pure and kept here so it can be
+ * asserted without a DOM. WHEN it is applied is app.ts's business and is the
+ * part that makes a cleared field stay cleared (see appNavigation.test.ts):
+ * this answers only "may it be filled", never "fill it again".
+ *
+ * The operator asked for exactly this -- "have the system populate that field
+ * based on the schema, similar to how we're able to get a list of collections"
+ * -- and the reason it is safe is that a schema either declares one such field
+ * or it does not. Choosing between two would be an institution-specific
+ * assumption, which is the class of bug this branch exists to remove.
+ */
+describe('attachmentPathToFill', () => {
+  it('offers the single candidate for an empty field', () => {
+    expect(attachmentPathToFill(['MWDL/title', 'local/attachments/attachment'], '')).toBe(
+      'local/attachments/attachment',
+    );
+  });
+
+  /**
+   * NEVER OVER WHAT THE OPERATOR TYPED. A path they entered themselves is the
+   * one piece of evidence on this screen about what their site really uses, and
+   * a schema-derived guess must not overwrite it.
+   */
+  it('offers nothing when the field already holds something', () => {
+    expect(attachmentPathToFill(['local/attachments/attachment'], 'MWDL/mine')).toBeNull();
+    // Even when what they typed is the candidate itself: there is nothing to do.
+    expect(
+      attachmentPathToFill(['local/attachments/attachment'], 'local/attachments/attachment'),
+    ).toBeNull();
+    // Whitespace is blank, and a blank-looking field is filled.
+    expect(attachmentPathToFill(['local/attachments/attachment'], '   ')).toBe(
+      'local/attachments/attachment',
+    );
+  });
+
+  it('offers nothing when the schema declares more than one', () => {
+    expect(attachmentPathToFill(['a/attachment', 'b/attachment'], '')).toBeNull();
+  });
+
+  it('offers nothing when the schema declares none, and nothing without a schema', () => {
+    expect(attachmentPathToFill(['MWDL/title'], '')).toBeNull();
+    expect(attachmentPathToFill(null, '')).toBeNull();
+  });
+});
+
+/**
+ * WHAT THE OPERATOR IS TOLD once the box has been filled in for them. Somebody
+ * who never typed this needs to know why it is there and that it is theirs to
+ * change; "Found in this collection's schema" is true but reads as a verdict on
+ * something they did.
+ */
+describe('the filled-in verdict', () => {
+  const PATHS = ['MWDL/title', 'local/attachments/attachment'];
+
+  it('says it was filled in from the schema, and that it can be changed', () => {
+    const verdict = attachmentPathVerdict('local/attachments/attachment', PATHS, true);
+    expect(verdict.kind).toBe('filled');
+    expect(verdict.message).toMatch(/filled in for you/i);
+    expect(verdict.message).toMatch(/schema/i);
+    expect(verdict.message).toMatch(/change it or clear it/i);
+  });
+
+  // A path the operator typed themselves gets the verdict it always got.
+  it('is not what a typed path gets', () => {
+    expect(attachmentPathVerdict('local/attachments/attachment', PATHS).kind).toBe('declared');
+    expect(attachmentPathVerdict('local/attachments/attachment', PATHS, false).kind).toBe('declared');
+  });
+
+  // The screen renders it, with its own class -- it is confirmed, like
+  // `declared`, but it is not the same event.
+  it('is what the screen renders', () => {
+    const html = setupMarkup(
+      props({
+        collections: COLLECTIONS,
+        schemaPaths: PATHS,
+        attachmentPathFilled: true,
+        fields: fields({ attachmentUuidPath: 'local/attachments/attachment' }),
+      }),
+    );
+    expect(html).toContain('verdict--filled');
+    expect(html).toMatch(/filled in for you/i);
+  });
+});
+
+/**
+ * SEVERAL CANDIDATES IS A CHOICE, NOT A GUESS. Picking between two would be
+ * this tool inventing an institution's answer, which is exactly what naming
+ * `BYUI_extended/...` in shipped code used to do.
+ */
+describe('a schema declaring several attachment fields', () => {
+  const PATHS = ['MWDL/title', 'a/attachment', 'b/attachments/attachment'];
+
+  it('fills nothing and names them all', () => {
+    const verdict = attachmentPathVerdict('', PATHS);
+    expect(verdict.kind).toBe('blank');
+    expect(verdict.message).toContain('a/attachment');
+    expect(verdict.message).toContain('b/attachments/attachment');
+    expect(verdict.message).toMatch(/more than one/i);
+  });
+
+  it('sends the operator to the box rather than deciding for them', () => {
+    expect(attachmentPathVerdict('', PATHS).message).toMatch(/choose/i);
   });
 });
 

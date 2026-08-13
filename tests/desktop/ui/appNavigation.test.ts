@@ -77,6 +77,13 @@ interface BootOptions {
   signOutReport?: { sessions: number; unconfirmed: number };
   /** Leave run() unresolved, so the app stays on the Progress screen. */
   holdRun?: boolean;
+  /**
+   * What the chosen collection's schema declares. Defaults to a schema with no
+   * attachment field at all, so nothing is filled in unless a test asks for it.
+   */
+  schemaPaths?: string[];
+  /** Make the schema read fail, which leaves the path unchecked. */
+  schemaUnreadable?: boolean;
 }
 
 /**
@@ -106,7 +113,10 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     currentUser: async () => USER,
     signIn: async () => USER,
     listCollections: async () => ({ collections: COLLECTIONS, withheld: false }),
-    fetchSchema: async () => ({ uuid: 'schema-1', name: 'Schema', paths: ['MWDL/title'] }),
+    fetchSchema: async () => {
+      if (options.schemaUnreadable === true) throw new Error('schema unreadable');
+      return { uuid: 'schema-1', name: 'Schema', paths: options.schemaPaths ?? ['MWDL/title'] };
+    },
     getPassword: async () => ({ username: 'a.operator' }),
     chooseSpreadsheet: async () => 'C:\\batch\\upload.csv',
     chooseFolder: async () => 'C:\\batch\\files',
@@ -477,6 +487,155 @@ describe('Results -> everywhere else', () => {
     await flush();
     expect(harness.app.innerHTML).toContain('Choose what to upload');
     expect(harness.app.innerHTML).toContain('value="coll-1" selected');
+  });
+});
+
+/**
+ * FILLING THE ATTACHMENT FIELD IN, asked for by the operator: "Is there a way
+ * that we can have the system populate that field based on the schema, similar
+ * to how we're able to get a list of collections? That way, the user doesn't
+ * have to try to figure out what it is and put it in manually."
+ *
+ * DRIVEN THROUGH app.ts AND NOT THE SCREEN, because the whole risk is in the
+ * TIMING rather than in the value. Filling on every render would make a
+ * deliberately-cleared field impossible to keep clear -- clear it, the screen
+ * re-renders on the next keystroke anywhere on it, and the path is back. That
+ * is invisible to any assertion on `setupMarkup`, which is a pure function of
+ * props and cannot show when it is called.
+ */
+describe('the attachment field, filled from the schema', () => {
+  const ONE = ['MWDL/title', 'local/attachments/attachment'];
+
+  /** The value attribute actually rendered into the attachment box. */
+  function attachmentValue(app: FakeElement): string {
+    const input = /<input[^>]*id="setup-attachment-path"[^>]*>/.exec(app.innerHTML)?.[0];
+    expect(input).toBeDefined();
+    return /value="([^"]*)"/.exec(input ?? '')?.[1] ?? '';
+  }
+
+  /** Choose -> Setup, with the collections listed and nothing chosen yet. */
+  async function reachSetup(app: FakeElement): Promise<void> {
+    await reachChoose(app);
+    app.fire('#choose-site-settings');
+    await flush();
+  }
+
+  async function chooseCollection(app: FakeElement): Promise<void> {
+    app.fire('#setup-collection', 'change', { target: { value: 'coll-1' } });
+    await flush();
+  }
+
+  it('fills the empty box in when the schema declares exactly one such field', async () => {
+    harness = await boot({ schemaPaths: ONE });
+    await reachSetup(harness.app);
+    expect(attachmentValue(harness.app)).toBe('');
+
+    await chooseCollection(harness.app);
+    expect(attachmentValue(harness.app)).toBe('local/attachments/attachment');
+  });
+
+  it('says it filled it in, and where that came from', async () => {
+    harness = await boot({ schemaPaths: ONE });
+    await reachSetup(harness.app);
+    await chooseCollection(harness.app);
+
+    expect(harness.app.innerHTML).toContain('verdict--filled');
+    expect(harness.app.innerHTML).toMatch(/filled in for you/i);
+    expect(harness.app.innerHTML).toMatch(/change it or clear it/i);
+  });
+
+  // It is a form field, so it saves like one -- the operator does not have to
+  // retype what was filled in for them.
+  it('saves what was filled in', async () => {
+    let saved = '';
+    harness = await boot({ schemaPaths: ONE });
+    await reachSetup(harness.app);
+    await chooseCollection(harness.app);
+    // Read back off the rendered form, which is what submit assembles from.
+    saved = attachmentValue(harness.app);
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+    expect(saved).toBe('local/attachments/attachment');
+    expect(harness.calls.saveInstance).toBe(1);
+  });
+
+  /**
+   * NEVER OVER WHAT THE OPERATOR TYPED. What they entered is the only evidence
+   * on this screen about what their site really uses.
+   */
+  it('leaves a path the operator typed alone', async () => {
+    harness = await boot({ schemaPaths: ONE });
+    await reachSetup(harness.app);
+    harness.app.fire('#setup-attachment-path', 'input', { target: { value: 'MWDL/mine' } });
+    await flush();
+
+    await chooseCollection(harness.app);
+    expect(attachmentValue(harness.app)).toBe('MWDL/mine');
+  });
+
+  /**
+   * THE BUG THIS FEATURE MOST EASILY BECOMES. An operator who clears the box
+   * has said "record nothing", and every subsequent render must respect it --
+   * including the renders caused by typing anywhere else on the screen.
+   */
+  it('stays cleared once the operator clears it', async () => {
+    harness = await boot({ schemaPaths: ONE });
+    await reachSetup(harness.app);
+    await chooseCollection(harness.app);
+    expect(attachmentValue(harness.app)).toBe('local/attachments/attachment');
+
+    harness.app.fire('#setup-attachment-path', 'input', { target: { value: '' } });
+    await flush();
+    expect(attachmentValue(harness.app)).toBe('');
+
+    // An unrelated re-render: a keystroke in the site's name.
+    harness.app.fire('#setup-label', 'input', { target: { value: 'Library archive' } });
+    await flush();
+    expect(attachmentValue(harness.app)).toBe('');
+    // ...and it is not still claiming to have filled anything in.
+    expect(harness.app.innerHTML).not.toContain('verdict--filled');
+  });
+
+  /**
+   * TWO CANDIDATES IS A CHOICE THAT BELONGS TO THE OPERATOR. Guessing between
+   * them would be this tool inventing an institution's answer.
+   */
+  it('fills nothing when the schema declares several, and names them', async () => {
+    harness = await boot({ schemaPaths: ['MWDL/title', 'a/attachment', 'b/attachments/attachment'] });
+    await reachSetup(harness.app);
+    await chooseCollection(harness.app);
+
+    expect(attachmentValue(harness.app)).toBe('');
+    expect(harness.app.innerHTML).toMatch(/more than one/i);
+    expect(harness.app.innerHTML).toContain('a/attachment');
+    expect(harness.app.innerHTML).toContain('b/attachments/attachment');
+  });
+
+  /**
+   * NO CANDIDATE LEAVES IT BLANK and says why -- a fact about this schema, not
+   * the reassurance about schemas in general the operator read as evasion.
+   */
+  it('fills nothing when the schema declares no such field, and says so', async () => {
+    harness = await boot({ schemaPaths: ['MWDL/title', 'MWDL/description'] });
+    await reachSetup(harness.app);
+    await chooseCollection(harness.app);
+
+    expect(attachmentValue(harness.app)).toBe('');
+    expect(harness.app.innerHTML).toMatch(/declares no field/i);
+    expect(harness.app.innerHTML).not.toMatch(/most schemas/i);
+  });
+
+  /**
+   * A SCHEMA THAT COULD NOT BE READ FILLS NOTHING. Unread has never been
+   * reported as clean here and must not start by writing a value.
+   */
+  it('fills nothing when the schema could not be read', async () => {
+    harness = await boot({ schemaPaths: ONE, schemaUnreadable: true });
+    await reachSetup(harness.app);
+    await chooseCollection(harness.app);
+
+    expect(attachmentValue(harness.app)).toBe('');
+    expect(harness.app.innerHTML).toMatch(/not been checked/i);
   });
 });
 

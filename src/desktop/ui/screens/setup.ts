@@ -33,8 +33,12 @@ export interface SetupFields {
   password: string;
   /**
    * Where each item's attachment uuid is written into its metadata, or '' for
-   * "write no such field" -- which is a real choice and the right default for
-   * most institutions, not an unfilled box.
+   * "write no such field" -- which is a real choice, not an unfilled box.
+   *
+   * Filled in from the schema when the chosen collection declares exactly one
+   * such field and this is empty (app.ts's `handleSetupCollectionChange`).
+   * Never filled over what the operator typed, and never re-filled after they
+   * clear it.
    */
   attachmentUuidPath: string;
   /**
@@ -99,6 +103,17 @@ export interface SetupProps {
    * correct.
    */
   schemaPaths: string[] | null;
+  /**
+   * Whether the path in the box was put there by this tool rather than typed.
+   *
+   * RENDERER STATE, HELD BY app.ts, and deliberately not derived here: "the
+   * value happens to equal the schema's only candidate" is also true of an
+   * operator who typed it themselves, and telling them the app did it would be
+   * a lie about their own work. app.ts sets it at the one moment it is true --
+   * the collection change that filled the box -- and clears it the instant the
+   * operator edits the field.
+   */
+  attachmentPathFilled: boolean;
   error: string | null;
   saving: boolean;
   /**
@@ -186,40 +201,95 @@ export function backLabel(returnTo: Screen): string {
   }
 }
 
-/** What the screen can say about a typed attachment-uuid path. */
+/**
+ * What the screen can say about the attachment-uuid path.
+ *
+ * `filled` is the one added for the schema-driven fill. It is deliberately NOT
+ * `declared`: both mean the schema has this node, but only one of them is
+ * something the operator did, and somebody who never typed the value has to be
+ * told where it came from and that it is theirs to change.
+ */
 export interface AttachmentPathVerdict {
-  kind: 'blank' | 'unchecked' | 'declared' | 'undeclared';
+  kind: 'blank' | 'unchecked' | 'declared' | 'undeclared' | 'filled';
   message: string;
 }
 
 /**
- * The path in this collection's schema that looks like the field an
- * attachment uuid belongs in, or null if none does.
+ * Every path in this collection's schema that could hold an attachment uuid,
+ * shortest first.
  *
- * OFFERED, NEVER APPLIED. Blank is a legitimate answer -- it means "write no
- * such field", which is right for most schemas -- so nothing here fills the
- * box in. What it must not be is an ACCIDENT: the operator's real store had
- * this empty with nothing on screen having ever mentioned it, so every item
- * they created silently lost the field. Naming the candidate makes blank a
- * decision.
+ * PLURAL ON PURPOSE, and that is the whole safety argument for filling the box
+ * in: one candidate is an answer, several are a choice belonging to the
+ * operator, and none means the schema simply has no such field.
+ * `suggestAttachmentPath` returns a string in all three cases and so cannot
+ * tell them apart.
  *
- * Only ever offered from a schema that was actually read (null in, null out):
+ * Only ever derived from a schema that was actually read (null in, empty out):
  * a guess made without one would be BYU-Idaho's answer at every institution,
  * which is the exact class of bug this branch exists to remove. Reachable at
  * all only because the collection list now asks for `full=true` -- without it
  * no collection carries a schema uuid, so `schemaPaths` was null for
  * everybody.
  *
- * The last segment is what identifies it (`.../attachments/attachment`), and
- * the shortest match wins so a deeply nested near-miss cannot outrank the
- * obvious one. Ties break alphabetically so the answer is stable.
+ * The last segment is what identifies one (`.../attachments/attachment`).
+ * Containers cannot match even when they are named that way: `discovery.ts`'s
+ * walker emits leaves only, and openEQUELLA cannot store a value at a node
+ * with children -- which is why BYUI_MWDL's `item/attachments/attachment`,
+ * which has `type` and `attributes/entry/string` beneath it, is correctly not
+ * among these.
+ *
+ * Sorted shortest-first so a deeply nested near-miss cannot outrank the obvious
+ * one, then alphabetically so the answer never depends on server order.
+ */
+export function attachmentPathCandidates(schemaPaths: string[] | null): string[] {
+  if (schemaPaths === null) return [];
+  return schemaPaths
+    .map((p) => p.trim())
+    .filter((p) => /(^|\/)attachments?$/i.test(p))
+    .sort((a, b) => a.length - b.length || a.localeCompare(b));
+}
+
+/**
+ * The single likeliest candidate, or null. Kept for the places that want one
+ * name rather than the set; anything DECIDING something uses
+ * `attachmentPathCandidates` and counts them.
  */
 export function suggestAttachmentPath(schemaPaths: string[] | null): string | null {
-  if (schemaPaths === null) return null;
-  const candidates = schemaPaths.filter((p) => /(^|\/)attachments?$/i.test(p.trim()));
-  return (
-    [...candidates].sort((a, b) => a.length - b.length || a.localeCompare(b))[0] ?? null
-  );
+  return attachmentPathCandidates(schemaPaths)[0] ?? null;
+}
+
+/**
+ * The path to put in the box on the operator's behalf, or null for "leave it
+ * exactly as it is".
+ *
+ * ASKED FOR BY THE OPERATOR: "Is there a way that we can have the system
+ * populate that field based on the schema, similar to how we're able to get a
+ * list of collections? That way, the user doesn't have to try to figure out
+ * what it is and put it in manually." The machine can read the schema, so
+ * nobody should be reverse-engineering an xpath out of a list of ~200.
+ *
+ * TWO CONDITIONS, AND BOTH MATTER.
+ *
+ *  - EXACTLY ONE CANDIDATE. Choosing between two would be this tool inventing
+ *    an institution's answer, which is precisely what shipping
+ *    `BYUI_extended/...` in code used to do. Several candidates are reported
+ *    and left to the operator.
+ *  - THE FIELD IS EMPTY. What the operator typed is the only evidence on this
+ *    screen about what their site really uses, and a schema-derived guess must
+ *    never overwrite it.
+ *
+ * PURE, AND ONLY EVER ASKED. It answers "may this be filled in", never "fill
+ * it again" -- the caller decides when to ask, and asking on every render is
+ * what would make a deliberately-cleared field impossible to keep clear. See
+ * app.ts's `handleSetupCollectionChange`, which asks once per collection.
+ */
+export function attachmentPathToFill(
+  schemaPaths: string[] | null,
+  current: string,
+): string | null {
+  if (current.trim() !== '') return null;
+  const candidates = attachmentPathCandidates(schemaPaths);
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
 }
 
 /**
@@ -233,23 +303,35 @@ export function suggestAttachmentPath(schemaPaths: string[] | null): string | nu
  * openEQUELLA's response to metadata at an undeclared path does not explain
  * itself.
  *
- * BLANK IS NOT AN ERROR. It means "write no such field", which is correct for
- * the many schemas that declare no such node, and the message says so instead
- * of leaving an operator to infer it from silence.
+ * BLANK IS NOT AN ERROR. It means "write no such field", and the message says
+ * so instead of leaving an operator to infer it from silence.
  *
  * BUT THE CANDIDATE LEADS. Where the schema does declare one, that is named
- * first and the reassurance follows it. The operator who reported this copy
- * read "that is correct for most schemas" and stopped there -- and theirs is
- * the schema that declares the field, so blank is the one silent data-loss
- * path in this release. Reassurance first answers the general case to the one
- * reader it is wrong for. With no candidate, the reassurance IS the answer and
- * stays exactly as it was.
+ * first. The operator who reported this copy read "that is correct for most
+ * schemas" and stopped there -- and theirs is the schema that declares the
+ * field, so blank is the one silent data-loss path in this release.
+ *
+ * AND WHERE THERE IS NO CANDIDATE, SAY THAT. The old copy answered with a
+ * reassurance about schemas in general; the same operator read it and replied
+ * "I thought that the attachment-uuid was a requirement", which is the sound of
+ * a general remark failing to answer a specific question. "This schema declares
+ * no such field" is the honest form of the same reassurance, and it is about
+ * the schema in front of them.
+ *
+ * SEVERAL CANDIDATES ARE NAMED AND NOT RANKED. Nothing is filled in, because
+ * choosing between them would be an institution-specific assumption, and the
+ * datalist on the box is already how the operator picks one.
  *
  * UNCHECKED IS NOT CORRECT. With no schema read, this says it could not check
  * -- the same rule every other check in this tool follows. "Could not check"
  * has never been reported as clean here and is not going to start.
  */
-export function attachmentPathVerdict(path: string, schemaPaths: string[] | null): AttachmentPathVerdict {
+export function attachmentPathVerdict(
+  path: string,
+  schemaPaths: string[] | null,
+  /** Whether this tool put the value there -- see SetupProps.attachmentPathFilled. */
+  filled = false,
+): AttachmentPathVerdict {
   const trimmed = path.trim();
   if (trimmed === '') {
     // BLANK AND UNCHECKED IS NOT BLANK AND FINE. Before a collection is
@@ -268,17 +350,33 @@ export function attachmentPathVerdict(path: string, schemaPaths: string[] | null
           'whether it has such a field. Your files are attached either way.',
       };
     }
-    const suggestion = suggestAttachmentPath(schemaPaths);
+    const candidates = attachmentPathCandidates(schemaPaths);
+    // NAMES NO PATH AT ALL when there is none to name: a guessed one would be
+    // BYU-Idaho's answer at every other institution.
+    if (candidates.length === 0) {
+      return {
+        kind: 'blank',
+        message:
+          'This collection’s schema declares no field for an attachment ID, so there is ' +
+          'nothing to record and nothing to fill in here. Your files are attached either way.',
+      };
+    }
+    if (candidates.length === 1) {
+      return {
+        kind: 'blank',
+        message:
+          `This collection’s schema declares ‘${candidates[0]}’, which is where an attachment ` +
+          `ID is usually recorded. Choose it from the box above if that is the field your site ` +
+          `uses. Left blank, nothing is recorded there — your files are attached either way.`,
+      };
+    }
     return {
       kind: 'blank',
       message:
-        suggestion === null
-          ? 'Left blank, so no attachment ID is recorded in item metadata. That is ' +
-            'correct for most schemas — your files are attached either way.'
-          : `This collection’s schema declares ‘${suggestion}’, which is where an attachment ` +
-            `ID is usually recorded. If that is the field your site uses, choose it from the ` +
-            `box above. Left blank, nothing is recorded there — right for most schemas, and ` +
-            `your files are attached either way.`,
+        `This collection’s schema declares more than one field an attachment ID could go in — ` +
+        `${candidates.map((c) => `‘${c}’`).join(', ')} — so none has been filled in for you. ` +
+        `Choose the one your site uses from the box above, or leave this blank to record none ` +
+        `of them. Your files are attached either way.`,
     };
   }
   if (schemaPaths === null) {
@@ -290,6 +388,18 @@ export function attachmentPathVerdict(path: string, schemaPaths: string[] | null
     };
   }
   if (schemaPaths.includes(trimmed)) {
+    // SAY WHO PUT IT THERE. An operator who never typed this needs to know why
+    // the box is not empty and that changing it is allowed; "Found in this
+    // collection's schema" reads as a verdict on something they did.
+    if (filled) {
+      return {
+        kind: 'filled',
+        message:
+          'Filled in for you from this collection’s schema, which declares this as its only ' +
+          'field for an attachment ID. Every item created will record its attachment ID here. ' +
+          'Change it or clear it if that is not what your site uses.',
+      };
+    }
     return {
       kind: 'declared',
       message: 'Found in this collection’s schema. Every item created will record its attachment ID here.',
@@ -528,7 +638,13 @@ function collectionSection(props: SetupProps): string {
  * xpaths are on the dropdown so the operator picks one instead of having to
  * know it. It does NOT restrict what can be typed -- a `<datalist>` suggests,
  * it does not constrain -- because a site whose schema could not be read must
- * still be able to enter the path they know is right.
+ * still be able to enter the path they know is right. Where the schema leaves
+ * no room for doubt -- exactly one candidate -- app.ts fills the box in on the
+ * collection change, and the verdict says it did.
+ *
+ * NOTHING HERE FILLS ANYTHING IN. This function runs on every keystroke
+ * anywhere on the screen; a fill made from a renderer would put a cleared path
+ * straight back and no operator could ever record nothing on purpose.
  *
  * THE LABEL HAS TO SEPARATE TWO SENSES OF "ATTACHMENT". The file is attached
  * through openEQUELLA's attachment API on every item, whatever this box says;
@@ -544,7 +660,11 @@ function collectionSection(props: SetupProps): string {
  * to every other one, in the one place a placeholder reads as a default.
  */
 function attachmentSection(props: SetupProps): string {
-  const verdict = attachmentPathVerdict(props.fields.attachmentUuidPath, props.schemaPaths);
+  const verdict = attachmentPathVerdict(
+    props.fields.attachmentUuidPath,
+    props.schemaPaths,
+    props.attachmentPathFilled,
+  );
   const list =
     props.schemaPaths === null
       ? ''

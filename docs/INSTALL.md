@@ -181,14 +181,20 @@ screen.
   type a long identifier. If it says this account can contribute nowhere, that
   is a permission your administrator grants, not something you have typed
   wrongly.
-- **Field that records the attachment ID** — your files are attached to their
-  items whether or not this is filled in. Some schemas *also* keep that ID as a
-  metadata field of their own, so it can be searched and exported. If the line
-  underneath the box names a field your schema declares, that is almost
-  certainly the one to choose — it looks like `local/attachments/attachment`.
-  If it names none, leave the box blank: most schemas have no such field, and
-  blank means the program writes none. Either way that line tells you whether
-  what you typed really exists in your collection's schema.
+- **Field that records the attachment ID** — usually you do not have to touch
+  this. Your files are attached to their items whether or not it is filled in.
+  Some schemas *also* keep that ID as a metadata field of their own, so it can
+  be searched and exported, and where yours declares exactly one such field the
+  program fills it in for you as soon as you choose a collection above. The
+  line underneath the box says so when it has, and you are free to change it or
+  clear it.
+
+  Where your schema declares **no** such field the box stays blank and the line
+  says the schema has none — nothing is missing and there is nothing to do.
+  Where it declares **more than one**, the program fills in nothing and names
+  them all: only your institution knows which one it uses, and you can pick from
+  the box's own dropdown. Whatever ends up in the box, that line tells you
+  whether it really exists in your collection's schema.
 - **"This is a live site — items created here are real"** — leave this ticked
   unless you know the address is a test or training instance. When it is
   ticked, the bar across the top of every screen stays loud and red, which is
