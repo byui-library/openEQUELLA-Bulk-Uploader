@@ -312,6 +312,63 @@ shape, never as a value the code may assume.
   is destroyed and recreated on every keystroke; without it the field loses
   focus after one character, or types backwards if it re-focuses without
   restoring the caret. Both shipped for months unnoticed.
+- **Never put a `style` attribute in rendered markup. The CSP blocks it
+  silently.** `index.html` sets `default-src 'self'` with no `style-src`, so
+  Chromium refuses inline styles — *"Refused to apply inline style because it
+  violates …"* — while leaving the attribute visibly present in the DOM. Set
+  the property through the DOM API instead (`el.style.width = …`), which CSP
+  does not block. **Do not add `'unsafe-inline'`**: this app renders
+  operator-supplied spreadsheet and document text into the DOM, so the policy
+  is load-bearing. The progress bar broke on exactly this and shipped broken
+  from v0.1.0 through two releases and a production run — and not as a dead
+  bar. `.progress-bar__fill` had no width in CSS, so `width: auto` filled the
+  track: operators were shown a **completed** bar for the whole of every run.
+- **Never build an instance URL with `new URL('/path', base)`.** An absolute
+  path replaces the base's path outright, so `https://host/oeq` silently
+  becomes `https://host/oauth/...`. openEQUELLA is commonly deployed under a
+  path prefix. Use `instanceEndpoint(baseUrl, path)` from
+  `src/core/instanceUrl.ts`. This was wrong at ten sites at once, including
+  `client.ts`, through which every API request passes.
+- **A build script must fail loudly when a required asset is missing.**
+  `copy-ui-assets.mjs` swallowed every error with `.catch(() => {})`, so a
+  build missing `index.html` completed successfully and opened a **blank
+  window** — this project's known catastrophic failure, which cost a full
+  session to diagnose once already, with the build configured to hide it.
+- **Do not assert semantically meaningless ordering in tests.** Cookie order in
+  a `Cookie` header is the live example: RFC 6265 says a server must not depend
+  on it, so asserting it couples the test to an iteration order that may change
+  harmlessly. Compare a sorted set of whole pairs — not `toContain`, which
+  passes for `AWSALB=lb; Path=/` and would drop the guard against echoing
+  cookie attributes back.
+
+## Process
+
+- **Read the PR review comments before merging.** Automated review has
+  commented on every PR in this repository since #1 and nobody read any of it
+  until 2026-08-13. There were **17 comments; seven were real defects**, one of
+  them user-visible and shipping since v0.1.0. They cost nothing to find.
+- **A review finding is usually narrower than the problem it points at.** Both
+  confirmed instances: the path-prefix comment named 2 sites, there were 10;
+  the cookie-order comment named 1 assertion, there were 4. Treat a finding as
+  a sample of a class, not an inventory — grep for the pattern before fixing
+  the line.
+- **Check that a refutation is valid before abandoning a hypothesis.** The
+  load-balancer cookie theory was raised, then dropped because a probe showed
+  both variants empty — but that run's sign-in status was never visible, and if
+  the sign-in itself failed both would read guest and the test proves nothing.
+  It was the right answer, discarded on evidence that could not support the
+  conclusion, and rediscovered an hour later.
+- **A commit pushed after its PR is merged is stranded.** It is invisible to
+  `git branch --merged`, which reports ancestry rather than whether the work
+  arrived. This repo has lost commits that way twice. **Before deleting any
+  branch, diff its content against `main`**, and after merging a PR, check
+  whether anything landed on the branch since.
+- **Hand-testing finds what the suite cannot.** One screenshot of an empty
+  dropdown produced six defects with all 1236 tests passing throughout. Every
+  serious fault in this project has lived at a boundary the tests do not
+  cross — the browser, the real schema, the DOM, the packaged build, the
+  seam between two halves of the program, and now the live server's idea of
+  what a successful response means.
 
 ## Working notes
 
