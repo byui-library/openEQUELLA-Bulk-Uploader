@@ -3,6 +3,7 @@ import type { AuthProvider } from './auth.js';
 import { GUEST_SESSION_EXPLANATION } from './identity.js';
 import { instanceEndpoint, normaliseInstanceUrl } from './instanceUrl.js';
 import { redactSecret } from './redact.js';
+import { SingleFlight } from './singleFlight.js';
 
 /**
  * openEQUELLA's own username/password sign-in.
@@ -74,17 +75,14 @@ interface Session {
 }
 
 export class UsernamePasswordAuth implements AuthProvider {
-  private session: Session | null = null;
-  private inFlight: Promise<Session> | null = null;
-  /** Generation the current `inFlight` sign-in was started under. */
-  private inFlightGeneration: number | null = null;
   /**
-   * Bumped by invalidate(). A completing sign-in only caches its session if
-   * the generation it started under is still current, and a caller arriving
-   * after invalidate() will not join a sign-in that predates it. Same
-   * reasoning as OAuthClientCredentials in auth.ts.
+   * The signed-in session: produced at most once at a time, dropped by
+   * invalidate(). Every subtlety -- collapsing concurrent sign-ins, refusing
+   * to cache one that was invalidated mid-flight, refusing to let a caller
+   * arriving after invalidate() join an older sign-in -- lives in
+   * SingleFlight, shared with OAuthClientCredentials in auth.ts.
    */
-  private generation = 0;
+  private readonly flight = new SingleFlight<Session>(() => this.login());
   private readonly baseUrl: string;
 
   constructor(
@@ -111,32 +109,11 @@ export class UsernamePasswordAuth implements AuthProvider {
     return (await this.getSession()).id;
   }
 
-  private async getSession(): Promise<Session> {
-    if (this.session) return this.session;
-    // Collapse concurrent sign-ins into one request -- but only join one that
-    // started in the current generation.
-    if (!this.inFlight || this.inFlightGeneration !== this.generation) {
-      const startedInGeneration = this.generation;
-      const promise = this.login(startedInGeneration);
-      this.inFlight = promise;
-      this.inFlightGeneration = startedInGeneration;
-      // Cleanup chain is separate from `promise` itself; callers await
-      // `promise` and handle its rejection. Swallow here so `.finally()`'s
-      // derived promise does not report the same rejection a second time as
-      // an unhandled rejection.
-      void promise
-        .finally(() => {
-          if (this.inFlight === promise) {
-            this.inFlight = null;
-            this.inFlightGeneration = null;
-          }
-        })
-        .catch(() => {});
-    }
-    return this.inFlight;
+  private getSession(): Promise<Session> {
+    return this.flight.get();
   }
 
-  private async login(startedInGeneration: number): Promise<Session> {
+  private async login(): Promise<Session> {
     const url = instanceEndpoint(this.baseUrl, LOGIN_PATH);
     url.searchParams.set('username', this.username);
     url.searchParams.set('password', this.password);
@@ -186,15 +163,12 @@ export class UsernamePasswordAuth implements AuthProvider {
       jar: [...cookies].map(([name, value]) => `${name}=${value}`).join('; '),
     };
 
-    // BEFORE caching, and before any caller is handed it. A guest session that
-    // reached the cache would be presented as a valid one for the rest of the
-    // process, and every request made with it would come back 200.
+    // BEFORE returning, so before this session can be cached or handed to any
+    // caller. A guest session that reached the cache would be presented as a
+    // valid one for the rest of the process, and every request made with it
+    // would come back 200. Throwing here means SingleFlight caches nothing.
     await this.confirmSignedIn(session);
 
-    // Only cache if nothing invalidated us while this sign-in was in flight.
-    if (startedInGeneration === this.generation) {
-      this.session = session;
-    }
     return session;
   }
 
@@ -285,8 +259,7 @@ export class UsernamePasswordAuth implements AuthProvider {
   }
 
   invalidate(): void {
-    this.session = null;
-    this.generation++;
+    this.flight.invalidate();
   }
 
   /**
@@ -310,7 +283,9 @@ export class UsernamePasswordAuth implements AuthProvider {
    * unrelated session the runtime attached a cookie jar to.
    */
   async logout(): Promise<void> {
-    const session = this.session;
+    // peek(), not getSession(): this must act on a session that already
+    // exists and must never establish one. See the doc comment.
+    const session = this.flight.peek();
     this.invalidate();
     if (!session) return;
 
