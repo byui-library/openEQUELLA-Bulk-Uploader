@@ -8,6 +8,7 @@ import { renderSetup, type SetupFields, type SetupTextField } from './screens/se
 // `import type`: secrets.ts reaches `node:fs` and this module runs in the
 // sandboxed renderer, where a runtime import of it would blank the window.
 import type { Settings, SettingsAuthMode } from '../secrets.js';
+import { signOutNotice } from './signout.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
 import { renderReview } from './screens/review.js';
@@ -745,9 +746,37 @@ async function handleSignIn(): Promise<void> {
   }
 }
 
+/**
+ * Sign out of the site currently selected, and go back to the sign-in screen.
+ *
+ * `state.instanceId` is passed because the main process cannot know it: sign
+ * out now ends the openEQUELLA session for that one site, not just the cached
+ * token, and the token store holds no instance of its own (handlers.ts).
+ *
+ * THE SCREEN CHANGES EVEN IF THE HANDLER THROWS. The operator asked to be
+ * signed out, and leaving them on a screen that says they are signed in would
+ * be the same lie in the other direction; the error is surfaced on the sign-in
+ * screen they land on.
+ *
+ * A throw here does NOT mean the logout PUT failed -- that case cannot reach
+ * this catch, and is handled in the paragraph below. This catches the
+ * unexpected: the IPC call itself rejecting, or clearing the local token store
+ * failing. Both leave the operator signed out on this machine regardless,
+ * which is why the screen still changes.
+ *
+ * AND IT CHANGES WHEN THE LOGOUT WAS MERELY UNCONFIRMED -- with a notice. That
+ * case does not throw and never will (core/passwordAuth.ts's `logout()` is
+ * deliberately never-throwing), so it used to arrive here indistinguishable
+ * from success and the operator read "signed out" over a session that might
+ * still be live. `signOutNotice` turns the report into the one sentence they
+ * can act on, in the same place the sign-out error already appears, so nothing
+ * blocks and nothing is claimed that has not been established.
+ */
 async function handleSignOut(): Promise<void> {
   try {
-    await window.oeq.signOut();
+    // Null on a clean sign-out, which also clears any error left from an
+    // earlier attempt -- see ui/signout.ts.
+    state.signinError = signOutNotice(await window.oeq.signOut(state.instanceId));
   } catch (err) {
     state.signinError = errorMessage(err);
   }

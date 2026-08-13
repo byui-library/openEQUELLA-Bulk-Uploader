@@ -1,6 +1,7 @@
 import { ApiError } from './errors.js';
 import { instanceEndpoint } from './instanceUrl.js';
 import { redactSecret } from './redact.js';
+import { SingleFlight } from './singleFlight.js';
 
 export interface AuthProvider {
   getToken(): Promise<string>;
@@ -34,22 +35,14 @@ export interface AuthProvider {
 const TOKEN_PATH = '/oauth/access_token';
 
 export class OAuthClientCredentials implements AuthProvider {
-  private token: string | null = null;
-  private inFlight: Promise<string> | null = null;
-  /** Generation the current `inFlight` fetch was started under. */
-  private inFlightGeneration: number | null = null;
   /**
-   * Bumped by invalidate(). A completing fetch only caches its result if the
-   * generation it started under is still current — this stops a refresh that
-   * was invalidated mid-flight from re-populating the cache with a token the
-   * caller already asked to discard. See fetchToken() and invalidate() below.
-   *
-   * getToken() also refuses to hand a caller an in-flight fetch that predates
-   * the current generation: invalidate() means "the next call re-authenticates",
-   * so a caller arriving after invalidate() must get its own fresh fetch, not
-   * silently join one that was already disowned.
+   * The access token: fetched at most once at a time, dropped by invalidate().
+   * Every subtlety -- collapsing concurrent refreshes, refusing to cache a
+   * fetch that was invalidated mid-flight, refusing to let a caller arriving
+   * after invalidate() join an older fetch -- lives in SingleFlight, shared
+   * with UsernamePasswordAuth in passwordAuth.ts.
    */
-  private generation = 0;
+  private readonly flight = new SingleFlight<string>(() => this.fetchToken());
 
   constructor(
     private readonly baseUrl: string,
@@ -57,34 +50,11 @@ export class OAuthClientCredentials implements AuthProvider {
     private readonly clientSecret: string,
   ) {}
 
-  async getToken(): Promise<string> {
-    if (this.token) return this.token;
-    // Collapse concurrent refreshes into one request — but only join an
-    // in-flight fetch that started in the current generation. One that
-    // predates a since-fired invalidate() is not eligible to be joined; a
-    // fresh fetch is started instead.
-    if (!this.inFlight || this.inFlightGeneration !== this.generation) {
-      const startedInGeneration = this.generation;
-      const promise = this.fetchToken(startedInGeneration);
-      this.inFlight = promise;
-      this.inFlightGeneration = startedInGeneration;
-      // This cleanup chain is separate from `promise` itself — callers await
-      // `promise` (via the return below) and handle its rejection there. If
-      // we didn't swallow it here too, `.finally()`'s derived promise would
-      // report the same rejection a second time as an unhandled rejection.
-      void promise
-        .finally(() => {
-          if (this.inFlight === promise) {
-            this.inFlight = null;
-            this.inFlightGeneration = null;
-          }
-        })
-        .catch(() => {});
-    }
-    return this.inFlight;
+  getToken(): Promise<string> {
+    return this.flight.get();
   }
 
-  private async fetchToken(startedInGeneration: number): Promise<string> {
+  private async fetchToken(): Promise<string> {
     const url = instanceEndpoint(this.baseUrl, TOKEN_PATH);
     url.searchParams.set('grant_type', 'client_credentials');
     url.searchParams.set('client_id', this.clientId);
@@ -129,10 +99,6 @@ export class OAuthClientCredentials implements AuthProvider {
       throw new ApiError('Token response contained no access_token.', res.status, this.redact(body));
     }
 
-    // Only cache if nothing invalidated us while this fetch was in flight.
-    if (startedInGeneration === this.generation) {
-      this.token = parsed.access_token;
-    }
     return parsed.access_token;
   }
 
@@ -153,7 +119,6 @@ export class OAuthClientCredentials implements AuthProvider {
   }
 
   invalidate(): void {
-    this.token = null;
-    this.generation++;
+    this.flight.invalidate();
   }
 }

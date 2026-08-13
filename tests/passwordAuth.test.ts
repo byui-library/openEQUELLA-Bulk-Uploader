@@ -497,6 +497,67 @@ describe('UsernamePasswordAuth', () => {
       return { impl: impl as unknown as typeof fetch, seen };
     }
 
+    /** Answers the logout PUT with `status`, and everything else normally, so a
+     *  test can see what an unhappy server does to the outcome. */
+    function logoutStatusStub(status: number) {
+      const impl = vi.fn(async (input: string | URL) => {
+        if (String(input).includes('/logout')) return new Response('', { status });
+        if (isVerify(String(input))) return userResponse();
+        return new Response('', {
+          status: 200,
+          headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/; HttpOnly' },
+        });
+      });
+      return impl as unknown as typeof fetch;
+    }
+
+    /**
+     * WHAT A LOGOUT CAN ESTABLISH, AND WHAT IT ONLY HOPES.
+     *
+     * This still never throws -- see the doc comment on `logout()` -- but never
+     * throwing used to mean never saying anything either, and a caller could
+     * not tell a confirmed logout from a request that died on the wire. The UI
+     * then told the operator "signed out" in both cases: true on this computer,
+     * unknown on the server, and on a shared machine that is the difference
+     * between the control working and appearing to.
+     */
+    it('reports the session ended when the server confirms it', async () => {
+      const { impl } = recordingStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.authHeader();
+
+      expect(await auth.logout()).toBe('ended');
+    });
+
+    /**
+     * HALF THE FINDING, AND THE HALF NOTHING COULD SEE. A non-2xx was swallowed
+     * exactly as an exception was, so a 500 -- the site up, the session
+     * untouched, the request refused -- was indistinguishable from success.
+     */
+    it('reports it could not confirm the logout when the site answers non-2xx', async () => {
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', logoutStatusStub(500));
+      await auth.authHeader();
+
+      expect(await auth.logout()).toBe('unconfirmed');
+    });
+
+    it('reports it could not confirm the logout on a 401 either', async () => {
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', logoutStatusStub(401));
+      await auth.authHeader();
+
+      expect(await auth.logout()).toBe('unconfirmed');
+    });
+
+    /** Nothing was signed in, so there is nothing on the server to be unsure
+     *  about. Reporting that as "could not confirm" would raise a warning at an
+     *  operator who has no session and nothing to do about it. */
+    it('reports there was no session when none was ever established', async () => {
+      const { impl } = recordingStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+
+      expect(await auth.logout()).toBe('no-session');
+    });
+
     it('asks the server to end the session, after signing in', async () => {
       const { impl, seen } = recordingStub();
       const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
@@ -547,7 +608,8 @@ describe('UsernamePasswordAuth', () => {
 
       const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
       await auth.getToken();
-      await expect(auth.logout()).resolves.toBeUndefined();
+      // Resolves rather than rejects -- and says what it could not establish.
+      await expect(auth.logout()).resolves.toBe('unconfirmed');
 
       // Locally gone regardless: the next caller signs in afresh rather than
       // being handed the session this process just tried to end. Sessions are

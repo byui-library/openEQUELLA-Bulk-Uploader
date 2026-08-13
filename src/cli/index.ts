@@ -14,6 +14,7 @@ import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
+import type { LogoutOutcome } from '../core/passwordAuth.js';
 import { OeqClient } from '../core/client.js';
 import { assertNotGuest } from '../core/identity.js';
 import { runManifest } from '../core/runner.js';
@@ -556,7 +557,7 @@ export interface LogoutDeps {
    * (a long-lived front end, or a test) passes it, and the session is ended
    * on the server rather than left to time out there.
    */
-  auth?: { logout(): Promise<void> };
+  auth?: { logout(): Promise<LogoutOutcome> };
 }
 
 /**
@@ -580,12 +581,27 @@ export async function logoutAction(deps: LogoutDeps = {}, env: Env = process.env
     if (deps.auth) {
       // Before the message, not after: under password auth the JSESSIONID
       // stays valid on the SERVER until openEQUELLA times it out, so "logged
-      // out" is not true until this has run. It never throws.
-      await deps.auth.logout();
-      console.log(
-        'Logged out, and the openEQUELLA session has been ended on the server. ' +
-          'Any token left over from an earlier OAuth setup has been removed.',
-      );
+      // out" is not true until this has run. It never throws -- and it now
+      // reports what it established, because never throwing used to mean the
+      // message below was printed over a logout that had failed.
+      const outcome = await deps.auth.logout();
+      if (outcome === 'unconfirmed') {
+        console.log(
+          'Logged out here, but the site did not confirm that the openEQUELLA session ended. ' +
+            'It will expire on its own; sign out in a browser if you need it gone now. ' +
+            'Any token left over from an earlier OAuth setup has been removed.',
+        );
+      } else if (outcome === 'no-session') {
+        console.log(
+          'Logged out. This process held no live openEQUELLA session to end. ' +
+            'Any token left over from an earlier OAuth setup has been removed.',
+        );
+      } else {
+        console.log(
+          'Logged out, and the openEQUELLA session has been ended on the server. ' +
+            'Any token left over from an earlier OAuth setup has been removed.',
+        );
+      }
       return;
     }
     console.log(
