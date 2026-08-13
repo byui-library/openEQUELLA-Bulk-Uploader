@@ -156,7 +156,15 @@ describe('UsernamePasswordAuth', () => {
       // The WHOLE jar: JSESSIONID alone is what authenticated as guest against
       // the live instance, so confirming with it alone would fail every
       // sign-in for the same wrong reason.
-      expect(seen).toEqual(['AWSALB=lb; JSESSIONID=abc123']);
+      //
+      // Sorted, because cookie order carries no meaning -- RFC 6265 says a
+      // server must not depend on it -- so asserting it would couple this test
+      // to readCookies()'s iteration order and break on a harmless change.
+      // Still compared as whole pairs rather than with `toContain`, which
+      // would also pass for `AWSALB=lb; Path=/`: attributes are a browser's
+      // instructions and must never be echoed back.
+      expect(seen).toHaveLength(1);
+      expect((seen[0] ?? '').split('; ').sort()).toEqual(['AWSALB=lb', 'JSESSIONID=abc123']);
     });
 
     /** One request per sign-in. Not one per call, or a batch pays for it. */
@@ -367,7 +375,9 @@ describe('UsernamePasswordAuth', () => {
         multiCookieStub(LIVE_SET_COOKIES),
       );
       const cookie = (await auth.authHeader()).Cookie ?? '';
-      const names = cookie.split('; ').map((pair) => pair.split('=')[0]);
+      // Sorted: which cookies are present is the point, the order they sit in
+      // is not. RFC 6265 says a server must not depend on it.
+      const names = cookie.split('; ').map((pair) => pair.split('=')[0]).sort();
       expect(names).toEqual(['AWSALB', 'AWSALBCORS', 'JSESSIONID', 'ROUTEID']);
     });
 
@@ -385,11 +395,17 @@ describe('UsernamePasswordAuth', () => {
         multiCookieStub(LIVE_SET_COOKIES),
       );
       const cookie = (await auth.authHeader()).Cookie;
-      expect(cookie).toBe(
-        `AWSALB=${'a'.repeat(124)}; ` +
-          `AWSALBCORS=${'b'.repeat(124)}; ` +
-          `JSESSIONID=0123456789abcdef0123456789abcdef; ` +
+      // Compared as a sorted set of whole pairs: this test is about FORMAT --
+      // `name=value`, joined by '; ', with no attributes -- and order is not
+      // part of that. An attribute leaking through would appear as its own
+      // element here and fail, which is the property worth keeping.
+      expect((cookie ?? '').split('; ').sort()).toEqual(
+        [
+          `AWSALB=${'a'.repeat(124)}`,
+          `AWSALBCORS=${'b'.repeat(124)}`,
+          `JSESSIONID=0123456789abcdef0123456789abcdef`,
           `ROUTEID=.1`,
+        ].sort(),
       );
       for (const attribute of ['Path', 'Expires', 'HttpOnly', 'Secure', 'SameSite']) {
         expect(cookie).not.toContain(attribute);
@@ -443,10 +459,15 @@ describe('UsernamePasswordAuth', () => {
       }) as unknown as typeof fetch;
 
       const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
-      expect((await auth.authHeader()).Cookie).toBe('AWSALB=lb-1; JSESSIONID=session-1; ROUTEID=.1');
+      // Sorted, like the other jar assertions: the point is WHICH cookies
+      // survive a re-sign-in, not the order they sit in. The second jar must
+      // not carry ROUTEID -- that is the merge this test exists to forbid.
+      const jar = async () => ((await auth.authHeader()).Cookie ?? '').split('; ').sort();
+
+      expect(await jar()).toEqual(['AWSALB=lb-1', 'JSESSIONID=session-1', 'ROUTEID=.1']);
 
       auth.invalidate();
-      expect((await auth.authHeader()).Cookie).toBe('AWSALB=lb-2; JSESSIONID=session-2');
+      expect(await jar()).toEqual(['AWSALB=lb-2', 'JSESSIONID=session-2']);
     });
   });
 
