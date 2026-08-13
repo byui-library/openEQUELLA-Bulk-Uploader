@@ -12,7 +12,7 @@ import {
   requireSignedIn,
 } from '../../src/desktop/handlers.js';
 import { forgetLiveSessions, rememberSession } from '../../src/desktop/session.js';
-import { SecretStore, type Cipher } from '../../src/desktop/secrets.js';
+import { SecretStore, EncryptedTokenStore, type Cipher } from '../../src/desktop/secrets.js';
 import { saveManifest, loadManifest } from '../../src/core/state.js';
 import { SchemaCache } from '../../src/core/schemaCache.js';
 import type { SchemaInfo } from '../../src/core/discovery.js';
@@ -369,6 +369,126 @@ describe('forgetPassword', () => {
     await ipc.call('oeq:forgetPassword', SITE);
 
     expect((await store().loadInstance(SITE))?.label).toBe('Live');
+  });
+});
+
+/**
+ * "SIGN OUT" USED TO BE A HALF-LOGOUT TOO -- and a whole one in password mode.
+ *
+ * It cleared the cached OAuth token and nothing else. That IS a complete
+ * logout under the authorization-code flow, where the token is the session,
+ * but password mode never writes the token store at all: the handler deleted a
+ * file that had never been created, the renderer returned to the sign-in
+ * screen, and the openEQUELLA session carried on until the server timed it
+ * out. The button said Sign out, the app looked signed out, and the session
+ * was live -- which on a shared machine is the difference between the control
+ * working and merely appearing to.
+ *
+ * Same order as `forgetPassword` above: the server session first, because it
+ * is the half that can fail, then the local clear unconditionally.
+ */
+describe('signOut', () => {
+  const SITE = 'https://oeq.example.edu';
+  const OTHER = 'https://other.example.edu';
+
+  beforeEach(async () => {
+    hoisted.userData = await mkdtemp(join(tmpdir(), 'oeq-signout-'));
+    forgetLiveSessions();
+  });
+
+  /** Pointed at the same file the handlers use, so this reads what they wrote. */
+  const tokenStore = () =>
+    new EncryptedTokenStore(join(hoisted.userData, 'token.enc'), plainCipher);
+
+  async function saveToken(): Promise<void> {
+    await tokenStore().save({ accessToken: 'a-real-token', baseUrl: SITE });
+  }
+
+  it('ends the live session for the site being signed out of, and clears the token', async () => {
+    await saveToken();
+    const ended = vi.fn(async () => {});
+    rememberSession(SITE, { logout: ended });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:signOut', SITE);
+
+    expect(ended).toHaveBeenCalledTimes(1);
+    expect(await tokenStore().loadRaw()).toBeNull();
+  });
+
+  /**
+   * THE MUTATION GUARD for `endSessionsFor` vs `endAllSessions`. An operator
+   * with a test site and a production site signed in to both would otherwise
+   * be signed out of the one they did not ask about -- a surprising side
+   * effect on a security control is its own defect.
+   */
+  it('does not end another site’s session', async () => {
+    const mine = vi.fn(async () => {});
+    const theirs = vi.fn(async () => {});
+    rememberSession(SITE, { logout: mine });
+    rememberSession(OTHER, { logout: theirs });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:signOut', SITE);
+
+    expect(mine).toHaveBeenCalledTimes(1);
+    expect(theirs).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE MUTATION GUARD for the order. Make the local clear conditional on the
+   * server logout and this goes red: the operator asked to be signed out, and
+   * that half is not conditional on the network being up.
+   */
+  it('clears the token even when ending the server session fails', async () => {
+    await saveToken();
+    rememberSession(SITE, {
+      logout: async () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await expect(ipc.call('oeq:signOut', SITE)).resolves.toBeUndefined();
+    expect(await tokenStore().loadRaw()).toBeNull();
+  });
+
+  // Nothing signed in during this app run -- OAuth mode, or a fresh launch.
+  // There is no session to end, and nothing may be signed in to end one.
+  it('clears the token with no session to end, and signs nothing in to do it', async () => {
+    await saveToken();
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await expect(ipc.call('oeq:signOut', SITE)).resolves.toBeUndefined();
+    expect(await tokenStore().loadRaw()).toBeNull();
+  });
+
+  /**
+   * Order, observed from inside the logout: the token is still on disk while
+   * the server session is being ended. Asserting only the end state would pass
+   * against a handler that cleared first -- which is not merely a different
+   * order, since the token is what an OAuth-mode logout would need to prove
+   * who it is.
+   */
+  it('ends the server session before clearing the token', async () => {
+    await saveToken();
+    const seen: string[] = [];
+    rememberSession(SITE, {
+      logout: async () => {
+        seen.push((await tokenStore().loadRaw()) ? 'still stored' : 'already gone');
+      },
+    });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:signOut', SITE);
+
+    expect(seen).toEqual(['still stored']);
+    expect(await tokenStore().loadRaw()).toBeNull();
   });
 });
 

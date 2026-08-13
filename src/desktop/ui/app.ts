@@ -745,9 +745,21 @@ async function handleSignIn(): Promise<void> {
   }
 }
 
+/**
+ * Sign out of the site currently selected, and go back to the sign-in screen.
+ *
+ * `state.instanceId` is passed because the main process cannot know it: sign
+ * out now ends the openEQUELLA session for that one site, not just the cached
+ * token, and the token store holds no instance of its own (handlers.ts).
+ *
+ * THE SCREEN CHANGES EVEN IF THE HANDLER THROWS. The operator asked to be
+ * signed out, and leaving them on a screen that says they are signed in
+ * because a PUT failed would be the same lie in the other direction; the error
+ * is surfaced on the sign-in screen they land on.
+ */
 async function handleSignOut(): Promise<void> {
   try {
-    await window.oeq.signOut();
+    await window.oeq.signOut(state.instanceId);
   } catch (err) {
     state.signinError = errorMessage(err);
   }

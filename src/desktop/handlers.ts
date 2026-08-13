@@ -439,9 +439,43 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     },
   );
 
-  ipcMain.handle(CHANNELS.signOut, async () => {
-    await tokens().clear();
-  });
+  /**
+   * "Sign out" -- which, like Forget above, has to end the SESSION and not
+   * just the local artefact.
+   *
+   * This used to clear the cached token and nothing else. That IS a complete
+   * logout under the authorization-code flow, where the token is the session.
+   * Under password mode it did nothing whatever: that mode never writes the
+   * token store, so the handler deleted a file that had never been created
+   * while the openEQUELLA session ran on until the server timed it out --
+   * and `handleSignOut` (ui/app.ts) returned the operator to the sign-in
+   * screen regardless. The button said Sign out, the app looked signed out,
+   * and the session was live.
+   *
+   * `endSessionsFor(instanceId)`, NOT `endAllSessions()`. The renderer knows
+   * which site it is on and now says so. An operator with a test site and a
+   * production site signed in to both would not expect signing out of one to
+   * end the other, and a surprising side effect on a security control is its
+   * own defect. The quit hook is the place that ends everything, because
+   * quitting really does abandon every session (quit.ts).
+   *
+   * THE SERVER FIRST and THE LOCAL CLEAR UNCONDITIONAL, exactly as
+   * `forgetPassword` above: ending the session needs the token still to be
+   * there in OAuth mode, it is the half that can fail, and the operator asked
+   * to be signed out -- which is not conditional on the network. A failed
+   * logout leaves nothing behind here that a timeout will not collect.
+   */
+  ipcMain.handle(
+    CHANNELS.signOut,
+    async (_e, instanceId: Parameters<OeqApi['signOut']>[0]) => {
+      try {
+        await endSessionsFor(instanceId);
+      } catch {
+        // Deliberately empty. See above: the local half still has to happen.
+      }
+      await tokens().clear();
+    },
+  );
 
   ipcMain.handle(
     CHANNELS.currentUser,
