@@ -1000,3 +1000,27 @@ the entire test suite agreed with** — the staging area being a `?file=` query
 parameter, `GET /search` defaulting to `showall=false`, and the schema's name
 path being `namePath` rather than the `itemNamePath` its own XML export uses.
 Tests agreeing with the code prove nothing about the server.
+
+## Licence and contributions
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Copyright 2026 Brigham Young University-Idaho.
+
+Apache 2.0 was chosen because **openEQUELLA itself is Apache 2.0**, so adopting
+this tool raises a licensing question your institution has almost certainly
+answered already. It is permissive: fork it, adapt it to your schema, and you
+are under no obligation to publish the result.
+
+**Contributions are welcome, with one caveat worth stating plainly.** This has
+only ever run against one institution's instances. If you get it working
+somewhere else, the most valuable thing you can send back is not a feature — it
+is what `oeq-upload check` told you, and what your instance returned that this
+code did not expect. Every hard-won fact in this repository came from a live
+probe contradicting an assumption the test suite agreed with, and yours will
+too.
+
+`scripts/probe-instance.mjs` is committed for exactly that: run it against your
+site, and the output answers the response-shape questions this tool depends on.
+
+**This tool is not affiliated with or endorsed by the openEQUELLA project or
+Apereo.** "openEQUELLA" names the system it talks to, nothing more.

@@ -122,6 +122,16 @@ files:
 # only when it ends without a trailing slash and matches the source basename),
 # but being explicit here removes any doubt.
 extraResources:
+  # Apache 2.0 obligations travel with the binary, not just the repository.
+  # 4(a) requires every recipient of the work get a copy of the License, and
+  # 4(d) requires the NOTICE to accompany a distribution that carries one. An
+  # installer handed to staff on a network share IS a distribution, and it is
+  # the copy most people will ever hold -- most of them will never see the
+  # repository these came from.
+  - from: LICENSE
+    to: LICENSE
+  - from: NOTICE
+    to: NOTICE
   - from: schema/_entity.xml
     to: schema/_entity.xml
   # The starter-kit template CSV + sample file the Choose screen's "Save a
