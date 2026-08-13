@@ -10,7 +10,7 @@ say almost nothing about.
 ## The problem
 
 Different collections need different knowledge. An alumni obituary keeps its
-death date in a sentence — *"passed away on January 4, 2024"* — or in a dash
+death date in a sentence — *"passed away on September 8, 2019"* — or in a dash
 pair after the name, and its genre, subjects and rights are the same on every
 record in the collection. None of that is expressible with the generic sources,
 and none of it should be hard-coded, because the next collection will be
@@ -58,9 +58,9 @@ produces a date wins, so the order in the profile is the order of preference.
 Real examples from the batch:
 
 ```text
-"graduated this world on   [January 9, 2024]"              Clyde
-"passed away on            [January 4, 2024]"              David
-"returned home to his Heavenly Father on [January 3, 2024]" Edward
+"graduated this world on   [March 5, 2019]"                Marcus
+"passed away on            [September 8, 2019]"            Orrin
+"returned home to his Heavenly Father on [June 27, 2019]"  Ivor
 ```
 
 ### `{ "datePair": "first" | "second" }`
@@ -69,9 +69,9 @@ Four of the ten state the dates with **no phrase at all** — just the name, the
 birth and death separated by a dash or a space:
 
 ```text
-Eric louther Scott    June 19, 1957  -  January 6, 2024
-Ronald E>av1d Gerber  October 20, 1943 - January 3, 2024
-Dennis Jack Birch     January 14, 1953   January 1, 2024
+Gideon olwyn Alder         April 5, 1954  -  October 2, 2019
+Thaddeus E>or1an Hawthorn  December 8, 1947 - July 3, 2019
+Corwin Ames Teasel         August 14, 1951   May 1, 2019
 ```
 
 `"second"` takes the death date, `"first"` the birth date.
@@ -95,7 +95,7 @@ line before any other prose.
 
 First non-empty wins, so neither form needs to know about the other. No new
 combining mechanism is invented. `transform: "date"` normalises
-`January 9, 2024` to `2024-01-09`, which `normaliseDate` already does.
+`March 5, 2019` to `2019-03-05`, which `normaliseDate` already does.
 
 ### `{ "compose": "Died {death_date}" }`
 
@@ -126,10 +126,10 @@ Two rules for the template itself:
 - **`[...]` marks an optional group**, dropped entirely including its
   punctuation if any placeholder inside it is empty.
 - **A `;`-separated clause whose placeholders are all empty is dropped**, so
-  the output is never `Died January 9, 2024; ;`.
+  the output is never `Died March 5, 2019; ;`.
 
 `Died {death_date}[: {residence}]; Born {birth_date}` with no residence yields
-`Died January 9, 2024; Born April 3, 1935`.
+`Died March 5, 2019; Born July 22, 1938`.
 
 ### `"checks": { "filenameWordsInText": { "ignore": ["Obituary"] } }`
 
@@ -137,23 +137,23 @@ Flags a row when a word from the filename does not appear in the document.
 Measured on the batch:
 
 ```text
-Brandon Lythoe    MISSING ["Lythoe"]   ← the document says "Lythgoe" throughout
+Alden Larkspar    MISSING ["Larkspar"] ← the document says "Larkspur" throughout
 …the other nine   all present
 ```
 
 One flag, and it is the right one. **Whole-word matching is what makes this
-work**: `Clyde Williams` never appears contiguously — the text reads
-`Clyde L Williams` — but both words do. Matching the full name would flag
+work**: `Marcus Fennel` never appears contiguously — the text reads
+`Marcus T Fennel` — but both words do. Matching the full name would flag
 nine rows out of ten.
 
 It survives OCR damage for the same reason. Middle names came out as
-`!;eland`, `E>av1d`, `louther` and `c eRoy`, and none is a filename word, so
+`!;ennick`, `E>or1an`, `olwyn` and `c eVarn`, and none is a filename word, so
 none is ever tested.
 
 A profile option rather than a hard-wired rule, so any collection where the
 filename is supposed to reflect the contents can switch it on. The note reads:
-*"the file is named 'Brandon Lythoe' but the document does not contain
-'Lythoe'"*.
+*"the file is named 'Alden Larkspar' but the document does not contain
+'Larkspar'"*.
 
 ## What the Alumni Obituary template contains
 
@@ -170,11 +170,11 @@ Only one row of that table needs anything new. The rest is configuration.
 
 ## Deliberately not extracted
 
-- **Cause of death.** The sample record says *"heart attack"*; these documents
+- **Cause of death.** The sample record says *"pneumonia"*; these documents
   say *"natural causes"* and *"after a four-year…"*. Too varied to read
   honestly.
-- **Birthplace.** Attempted, and the captures were `"Idaho Falls, a son to
-  Jabez Dean R"` and `"Wilshire Hospital, in Hollywood Ca"`. Wrong, and
+- **Birthplace.** Attempted, and the captures were `"Elmsgate, a son to
+  Wendell Vance R"` and `"Marchmont Hospital, in Pasadena Ca"`. Wrong, and
   plausibly wrong, which is worse.
 - **Residence and the Ricks College connection.** Both extract at 8/10 and
   would need two further source kinds (`textNear`, `presence`). Dropped on the
@@ -201,12 +201,12 @@ had to work. `filenameWordsInText` writes its own note.
 
 Against the operator's ten obituaries:
 
-- **An independent cross-check exists.** Three files (Clyde, Eric, Ronald) have
-  a numeric `Approx Date of Death` that survived OCR. The extracted date must
-  equal it: `01/09/2024`, `01/06/2024`, `01/03/2024`.
-- Five more whose header was mangled — `01104/2024`, `01111/`, `01/0`, `0:1`,
+- **An independent cross-check exists.** Three files (Marcus, Gideon, Thaddeus)
+  have a numeric `Approx Date of Death` that survived OCR. The extracted date
+  must equal it: `03/05/2019`, `10/02/2019`, `07/03/2019`.
+- Five more whose header was mangled — `09108/2019`, `02111/`, `06/2`, `0:1`,
   `0` — must still yield a date from the prose.
-- **Brandon Lythoe must come out blank and flagged.** His obituary says only
+- **Alden Larkspar must come out blank and flagged.** His obituary says only
   "the early hours of Saturday morning" and states no date anywhere. A value
   here would mean the rules are guessing.
 - The name check must flag exactly one row.
@@ -220,16 +220,16 @@ what made this feature worth building rather than buying better OCR software —
 the OCR was fine, the wrong part of the page was being read.
 
 One measurement error was made and corrected along the way: a first pass
-reported Dean Ritchie's death date as `January 19, 2024`, his funeral. His
-actual death date is written `January 11 , 2024`, with a space before the
+reported Hollis Bracken's death date as `February 19, 2019`, his funeral. His
+actual death date is written `February 11 , 2019`, with a space before the
 comma, and the pattern missed it. **The date pattern must tolerate whitespace
 around punctuation**, and that is a requirement, not a detail.
 
 ## Out of scope
 
 - A code-level plugin per collection. Rejected above.
-- The description synthesis of the existing records — *"Died November 9, 1993:
-  Afton, Idaho, heart attack; Born August 20, 1933; Attended Ricks College"* —
+- The description synthesis of the existing records — *"Died March 2, 1991:
+  Willow Bend, Idaho, pneumonia; Born June 5, 1928; Attended Ricks College"* —
   which needs facts this design deliberately does not extract. That remains a
   tier 4 case; see the description-extraction design.
 - OCR. Done outside this tool, decided 2026-08-07.

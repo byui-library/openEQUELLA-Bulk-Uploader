@@ -43,12 +43,12 @@ describe('shipped templates', () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
-      'Clyde Williams Obituary.pdf',
-      doc('Clyde L Williams graduated this world on January 9, 2024. He was born April 3, 1935.'),
+      'Marcus Fennel Obituary.pdf',
+      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born July 22, 1938.'),
     );
-    expect(row.cells[DEATH]).toBe('2024-01-09');
-    expect(row.cells['MWDL/description']).toBe('Died 2024-01-09; Born 1935-04-03');
-    expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Clyde Williams');
+    expect(row.cells[DEATH]).toBe('2019-03-05');
+    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05; Born 1938-07-22');
+    expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Marcus Fennel');
     expect(row.cells['MWDL/genres/genre']).toBe('Alumni Obituary');
   });
 
@@ -56,10 +56,10 @@ describe('shipped templates', () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
-      'Clyde Williams Obituary.pdf',
-      doc('Clyde L Williams died January 9, 2024. He continued his education at Ricks College.'),
+      'Marcus Fennel Obituary.pdf',
+      doc('Marcus T Fennel died March 5, 2019. He continued his education at Ricks College.'),
     );
-    expect(row.cells['MWDL/description']).toBe('Died 2024-01-09; Attended Ricks College');
+    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05; Attended Ricks College');
   });
 
   /**
@@ -72,35 +72,35 @@ describe('shipped templates', () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
-      'Clyde Williams Obituary.pdf',
-      doc('He died January 9, 2024, was born April 3, 1935, and attended Ricks College.'),
+      'Marcus Fennel Obituary.pdf',
+      doc('He died March 5, 2019, was born July 22, 1938, and attended Ricks College.'),
     );
-    expect(row.cells['MWDL/description']).toContain('Born 1935-04-03');
+    expect(row.cells['MWDL/description']).toContain('Born 1938-07-22');
     expect(row.cells['MWDL/coverage']).toBeUndefined();
     expect(row.cells['MWDL/relation']).toBeUndefined();
   });
 
   // Each clause disappears on its own, so a partial document never yields
-  // "Died 2024-01-09; ; Attended Ricks College".
+  // "Died 2019-03-05; ; Attended Ricks College".
   it('drops only the parts it could not find', async () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
-      'Dennis Birch Obituary.pdf',
-      doc('Dennis Jack Birch January 14, 1953 January 1, 2024. He lived in Rexburg.'),
+      'Corwin Teasel Obituary.pdf',
+      doc('Corwin Ames Teasel August 14, 1951 May 1, 2019. He lived in Elmsgate.'),
     );
-    expect(row.cells['MWDL/description']).toBe('Died 2024-01-01; Born 1953-01-14');
+    expect(row.cells['MWDL/description']).toBe('Died 2019-05-01; Born 1951-08-14');
   });
 
   it('leaves the date blank rather than guessing when none is stated', async () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
-      'Brandon Lythoe Obituary.pdf',
-      doc('Brandon Lythgoe passed away peacefully in the early hours of Saturday morning.'),
+      'Alden Larkspar Obituary.pdf',
+      doc('Alden Larkspur passed away peacefully in the early hours of Saturday morning.'),
     );
     expect(row.cells[DEATH]).toBe('');
-    expect(row.notes.join(' ')).toContain('Lythoe');
+    expect(row.notes.join(' ')).toContain('Larkspar');
     expect(row.notes.join(' ')).toContain('alumni_obituary/death_date');
   });
 

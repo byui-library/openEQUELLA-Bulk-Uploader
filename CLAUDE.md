@@ -311,6 +311,18 @@ shape, never as a value the code may assume.
 - **The MCP layer never streams file bytes.** It plans, validates, launches, and
   monitors. Uploading belongs to the runner process.
 - Never commit real spreadsheets, `.env` files, or media.
+- **Every person in a test, a fixture, a comment or a doc is invented.** The
+  jury data uses botanical surnames (Aster, Birch, Cedar, Juniper, Rowan, Thorn,
+  Wren); the alumni-obituary examples use Larkspar/Larkspur, Fennel, Linden,
+  Bracken, Teasel, Sorrel, Alder, Clover, Willow and Hawthorn. **They are
+  pseudonyms and must stay that way, and so must the dates, towns and causes of
+  death beside them** — a real death date under an invented name still
+  identifies someone. This rule is written here because it was broken once: the
+  real names of ten deceased people, with birth and death dates, towns and
+  causes of death, reached the tests, the README, the specs and the source
+  comments during the obituary work and had to be scrubbed before the repository
+  could be opened. Working from a real batch is fine; typing what you saw into
+  the repository is not.
 - **Nothing reachable from `src/desktop/ui/` may import `node:*` or `electron`.**
   The renderer is sandboxed. Such an import does not fail loudly — it kills the
   whole module graph and the window renders blank, with nothing on the terminal.

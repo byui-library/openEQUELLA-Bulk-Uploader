@@ -30,12 +30,12 @@ function containsWholeWord(haystack: string, word: string): boolean {
 /**
  * Words in the filename that the document does not contain.
  *
- * A real file was named "Brandon Lythoe Obituary.pdf" while the obituary said
- * "Lythgoe" throughout. The filename becomes the item's permanent title, so
+ * A real file was named "Alden Larkspar Obituary.pdf" while the obituary said
+ * "Larkspur" throughout. The filename becomes the item's permanent title, so
  * that misspelling would have been catalogued and never noticed.
  *
- * WHOLE WORDS, not the whole name. "Clyde Williams" never appears contiguously
- * in its own document -- the text reads "Clyde L Williams" -- so requiring the
+ * WHOLE WORDS, not the whole name. "Marcus Fennel" never appears contiguously
+ * in its own document -- the text reads "Marcus T Fennel" -- so requiring the
  * full name would flag nine of ten real files. Checking each word separately
  * flagged exactly one, the one that deserved it.
  *
@@ -43,7 +43,7 @@ function containsWholeWord(haystack: string, word: string): boolean {
  * found "Ann" inside "Anniversary" and reported nothing.
  *
  * It survives OCR damage for the same reason: middle names came out as
- * `!;eland`, `E>av1d` and `louther`, and none is a filename word, so none is
+ * `!;ennick`, `E>or1an` and `olwyn`, and none is a filename word, so none is
  * ever tested.
  *
  * `ignore` is supplied by the profile rather than known here -- "Obituary" is

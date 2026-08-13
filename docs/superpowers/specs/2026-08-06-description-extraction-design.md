@@ -166,8 +166,8 @@ Two things were learned in the building that the design did not anticipate:
 A batch of ten alumni obituaries arrived as PDFs with **no text layer at all**:
 
 ```text
-0 chars  textLayer=false  Brandon Lythoe Obituary.pdf
-0 chars  textLayer=false  Clyde Williams Obituary.pdf
+0 chars  textLayer=false  Alden Larkspar Obituary.pdf
+0 chars  textLayer=false  Marcus Fennel Obituary.pdf
 …all ten identical
 ```
 
@@ -194,8 +194,8 @@ layer is an ordinary input and needs no special handling.
 One thing OCR alone will NOT solve. The target description in these records is
 a synthesis, not a quotation:
 
-> Died November 9, 1993: Afton, Idaho, heart attack; Born August 20, 1933;
-> Attended Ricks College; Obituary also appeared in the Post Register 11/11/1993
+> Died March 2, 1991: Willow Bend, Idaho, pneumonia; Born June 5, 1928;
+> Attended Ricks College; Obituary also appeared in the Post Register 03/04/1991
 
 No section-finding produces that from a clipping, however clean the text. It is
 specific facts pulled out and rewritten in a house style — a tier 4 case, and a

@@ -63,7 +63,7 @@ import { composeValue } from '../../src/core/extract/compose.js';
  */
 describe('composeValue', () => {
   it('substitutes a value', () => {
-    expect(composeValue('Died {death}', { death: 'January 9, 2024' })).toBe('Died January 9, 2024');
+    expect(composeValue('Died {death}', { death: 'March 5, 2019' })).toBe('Died March 5, 2019');
   });
 
   it('substitutes several', () => {
@@ -140,9 +140,9 @@ Expected: FAIL, cannot resolve `../../src/core/extract/compose.js`. You MUST see
  *
  * - `[...]` is an OPTIONAL GROUP. If any placeholder inside it is empty, the
  *   whole group goes, punctuation included -- so a missing residence cannot
- *   leave `Died January 9, 2024: `.
+ *   leave `Died March 5, 2019: `.
  * - A `;`-separated CLAUSE whose placeholders are all empty is dropped
- *   entirely, so the output is never `Died January 9, 2024; ;`.
+ *   entirely, so the output is never `Died March 5, 2019; ;`.
  *
  * An unknown name is treated as empty rather than printed. A template naming a
  * column that does not exist is rejected when the profile loads (profile.ts),
@@ -201,9 +201,9 @@ git commit -m "feat(extract): compose one field from others"
 - Create: `src/core/extract/dates.ts`
 - Create: `tests/extract/dates.test.ts`
 
-Context you need: the obituaries state dates two ways. In prose — *"passed away on January 4, 2024"* — and as a bare pair after the name — *"Eric louther Scott June 19, 1957 - January 6, 2024"*. Four of ten use the second form with no phrase at all.
+Context you need: the obituaries state dates two ways. In prose — *"passed away on September 8, 2019"* — and as a bare pair after the name — *"Gideon olwyn Alder April 5, 1954 - October 2, 2019"*. Four of ten use the second form with no phrase at all.
 
-**The pattern must tolerate whitespace around punctuation.** Dean Ritchie's death date reads `January 11 , 2024`, with a space before the comma. A first pass missed it and reported his *funeral* date instead. That is a requirement, not a detail.
+**The pattern must tolerate whitespace around punctuation.** Hollis Bracken's death date reads `February 11 , 2019`, with a space before the comma. A first pass missed it and reported his *funeral* date instead. That is a requirement, not a detail.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -214,14 +214,14 @@ import { dateNear, datePair } from '../../src/core/extract/dates.js';
 
 describe('dateNear', () => {
   it('finds a date after the phrase', () => {
-    expect(dateNear('He passed away on January 4, 2024, at home.', ['passed away'])).toBe(
-      'January 4, 2024',
+    expect(dateNear('He passed away on September 8, 2019, at home.', ['passed away'])).toBe(
+      'September 8, 2019',
     );
   });
 
   it('tries each phrase in turn', () => {
-    const t = 'Clyde graduated this world on January 9, 2024.';
-    expect(dateNear(t, ['passed away', 'graduated this world'])).toBe('January 9, 2024');
+    const t = 'Marcus graduated this world on March 5, 2019.';
+    expect(dateNear(t, ['passed away', 'graduated this world'])).toBe('March 5, 2019');
   });
 
   /**
@@ -230,15 +230,15 @@ describe('dateNear', () => {
    * date of death.
    */
   it('tolerates a space before the comma', () => {
-    expect(dateNear('died Thursday, January 11 , 2024 at home', ['died'])).toBe('January 11 , 2024');
+    expect(dateNear('died Thursday, February 11 , 2019 at home', ['died'])).toBe('February 11 , 2019');
   });
 
   it('tolerates a missing comma', () => {
-    expect(dateNear('died January 11 2024', ['died'])).toBe('January 11 2024');
+    expect(dateNear('died February 11 2019', ['died'])).toBe('February 11 2019');
   });
 
   it('ignores case in the phrase', () => {
-    expect(dateNear('DIED on May 5, 1955', ['died'])).toBe('May 5, 1955');
+    expect(dateNear('DIED on August 5, 1952', ['died'])).toBe('August 5, 1952');
   });
 
   /**
@@ -247,13 +247,13 @@ describe('dateNear', () => {
    * "returned home to his Heavenly Father on", at 39 characters.
    */
   it('does not reach a date far beyond the phrase', () => {
-    const far = 'died' + ' '.repeat(120) + 'January 4, 2024';
+    const far = 'died' + ' '.repeat(120) + 'September 8, 2019';
     expect(dateNear(far, ['died'])).toBe('');
   });
 
   it('reaches a date within the window', () => {
-    const near = 'died' + ' '.repeat(40) + 'January 4, 2024';
-    expect(dateNear(near, ['died'])).toBe('January 4, 2024');
+    const near = 'died' + ' '.repeat(40) + 'September 8, 2019';
+    expect(dateNear(near, ['died'])).toBe('September 8, 2019');
   });
 
   it('returns nothing when no phrase appears', () => {
@@ -265,7 +265,7 @@ describe('dateNear', () => {
   });
 
   it('looks only forwards, never behind the phrase', () => {
-    expect(dateNear('January 4, 2024 was the year he died', ['died'])).toBe('');
+    expect(dateNear('September 8, 2019 was the year he died', ['died'])).toBe('');
   });
 
   /**
@@ -274,31 +274,31 @@ describe('dateNear', () => {
    * the answer sits further down.
    */
   it('keeps looking past an occurrence with no date after it', () => {
-    const t = 'Obituary and Death Notice. He died at home. He died on January 4, 2024.';
-    expect(dateNear(t, ['died'])).toBe('January 4, 2024');
+    const t = 'Obituary and Death Notice. He died at home. He died on September 8, 2019.';
+    expect(dateNear(t, ['died'])).toBe('September 8, 2019');
   });
 });
 
 describe('datePair', () => {
-  const line = 'Eric louther Scott June 19, 1957 - January 6, 2024 St. George, Utah';
+  const line = 'Gideon olwyn Alder April 5, 1954 - October 2, 2019 Wheatfield, Utah';
 
   it('takes the second date of a dash pair', () => {
-    expect(datePair(line, 'second')).toBe('January 6, 2024');
+    expect(datePair(line, 'second')).toBe('October 2, 2019');
   });
 
   it('takes the first date of a dash pair', () => {
-    expect(datePair(line, 'first')).toBe('June 19, 1957');
+    expect(datePair(line, 'first')).toBe('April 5, 1954');
   });
 
   // One real file separates them with nothing but a space.
   it('accepts a pair separated by only a space', () => {
-    expect(datePair('Dennis Jack Birch January 14, 1953 January 1, 2024 Dennis', 'second')).toBe(
-      'January 1, 2024',
+    expect(datePair('Corwin Ames Teasel August 14, 1951 May 1, 2019 Corwin', 'second')).toBe(
+      'May 1, 2019',
     );
   });
 
   it('accepts the punctuation OCR leaves behind', () => {
-    expect(datePair('Name October 20, 1943 ~ - January 3, 2024', 'second')).toBe('January 3, 2024');
+    expect(datePair('Name December 8, 1947 ~ - July 3, 2019', 'second')).toBe('July 3, 2019');
   });
 
   /**
@@ -306,12 +306,12 @@ describe('datePair', () => {
    * and an unrelated later date would be read as a name-and-dates line.
    */
   it('is not fooled by two dates far apart', () => {
-    const apart = 'Born March 4, 1950 and after a long life in Missouri he died January 2, 2024';
+    const apart = 'Born October 12, 1946 and after a long life in Missouri he died April 9, 2018';
     expect(datePair(apart, 'second')).toBe('');
   });
 
   it('returns nothing when there is only one date', () => {
-    expect(datePair('Born March 4, 1950 and nothing else', 'second')).toBe('');
+    expect(datePair('Born October 12, 1946 and nothing else', 'second')).toBe('');
   });
 
   it('returns nothing when there are no dates', () => {
@@ -319,8 +319,8 @@ describe('datePair', () => {
   });
 
   it('takes the FIRST pair when a document holds several', () => {
-    const two = 'A June 19, 1957 - January 6, 2024 then B March 4, 1950 - January 2, 2024';
-    expect(datePair(two, 'second')).toBe('January 6, 2024');
+    const two = 'A April 5, 1954 - October 2, 2019 then B October 12, 1946 - April 9, 2018';
+    expect(datePair(two, 'second')).toBe('October 2, 2019');
   });
 });
 ```
@@ -336,16 +336,16 @@ Expected: FAIL, cannot resolve `../../src/core/extract/dates.js`.
 // src/core/extract/dates.ts
 
 /**
- * A date written in words: "January 9, 2024".
+ * A date written in words: "March 5, 2019".
  *
  * Deliberately tolerant of whitespace around the comma, and of the comma being
- * absent. OCR of a scanned newspaper clipping produced `January 11 , 2024`,
+ * absent. OCR of a scanned newspaper clipping produced `February 11 , 2019`,
  * and the first version of this pattern missed it -- which made the tool
  * report that man's FUNERAL date as his date of death.
  *
  * Spelled-out dates are used rather than the numeric ones these documents also
  * carry, because letters survive OCR far better than digits: the same batch
- * yielded `04[031.193:5` for 3 April 1935 and `0:1` for a death date, while
+ * yielded `07[221.193:8` for 22 July 1938 and `0:1` for a death date, while
  * every spelled date came through clean. Reading the prose took recovery from
  * 3 of 10 files to 9 of 10.
  */
@@ -368,7 +368,7 @@ const PAIR_GAP = 12;
  * The first date following any of `phrases`, within `WINDOW` characters.
  *
  * Phrases are tried in order, so the profile's ordering is its preference.
- * Looks only forwards: "January 4, 2024 was the year he died" must not yield a
+ * Looks only forwards: "September 8, 2019 was the year he died" must not yield a
  * date for the phrase "died".
  */
 export function dateNear(text: string, phrases: readonly string[]): string {
@@ -388,7 +388,7 @@ export function dateNear(text: string, phrases: readonly string[]): string {
 }
 
 /**
- * One half of a name-and-dates line: `June 19, 1957 - January 6, 2024`.
+ * One half of a name-and-dates line: `April 5, 1954 - October 2, 2019`.
  *
  * Four of ten real obituaries state the dates this way, with no phrase at all
  * to anchor on, so `dateNear` cannot see them. The two are combined by the
@@ -435,53 +435,53 @@ import { describe, it, expect } from 'vitest';
 import { missingFilenameWords } from '../../src/core/extract/names.js';
 
 /**
- * A real file was named "Brandon Lythoe Obituary.pdf" while the document said
- * "Lythgoe" throughout. Since the filename becomes the item's permanent title,
+ * A real file was named "Alden Larkspar Obituary.pdf" while the document said
+ * "Larkspur" throughout. Since the filename becomes the item's permanent title,
  * that misspelling would have been catalogued.
  */
 describe('missingFilenameWords', () => {
   it('reports a word the document does not contain', () => {
-    expect(missingFilenameWords('Brandon Lythoe.pdf', 'Brandon Lythgoe passed away', [])).toEqual([
-      'Lythoe',
+    expect(missingFilenameWords('Alden Larkspar.pdf', 'Alden Larkspur passed away', [])).toEqual([
+      'Larkspar',
     ]);
   });
 
   it('reports nothing when every word appears', () => {
-    expect(missingFilenameWords('Clyde Williams.pdf', 'Clyde L Williams was born', [])).toEqual([]);
+    expect(missingFilenameWords('Marcus Fennel.pdf', 'Marcus T Fennel was born', [])).toEqual([]);
   });
 
   /**
-   * Whole words, not the whole name. "Clyde Williams" never appears
-   * contiguously -- the document reads "Clyde L Williams" -- so matching the
+   * Whole words, not the whole name. "Marcus Fennel" never appears
+   * contiguously -- the document reads "Marcus T Fennel" -- so matching the
    * full name would flag nine rows out of ten.
    */
   it('does not require the words to be adjacent', () => {
-    expect(missingFilenameWords('Mary Allred.pdf', 'Mary Ellen Swann Allred', [])).toEqual([]);
+    expect(missingFilenameWords('Rosalind Willow.pdf', 'Rosalind Maren Vess Willow', [])).toEqual([]);
   });
 
   it('ignores case', () => {
-    expect(missingFilenameWords('DEAN RITCHIE.pdf', 'dean ritchie was born', [])).toEqual([]);
+    expect(missingFilenameWords('HOLLIS BRACKEN.pdf', 'hollis bracken was born', [])).toEqual([]);
   });
 
   it('ignores words the caller asks it to', () => {
-    expect(missingFilenameWords('Eric Scott Obituary.pdf', 'Eric Scott died', ['Obituary'])).toEqual(
+    expect(missingFilenameWords('Gideon Alder Obituary.pdf', 'Gideon Alder died', ['Obituary'])).toEqual(
       [],
     );
   });
 
   it('ignores those words case-insensitively too', () => {
-    expect(missingFilenameWords('Eric Scott OBITUARY.pdf', 'Eric Scott died', ['obituary'])).toEqual(
+    expect(missingFilenameWords('Gideon Alder OBITUARY.pdf', 'Gideon Alder died', ['obituary'])).toEqual(
       [],
     );
   });
 
   // Initials and stray single characters carry no signal and appear everywhere.
   it('ignores one-character words', () => {
-    expect(missingFilenameWords('Clyde L Williams.pdf', 'Clyde Williams', [])).toEqual([]);
+    expect(missingFilenameWords('Marcus T Fennel.pdf', 'Marcus Fennel', [])).toEqual([]);
   });
 
   it('drops the extension before checking', () => {
-    expect(missingFilenameWords('Eric Scott.pdf', 'Eric Scott died', [])).toEqual([]);
+    expect(missingFilenameWords('Gideon Alder.pdf', 'Gideon Alder died', [])).toEqual([]);
   });
 
   it('reports several missing words', () => {
@@ -512,17 +512,17 @@ Expected: FAIL, cannot resolve the module.
 /**
  * Words in the filename that the document does not contain.
  *
- * A real file was named "Brandon Lythoe Obituary.pdf" while the obituary said
- * "Lythgoe" throughout. The filename becomes the item's permanent title, so
+ * A real file was named "Alden Larkspar Obituary.pdf" while the obituary said
+ * "Larkspur" throughout. The filename becomes the item's permanent title, so
  * that misspelling would have been catalogued and never noticed.
  *
- * WHOLE WORDS, not the whole name. "Clyde Williams" never appears contiguously
- * in its own document -- the text reads "Clyde L Williams" -- so requiring the
+ * WHOLE WORDS, not the whole name. "Marcus Fennel" never appears contiguously
+ * in its own document -- the text reads "Marcus T Fennel" -- so requiring the
  * full name would flag nine of ten real files. Checking each word separately
  * flagged exactly one, the one that deserved it.
  *
  * It survives OCR damage for the same reason: middle names came out as
- * `!;eland`, `E>av1d` and `louther`, and none is a filename word, so none is
+ * `!;ennick`, `E>or1an` and `olwyn`, and none is a filename word, so none is
  * ever tested.
  *
  * `ignore` is supplied by the profile rather than known here -- "Obituary" is
@@ -672,11 +672,11 @@ In `src/core/extract/types.ts`, add to the `Source` union, before `{ filename: t
 ```typescript
   /**
    * The first date written in words following any of these phrases.
-   * "passed away on January 4, 2024".
+   * "passed away on September 8, 2019".
    */
   | { dateNear: string[] }
   /**
-   * One half of a name-and-dates line: `June 19, 1957 - January 6, 2024`.
+   * One half of a name-and-dates line: `April 5, 1954 - October 2, 2019`.
    * Four of ten real obituaries state the dates this way, with no phrase to
    * anchor on.
    */
@@ -824,14 +824,14 @@ describe('buildRow with templated sources', () => {
   };
 
   it('reads a death date from prose and normalises it', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on January 4, 2024 at home.'));
-    expect(row.cells['MWDL/date']).toBe('2024-01-04');
+    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on September 8, 2019 at home.'));
+    expect(row.cells['MWDL/date']).toBe('2019-09-08');
     expect(row.sources['MWDL/date']).toBe('dateNear');
   });
 
   it('falls back to the dash pair when no phrase appears', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('Eric Scott June 19, 1957 - January 6, 2024 Utah'));
-    expect(row.cells['MWDL/date']).toBe('2024-01-06');
+    const row = buildRow(obitProfile, 'a.pdf', doc('Gideon Alder April 5, 1954 - October 2, 2019 Utah'));
+    expect(row.cells['MWDL/date']).toBe('2019-10-02');
     expect(row.sources['MWDL/date']).toBe('datePair');
   });
 
@@ -840,8 +840,8 @@ describe('buildRow with templated sources', () => {
    * its transform -- not the raw text it was read from.
    */
   it('composes from the transformed value of another column', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('He died January 4, 2024.'));
-    expect(row.cells['MWDL/description']).toBe('Died 2024-01-04');
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died September 8, 2019.'));
+    expect(row.cells['MWDL/description']).toBe('Died 2019-09-08');
     expect(row.sources['MWDL/description']).toBe('compose');
   });
 
@@ -856,8 +856,8 @@ describe('buildRow with templated sources', () => {
       ...obitProfile,
       columns: [obitProfile.columns[2]!, obitProfile.columns[1]!, obitProfile.columns[0]!],
     };
-    expect(buildRow(reversed, 'a.pdf', doc('died January 4, 2024')).cells['MWDL/description']).toBe(
-      'Died 2024-01-04',
+    expect(buildRow(reversed, 'a.pdf', doc('died September 8, 2019')).cells['MWDL/description']).toBe(
+      'Died 2019-09-08',
     );
   });
 });
@@ -872,18 +872,18 @@ describe('buildRow and the filename check', () => {
   const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
 
   it('flags a filename word the document does not contain', () => {
-    const row = buildRow(withCheck, 'Brandon Lythoe Obituary.pdf', doc('Brandon Lythgoe passed away'));
-    expect(row.notes.join(' ')).toContain('Lythoe');
+    const row = buildRow(withCheck, 'Alden Larkspar Obituary.pdf', doc('Alden Larkspur passed away'));
+    expect(row.notes.join(' ')).toContain('Larkspar');
   });
 
   it('says nothing when every word appears', () => {
-    const row = buildRow(withCheck, 'Clyde Williams Obituary.pdf', doc('Clyde L Williams was born'));
+    const row = buildRow(withCheck, 'Marcus Fennel Obituary.pdf', doc('Marcus T Fennel was born'));
     expect(row.notes).toEqual([]);
   });
 
   it('does not run the check when the profile does not ask for it', () => {
     const noCheck: Profile = { ...withCheck, checks: undefined };
-    expect(buildRow(noCheck, 'Brandon Lythoe.pdf', doc('Brandon Lythgoe')).notes).toEqual([]);
+    expect(buildRow(noCheck, 'Alden Larkspar.pdf', doc('Alden Larkspur')).notes).toEqual([]);
   });
 });
 ```
@@ -1079,14 +1079,14 @@ describe('shipped templates', () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
-      'Clyde Williams Obituary.pdf',
-      doc('Clyde L Williams graduated this world on January 9, 2024. He was born April 3, 1935.'),
+      'Marcus Fennel Obituary.pdf',
+      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born July 22, 1938.'),
     );
     expect(
       row.cells['BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date'],
-    ).toBe('2024-01-09');
-    expect(row.cells['MWDL/description']).toBe('Died 2024-01-09');
-    expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Clyde Williams');
+    ).toBe('2019-03-05');
+    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05');
+    expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Marcus Fennel');
     expect(row.cells['MWDL/genres/genre']).toBe('Alumni Obituary');
   });
 
@@ -1094,13 +1094,13 @@ describe('shipped templates', () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
-      'Brandon Lythoe Obituary.pdf',
-      doc('Brandon Lythgoe passed away peacefully in the early hours of Saturday morning.'),
+      'Alden Larkspar Obituary.pdf',
+      doc('Alden Larkspur passed away peacefully in the early hours of Saturday morning.'),
     );
     expect(
       row.cells['BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date'],
     ).toBe('');
-    expect(row.notes.join(' ')).toContain('Lythoe');
+    expect(row.notes.join(' ')).toContain('Larkspar');
   });
 
   it('rejects an unknown template id rather than returning a broken profile', async () => {
@@ -1238,14 +1238,14 @@ Run: `npx tsx verify.tmp.mts` then read `verify.out.txt`.
 All of these must hold. If any does not, **fix the code, not the expectation**:
 
 1. **Death date found on 9 of 10.**
-2. **Brandon Lythoe has none**, and is not guessed. His obituary states only "the early hours of Saturday morning".
+2. **Alden Larkspar has none**, and is not guessed. His obituary states only "the early hours of Saturday morning".
 3. **The three files whose numeric header survived OCR agree with it** — this is an independent cross-check, not a restatement of the same extraction:
-   - Clyde Williams → `2024-01-09` (header said `01/09/2024`)
-   - Eric Scott → `2024-01-06` (header said `01/06/2024`)
-   - Ronald Gerber → `2024-01-03` (header said `01/03/2024`)
-4. **Dean Ritchie → `2024-01-11`, not `2024-01-19`.** The 19th is his funeral. His death date is written `January 11 , 2024` with a space before the comma, and an earlier pattern missed it and reported the funeral instead.
-5. **Exactly one row carries a filename note**, Brandon's, naming `Lythoe`.
-6. `_source` reads `dateNear` for the prose files and `datePair` for Eric, Laverne, Ronald and Dennis.
+   - Marcus Fennel → `2019-03-05` (header said `03/05/2019`)
+   - Gideon Alder → `2019-10-02` (header said `10/02/2019`)
+   - Thaddeus Hawthorn → `2019-07-03` (header said `07/03/2019`)
+4. **Hollis Bracken → `2019-02-11`, not `2019-02-19`.** The 19th is his funeral. His death date is written `February 11 , 2019` with a space before the comma, and an earlier pattern missed it and reported the funeral instead.
+5. **Exactly one row carries a filename note**, Alden's, naming `Larkspar`.
+6. `_source` reads `dateNear` for the prose files and `datePair` for Gideon, Delphine, Thaddeus and Corwin.
 
 - [ ] **Step 3: Delete the script and commit the numbers**
 

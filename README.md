@@ -668,7 +668,7 @@ blind to exactly the duplicates it exists to catch.
 ### Collection templates
 
 Different collections are written differently. An alumni obituary keeps its
-death date in a sentence — *"passed away on January 4, 2024"* — and its genre,
+death date in a sentence — *"passed away on September 8, 2019"* — and its genre,
 subjects and rights are identical on every record. A **template** carries that
 knowledge.
 
@@ -684,7 +684,7 @@ the code knows what an obituary is:
 | In a profile | Reads |
 | --- | --- |
 | `{ "dateNear": ["passed away", "died"] }` | the first date in words after any phrase, within 80 characters |
-| `{ "datePair": "second" }` | one half of `June 19, 1957 - January 6, 2024` |
+| `{ "datePair": "second" }` | one half of `April 5, 1954 - October 2, 2019` |
 | `{ "compose": "Died {death_date}" }` | other columns' finished values |
 | `"checks": { "filenameWordsInText": { "ignore": ["Obituary"] } }` | flags a row whose filename the document contradicts |
 
@@ -701,21 +701,21 @@ empty is dropped whole — so a missing piece never yields `Died ; Born`.
 **Measured on ten real scanned obituaries:** a death date on 9 of 10, agreeing
 in all three cases where the document's own numeric header survived OCR. The
 tenth states no date anywhere and comes out blank rather than guessed. One row
-was flagged, correctly: the file was named `Brandon Lythoe` while the obituary
-said *Lythgoe* throughout — a misspelling that would otherwise have become the
+was flagged, correctly: the file was named `Alden Larkspar` while the obituary
+said *Larkspur* throughout — a misspelling that would otherwise have become the
 item's permanent title.
 
 **Read the prose, not the numbers.** These documents state the death date twice,
 once in a numeric header and once in a sentence. OCR destroyed the header on
-seven of ten — `01104/2024`, `0:1`, `0` — while every spelled-out date came
+seven of ten — `09108/2019`, `0:1`, `0` — while every spelled-out date came
 through clean, because letters carry far more redundancy than digits. Reading
 the prose took recovery from 3 of 10 to 9 of 10 without changing anything about
 the scanning.
 
 **What the Alumni Obituary template deliberately does not extract:** cause of
 death, birthplace, residence, and the Ricks College connection. Cause and
-birthplace cannot be read honestly — a trial capture produced *"Wilshire
-Hospital, in Hollywood Ca"* as a birthplace. Residence and the Ricks mention
+birthplace cannot be read honestly — a trial capture produced *"Marchmont
+Hospital, in Pasadena Ca"* as a birthplace. Residence and the Ricks mention
 are both readable at 8 of 10 but were dropped as not worth the build: the PDF
 is attached, and a reader can see them. **A wrong fact in a permanent catalogue
 record is worse than an absent one.**

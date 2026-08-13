@@ -57,11 +57,11 @@ export type Source =
   | { filenameStem: true }
   /**
    * The first date written in words following any of these phrases.
-   * "passed away on January 4, 2024".
+   * "passed away on September 8, 2019".
    */
   | { dateNear: string[] }
   /**
-   * One half of a name-and-dates line: `June 19, 1957 - January 6, 2024`.
+   * One half of a name-and-dates line: `April 5, 1954 - October 2, 2019`.
    * Four of ten real obituaries state the dates this way, with no phrase to
    * anchor on.
    */
