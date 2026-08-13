@@ -4,7 +4,12 @@ import type { ItemState } from '../../core/types.js';
 import { initialScreen, nextScreen, settingsReturnTo, type Screen } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
-import { renderSetup, type SetupFields, type SetupTextField } from './screens/setup.js';
+import {
+  attachmentPathToFill,
+  renderSetup,
+  type SetupFields,
+  type SetupTextField,
+} from './screens/setup.js';
 // `import type`: secrets.ts reaches `node:fs` and this module runs in the
 // sandboxed renderer, where a runtime import of it would blank the window.
 import type { Settings, SettingsAuthMode } from '../secrets.js';
@@ -85,6 +90,14 @@ interface AppState extends BatchState {
   // checked". Fetched through window.oeq.fetchSchema, which also leaves the
   // schema in the on-disk cache extraction reads offline (ipc.ts).
   setupSchemaPaths: string[] | null;
+  // Whether the attachment path in the form was put there by this tool rather
+  // than typed, so the screen can say so (screens/setup.ts's `filled` verdict).
+  //
+  // IT IS ALSO THE ONLY RECORD THAT A FILL HAS HAPPENED. Nothing else can tell
+  // "filled and then cleared" from "never filled": both are an empty box beside
+  // a schema with one candidate. Set only by handleSetupCollectionChange, and
+  // cleared the moment the operator touches the field.
+  setupAttachmentPathFilled: boolean;
   setupSaving: boolean;
   setupError: string | null;
   // Whether credentials written by an older version of the store were found
@@ -138,8 +151,10 @@ function blankSetupFields(): SetupFields {
     redirectUri: '',
     username: '',
     password: '',
-    // Blank means "write no such field", which is right for most schemas and
-    // is a choice, not an unfilled box. It is never guessed at.
+    // Blank means "write no such field" -- a choice, not an unfilled box, and
+    // never guessed at from nothing. It is filled in only once a collection has
+    // been chosen and its schema turns out to declare exactly one such field
+    // (handleSetupCollectionChange), which is evidence rather than a guess.
     attachmentUuidPath: '',
     collectionUuid: '',
     // A new site is assumed LIVE until the operator says otherwise: being
@@ -167,6 +182,7 @@ function initialState(): AppState {
     setupCollectionsError: null,
     setupCollectionsWithheld: false,
     setupSchemaPaths: null,
+    setupAttachmentPathFilled: false,
     setupSaving: false,
     setupError: null,
     credentialsDropped: false,
@@ -258,6 +274,7 @@ function render(): void {
         collectionsError: state.setupCollectionsError,
         collectionsWithheld: state.setupCollectionsWithheld,
         schemaPaths: state.setupSchemaPaths,
+        attachmentPathFilled: state.setupAttachmentPathFilled,
         error: state.setupError,
         saving: state.setupSaving,
         // Null on first run and after "Change credentials…", where there is
@@ -447,6 +464,9 @@ function seedSetupForm(id: string): void {
   state.setupCollections = null;
   state.setupCollectionsError = null;
   state.setupSchemaPaths = null;
+  // The path below is about to be seeded from this site's own saved settings,
+  // which this tool did not fill in on this pass -- it read it back off disk.
+  state.setupAttachmentPathFilled = false;
   const selected = instanceById(id);
   state.setupFields = {
     ...blankSetupFields(),
@@ -528,10 +548,26 @@ async function refreshSetupCollections(): Promise<void> {
  * A schema that cannot be read leaves `setupSchemaPaths` null, which the
  * screen reports as "not checked" -- never as a path that turned out to be
  * fine.
+ *
+ * THIS IS ALSO THE ONE PLACE THE ATTACHMENT PATH IS FILLED IN, and it is here
+ * rather than in the renderer for a reason that is easy to get wrong. Setup
+ * re-renders on every keystroke anywhere on it, so a fill performed while
+ * rendering would run again immediately after the operator cleared the box --
+ * they would clear it, type a character in the site's name, and watch the path
+ * come back. Recording nothing on purpose would be impossible.
+ *
+ * Arriving with the schema makes it a consequence of CHOOSING A COLLECTION,
+ * which happens once, is something the operator did, and is the only moment new
+ * evidence about the field exists.
  */
 function handleSetupCollectionChange(uuid: string): void {
   state.setupFields = { ...state.setupFields, collectionUuid: uuid };
   state.setupSchemaPaths = null;
+  // Whatever is in the box now belongs to the previous collection's schema, if
+  // anything filled it at all. Nothing here empties the FIELD -- a value the
+  // operator can see is theirs to keep or clear -- only the claim that this
+  // tool put it there.
+  state.setupAttachmentPathFilled = false;
   render();
   const chosen = state.setupCollections?.find((c) => c.uuid === uuid);
   const schemaUuid = chosen?.schemaUuid ?? '';
@@ -541,10 +577,18 @@ function handleSetupCollectionChange(uuid: string): void {
     (schema) => {
       if (state.setupInstanceId !== instanceId || state.setupFields.collectionUuid !== uuid) return;
       state.setupSchemaPaths = schema.paths;
+      // Null unless the schema declares exactly one such field AND the box is
+      // empty; screens/setup.ts's attachmentPathToFill holds both rules and
+      // says why each one is there.
+      const fill = attachmentPathToFill(schema.paths, state.setupFields.attachmentUuidPath);
+      if (fill !== null) {
+        state.setupFields = { ...state.setupFields, attachmentUuidPath: fill };
+        state.setupAttachmentPathFilled = true;
+      }
       render();
     },
     () => {
-      // Unread stays unread. See this function's doc comment.
+      // Unread stays unread, and unread fills nothing. See the doc comment.
     },
   );
 }
@@ -557,6 +601,11 @@ function handleSetupLiveChange(live: boolean): void {
 function handleSetupFieldChange(field: SetupTextField, value: string): void {
   state.setupFields = { ...state.setupFields, [field]: value };
   if (field === 'redirectUri') state.setupRedirectTouched = true;
+  // Once they have touched it, it is theirs -- whether they changed it, or
+  // cleared it to record nothing. Clearing this is what stops the screen
+  // claiming to have filled in a value the operator has since edited, and
+  // nothing sets it again short of another collection change.
+  if (field === 'attachmentUuidPath') state.setupAttachmentPathFilled = false;
   // Keep the redirect URL following the address until the operator edits it
   // themselves, so what is saved is always exactly what is on screen.
   if (field === 'baseUrl' && !state.setupRedirectTouched) {
