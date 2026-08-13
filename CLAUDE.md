@@ -37,7 +37,7 @@ never code. One ships: `templates/alumni-obituary.profile.json`.
 **The institution-agnostic work is MERGED** (PRs #7, #8, #9). Username/password
 sign-in, collections and schemas discovered from the API, an operator-managed
 instance list, nothing BYU-Idaho-specific read at runtime, and `check` grown
-into a compatibility probe. **1305 tests across 83 files**, typecheck clean,
+into a compatibility probe. **1359 tests across 86 files**, typecheck clean,
 `build:desktop` clean. `main` carries everything and no PR is open.
 
 That is spec 1 of two. Publishing the repository — a licence, a README written
