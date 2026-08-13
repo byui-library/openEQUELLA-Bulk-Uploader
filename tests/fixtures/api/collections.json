@@ -1,0 +1,130 @@
+{
+  "start": 0,
+  "length": 29,
+  "available": 29,
+  "results": [
+    {
+      "uuid": "6f2777f2-3965-4898-b3a5-7b5b5e9908dc",
+      "name": "Web Utilities",
+      "nameStrings": {
+        "en": "Web Utilities"
+      },
+      "description": "Web Utilities\nCSS files, JQuery, JavaScript, etc.",
+      "descriptionStrings": {
+        "en": "Web Utilities\nCSS files, JQuery, JavaScript, etc."
+      },
+      "modifiedDate": "2014-06-12T17:52:33.587-07:00",
+      "createdDate": "2012-10-02T13:43:36.173-07:00",
+      "owner": {
+        "id": "00000000-0000-0000-0000-000000000000"
+      },
+      "readonly": {
+        "granted": [
+          "CREATE_ITEM",
+          "EDIT_COLLECTION",
+          "VIEW_COLLECTION"
+        ]
+      },
+      "schema": {
+        "uuid": "c93181f3-a443-41bf-9afe-ac9f7daf90b7"
+      },
+      "filestoreId": "default",
+      "links": {
+        "self": "https://content.byui.edu/api/collection/6f2777f2-3965-4898-b3a5-7b5b5e9908dc"
+      }
+    },
+    {
+      "uuid": "6e85ce64-9a11-c5e7-69a4-bd30ec61007f",
+      "name": "Learning resources",
+      "nameStrings": {
+        "en": "Learning resources"
+      },
+      "description": "General learning resources",
+      "descriptionStrings": {
+        "en": "General learning resources"
+      },
+      "modifiedDate": "2014-07-28T15:38:32.893-07:00",
+      "createdDate": "2008-04-03T11:38:38.413-07:00",
+      "owner": {
+        "id": "00000000-0000-0000-0000-000000000000"
+      },
+      "readonly": {
+        "granted": [
+          "CREATE_ITEM",
+          "EDIT_COLLECTION",
+          "VIEW_COLLECTION"
+        ]
+      },
+      "schema": {
+        "uuid": "9fc6f87c-88c8-4492-81e3-69b2e1399097"
+      },
+      "filestoreId": "default",
+      "links": {
+        "self": "https://content.byui.edu/api/collection/6e85ce64-9a11-c5e7-69a4-bd30ec61007f"
+      }
+    },
+    {
+      "uuid": "ffb8dd5a-925e-4e68-8b76-0ec8ad911603",
+      "name": "Sample",
+      "nameStrings": {
+        "en": "Sample"
+      },
+      "description": "Test collection",
+      "descriptionStrings": {
+        "en": "Test collection"
+      },
+      "modifiedDate": "2014-06-25T15:21:01.007-07:00",
+      "createdDate": "2012-08-10T10:04:41.620-07:00",
+      "owner": {
+        "id": "00000000-0000-0000-0000-000000000000"
+      },
+      "readonly": {
+        "granted": [
+          "CREATE_ITEM",
+          "EDIT_COLLECTION",
+          "VIEW_COLLECTION"
+        ]
+      },
+      "schema": {
+        "uuid": "c93181f3-a443-41bf-9afe-ac9f7daf90b7"
+      },
+      "workflow": {
+        "uuid": "494f0ce6-0915-46c2-8e0c-a48f6fbb4d36"
+      },
+      "filestoreId": "default",
+      "links": {
+        "self": "https://content.byui.edu/api/collection/ffb8dd5a-925e-4e68-8b76-0ec8ad911603"
+      }
+    },
+    {
+      "uuid": "6b749b28-f97a-4d21-9d76-7caf1cad7b7c",
+      "name": "Course Improvement",
+      "nameStrings": {
+        "en": "Course Improvement"
+      },
+      "description": "I-Learn content",
+      "descriptionStrings": {
+        "en": "I-Learn content"
+      },
+      "modifiedDate": "2014-06-12T17:34:52.400-07:00",
+      "createdDate": "2012-07-25T10:05:07.380-07:00",
+      "owner": {
+        "id": "00000000-0000-0000-0000-000000000000"
+      },
+      "readonly": {
+        "granted": [
+          "CREATE_ITEM",
+          "EDIT_COLLECTION",
+          "VIEW_COLLECTION"
+        ]
+      },
+      "schema": {
+        "uuid": "c93181f3-a443-41bf-9afe-ac9f7daf90b7"
+      },
+      "filestoreId": "default",
+      "links": {
+        "self": "https://content.byui.edu/api/collection/6b749b28-f97a-4d21-9d76-7caf1cad7b7c"
+      }
+    }
+  ]
+}

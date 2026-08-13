@@ -26,7 +26,13 @@ export interface CategorizedWarnings {
 
 const UNMATCHED_FILE_RE = /has no matching row/;
 const MISSING_FILE_RE = /^Row \d+: (?:no '.*' value; skipped\.|.*not found in .*; skipped\.)$/;
-const DUPLICATE_RE = /identifier '.*' may already exist|could not check whether identifier/;
+// The third alternative is the batch-wide "this schema has no identifier field"
+// message (plan.ts#NO_IDENTIFIER_PATH_WARNING). It belongs in this group and not
+// in `other`: it is the answer to "were there duplicate identifiers?", and the
+// answer is "nobody looked". Grouping it under the heading the operator reads
+// for that question is the whole point of reporting it at all.
+const DUPLICATE_RE =
+  /identifier '.*' may already exist|could not check whether identifier|Duplicate identifiers were not checked/;
 
 export function categorizeWarnings(warnings: readonly string[]): CategorizedWarnings {
   const out: CategorizedWarnings = { missingFile: [], unmatchedFile: [], duplicateIdentifier: [], other: [] };

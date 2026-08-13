@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { OeqClient, escapeWhereValue } from '../src/core/client.js';
+import { parseCollections } from '../src/core/discovery.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ApiError, ValidationError } from '../src/core/errors.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
+
+/** The real body an UNAUTHENTICATED `GET /api/content/currentuser` returns -- 200, not 401. */
+const guestUser = JSON.parse(readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'));
 
 let mock: MockServer;
 let client: OeqClient;
@@ -218,7 +223,7 @@ describe('OeqClient', () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: 'Senior Recital', attachmentNames: ['Smith_Jane.pdf'] },
       ];
-      expect(await client.searchByTitle('c1', 'Senior Recital')).toEqual([
+      expect(await client.searchByTitle('c1', 'Senior Recital', 'MWDL/title')).toEqual([
         { uuid: 'i1', version: 1, name: '', attachmentNames: ['Smith_Jane.pdf'] },
       ]);
     });
@@ -227,20 +232,20 @@ describe('OeqClient', () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: 'Senior Recital', attachmentNames: [] },
       ];
-      expect(await client.searchByTitle('c1', 'Recital')).toEqual([]);
-      expect(await client.searchByTitle('c1', 'Senior')).toEqual([]);
+      expect(await client.searchByTitle('c1', 'Recital', 'MWDL/title')).toEqual([]);
+      expect(await client.searchByTitle('c1', 'Senior', 'MWDL/title')).toEqual([]);
     });
 
     it('matches a title containing an apostrophe', async () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: "Bach's Prelude", attachmentNames: ['b.pdf'] },
       ];
-      expect(await client.searchByTitle('c1', "Bach's Prelude")).toHaveLength(1);
+      expect(await client.searchByTitle('c1', "Bach's Prelude", 'MWDL/title')).toHaveLength(1);
     });
 
     it('returns nothing when the collection holds no such title', async () => {
       mock.state.existingItems = [];
-      expect(await client.searchByTitle('c1', 'Senior Recital')).toEqual([]);
+      expect(await client.searchByTitle('c1', 'Senior Recital', 'MWDL/title')).toEqual([]);
     });
 
     /**
@@ -251,30 +256,97 @@ describe('OeqClient', () => {
      */
     it('asks for non-live items, or it would never see this tool own drafts', async () => {
       mock.state.existingItems = [{ uuid: 'i1', version: 1, title: 'A Draft', attachmentNames: [] }];
-      expect(await client.searchByTitle('c1', 'A Draft')).toHaveLength(1);
+      expect(await client.searchByTitle('c1', 'A Draft', 'MWDL/title')).toHaveLength(1);
     });
 
     it('asks for attachments, or the filename tier has nothing to compare', async () => {
       mock.state.existingItems = [
         { uuid: 'i1', version: 1, title: 'T', attachmentNames: ['only-if-info-requested.pdf'] },
       ];
-      expect((await client.searchByTitle('c1', 'T'))[0]?.attachmentNames).toEqual([
+      expect((await client.searchByTitle('c1', 'T', 'MWDL/title'))[0]?.attachmentNames).toEqual([
         'only-if-info-requested.pdf',
       ]);
     });
 
     it('copes with an item that has no attachments at all', async () => {
       mock.state.existingItems = [{ uuid: 'i1', version: 1, title: 'T', attachmentNames: [] }];
-      expect((await client.searchByTitle('c1', 'T'))[0]?.attachmentNames).toEqual([]);
+      expect((await client.searchByTitle('c1', 'T', 'MWDL/title'))[0]?.attachmentNames).toEqual([]);
+    });
+
+    /**
+     * `MWDL/title` is BYU-Idaho's schema, not a universal one. A hardcoded
+     * clause matches nothing at any other institution, so every row comes back
+     * clean from a check that never looked -- the same shape of silent failure
+     * this whole feature exists to prevent.
+     */
+    it('builds the where clause from the supplied path', async () => {
+      mock.state.titlePath = 'local/dc/title';
+      await client.searchByTitle('c1', 'A Thesis', 'local/dc/title');
+      const asked = decodeURIComponent(mock.state.searchUrls[0] ?? '');
+      expect(asked).toContain("/xml/local/dc/title = 'A Thesis'");
+      expect(asked).not.toContain('MWDL');
+    });
+
+    /**
+     * showall=true is mandatory: /search excludes non-live items by default,
+     * and everything this tool creates is a draft. Omitting it made the check
+     * blind to this tool's own uploads once already. Asserted on the URL as
+     * well as on behaviour above, so a change to the clause cannot quietly
+     * drop it.
+     */
+    it('still sends showall=true, which drafts depend on', async () => {
+      mock.state.titlePath = 'local/dc/title';
+      await client.searchByTitle('c1', 'A Thesis', 'local/dc/title');
+      expect(mock.state.searchUrls[0]).toContain('showall=true');
+    });
+
+    it('finds an item through a path other than MWDL/title', async () => {
+      mock.state.titlePath = 'local/dc/title';
+      mock.state.existingItems = [
+        { uuid: 'i1', version: 1, title: 'A Thesis', attachmentNames: ['thesis.pdf'] },
+      ];
+      expect(await client.searchByTitle('c1', 'A Thesis', 'local/dc/title')).toEqual([
+        { uuid: 'i1', version: 1, name: '', attachmentNames: ['thesis.pdf'] },
+      ]);
     });
   });
 });
 
 describe('OeqClient — currentUser', () => {
   it('returns the authenticated user', async () => {
-    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    mock.state.currentUser = { id: 'u-1', username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
     const user = await client.currentUser();
-    expect(user).toEqual({ username: 'jdoe', firstName: 'Jane', lastName: 'Doe' });
+    expect(user).toEqual({
+      id: 'u-1',
+      username: 'jdoe',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      guest: false,
+    });
+  });
+
+  /**
+   * THE FIELD THIS USED TO DISCARD. openEQUELLA does not answer an
+   * unauthenticated request with 401 -- it answers 200 as the guest identity
+   * (recorded verbatim in the fixture below). Reading only
+   * username/firstName/lastName made "not signed in at all" and "signed in"
+   * the same success, which is how `oeq-upload check` came to report
+   * "Identity ok -- logged in as guest ( )" as a PASS.
+   */
+  it('carries `guest` through from the real unauthenticated response', async () => {
+    mock.state.currentUser = guestUser;
+    const user = await client.currentUser();
+    expect(user.guest).toBe(true);
+    expect(user.username).toBe('guest');
+    expect(user.id).toBe('guest');
+  });
+
+  // A response that simply does not mention it is not a guest session. Only an
+  // explicit `true` means guest; anything else is read as a real account, and
+  // the Identity check (preflight.ts) is what refuses to call that proof.
+  it('treats an absent `guest` field as not guest', async () => {
+    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    expect((await client.currentUser()).guest).toBe(false);
   });
 });
 
@@ -282,7 +354,31 @@ describe('OeqClient — getCollection', () => {
   it('returns the collection when it exists on this host', async () => {
     mock.state.collections.push({ uuid: 'c1', name: 'Faculty Content', privileges: [] });
     const collection = await client.getCollection('c1');
-    expect(collection).toEqual({ uuid: 'c1', name: 'Faculty Content' });
+    // schemaUuid is '' because this collection declares no schema; the
+    // pre-flight tells that apart from a schema it could not read.
+    expect(collection).toEqual({ uuid: 'c1', name: 'Faculty Content', schemaUuid: '' });
+  });
+
+  it("carries the collection's declared schema uuid, so nothing has to configure it twice", async () => {
+    mock.state.collections.push({
+      uuid: 'c2',
+      name: 'Other Collection',
+      privileges: [],
+      schemaUuid: 's1',
+    });
+    expect((await client.getCollection('c2')).schemaUuid).toBe('s1');
+  });
+
+  it('reads a schema, parsing its declared name path and valid xpaths', async () => {
+    mock.state.schemas.push({
+      uuid: 's1',
+      namePath: '/MWDL/title',
+      paths: ['MWDL/title', 'Local/attachments/attachment'],
+    });
+    const schema = await client.getSchema('s1');
+    expect(schema.titleHeader).toBe('MWDL/title');
+    expect(schema.paths.has('Local/attachments/attachment')).toBe(true);
+    expect(schema.paths.has('Nothing/like/this')).toBe(false);
   });
 
   it('throws a non-retryable 404 ApiError when the collection does not exist on this host', async () => {
@@ -302,11 +398,83 @@ describe('OeqClient — getCollection', () => {
 describe('OeqClient — listCollections', () => {
   it('filters by privilege', async () => {
     mock.state.collections.push(
-      { uuid: 'c1', name: 'Contributable', privileges: ['CREATE_ITEM'] },
-      { uuid: 'c2', name: 'View only', privileges: ['VIEW_ITEM'] },
+      { uuid: 'c1', name: 'Contributable', privileges: ['CREATE_ITEM'], schemaUuid: 's1' },
+      { uuid: 'c2', name: 'View only', privileges: ['VIEW_ITEM'], schemaUuid: 's1' },
     );
-    const results = await client.listCollections({ privilege: 'CREATE_ITEM' });
-    expect(results).toEqual([{ uuid: 'c1', name: 'Contributable' }]);
+    const { collections } = await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(collections).toEqual([{ uuid: 'c1', name: 'Contributable', schemaUuid: 's1' }]);
+  });
+
+  /**
+   * `full=true` OR NO SCHEMA. Confirmed against the live instance: without it,
+   * every entry comes back as `uuid, name, nameStrings, readonly, links` and
+   * no `schema` field at all -- so `schemaUuid` was '' for every collection,
+   * and everything that hangs off the schema (the declared title path, the
+   * attachment-field check, the offline schema cache) degraded silently.
+   *
+   * Asserted on the REQUEST, not on the answer, because the answer only shows
+   * the consequence -- and a mock that hands the schema over regardless would
+   * hide it entirely.
+   */
+  it('asks for the full collection record, or no entry carries its schema', async () => {
+    await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(mock.state.collectionUrls).toHaveLength(1);
+    expect(mock.state.collectionUrls[0]).toContain('full=true');
+  });
+
+  /**
+   * The two recorded shapes, side by side: `collections-test-instance.json` is
+   * a real authenticated list fetched WITHOUT `full=true` (29 entries, not one
+   * `schema` between them), and `collections.json` is the same endpoint WITH
+   * it (`schema: { uuid }` on every entry). Parsing both here pins the
+   * consequence of the parameter to real data rather than to the mock.
+   */
+  it('reads a schema uuid from a full record, and none from a record without one', () => {
+    const withoutFull = JSON.parse(
+      readFileSync('tests/fixtures/api/collections-test-instance.json', 'utf8'),
+    );
+    const withFull = JSON.parse(readFileSync('tests/fixtures/api/collections.json', 'utf8'));
+    expect(parseCollections(withoutFull).collections.every((c) => c.schemaUuid === '')).toBe(true);
+    expect(parseCollections(withFull).collections.every((c) => c.schemaUuid !== '')).toBe(true);
+  });
+
+  /**
+   * The desktop's collection dropdown read "showing 0 of 0 -- No collections
+   * match" against a session that was not signed in at all. The count the
+   * server sent alongside those zero rows is the only thing that tells the two
+   * apart, so the client must hand it on rather than flatten the answer to an
+   * array.
+   */
+  it('reports a withheld list as withheld rather than as an empty one', async () => {
+    mock.state.collections.push({ uuid: 'c1', name: 'A', privileges: ['CREATE_ITEM'] });
+    mock.state.withholdCollections = true;
+    const list = await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(list.collections).toEqual([]);
+    expect(list.available).toBe(1);
+    expect(list.withheld).toBe(true);
+  });
+
+  /**
+   * The field the inline parse this method used to carry dropped on the
+   * floor. Each list entry declares its schema, so choosing a collection
+   * determines its schema in ONE hop -- which is what lets Setup offer or
+   * check an attachment-uuid path against the schema that collection really
+   * uses, instead of asking a non-technical operator to know a uuid.
+   */
+  it('carries each collection\'s schema uuid, from parseCollections', async () => {
+    mock.state.collections.push(
+      { uuid: 'c1', name: 'Faculty Content', privileges: ['CREATE_ITEM'], schemaUuid: 'schema-abc' },
+    );
+    const [only] = (await client.listCollections({ privilege: 'CREATE_ITEM' })).collections;
+    expect(only?.schemaUuid).toBe('schema-abc');
+  });
+
+  // A collection whose response declares no schema is '' -- distinguishable
+  // from a schema that could not be read, and never undefined-by-accident.
+  it('reports an undeclared schema as empty rather than missing', async () => {
+    mock.state.collections.push({ uuid: 'c1', name: 'No schema', privileges: ['CREATE_ITEM'] });
+    const [only] = (await client.listCollections({ privilege: 'CREATE_ITEM' })).collections;
+    expect(only?.schemaUuid).toBe('');
   });
 
   it('returns everything when no privilege filter is given', async () => {
@@ -314,14 +482,20 @@ describe('OeqClient — listCollections', () => {
       { uuid: 'c1', name: 'A', privileges: ['CREATE_ITEM'] },
       { uuid: 'c2', name: 'B', privileges: [] },
     );
-    const results = await client.listCollections();
-    expect(results.map((c) => c.uuid).sort()).toEqual(['c1', 'c2']);
+    const { collections } = await client.listCollections();
+    expect(collections.map((c) => c.uuid).sort()).toEqual(['c1', 'c2']);
   });
 
+  /**
+   * Nothing matched the privilege, and the server said so: `available: 0`.
+   * That is a real account state, not a withheld list, and must keep reading
+   * as one.
+   */
   it('returns an empty list when no collection matches the privilege', async () => {
     mock.state.collections.push({ uuid: 'c1', name: 'A', privileges: [] });
-    const results = await client.listCollections({ privilege: 'CREATE_ITEM' });
-    expect(results).toEqual([]);
+    const list = await client.listCollections({ privilege: 'CREATE_ITEM' });
+    expect(list.collections).toEqual([]);
+    expect(list.withheld).toBe(false);
   });
 });
 

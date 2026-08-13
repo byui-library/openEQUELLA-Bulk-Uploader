@@ -2,11 +2,28 @@ import { app, dialog, safeStorage, type BrowserWindow, type IpcMain } from 'elec
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, readdir, copyFile } from 'node:fs/promises';
-import { CHANNELS, INSTANCES, type ColumnReport, type OeqApi, type PlanReport, type RunReport } from './ipc.js';
-import { SecretStore, EncryptedTokenStore } from './secrets.js';
-import { buildAuth, buildClient, buildConfig, instanceById } from './session.js';
+import {
+  CHANNELS,
+  type ColumnReport,
+  type OeqApi,
+  type PlanReport,
+  type RunReport,
+  type SchemaSummary,
+} from './ipc.js';
+import { SecretStore, EncryptedTokenStore, type Instance } from './secrets.js';
+import type { CurrentUser } from '../core/client.js';
+import { assertNotGuest } from '../core/identity.js';
+import { SchemaCache } from '../core/schemaCache.js';
+import type { SchemaInfo } from '../core/discovery.js';
+import { buildAuth, buildCodeAuth, buildClient, buildConfig, requireInstance } from './session.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, parseSchemaPaths, validateHeaders, isAnnotationHeader } from '../core/schema.js';
+import {
+  extractDefinition,
+  extractItemNamePath,
+  parseSchemaPaths,
+  validateHeaders,
+  isAnnotationHeader,
+} from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
@@ -28,25 +45,124 @@ const secrets = () => new SecretStore(join(userData(), 'settings.enc'), cipher);
 const tokens = () => new EncryptedTokenStore(join(userData(), 'token.enc'), cipher);
 
 /**
- * The exact wording an operator sees when the instance they've selected has
- * no saved credentials. Names the instance -- with credentials now per
- * instance (see secrets.ts), a bare "no credentials" would be actively
- * confusing: which one? Falls back to the raw id for a value that isn't a
- * known instance rather than crashing; `instanceById` (session.ts) already
- * rejects a truly bogus id earlier in the same call, so this fallback only
- * matters for whatever calls this function directly without going through
- * that guard first.
+ * Fetched schemas, on disk, so extraction can validate its columns offline.
+ *
+ * NOT encrypted, unlike the two stores above, and deliberately not: a schema
+ * is a public description of a collection's fields, holds no credential and
+ * nothing personal, and `SchemaCache` is a plain-JSON cache that any of its
+ * files being unreadable degrades to "no cache" rather than to an error.
  */
-export function missingCredentialsMessage(instanceId: string): string {
-  const label = INSTANCES.find((i) => i.id === instanceId)?.label ?? instanceId;
-  return `No credentials saved for ${label}. Enter the client ID and secret for that instance in Setup.`;
+const schemas = () => new SchemaCache(join(userData(), 'schema-cache'));
+
+/** A fetched schema in the shape that crosses IPC -- `paths` as an array, not a Set. */
+function toSummary(schema: SchemaInfo): SchemaSummary {
+  return {
+    uuid: schema.uuid,
+    namePath: schema.namePath,
+    titleHeader: schema.titleHeader,
+    paths: [...schema.paths].sort(),
+  };
 }
 
+/**
+ * Read one schema and leave it in the cache on the way past.
+ *
+ * THE WRITE IS THE POINT, as much as the answer is. `src/core/extract/` never
+ * touches the network -- which is what lets an operator build a spreadsheet
+ * without signing in to anything -- so this is the only way a schema fetched
+ * here reaches the column validation that happens there.
+ *
+ * A CACHE WRITE THAT FAILS DOES NOT FAIL THE FETCH. The operator asked to see
+ * a schema, not to populate a cache; a full or read-only disk would otherwise
+ * turn "here are your collection's fields" into an error dialog, and the only
+ * thing actually lost is a later offline validation that degrades to the
+ * bundled export anyway.
+ *
+ * Taken as parameters rather than built here so it can be exercised without an
+ * Electron process, a live instance, or an https address -- `saveInstance`
+ * refuses anything else, which puts the real handler's path out of reach of a
+ * loopback mock server.
+ */
+export async function fetchAndCacheSchema(
+  client: { getSchema(uuid: string): Promise<SchemaInfo> },
+  cache: { save(instanceUrl: string, schema: SchemaInfo): Promise<void> },
+  instanceUrl: string,
+  schemaUuid: string,
+): Promise<SchemaSummary> {
+  const schema = await client.getSchema(schemaUuid);
+  try {
+    await cache.save(instanceUrl, schema);
+  } catch {
+    // See above: the answer is still good.
+  }
+  return toSummary(schema);
+}
+
+/**
+ * The cached schema for one instance, or null when there is none.
+ *
+ * Null for every ordinary reason: no instance selected, a site whose schema
+ * has never been fetched, a collection that names no schema, an unreadable or
+ * damaged cache file. Every one of those means "validate against the bundled
+ * export instead" -- never "refuse to extract". See `SchemaCache`'s own doc
+ * comment, which makes the same promise about its reads.
+ */
+async function cachedSchema(instanceId: string): Promise<SchemaInfo | null> {
+  if (!instanceId) return null;
+  const inst = await secrets().loadInstance(instanceId);
+  if (!inst || inst.schemaUuid === '') return null;
+  return schemas().load(inst.baseUrl, inst.schemaUuid);
+}
+
+/**
+ * The exact wording an operator sees when the instance they've selected has
+ * no saved credentials. Names the instance -- with credentials per instance
+ * (see secrets.ts), a bare "no credentials" would be actively confusing:
+ * which one? Takes the label rather than the id because the id is the site's
+ * address, and the operator picked their site from a dropdown of their own
+ * names for them.
+ */
+export function missingCredentialsMessage(label: string): string {
+  // Says "sign-in details", not "client ID and secret": a site can now be
+  // configured with an ordinary openEQUELLA username and password
+  // (secrets.ts), and naming the OAuth credential would send most
+  // institutions looking for something they do not have and cannot get.
+  return `No credentials saved for ${label}. Add your sign-in details for that site in Setup.`;
+}
+
+/**
+ * The user a sign-in produced -- or a refusal, if it produced the guest.
+ *
+ * A SUCCESSFUL `currentUser()` IS NOT PROOF OF SIGN-IN. openEQUELLA never
+ * answers an unauthenticated request with 401; it answers 200 as the guest
+ * identity (core/client.ts's `CurrentUser.guest`). Without this, a sign-in
+ * that silently failed -- an SSO window closed early, a session that did not
+ * stick, a password rejected in a way that still left a usable cookie --
+ * resolved a perfectly good user object, the app advanced to the next screen
+ * reporting success, and the first the operator heard of it was a collection
+ * dropdown reading "No collections match".
+ *
+ * Names the site, because credentials are per instance and the operator picked
+ * theirs from a dropdown of their own names for them.
+ */
+export function requireSignedIn(user: CurrentUser, label: string): CurrentUser {
+  return assertNotGuest(
+    user,
+    `Check the sign-in details for ${label} in Setup, then try signing in again.`,
+  );
+}
+
+/** The instance record the operator saved, or a refusal naming the id. */
+async function requireInstanceRecord(instanceId: string): Promise<Instance> {
+  return requireInstance(instanceId, await secrets().loadInstance(instanceId));
+}
+
+/** Both halves of an instance: what it is, and how to authenticate to it. */
 async function requireSettings(instanceId: string) {
-  const inst = instanceById(instanceId);
+  const inst = await requireInstanceRecord(instanceId);
   const s = await secrets().loadSettings(inst.id);
-  if (!s) throw new OeqError(missingCredentialsMessage(inst.id));
-  return s;
+  if (!s) throw new OeqError(missingCredentialsMessage(inst.label));
+  return { inst, settings: s };
 }
 
 /**
@@ -122,6 +238,19 @@ function resourcePathOpts(): { isPackaged: boolean; appPath: string; resourcesPa
 async function schemaPaths(): Promise<Set<string>> {
   const p = resolveSchemaPath(resourcePathOpts());
   return parseSchemaPaths(extractDefinition(await readFile(p, 'utf8')));
+}
+
+/**
+ * The title xpath the same export declares, or null if it declares none.
+ *
+ * Read rather than assumed: the duplicate check searches on this path, and a
+ * hardcoded `MWDL/title` matches nothing outside BYU-Idaho -- which would
+ * report every row clean from a check that never looked. Null reaches
+ * findDuplicates as "could not check", never as "clean".
+ */
+async function schemaTitleHeader(): Promise<string | null> {
+  const p = resolveSchemaPath(resourcePathOpts());
+  return extractItemNamePath(await readFile(p, 'utf8'));
 }
 
 /**
@@ -205,24 +334,22 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
  * tests/desktop/handlers.test.ts's `applyDuplicateChoices` suite.
  */
 export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindow | null): void {
+  ipcMain.handle(CHANNELS.listInstances, async () => secrets().listInstances());
+
+  ipcMain.handle(CHANNELS.credentialsDropped, async () => secrets().credentialsDropped());
+
   ipcMain.handle(
     CHANNELS.hasSettings,
-    async (_e, instanceId: Parameters<OeqApi['hasSettings']>[0]) => {
-      const inst = instanceById(instanceId);
-      return secrets().hasSettings(inst.id);
-    },
+    async (_e, instanceId: Parameters<OeqApi['hasSettings']>[0]) => secrets().hasSettings(instanceId),
   );
 
   ipcMain.handle(
-    CHANNELS.saveSettings,
+    CHANNELS.saveInstance,
     async (
       _e,
-      instanceId: Parameters<OeqApi['saveSettings']>[0],
-      s: Parameters<OeqApi['saveSettings']>[1],
-    ) => {
-      const inst = instanceById(instanceId);
-      await secrets().saveSettings(inst.id, s);
-    },
+      instance: Parameters<OeqApi['saveInstance']>[0],
+      s: Parameters<OeqApi['saveInstance']>[1],
+    ) => secrets().saveInstance(instance, s),
   );
 
   ipcMain.handle(CHANNELS.clearSettings, async () => {
@@ -231,13 +358,47 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   });
 
   ipcMain.handle(
+    CHANNELS.setPassword,
+    async (_e, args: Parameters<OeqApi['setPassword']>[0]) =>
+      secrets().setPassword(args.instanceId, args.username, args.password),
+  );
+
+  // Returns the USERNAME ONLY. The password never crosses back into the
+  // renderer -- see OeqApi.getPassword for why.
+  ipcMain.handle(
+    CHANNELS.getPassword,
+    async (_e, instanceId: Parameters<OeqApi['getPassword']>[0]) => {
+      const stored = await secrets().getPassword(instanceId);
+      return stored ? { username: stored.username } : null;
+    },
+  );
+
+  ipcMain.handle(
+    CHANNELS.forgetPassword,
+    async (_e, instanceId: Parameters<OeqApi['forgetPassword']>[0]) =>
+      secrets().forgetPassword(instanceId),
+  );
+
+  ipcMain.handle(
     CHANNELS.signIn,
     async (_e, instanceId: Parameters<OeqApi['signIn']>[0]) => {
-      const settings = await requireSettings(instanceId);
-      const cfg = buildConfig(instanceId, settings, 'unused-for-signin');
-      const auth = buildAuth(cfg, tokens());
+      const { inst, settings } = await requireSettings(instanceId);
+      const cfg = buildConfig(inst, settings, 'unused-for-signin');
+      // Password auth has no browser flow to drive: UsernamePasswordAuth signs
+      // in on its first request, so asking the site who is signed in IS the
+      // sign-in, and its failure IS the "check the username and password"
+      // error (core/passwordAuth.ts). Opening an SSO window here would present
+      // an institution that has no SSO with a login page they cannot use.
+      if (cfg.authMode === 'password') {
+        const user = await buildClient(cfg, buildAuth(cfg, tokens())).currentUser();
+        // Guest is a refusal, not a user -- see requireSignedIn.
+        return requireSignedIn(user, inst.label);
+      }
+      // buildCodeAuth, not buildAuth: this handler IS the authorization-code
+      // browser flow, and signInInteractive needs that flow's own API.
+      const auth = buildCodeAuth(cfg, tokens());
       await signInInteractive(cfg.baseUrl, auth, getWindow() ?? undefined);
-      return buildClient(cfg, auth).currentUser();
+      return requireSignedIn(await buildClient(cfg, auth).currentUser(), inst.label);
     },
   );
 
@@ -248,13 +409,19 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   ipcMain.handle(
     CHANNELS.currentUser,
     async (_e, instanceId: Parameters<OeqApi['currentUser']>[0]) => {
-      const inst = instanceById(instanceId);
+      const inst = await secrets().loadInstance(instanceId);
+      if (!inst) return null;
       const settings = await secrets().loadSettings(inst.id);
       if (!settings) return null;
-      const cfg = buildConfig(instanceId, settings, 'unused');
+      const cfg = buildConfig(inst, settings, 'unused');
       const auth = buildAuth(cfg, tokens());
       try {
-        return await buildClient(cfg, auth).currentUser();
+        const user = await buildClient(cfg, auth).currentUser();
+        // A guest session is nobody. This channel answers "is anyone signed
+        // in", and openEQUELLA says no by answering as the guest rather than
+        // by failing -- so reporting the guest here would show the operator
+        // "Signed in as guest" and a Continue button (ui/signin.ts).
+        return user.guest ? null : user;
       } catch {
         return null;
       }
@@ -264,12 +431,24 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   ipcMain.handle(
     CHANNELS.listCollections,
     async (_e, instanceId: Parameters<OeqApi['listCollections']>[0]) => {
-      const settings = await requireSettings(instanceId);
-      const cfg = buildConfig(instanceId, settings, 'unused');
+      const { inst, settings } = await requireSettings(instanceId);
+      const cfg = buildConfig(inst, settings, 'unused');
       const auth = buildAuth(cfg, tokens());
       // NOTE the signature: listCollections takes an OPTIONS OBJECT, not a
       // positional string. `listCollections('CREATE_ITEM')` does not compile.
       return buildClient(cfg, auth).listCollections({ privilege: 'CREATE_ITEM', length: 100 });
+    },
+  );
+
+  // Read one schema and REMEMBER IT -- see fetchAndCacheSchema, which is
+  // where the reasoning and the tests live.
+  ipcMain.handle(
+    CHANNELS.fetchSchema,
+    async (_e, args: Parameters<OeqApi['fetchSchema']>[0]): Promise<SchemaSummary> => {
+      const { inst, settings } = await requireSettings(args.instanceId);
+      const cfg = buildConfig(inst, settings, 'unused');
+      const client = buildClient(cfg, buildAuth(cfg, tokens()));
+      return fetchAndCacheSchema(client, schemas(), inst.baseUrl, args.schemaUuid);
     },
   );
 
@@ -350,8 +529,8 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   ipcMain.handle(
     CHANNELS.plan,
     async (_e, args: Parameters<OeqApi['plan']>[0]): Promise<PlanReport> => {
-      const settings = await requireSettings(args.instanceId);
-      const cfg = buildConfig(args.instanceId, settings, args.collectionUuid);
+      const { inst, settings } = await requireSettings(args.instanceId);
+      const cfg = buildConfig(inst, settings, args.collectionUuid);
       const auth = buildAuth(cfg, tokens());
       const client = buildClient(cfg, auth);
 
@@ -362,11 +541,17 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         collectionUuid: cfg.collectionUuid,
         schemaUuid: cfg.schemaUuid,
         itemState: args.itemState,
+        attachmentUuidPath: cfg.attachmentUuidPath,
       });
+
+      const titleHeader = await schemaTitleHeader();
 
       // Matches the CLI: fold advisory duplicate-identifier warnings into the
       // manifest at plan time so the reviewer sees them before confirming.
-      manifest.warnings.push(...(await preflightDuplicates(client, manifest)));
+      // The schema goes in because the identifier path is resolved from it --
+      // a hardcoded `MWDL/identifier` checks nothing outside BYU-Idaho, and a
+      // schema with no identifier field at all warns rather than reads clean.
+      manifest.warnings.push(...(await preflightDuplicates(client, manifest, { titleHeader, paths })));
 
       // One search per pending row. Advisory: nothing is skipped here, the
       // operator decides on the Review screen and the choices are applied by
@@ -375,7 +560,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       // A failure for one row becomes a `could-not-check` finding rather than
       // an exception, so an unreachable server cannot block a plan that is
       // otherwise ready -- and cannot be mistaken for a clean result either.
-      const duplicates = await findDuplicates(client, manifest);
+      const duplicates = await findDuplicates(client, manifest, titleHeader);
 
       const manifestPath = join(userData(), 'job.json');
       await saveManifest(manifestPath, manifest);
@@ -417,9 +602,9 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   ipcMain.handle(
     CHANNELS.run,
     async (_e, args: Parameters<OeqApi['run']>[0]): Promise<RunReport> => {
-      const settings = await requireSettings(args.instanceId);
+      const { inst, settings } = await requireSettings(args.instanceId);
       const manifest = await loadManifest(args.manifestPath);
-      const cfg = buildConfig(args.instanceId, settings, manifest.collectionUuid);
+      const cfg = buildConfig(inst, settings, manifest.collectionUuid);
       const auth = buildAuth(cfg, tokens());
       const client = buildClient(cfg, auth);
 
@@ -470,5 +655,9 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   registerExtractHandlers(ipcMain, {
     schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
     templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
+    // The site's OWN schema, when one has been fetched and cached, in
+    // preference to the bundled export -- which is BYU-Idaho's and correct
+    // nowhere else. Null falls back to the bundle; see cachedSchema.
+    cachedSchema,
   });
 }

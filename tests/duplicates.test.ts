@@ -111,6 +111,13 @@ describe('defaultChoice', () => {
 });
 
 describe('findDuplicates', () => {
+  /**
+   * Every manifest here puts its title at `MWDL/title`, so that is the path
+   * these tests declare. It is passed explicitly rather than defaulted: the
+   * whole point of this parameter is that no layer may assume a title path.
+   */
+  const TITLE_PATH = 'MWDL/title';
+
   function manifestOf(rows: { rowNumber: number; fileName: string; title: string }[]): Manifest {
     return {
       version: 1,
@@ -143,7 +150,7 @@ describe('findDuplicates', () => {
           ? [{ uuid: 'i1', version: 1, name: 'Taken', attachmentNames: ['a.pdf'] }]
           : [],
     };
-    const found = await findDuplicates(client, manifest);
+    const found = await findDuplicates(client, manifest, TITLE_PATH);
     expect(found).toHaveLength(1);
     expect(found[0]?.rowNumber).toBe(2);
     expect(found[0]?.tier).toBe('near-certain');
@@ -160,7 +167,7 @@ describe('findDuplicates', () => {
         throw new Error('the server said 400');
       },
     };
-    const found = await findDuplicates(client, manifest);
+    const found = await findDuplicates(client, manifest, TITLE_PATH);
     expect(found[0]?.tier).toBe('could-not-check');
     expect(found[0]?.detail).toContain('the server said 400');
   });
@@ -176,14 +183,14 @@ describe('findDuplicates', () => {
         return [{ uuid: 'i1', version: 1, name: 'Taken', attachmentNames: ['b.pdf'] }];
       },
     };
-    const found = await findDuplicates(client, manifest);
+    const found = await findDuplicates(client, manifest, TITLE_PATH);
     expect(found.map((f) => f.tier).sort()).toEqual(['could-not-check', 'near-certain']);
   });
 
   it('says nothing at all when no row is flagged', async () => {
     const manifest = manifestOf([{ rowNumber: 2, fileName: 'a.pdf', title: 'Free' }]);
     const client = { searchByTitle: async () => [] };
-    expect(await findDuplicates(client, manifest)).toEqual([]);
+    expect(await findDuplicates(client, manifest, TITLE_PATH)).toEqual([]);
   });
 
   // An entry already created or skipped by an earlier run is not going to be
@@ -199,7 +206,7 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifest);
+    await findDuplicates(client, manifest, TITLE_PATH);
     expect(calls).toBe(0);
   });
 
@@ -212,7 +219,7 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifest);
+    await findDuplicates(client, manifest, TITLE_PATH);
     expect(seen).toEqual(['c1']);
   });
 
@@ -227,7 +234,7 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    const found = await findDuplicates(client, manifest);
+    const found = await findDuplicates(client, manifest, TITLE_PATH);
     expect(calls).toBe(0);
     expect(found[0]?.tier).toBe('not-checkable');
     expect(found[0]?.rowNumber).toBe(2);
@@ -252,7 +259,7 @@ describe('findDuplicates', () => {
         return [{ uuid: 'i', version: 1, name: title, attachmentNames: [`f${asked.length - 1}.pdf`] }];
       },
     };
-    const found = await findDuplicates(client, manifestOf(rows));
+    const found = await findDuplicates(client, manifestOf(rows), TITLE_PATH);
     expect(asked).toHaveLength(12);
     expect(found).toHaveLength(12);
     expect(found.map((f) => f.rowNumber)).toEqual(rows.map((r) => r.rowNumber));
@@ -275,8 +282,115 @@ describe('findDuplicates', () => {
         return [];
       },
     };
-    await findDuplicates(client, manifestOf(rows));
+    await findDuplicates(client, manifestOf(rows), TITLE_PATH);
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(5);
+  });
+});
+
+/**
+ * `MWDL/title` is what BYU-Idaho's schema happens to declare, not a universal
+ * truth. Reading it from anywhere but the schema makes the duplicate check
+ * match nothing at any other institution -- and a check that matches nothing
+ * reports every row clean, which is the exact failure
+ * docs/superpowers/specs/2026-08-06-duplicate-prevention-design.md records this
+ * codebase already shipping once.
+ */
+describe('the title path is read, not assumed', () => {
+  /** Both title columns are present, with DIFFERENT values, so reading the
+   *  wrong one is visible rather than coincidentally right. */
+  function manifestWithTwoTitles(): Manifest {
+    return {
+      version: 1,
+      createdAt: '2026-08-12T00:00:00.000Z',
+      baseUrl: 'https://example.test',
+      collectionUuid: 'c1',
+      schemaUuid: 's1',
+      itemState: 'draft',
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: [
+        {
+          rowNumber: 2,
+          filePath: '/files/thesis.pdf',
+          fileName: 'thesis.pdf',
+          metadata: { 'local/dc/title': ['A Thesis'], 'MWDL/title': ['WRONG'] },
+          status: 'pending' as const,
+          attempts: 0,
+        },
+      ],
+    };
+  }
+
+  it('queries the path the schema declared, not MWDL/title', async () => {
+    const asked: string[] = [];
+    const client = {
+      searchByTitle: async (_c: string, title: string) => {
+        asked.push(title);
+        return [];
+      },
+    };
+    await findDuplicates(client, manifestWithTwoTitles(), 'local/dc/title');
+    expect(asked).toEqual(['A Thesis']);
+  });
+
+  it('tells the searcher which path to match on, not just the value', async () => {
+    const paths: string[] = [];
+    const client = {
+      searchByTitle: async (_c: string, _t: string, titleHeader: string) => {
+        paths.push(titleHeader);
+        return [];
+      },
+    };
+    await findDuplicates(client, manifestWithTwoTitles(), 'local/dc/title');
+    expect(paths).toEqual(['local/dc/title']);
+  });
+
+  /**
+   * The whole point. With no declared path there is nothing to match on, and
+   * saying "clean" would tell the operator their batch was checked when it
+   * never was.
+   */
+  it('reports could-not-check when no title path is known, never clean', async () => {
+    const client = { searchByTitle: async () => [] };
+    const findings = await findDuplicates(client, manifestWithTwoTitles(), null);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.tier).toBe('could-not-check');
+    expect(findings[0]?.rowNumber).toBe(2);
+    expect(findings[0]?.fileName).toBe('thesis.pdf');
+  });
+
+  it('treats an empty title path the same as none at all', async () => {
+    const client = { searchByTitle: async () => [] };
+    const findings = await findDuplicates(client, manifestWithTwoTitles(), '');
+    expect(findings[0]?.tier).toBe('could-not-check');
+  });
+
+  it('issues no search at all when it cannot know what to search for', async () => {
+    let calls = 0;
+    const client = {
+      searchByTitle: async () => {
+        calls += 1;
+        return [];
+      },
+    };
+    await findDuplicates(client, manifestWithTwoTitles(), null);
+    expect(calls).toBe(0);
+  });
+
+  // A finding the operator cannot act on is only half a warning: it has to say
+  // what to do, not merely that something was missing.
+  it('says what to do about it', async () => {
+    const client = { searchByTitle: async () => [] };
+    const findings = await findDuplicates(client, manifestWithTwoTitles(), null);
+    expect(findings[0]?.detail).toMatch(/title/i);
+    expect(findings[0]?.detail).toMatch(/by hand/i);
+  });
+
+  it('leaves rows an earlier run already handled alone', async () => {
+    const manifest = manifestWithTwoTitles();
+    manifest.entries[0]!.status = 'created';
+    const client = { searchByTitle: async () => [] };
+    expect(await findDuplicates(client, manifest, null)).toEqual([]);
   });
 });

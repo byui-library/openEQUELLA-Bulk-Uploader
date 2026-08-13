@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -13,6 +13,7 @@ import {
   loginUrlTool,
   loginCompleteTool,
   checkTool,
+  redactSecret,
 } from '../src/mcp/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
@@ -43,6 +44,7 @@ const configEnv = () => ({
   OEQ_BASE_URL: 'https://example.test',
   OEQ_CLIENT_ID: 'test-client-id',
   OEQ_CLIENT_SECRET: 'super-secret-value',
+  OEQ_COLLECTION_UUID: 'c1',
 });
 
 function textOf(result: { content: Array<{ type: 'text'; text: string }> }): string {
@@ -201,10 +203,19 @@ describe('oeq_plan duplicate pre-flight', () => {
     await mock.close();
   });
 
+  // client_credentials so findDuplicates' real searchByTitle call can get a
+  // token from the mock without a login flow -- identical to the mockEnv() in
+  // cli.test.ts's 'planAction duplicate check' block, which this describe
+  // exists to mirror. It used to be absent, and these tests passed anyway
+  // only because oeq_plan hard-coded an OAuthClientCredentials regardless of
+  // OEQ_AUTH_MODE while planAction honoured it -- exactly the drift that hid
+  // password mode being unreachable here.
   const mockEnv = () => ({
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
+    OEQ_AUTH_MODE: 'client_credentials',
   });
 
   it('does not attempt a network call when skipDuplicateCheck is true', async () => {
@@ -250,7 +261,10 @@ describe('oeq_plan duplicate pre-flight', () => {
     // would behave differently from the true "no server at all" case.
     const result = await planTool(
       { sheet: sheetPath, filesDir: dir, manifestPath },
-      { OEQ_BASE_URL: mock.url },
+      // The collection IS set: it is target configuration, not a credential,
+      // and a manifest without one cannot be run at all (loadManifest rejects
+      // it). Only the credentials are missing, which is what this tests.
+      { OEQ_BASE_URL: mock.url, OEQ_COLLECTION_UUID: 'c1' },
     );
 
     expect(result.isError).toBeFalsy();
@@ -258,14 +272,13 @@ describe('oeq_plan duplicate pre-flight', () => {
     expect(mock.state.issuedTokens).toHaveLength(0);
 
     // Not a landmine: the saved manifest is structurally complete (real
-    // baseUrl, non-empty collectionUuid/schemaUuid from loadConfig's own
-    // defaults) and loads back cleanly -- proving planning without
-    // credentials doesn't silently corrupt anything for later steps.
+    // baseUrl, the configured collectionUuid) and loads back cleanly --
+    // proving planning without credentials doesn't silently corrupt anything
+    // for later steps.
     const saved = await loadManifest(manifestPath);
     expect(saved.entries).toHaveLength(2);
     expect(saved.baseUrl).toBe(mock.url);
-    expect(saved.collectionUuid.length).toBeGreaterThan(0);
-    expect(saved.schemaUuid.length).toBeGreaterThan(0);
+    expect(saved.collectionUuid).toBe('c1');
   });
 
   it('reports a near-certain duplicate finding when an existing item already holds the row\'s file', async () => {
@@ -438,6 +451,7 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
     OEQ_BASE_URL: mock.url,
     OEQ_CLIENT_ID: 'good-id',
     OEQ_CLIENT_SECRET: secret,
+    OEQ_COLLECTION_UUID: 'c1',
   });
 
   /** A token store already populated via a real exchange against the mock -- mirrors cli.test.ts. */
@@ -467,6 +481,37 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
     });
   });
 
+  describe('the login tools in password mode', () => {
+    const passwordEnv = {
+      OEQ_BASE_URL: 'https://oeq.example.edu',
+      OEQ_COLLECTION_UUID: 'c1',
+      OEQ_AUTH_MODE: 'password',
+      OEQ_USERNAME: 'jsmith',
+      OEQ_PASSWORD: 'hunter2',
+    };
+
+    it('oeq_login_url refuses instead of handing back an authorize URL that cannot work', async () => {
+      const result = await loginUrlTool(passwordEnv);
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('OEQ_USERNAME');
+      expect(textOf(result)).toContain('oeq_check');
+      expect(textOf(result)).not.toContain('/oauth/authorise');
+    });
+
+    it('oeq_login_complete refuses rather than exchanging a code no flow issued', async () => {
+      const result = await loginCompleteTool({ code: 'whatever' }, passwordEnv);
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('OEQ_USERNAME');
+    });
+
+    it('never leaks the password in either refusal', async () => {
+      const url = await loginUrlTool(passwordEnv);
+      const complete = await loginCompleteTool({ code: 'whatever' }, passwordEnv);
+      expect(textOf(url)).not.toContain('hunter2');
+      expect(textOf(complete)).not.toContain('hunter2');
+    });
+  });
+
   describe('oeq_login_complete', () => {
     beforeEach(() => {
       // loginCompleteTool builds its AuthorizationCodeAuth from cfg.redirectUri,
@@ -486,6 +531,27 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(result.isError).toBeFalsy();
       expect(textOf(result)).toBe('Logged in as jdoe (Jane Doe).');
       expect(await tokenStore.loadRaw()).not.toBeNull();
+    });
+
+    /**
+     * A code that exchanged cleanly is not a sign-in. openEQUELLA answers an
+     * unauthenticated session as the guest identity rather than refusing it,
+     * so this used to report "Logged in as guest ( )" as a SUCCESS -- and an
+     * MCP caller would go straight on to start a job that can create nothing.
+     */
+    it('refuses a guest session rather than reporting it as a login', async () => {
+      mock.state.validAuthCodes.add('the-code');
+      mock.state.currentUser = JSON.parse(
+        readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+      );
+      const tokenStore = new FileTokenStore(join(dir, 'token.json'));
+
+      const result = await loginCompleteTool({ code: 'the-code' }, env(), { tokenStore });
+
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).not.toMatch(/^Logged in as/);
+      expect(textOf(result)).toMatch(/guest/i);
+      expect(textOf(result)).toMatch(/oeq_login_url/);
     });
 
     it('reports a clear error for an invalid or already-used code', async () => {
@@ -508,13 +574,21 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
   });
 
   describe('oeq_check', () => {
-    it('mirrors the CLI: prints the same four PASS lines and succeeds when everything lines up', async () => {
+    it('mirrors the CLI: prints the same PASS lines and succeeds when everything lines up', async () => {
       mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+      // Whatever OEQ_COLLECTION_UUID names -- there is no default collection
+      // any more, so the mock must register the one the config actually asks
+      // for rather than a uuid the tool used to fall back to.
       mock.state.collections.push({
-        uuid: 'bb348ab1-7a81-4e37-8ef7-adc095ade4f9',
-        name: 'BYU-Idaho Faculty Content',
+        uuid: 'c1',
+        name: 'Faculty Content',
         privileges: ['CREATE_ITEM'],
+        schemaUuid: 's1',
       });
+      // "Everything lines up" now includes a readable schema that declares an
+      // item name path -- without one, duplicate detection reports could-not-
+      // check for every row, which is not a full success by any reading.
+      mock.state.schemas.push({ uuid: 's1', namePath: '/MWDL/title', paths: ['MWDL/title'] });
       const tokenStore = await loggedInStore();
 
       const result = await checkTool(env(), { tokenStore });
@@ -522,10 +596,16 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(result.isError).toBeFalsy();
       const out = textOf(result);
       expect(out).toContain(`OEQ_BASE_URL: ${mock.url}`);
+      expect(out).toContain('[PASS] HTTPS:');
       expect(out).toContain('[PASS] Token: present and usable.');
+      expect(out).toContain('[PASS] Sign-in method: signed in with OEQ_AUTH_MODE=code');
       expect(out).toContain('[PASS] Identity: logged in as jdoe (Jane Doe)');
-      expect(out).toContain("[PASS] Collection: 'BYU-Idaho Faculty Content'");
-      expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'BYU-Idaho Faculty Content'.");
+      expect(out).toContain("[PASS] Collection: 'Faculty Content'");
+      expect(out).toContain('[PASS] Collections available: 1 collection(s)');
+      expect(out).toContain("[PASS] Permission: CREATE_ITEM confirmed on 'Faculty Content'.");
+      expect(out).toContain(
+        "[PASS] Duplicate detection: existing items will be matched on 'MWDL/title'",
+      );
       expect(out).toContain('All checks passed.');
     });
 
@@ -577,5 +657,40 @@ describe('oeq_login_url / oeq_login_complete / oeq_check', () => {
       expect(out).not.toContain(secret);
       expect(out).not.toContain(encoded);
     });
+  });
+});
+
+/**
+ * The MCP layer used to carry its own literal-only redactor under the same
+ * name as the strong core one, so the conversation transcript was guarded by
+ * the weakest of the three. These pin the delegation.
+ *
+ * Note the secret above ('a+b/c=d&e') cannot detect that bug: every one of
+ * its special characters escapes identically under both encoders, so a
+ * literal-only redactor passes it. '!' is what separates them.
+ */
+describe('mcp redactSecret', () => {
+  const SECRET = 'Summer2026!pa ss';
+
+  it('redacts the form the secret actually takes on the wire', () => {
+    // What URLSearchParams puts in the request line -- and what a server
+    // echoing that line back would hand to an ApiError message.
+    const onWire = 'Summer2026%21pa+ss';
+    expect(redactSecret(`token request failed: ...&client_secret=${onWire}`, {
+      OEQ_CLIENT_SECRET: SECRET,
+    })).toBe('token request failed: ...&client_secret=[REDACTED]');
+  });
+
+  it('redacts the literal and encodeURIComponent forms too', () => {
+    for (const form of [SECRET, encodeURIComponent(SECRET)]) {
+      expect(redactSecret(`saw ${form} here`, { OEQ_CLIENT_SECRET: SECRET })).toBe(
+        'saw [REDACTED] here',
+      );
+    }
+  });
+
+  it('passes text through when no secret is configured', () => {
+    expect(redactSecret('nothing configured', {})).toBe('nothing configured');
+    expect(redactSecret('empty string', { OEQ_CLIENT_SECRET: '' })).toBe('empty string');
   });
 });

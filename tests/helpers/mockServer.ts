@@ -103,6 +103,25 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+/**
+ * `GET /api/content/currentuser`'s body, as this mock serves it.
+ *
+ * `id` and `guest` are OPTIONAL here only so the existing tests that assign a
+ * three-field literal keep compiling; the real response always carries both,
+ * and the guest one is recorded verbatim in
+ * tests/fixtures/api/currentuser-guest.json. `guest` is the field that matters:
+ * openEQUELLA answers an UNAUTHENTICATED request to this route with 200 and
+ * `{"username":"guest","guest":true,...}`, never with 401, which is how a
+ * pre-flight came to report a not-signed-in session as "logged in as guest".
+ */
+export interface MockCurrentUser {
+  username: string;
+  firstName: string;
+  lastName: string;
+  id?: string;
+  guest?: boolean;
+}
+
 export interface MockState {
   /** Tokens handed out, newest last. */
   issuedTokens: string[];
@@ -143,7 +162,7 @@ export interface MockState {
    * created items will be owned by. Mutate directly in a test to change who
    * "is logged in".
    */
-  currentUser: { username: string; firstName: string; lastName: string };
+  currentUser: MockCurrentUser;
   /**
    * Additive test scaffolding for `GET /api/collection/{uuid}` and
    * `GET /api/collection`, backing `check`/`oeq_check`'s "does the
@@ -152,7 +171,18 @@ export interface MockState {
    * (with whatever `privileges` it wants the mock's "current user" to hold
    * on it) before either check can pass.
    */
-  collections: { uuid: string; name: string; privileges: string[] }[];
+  collections: { uuid: string; name: string; privileges: string[]; schemaUuid?: string }[];
+  /**
+   * Additive test scaffolding for `GET /api/schema/{uuid}`, backing
+   * `check`/`oeq_check`'s "does the configured attachment-uuid path actually
+   * exist in this collection's schema" check. `paths` are leaf xpaths in
+   * spreadsheet-header form; the route turns them back into the nested
+   * `definition.xml` tree a real schema response carries (see
+   * tests/fixtures/api/schema.json). Empty by default -- a collection must
+   * declare a `schemaUuid` AND a schema be registered here before anything can
+   * be looked up.
+   */
+  schemas: { uuid: string; namePath: string; paths: string[] }[];
   stagingAreas: Set<string>;
   uploads: { staging: string; filename: string; bytes: number }[];
   items: {
@@ -168,12 +198,56 @@ export interface MockState {
   existingIdentifiers: string[];
   /** Items that already exist, for the title/attachment duplicate check. */
   existingItems: { uuid: string; version: number; title: string; attachmentNames: string[] }[];
+  /**
+   * The xpath this mock instance's schema declares as the item name. A `where`
+   * clause naming any other path matches nothing, which is what a real
+   * instance does and is exactly the silent-blindness failure the title-path
+   * work exists to prevent -- so the mock must model it rather than answering
+   * whatever path it is asked about.
+   */
+  titlePath: string;
+  /** Every `/api/search` request line, in order, so a test can assert on the URL itself. */
+  searchUrls: string[];
+  /**
+   * Every `/api/collection` LIST request line, in order. `full=true` is the
+   * difference between an entry that carries `schema: { uuid }` and one that
+   * does not (confirmed live), and the only way to prove it is sent is to
+   * look at the request.
+   */
+  collectionUrls: string[];
+  /**
+   * Answer the collection list the way an UNAUTHENTICATED openEQUELLA does:
+   * 200, the real `available` count, and ZERO results. Recorded verbatim in
+   * tests/fixtures/api/collections-unauthenticated.json (`available: 29`,
+   * `results: []`). Not an error path -- it is indistinguishable from "you
+   * have no collections" unless the count is read, which is exactly the
+   * defect this models.
+   */
+  withholdCollections: boolean;
 }
 
 export interface MockServer {
   url: string;
   state: MockState;
   close: () => Promise<void>;
+}
+
+/**
+ * Turn leaf xpaths (`MWDL/title`) back into the nested object a real
+ * `definition.xml` is, so `parseSchema`'s own tree walk is exercised rather
+ * than bypassed. A leaf is a node with no non-underscore children, which is
+ * exactly what an empty object is.
+ */
+function definitionTree(paths: string[]): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  for (const path of paths) {
+    let cursor = root;
+    for (const segment of path.split('/').filter(Boolean)) {
+      cursor[segment] ??= {};
+      cursor = cursor[segment] as Record<string, unknown>;
+    }
+  }
+  return root;
 }
 
 const readBody = (req: IncomingMessage): Promise<Buffer> =>
@@ -195,11 +269,16 @@ export async function startMockServer(): Promise<MockServer> {
     validAuthCodes: new Set(),
     currentUser: { username: 'test-user', firstName: 'Test', lastName: 'User' },
     collections: [],
+    schemas: [],
     stagingAreas: new Set(),
     uploads: [],
     items: [],
     existingIdentifiers: [],
     existingItems: [],
+    titlePath: 'MWDL/title',
+    searchUrls: [],
+    collectionUrls: [],
+    withholdCollections: false,
   };
 
   let counter = 0;
@@ -352,16 +431,26 @@ export async function startMockServer(): Promise<MockServer> {
         // live server's default of excluding drafts entirely.
         const showAll = url.searchParams.get('showall') === 'true';
         const where = url.searchParams.get('where');
+        state.searchUrls.push(req.url ?? '');
 
         if (where) {
           // Models the shape CONFIRMED against production on 2026-08-07:
           // an exact match on the node, and results that carry `attachments`
           // with a `filename` but NO `name` of their own.
-          const parsed = /^\/xml\/MWDL\/title\s*=\s*'(.*)'$/s.exec(where);
+          //
+          // The path is captured rather than hardcoded, and only the path this
+          // instance's schema declares (state.titlePath) can match: querying
+          // some other institution's title path returns zero hits, silently,
+          // just like the real server.
+          const parsed = /^\/xml\/(.+?)\s*=\s*'(.*)'$/s.exec(where);
           if (!parsed) return send(res, 400, { error: `unparseable where clause: ${where}` });
-          const wanted = parsed[1]!.replace(/''/g, "'");
+          const askedPath = parsed[1]!;
+          const wanted = parsed[2]!.replace(/''/g, "'");
 
-          const hits = showAll ? state.existingItems.filter((i) => i.title === wanted) : [];
+          const hits =
+            showAll && askedPath === state.titlePath
+              ? state.existingItems.filter((i) => i.title === wanted)
+              : [];
           const withAttachments = url.searchParams.get('info')?.includes('attachment') ?? false;
           return send(res, 200, {
             start: 0,
@@ -403,7 +492,28 @@ export async function startMockServer(): Promise<MockServer> {
       if (collectionGet && req.method === 'GET') {
         const found = state.collections.find((c) => c.uuid === collectionGet[1]);
         if (!found) return send(res, 404, { error: 'not found' });
-        return send(res, 200, { uuid: found.uuid, name: found.name });
+        // `schema: { uuid }` is on the real CollectionBean -- see
+        // tests/fixtures/api/collection-one.json, recorded live. Omitted when
+        // the mock collection declares none, which is how a "this collection
+        // names no schema" case is expressed.
+        return send(res, 200, {
+          uuid: found.uuid,
+          name: found.name,
+          ...(found.schemaUuid ? { schema: { uuid: found.schemaUuid } } : {}),
+        });
+      }
+
+      // CONFIRMED against tests/fixtures/api/schema.json, recorded live:
+      // GET /schema/{uuid} -> { uuid, namePath, definition: { xml: ... } }.
+      const schemaGet = /^\/api\/schema\/([^/]+)$/.exec(path);
+      if (schemaGet && req.method === 'GET') {
+        const found = state.schemas.find((s) => s.uuid === schemaGet[1]);
+        if (!found) return send(res, 404, { error: 'not found' });
+        return send(res, 200, {
+          uuid: found.uuid,
+          namePath: found.namePath,
+          definition: { xml: definitionTree(found.paths) },
+        });
       }
 
       // CONFIRMED against swagger.json: GET /collection (PagingBeanCollectionBean).
@@ -413,13 +523,37 @@ export async function startMockServer(): Promise<MockServer> {
       // mock collection's `privileges`) rather than every combination swagger
       // permits.
       if (path === '/api/collection' && req.method === 'GET') {
+        state.collectionUrls.push(req.url ?? '');
         const privileges = url.searchParams.getAll('privilege');
         const length = Number(url.searchParams.get('length') ?? '10');
         const filtered =
           privileges.length > 0
             ? state.collections.filter((c) => privileges.every((p) => c.privileges.includes(p)))
             : state.collections;
-        const results = filtered.slice(0, length).map((c) => ({ uuid: c.uuid, name: c.name }));
+        // The unauthenticated answer: the true count, and none of the rows.
+        // See MockState.withholdCollections.
+        if (state.withholdCollections) {
+          return send(res, 200, {
+            start: 0,
+            length: 0,
+            available: filtered.length,
+            results: [],
+            resumptionToken: '',
+          });
+        }
+        // `schema: { uuid }` IS GATED ON `full=true`, exactly as the live
+        // instance gates it. Without that parameter a real entry carries only
+        // `uuid, name, nameStrings, readonly, links` -- recorded verbatim in
+        // tests/fixtures/api/collections-test-instance.json -- and every
+        // collection resolves to no schema at all. The mock used to hand the
+        // schema over unconditionally, so no test could have noticed the
+        // parameter was missing from the request.
+        const full = url.searchParams.get('full') === 'true';
+        const results = filtered.slice(0, length).map((c) => ({
+          uuid: c.uuid,
+          name: c.name,
+          ...(full && c.schemaUuid ? { schema: { uuid: c.schemaUuid } } : {}),
+        }));
         return send(res, 200, {
           start: 0,
           length: results.length,

@@ -2,7 +2,7 @@ import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises';
 import { unlinkSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { StoredToken, TokenStore } from '../core/tokenStore.js';
-import { INSTANCES } from './ipc.js';
+import { instanceKey, normaliseInstanceUrl } from '../core/instanceUrl.js';
 
 /**
  * The subset of Electron's `safeStorage` this module needs, extracted as an
@@ -16,7 +16,25 @@ export interface Cipher {
   decrypt(encrypted: Buffer): string;
 }
 
-export interface Settings {
+/**
+ * How the operator signs in to one instance.
+ *
+ * A DISCRIMINATOR, not an inference from which fields happen to be filled in.
+ * "Empty client id means they must have meant password" is a rule that has to
+ * be re-derived correctly at every site that reads these settings, and is
+ * wrong the first time somebody saves a half-typed form; an explicit mode is
+ * read the same way everywhere and survives a partly filled form intact.
+ *
+ * A subset of core's `AuthMode` (core/config.ts): `client_credentials` is
+ * deliberately absent, because it is an unattended-run mode with no operator
+ * at the keyboard and Setup has nothing to collect for it that it does not
+ * already collect for `code`.
+ */
+export type SettingsAuthMode = 'code' | 'password';
+
+/** OAuth authorization-code credentials -- the SSO-backed sites' route in. */
+export interface OAuthSettings {
+  authMode: 'code';
   clientId: string;
   clientSecret: string;
   /**
@@ -31,76 +49,253 @@ export interface Settings {
 }
 
 /**
- * The OAuth client on production is a completely different registration
- * from the one on test -- see the module doc below -- so credentials are
- * keyed by instance, never shared.
- */
-export type InstanceId = 'production' | 'test';
-
-const INSTANCE_IDS: readonly InstanceId[] = ['production', 'test'];
-
-/**
- * On-disk shape for one instance's entry. `redirectUri` is OPTIONAL here,
- * even though it is required on the public `Settings` type `loadSettings`
- * returns: entries written by this project's very first per-instance store
- * (commit f31505b, before this field existed) have no `redirectUri` key at
- * all. See `defaultRedirectUri` and the migration note on `loadSettings`
- * below for how that gap is filled back in.
- */
-type StoredSettings = Pick<Settings, 'clientId' | 'clientSecret'> & Partial<Pick<Settings, 'redirectUri'>>;
-
-/** On-disk shape written by THIS version of the store. */
-interface StoredShapeV2 {
-  version: 2;
-  instances: Partial<Record<InstanceId, StoredSettings>>;
-}
-
-function isStoredSettings(v: unknown): v is StoredSettings {
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    typeof (v as Partial<StoredSettings>).clientId === 'string' &&
-    typeof (v as Partial<StoredSettings>).clientSecret === 'string' &&
-    ((v as Partial<StoredSettings>).redirectUri === undefined ||
-      typeof (v as Partial<StoredSettings>).redirectUri === 'string')
-  );
-}
-
-/**
- * Migration default for a stored entry that predates `redirectUri` (and the
- * sensible pre-fill Setup shows for a fresh entry): the instance's own base
- * url, with no trailing slash -- verified live to match both of the
- * operator's new dedicated OAuth clients. Forcing re-entry instead would
- * have been the THIRD time in one day the operator had to retype
- * credentials for a gap that has nothing to do with the client ID/secret
- * they already typed correctly.
- */
-function defaultRedirectUri(instanceId: InstanceId): string {
-  const inst = INSTANCES.find((i) => i.id === instanceId);
-  // INSTANCES always declares both known instance ids (guarded by
-  // session.test.ts); this fallback only matters if that invariant is ever
-  // violated.
-  return inst ? inst.baseUrl.replace(/\/+$/, '') : '';
-}
-
-/**
- * Credentials are per instance: production (`content.byui.edu`) and test
- * (`content-test.byui.edu`) each register their own OAuth client, so a
- * client ID that works on one is refused outright by the other. Earlier
- * versions of this store persisted a single, unkeyed `{clientId,
- * clientSecret}` pair -- fine when the app only ever talked to one
- * instance, wrong now that it can talk to either.
+ * An ordinary openEQUELLA account: what an institution that is not behind SSO
+ * can use on the day it installs this tool, with nothing to request from an
+ * administrator first.
  *
- * Migration: a store written by that old format is indistinguishable from
- * "which instance was this pair for?" -- the old format never recorded
- * that, and guessing would risk silently handing one instance's client_id
- * to the other, which is precisely the bug being fixed here. So `loadAll`
- * treats ANY on-disk shape that isn't this version's `{version: 2,
- * instances: {...}}` wrapper -- the old flat shape, a corrupt blob, or
- * anything else unrecognised -- as "no credentials saved for either
- * instance". The operator sees Setup again and re-enters what they have;
- * that one-time re-prompt is a far smaller cost than a wrong-instance
- * credential being sent to openEQUELLA unnoticed.
+ * The password is here because `buildConfig` (session.ts) needs it to reach
+ * `UsernamePasswordAuth`. On disk it lives apart from the instance entry, in
+ * its own per-instance record, so `forgetPassword` can remove the credential
+ * without removing the site -- see `StoredShapeV3`.
+ */
+export interface PasswordSettings {
+  authMode: 'password';
+  username: string;
+  /** Never logged, never written to a manifest. See core/config.ts. */
+  password: string;
+}
+
+export type Settings = OAuthSettings | PasswordSettings;
+
+/**
+ * The key one instance's credentials are stored under: `instanceKey` of its
+ * address (core/instanceUrl.ts). A plain string, not a union of known names
+ * -- the instances are the operator's own, added on Setup, and this tool
+ * ships knowing none of them.
+ */
+export type InstanceId = string;
+
+/**
+ * An openEQUELLA site the operator has added, as everything outside this
+ * module sees it.
+ *
+ * Everything here is per-INSTANCE and not per-credential, which is why it sits
+ * beside `Settings` rather than inside it: an institution's schema, its
+ * production-or-not status and its site address are facts about the SITE, true
+ * whether it is reached with a password or with an OAuth client.
+ */
+export interface Instance {
+  id: InstanceId;
+  /** What the operator calls it. Defaults to the address's host. */
+  label: string;
+  /** Normalised (`normaliseInstanceUrl`), so it can be concatenated with an api path. */
+  baseUrl: string;
+  /** How this site signs in. Mirrors `Settings.authMode`; carries no secret. */
+  authMode: SettingsAuthMode;
+  /**
+   * Where each item's attachment uuid is written into its metadata, as a
+   * spreadsheet-style xpath (`BYUI_extended/attachments/attachment`), or ''
+   * for "write no such field".
+   *
+   * STORED, not read from `process.env`. `session.ts`'s `buildConfig` used to
+   * take it from `OEQ_ATTACHMENT_UUID_PATH`, which works for a developer
+   * running `npm run desktop` and is useless for an operator launching the
+   * packaged app from a Start Menu shortcut with no environment set -- their
+   * items came out silently missing the field, with no error and nothing to
+   * notice until somebody went looking in openEQUELLA weeks later.
+   *
+   * BLANK IS A LEGITIMATE CHOICE and the right default for most institutions,
+   * whose schema declares no such node. It is never coerced into a guess.
+   */
+  attachmentUuidPath: string;
+  /**
+   * Whether this is a live site -- one where a contribution is a real,
+   * undoable item in a real collection. Drives the instance banner
+   * (ui/banner.ts).
+   *
+   * DEFAULTS TO TRUE, including for an entry written before this field
+   * existed. A new site is assumed live until the operator says otherwise, so
+   * the failure direction stays safe: being warned about a sandbox is a
+   * nuisance, not being warned about production is an unrecoverable batch.
+   */
+  live: boolean;
+  /**
+   * The schema of the collection the operator picked on Setup, or '' if none
+   * has been picked.
+   *
+   * Stored because it is the ADDRESS OF THE CACHED SCHEMA: `SchemaCache`
+   * (core/schemaCache.ts) is keyed on (instance url, schema uuid), and
+   * extraction -- which never touches the network -- has no other way to find
+   * the schema it should validate its columns against. Derived from the chosen
+   * collection's own `schema.uuid` (discovery.ts#parseCollections), never
+   * typed by the operator.
+   */
+  schemaUuid: string;
+}
+
+/**
+ * On-disk shape for one instance's entry. Every field its OWN mode needs is
+ * required: an entry missing one is not a usable credential, and filling the
+ * gap in would mean inventing a value -- see `OAuthSettings.redirectUri` for
+ * what inventing that one in particular has cost this project. Which fields
+ * those are depends on `authMode`, so a password entry is not rejected for
+ * having no client id it was never going to have.
+ *
+ * The password itself is NOT here: it lives in `StoredShapeV3.passwords`.
+ */
+type StoredEntry = {
+  label: string;
+  baseUrl: string;
+  attachmentUuidPath: string;
+  live: boolean;
+  schemaUuid: string;
+} & (
+  | { authMode: 'code'; clientId: string; clientSecret: string; redirectUri: string }
+  | { authMode: 'password' }
+);
+
+/** One instance's openEQUELLA account, as stored. */
+interface StoredPassword {
+  username: string;
+  password: string;
+}
+
+/**
+ * On-disk shape written by THIS version of the store.
+ *
+ * `passwords` is keyed exactly like `instances` and kept beside them rather
+ * than inside them for two reasons: "Forget this password" has to be able to
+ * remove the credential while leaving the site, its name and its address
+ * alone; and a v3 file written before password auth existed simply has no
+ * `passwords` key, which reads as "no passwords stored" with no migration at
+ * all. Still ONE file and ONE `safeStorage` encryption -- a second store
+ * would be a second thing to keep in step and a second thing to leave behind
+ * on `clear()`.
+ */
+interface StoredShapeV3 {
+  version: 3;
+  instances: Record<InstanceId, StoredEntry>;
+  passwords: Record<InstanceId, StoredPassword>;
+}
+
+/**
+ * What `loadAll` returns: the store, plus whether readable credentials
+ * written by an older version were found and thrown away. Setup needs that
+ * second fact to explain an otherwise blank form -- see `credentialsDropped`.
+ */
+interface LoadResult {
+  shape: StoredShapeV3;
+  dropped: boolean;
+}
+
+/**
+ * One on-disk entry, normalised -- or null if it is not a usable credential.
+ *
+ * A parse rather than a type guard because of the one thing it fills in: an
+ * entry with NO `authMode` is a v3 entry written by this same branch before
+ * password auth existed, and every one of those is an OAuth entry. Reading it
+ * as `code` is not a guess -- `code` was the only mode the desktop could
+ * produce, hardcoded in `buildConfig`. Discarding it over a field that had not
+ * been invented yet would send an operator back to their administrator for a
+ * client secret for no reason at all.
+ *
+ * The three per-site settings are defaulted rather than required, for the same
+ * reason: an entry written before they existed is a perfectly good credential,
+ * and none of them is a secret that has to come from the operator.
+ * `attachmentUuidPath` and `schemaUuid` default to '' -- "no such field" and
+ * "no schema picked", both true of an entry that predates them. `live`
+ * defaults to TRUE: an unmarked site is assumed live, because the direction to
+ * be wrong in is warning about a sandbox, not staying quiet about production.
+ *
+ * Nothing else is filled in. A `code` entry still has to carry all three OAuth
+ * fields, and one missing its `redirectUri` is still dropped rather than
+ * having one derived for it.
+ */
+function parseStoredEntry(v: unknown): StoredEntry | null {
+  const e = v as Record<string, unknown> | null;
+  if (typeof e !== 'object' || e === null) return null;
+  if (typeof e.label !== 'string' || typeof e.baseUrl !== 'string') return null;
+  const base = {
+    label: e.label,
+    baseUrl: e.baseUrl,
+    attachmentUuidPath: typeof e.attachmentUuidPath === 'string' ? e.attachmentUuidPath : '',
+    live: typeof e.live === 'boolean' ? e.live : true,
+    schemaUuid: typeof e.schemaUuid === 'string' ? e.schemaUuid : '',
+  };
+
+  if (e.authMode === 'password') return { ...base, authMode: 'password' };
+  if (e.authMode !== undefined && e.authMode !== 'code') return null;
+  if (
+    typeof e.clientId !== 'string' ||
+    typeof e.clientSecret !== 'string' ||
+    typeof e.redirectUri !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    ...base,
+    authMode: 'code',
+    clientId: e.clientId,
+    clientSecret: e.clientSecret,
+    redirectUri: e.redirectUri,
+  };
+}
+
+/**
+ * One stored entry as everything outside this module sees it. Deliberately
+ * field-by-field rather than a spread of `stored`: `StoredEntry` also carries
+ * the client id and secret in OAuth mode, and this is the shape handed to the
+ * sandboxed renderer through `listInstances` (ipc.ts's `InstanceChoice`). A
+ * spread would put an OAuth client secret in the renderer the day a field was
+ * added to `StoredEntry`, silently.
+ */
+function toInstance(id: InstanceId, stored: StoredEntry): Instance {
+  return {
+    id,
+    label: stored.label,
+    baseUrl: stored.baseUrl,
+    // Always set: parseStoredEntry fills 'code' in for an entry written
+    // before the discriminator existed, rather than leaving it absent.
+    authMode: stored.authMode,
+    attachmentUuidPath: stored.attachmentUuidPath,
+    live: stored.live,
+    schemaUuid: stored.schemaUuid,
+  };
+}
+
+/** One stored account, or null. Both halves or neither -- a password with no
+ *  username signs nobody in, and a username alone is not a credential. */
+function parseStoredPassword(v: unknown): StoredPassword | null {
+  const p = v as Record<string, unknown> | null;
+  if (typeof p !== 'object' || p === null) return null;
+  if (typeof p.username !== 'string' || typeof p.password !== 'string') return null;
+  return { username: p.username, password: p.password };
+}
+
+/**
+ * Credentials are per instance: each openEQUELLA site registers its own OAuth
+ * client, so a client ID that works on one is refused outright by another. A
+ * site's entry is keyed by `instanceKey` of its address, which is what makes
+ * two spellings of one address a single entry rather than two. Earlier
+ * versions of this store persisted a single, unkeyed `{clientId,
+ * clientSecret}` pair -- fine when the app only ever talked to one site,
+ * wrong now that the operator can add any number of them.
+ *
+ * Migration: a store written by an older format cannot be rekeyed. `version:
+ * 2` keyed entries by the literal names 'production' and 'test' -- two
+ * addresses the app itself used to declare and no longer does -- and the
+ * older flat format never recorded which site its pair belonged to at all.
+ * Guessing would risk silently handing one site's client_id to another, which
+ * is precisely the bug this store exists to prevent. So `loadAll` treats ANY
+ * on-disk shape that isn't this version's `{version: 3, instances: {...}}`
+ * wrapper -- v2, the old flat shape, a corrupt blob, or anything else
+ * unrecognised -- as "no credentials saved at all". The operator sees Setup
+ * again and re-enters what they have; that one-time re-prompt is a far
+ * smaller cost than a wrong-instance credential being sent to openEQUELLA
+ * unnoticed.
+ *
+ * A discard that happened silently would read as a broken app, so it is
+ * reported: see `credentialsDropped`, and the notice Setup shows because of it.
  */
 export class SecretStore {
   constructor(
@@ -108,43 +303,165 @@ export class SecretStore {
     private readonly cipher: Cipher,
   ) {}
 
-  async saveSettings(instanceId: InstanceId, settings: Settings): Promise<void> {
-    if (!this.cipher.isAvailable()) {
-      throw new Error(
-        'OS encryption is unavailable, so credentials cannot be stored safely. ' +
-          'Refusing to write them in plaintext.',
-      );
+  /**
+   * Add or update one instance and its credentials, returning the instance as
+   * stored -- including the id, which is DERIVED here rather than supplied,
+   * so there is exactly one rule for what an address's key is.
+   *
+   * A blank label falls back to the address's host: a dropdown of untitled
+   * entries is no way to tell a live site from a sandbox, and the host is the
+   * one name that is always available and always true.
+   *
+   * The three per-site settings are OPTIONAL on the way in, and an omitted one
+   * leaves whatever is already stored alone -- the same rule as a blank
+   * password below. A caller that only means to rename a site must not silently
+   * reset which field its attachment uuids are written to, or un-mark it as
+   * live. Explicitly passing `''` for `attachmentUuidPath` is NOT an omission:
+   * blank means "write no such field", which is a real choice and the correct
+   * one for most schemas, so it is stored as given.
+   */
+  async saveInstance(
+    instance: {
+      label: string;
+      baseUrl: string;
+      attachmentUuidPath?: string;
+      live?: boolean;
+      schemaUuid?: string;
+    },
+    settings: Settings,
+  ): Promise<Instance> {
+    this.requireEncryption();
+    // Before anything is written: an address that cannot be normalised has no
+    // key, and https is required (see normaliseInstanceUrl).
+    const baseUrl = normaliseInstanceUrl(instance.baseUrl);
+    const id = instanceKey(baseUrl);
+    const label = instance.label.trim() || new URL(baseUrl).host;
+
+    const { shape } = await this.loadAll();
+    const previous = shape.instances[id];
+    const site = {
+      label,
+      baseUrl,
+      attachmentUuidPath: instance.attachmentUuidPath ?? previous?.attachmentUuidPath ?? '',
+      // `true` last, not `previous?.live ?? true` folded into one `??` chain
+      // with an explicit `false`: `false ?? true` is `false`, but reading it
+      // that way takes a moment, and "assumed live" is the rule this defaults
+      // to when nothing at all is known.
+      live: instance.live ?? previous?.live ?? true,
+      schemaUuid: instance.schemaUuid ?? previous?.schemaUuid ?? '',
+    };
+    if (settings.authMode === 'password') {
+      shape.instances[id] = { ...site, authMode: 'password' };
+      // A BLANK password means "leave the stored one alone", not "clear it".
+      // Setup never renders a stored password back into a field, so the form
+      // submitted by an operator who only renamed the site carries an empty
+      // one; treating that as a deletion would sign them out of a site they
+      // never touched. The only way to remove a password is forgetPassword.
+      if (settings.password !== '') {
+        shape.passwords[id] = { username: settings.username, password: settings.password };
+      }
+    } else {
+      const { authMode, clientId, clientSecret, redirectUri } = settings;
+      shape.instances[id] = { ...site, authMode, clientId, clientSecret, redirectUri };
+      // Any password stored for this site is left where it is: switching to
+      // Advanced to correct a client id must not throw away a credential the
+      // operator can only replace by typing it again.
     }
-    const current = await this.loadAll();
-    current.instances[instanceId] = settings;
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const blob = this.cipher.encrypt(JSON.stringify(current));
-    await writeFile(this.filePath, blob);
+    await this.write(shape);
+    return { id, authMode: settings.authMode, ...site };
   }
 
   /**
-   * Migration: an entry saved before `redirectUri` existed has no such key
-   * on disk (see `StoredSettings`'s doc comment). Rather than surface that
-   * gap as `undefined` -- which would go straight into an OAuth
-   * authorize-url query string as the literal string `"undefined"` -- it is
-   * filled in here with `defaultRedirectUri`, once, on every read. Nothing
-   * is written back to disk by this; the fill-in is applied fresh each time
-   * until the operator (or Setup's own pre-filled default) actually saves a
-   * value for it.
+   * The instance's credentials in the shape `buildConfig` consumes, or null
+   * when there is no usable one.
+   *
+   * Null for a password-mode instance whose password has been forgotten: it
+   * is a site with no credential, and reporting it as configured would put a
+   * "Sign in" button in front of the operator that can only fail with an empty
+   * password. `handlers.ts` turns the null into "no credentials saved for
+   * {site}", which is both true and actionable.
    */
   async loadSettings(instanceId: InstanceId): Promise<Settings | null> {
-    const all = await this.loadAll();
-    const stored = all.instances[instanceId];
+    const { shape } = await this.loadAll();
+    const stored = shape.instances[instanceId];
     if (!stored) return null;
+    if (stored.authMode === 'password') {
+      const account = shape.passwords[instanceId];
+      if (!account) return null;
+      return { authMode: 'password', username: account.username, password: account.password };
+    }
     return {
+      authMode: 'code',
       clientId: stored.clientId,
       clientSecret: stored.clientSecret,
-      redirectUri: stored.redirectUri ?? defaultRedirectUri(instanceId),
+      // Verbatim, never re-derived. See OAuthSettings.redirectUri.
+      redirectUri: stored.redirectUri,
     };
+  }
+
+  /**
+   * Store one instance's openEQUELLA account. Same encryption and the same
+   * per-instance key as the client secret: an account that works on one site
+   * is refused outright by another, so there is no such thing as "the"
+   * password any more than there is "the" client id.
+   */
+  async setPassword(instanceId: InstanceId, username: string, password: string): Promise<void> {
+    this.requireEncryption();
+    const { shape } = await this.loadAll();
+    shape.passwords[instanceId] = { username, password };
+    await this.write(shape);
+  }
+
+  /** Null when nothing is stored, or when the store cannot be read -- never throws. */
+  async getPassword(instanceId: InstanceId): Promise<StoredPassword | null> {
+    return (await this.loadAll()).shape.passwords[instanceId] ?? null;
+  }
+
+  /**
+   * Behind Setup's "Forget this password". Removing what is absent is not an
+   * error, and costs no write -- which also means it cannot fail on a machine
+   * whose encryption has stopped working, where there is nothing to forget.
+   */
+  async forgetPassword(instanceId: InstanceId): Promise<void> {
+    const { shape } = await this.loadAll();
+    if (!shape.passwords[instanceId]) return;
+    delete shape.passwords[instanceId];
+    await this.write(shape);
+  }
+
+  /** The instance itself -- address, name and per-site settings -- without its credentials. */
+  async loadInstance(instanceId: InstanceId): Promise<Instance | null> {
+    const stored = (await this.loadAll()).shape.instances[instanceId];
+    return stored ? toInstance(instanceId, stored) : null;
+  }
+
+  /** Every instance the operator has added, for the dropdowns. Credentials stay here. */
+  async listInstances(): Promise<Instance[]> {
+    const { shape } = await this.loadAll();
+    return Object.entries(shape.instances).map(([id, e]) => toInstance(id, e));
   }
 
   async hasSettings(instanceId: InstanceId): Promise<boolean> {
     return (await this.loadSettings(instanceId)) !== null;
+  }
+
+  /**
+   * Whether readable credentials written by an older version of this store
+   * were found and discarded, so Setup can say so instead of presenting a
+   * blank form that looks like a broken app.
+   *
+   * True only when a store was successfully decrypted and parsed and turned
+   * out to be a shape this version does not accept. A blob that would not
+   * decrypt at all is NOT reported: the notice claims something specific
+   * happened to the operator's credentials, and an unreadable file is no
+   * evidence of it.
+   *
+   * It reports the state of the file, so it stops being true the moment the
+   * operator saves anything -- the old blob is overwritten by then and there
+   * is nothing left to explain. That is what makes the notice appear once.
+   */
+  async credentialsDropped(): Promise<boolean> {
+    return (await this.loadAll()).dropped;
   }
 
   async clear(): Promise<void> {
@@ -155,33 +472,68 @@ export class SecretStore {
     }
   }
 
+  /**
+   * The one refusal, shared by every write: an OS with no working encryption
+   * must not be quietly downgraded to a plaintext file holding somebody's
+   * client secret or account password.
+   */
+  private requireEncryption(): void {
+    if (!this.cipher.isAvailable()) {
+      throw new Error(
+        'OS encryption is unavailable, so credentials cannot be stored safely. ' +
+          'Refusing to write them in plaintext.',
+      );
+    }
+  }
+
+  private async write(shape: StoredShapeV3): Promise<void> {
+    this.requireEncryption();
+    await mkdir(dirname(this.filePath), { recursive: true });
+    await writeFile(this.filePath, this.cipher.encrypt(JSON.stringify(shape)));
+  }
+
   /** Reads and validates the on-disk store. Never throws -- see class doc. */
-  private async loadAll(): Promise<StoredShapeV2> {
-    const empty: StoredShapeV2 = { version: 2, instances: {} };
+  private async loadAll(): Promise<LoadResult> {
+    const empty = (dropped = false): LoadResult => ({
+      shape: { version: 3, instances: {}, passwords: {} },
+      dropped,
+    });
     let blob: Buffer;
     try {
       blob = await readFile(this.filePath);
     } catch {
-      return empty;
+      // No file: a fresh install, with nothing to explain to anybody.
+      return empty();
     }
     try {
-      const parsed = JSON.parse(this.cipher.decrypt(blob)) as Partial<StoredShapeV2>;
-      if (parsed.version !== 2 || typeof parsed.instances !== 'object' || parsed.instances === null) {
-        // Old single-pair format, or anything else unrecognised. See the
+      const parsed = JSON.parse(this.cipher.decrypt(blob)) as Partial<StoredShapeV3>;
+      if (parsed.version !== 3 || typeof parsed.instances !== 'object' || parsed.instances === null) {
+        // A v2 store, the old single-pair format, or anything else
+        // unrecognised. Discarded, and reported as discarded. See the
         // migration note in this class's doc comment.
-        return empty;
+        return empty(true);
       }
-      const instances: Partial<Record<InstanceId, StoredSettings>> = {};
-      for (const id of INSTANCE_IDS) {
-        const v = (parsed.instances as Partial<Record<InstanceId, unknown>>)[id];
-        if (isStoredSettings(v)) instances[id] = v;
+      const instances: Record<InstanceId, StoredEntry> = {};
+      for (const [id, v] of Object.entries(parsed.instances as Record<string, unknown>)) {
+        const entry = parseStoredEntry(v);
+        if (entry) instances[id] = entry;
       }
-      return { version: 2, instances };
+      // Absent on any v3 file written before password auth existed, which is
+      // simply "no passwords stored" -- no migration, nothing dropped.
+      const passwords: Record<InstanceId, StoredPassword> = {};
+      const rawPasswords = parsed.passwords;
+      if (typeof rawPasswords === 'object' && rawPasswords !== null) {
+        for (const [id, v] of Object.entries(rawPasswords as Record<string, unknown>)) {
+          const account = parseStoredPassword(v);
+          if (account) passwords[id] = account;
+        }
+      }
+      return { shape: { version: 3, instances, passwords }, dropped: false };
     } catch {
       // Corrupt, hand-edited, or written by a different OS user. Treat as
       // absent: the resulting "set up your credentials" prompt is the right
-      // recovery either way.
-      return empty;
+      // recovery either way. Not reported as a drop -- nothing was read.
+      return empty();
     }
   }
 }

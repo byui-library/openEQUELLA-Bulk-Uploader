@@ -3,9 +3,10 @@ import type { AuthProvider } from './auth.js';
 import { OAuthClientCredentials } from './auth.js';
 import { AuthorizationCodeAuth } from './authCode.js';
 import { FileTokenStore, type TokenStore } from './tokenStore.js';
+import { UsernamePasswordAuth } from './passwordAuth.js';
 
-/** Which OAuth grant to authenticate with. See "Authentication — revised" in the design doc. */
-export type AuthMode = 'code' | 'client_credentials';
+/** Which sign-in method to use. See the institution-agnostic design doc. */
+export type AuthMode = 'code' | 'client_credentials' | 'password';
 
 export interface Config {
   baseUrl: string;
@@ -24,25 +25,62 @@ export interface Config {
    * callback) must set `OEQ_REDIRECT_URI` to match it exactly.
    */
   redirectUri: string;
+  /** Set only in `password` mode. */
+  username: string;
+  /** Set only in `password` mode. Never logged, never written to the manifest. */
+  password: string;
+  /**
+   * Metadata xpath that should receive each item's attachment uuid, in
+   * spreadsheet-header form (`Local/attachments/attachment`).
+   *
+   * EMPTY BY DEFAULT, and empty means "write nothing". This is a convenience
+   * index some schemas declare beside the attachment itself; the attachment is
+   * linked through the attachment API and does not depend on it. Writing a
+   * guessed path would write to a node the collection's schema does not have,
+   * on every item created -- see runner.ts, which also stops treating a
+   * server-assigned attachment uuid as a defect when nothing referenced the
+   * one it asked for.
+   */
+  attachmentUuidPath: string;
 }
 
-const DEFAULT_COLLECTION = 'bb348ab1-7a81-4e37-8ef7-adc095ade4f9';
-const DEFAULT_SCHEMA = 'c93181f3-a443-41bf-9afe-ac9f7daf90b7';
+/*
+ * There are deliberately NO default collection or schema uuids here.
+ *
+ * `OEQ_COLLECTION_UUID` used to fall back to BYU-Idaho's own collection, so an
+ * institution that had not set it got a real, valid-looking uuid they never
+ * chose; the only symptom was a not-found from the server naming an identifier
+ * they could not recognise. `OEQ_COLLECTION_UUID` is a required variable now,
+ * in every auth mode -- the "Missing required environment variables" error
+ * names it, which is the outcome a default was hiding.
+ *
+ * `OEQ_SCHEMA_UUID` is recorded in the manifest and sent nowhere (see
+ * CLAUDE.md), so it stays optional and defaults to empty rather than becoming
+ * a required variable for a value nothing reads.
+ */
 
 export function loadConfig(env: Record<string, string | undefined>): Config {
-  const required = ['OEQ_BASE_URL', 'OEQ_CLIENT_ID', 'OEQ_CLIENT_SECRET'] as const;
+  const authModeRaw = env.OEQ_AUTH_MODE ?? 'code';
+  if (authModeRaw !== 'code' && authModeRaw !== 'client_credentials' && authModeRaw !== 'password') {
+    throw new OeqError(
+      `OEQ_AUTH_MODE must be "code", "client_credentials" or "password", got "${authModeRaw}".`,
+    );
+  }
+
+  // Which variables are required depends on the mode: an institution using
+  // password auth has no OAuth client at all, so demanding a client id would
+  // make the mode unusable.
+  // OEQ_COLLECTION_UUID is in BOTH branches: the mode decides how you sign in,
+  // not whether you need somewhere to contribute to.
+  const required =
+    authModeRaw === 'password'
+      ? (['OEQ_BASE_URL', 'OEQ_COLLECTION_UUID', 'OEQ_USERNAME', 'OEQ_PASSWORD'] as const)
+      : (['OEQ_BASE_URL', 'OEQ_COLLECTION_UUID', 'OEQ_CLIENT_ID', 'OEQ_CLIENT_SECRET'] as const);
   const missing = required.filter((k) => !env[k]);
   if (missing.length > 0) {
     throw new OeqError(
       `Missing required environment variables:\n${missing.map((m) => `  ${m}`).join('\n')}\n` +
         `Copy .env.example to .env and fill them in.`,
-    );
-  }
-
-  const authModeRaw = env.OEQ_AUTH_MODE ?? 'code';
-  if (authModeRaw !== 'code' && authModeRaw !== 'client_credentials') {
-    throw new OeqError(
-      `OEQ_AUTH_MODE must be "code" or "client_credentials", got "${authModeRaw}".`,
     );
   }
 
@@ -61,10 +99,18 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
 
   return {
     baseUrl,
-    clientId: env.OEQ_CLIENT_ID!,
-    clientSecret: env.OEQ_CLIENT_SECRET!,
-    collectionUuid: env.OEQ_COLLECTION_UUID ?? DEFAULT_COLLECTION,
-    schemaUuid: env.OEQ_SCHEMA_UUID ?? DEFAULT_SCHEMA,
+    clientId: env.OEQ_CLIENT_ID ?? '',
+    clientSecret: env.OEQ_CLIENT_SECRET ?? '',
+    username: env.OEQ_USERNAME ?? '',
+    password: env.OEQ_PASSWORD ?? '',
+    collectionUuid: env.OEQ_COLLECTION_UUID!,
+    schemaUuid: env.OEQ_SCHEMA_UUID ?? '',
+    // Normalised to spreadsheet-header form: openEQUELLA writes its own paths
+    // with a leading slash (`/MWDL/title`), so one pasted from a schema browser
+    // arrives as `/Local/attachments/attachment` while every header and every
+    // metadata xpath in this tool is slashless. The field is write-only, so a
+    // mismatch would never be noticed -- it would just land somewhere else.
+    attachmentUuidPath: (env.OEQ_ATTACHMENT_UUID_PATH ?? '').trim().replace(/^\/+/, ''),
     authMode: authModeRaw,
     redirectUri,
   };
@@ -86,6 +132,9 @@ export function createAuthProvider(
   env: Record<string, string | undefined> = {},
   tokenStore?: TokenStore,
 ): AuthProvider {
+  if (cfg.authMode === 'password') {
+    return new UsernamePasswordAuth(cfg.baseUrl, cfg.username, cfg.password);
+  }
   if (cfg.authMode === 'client_credentials') {
     return new OAuthClientCredentials(cfg.baseUrl, cfg.clientId, cfg.clientSecret);
   }

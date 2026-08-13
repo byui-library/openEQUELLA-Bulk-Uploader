@@ -4,6 +4,8 @@ import { availablePaths, groupPaths, plainLabel } from '../extract/picker.js';
 
 export interface ExtractAddColumnProps {
   schemaPaths: string[];
+  /** What the schema calls the item's name, which decides the leading section. */
+  schemaNamePath: string | null;
   usedPaths: string[];
   query: string;
   onQueryChange(q: string): void;
@@ -18,7 +20,12 @@ export interface ExtractAddColumnProps {
  * xpath is what the spreadsheet header must literally say.
  */
 export function renderExtractAddColumn(root: HTMLElement, props: ExtractAddColumnProps): void {
-  const matches = availablePaths(props.schemaPaths, props.usedPaths, props.query);
+  const matches = availablePaths(
+    props.schemaPaths,
+    props.usedPaths,
+    props.query,
+    props.schemaNamePath,
+  );
 
   // Every keystroke re-renders this screen, destroying and recreating the
   // search box. focusWhenNew also gives it focus the first time the dialog

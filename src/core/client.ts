@@ -82,6 +82,15 @@
  */
 import type { AuthProvider } from './auth.js';
 import { ApiError, ValidationError } from './errors.js';
+import {
+  displayName,
+  parseCollections,
+  parseSchema,
+  type CollectionList,
+  type SchemaInfo,
+} from './discovery.js';
+
+export type { CollectionList } from './discovery.js';
 
 export interface AttachmentSpec {
   filename: string;
@@ -106,14 +115,46 @@ export interface CreateItemResult {
 
 /** Who the current OAuth token authenticates as -- see `CurrentUserDetails` in swagger.json. */
 export interface CurrentUser {
+  /** The account's own id. `'guest'` on an unauthenticated session. */
+  id: string;
   username: string;
   firstName: string;
   lastName: string;
+  /**
+   * THE FIELD THAT SAYS WHETHER ANYONE IS SIGNED IN.
+   *
+   * openEQUELLA never answers an unauthenticated request with 401. Measured
+   * against content-test.byui.edu with no credentials at all, this endpoint
+   * returned 200 and `{"id":"guest","username":"guest","guest":true,...}`
+   * (recorded verbatim in tests/fixtures/api/currentuser-guest.json). This
+   * client used to read only username/firstName/lastName and discard `guest`,
+   * which made "not signed in at all" and "signed in" the same success --
+   * and `oeq-upload check` reported "Identity ok -- logged in as guest ( )"
+   * as a PASS.
+   *
+   * A SUCCESSFUL CALL IS THEREFORE NOT PROOF OF SIGN-IN. Every caller has to
+   * read this. `true` only when the response says so explicitly; a response
+   * that does not mention it is read as a real account.
+   */
+  guest: boolean;
 }
 
 export interface CollectionSummary {
   uuid: string;
   name: string;
+  /**
+   * The schema this collection contributes against, from the response's
+   * `schema: { uuid }`. CONFIRMED present on `GET /collection/{uuid}` --
+   * tests/fixtures/api/collection-one.json, recorded live -- and on every
+   * entry of `GET /collection` (tests/fixtures/api/collections.json, same
+   * recording). `''` when the response declares none, so a caller can tell
+   * "no schema named" from a schema that could not be read.
+   *
+   * BOTH `getCollection` and `listCollections` populate it. The list used not
+   * to: its inline parse read `uuid` and `name` only, which is why picking a
+   * collection could not resolve its schema without a second request.
+   */
+  schemaUuid?: string;
 }
 
 /** One item already in the collection, as the duplicate check needs to see it. */
@@ -128,29 +169,6 @@ export interface SearchHit {
   name: string;
   /** Filenames of this item's attachments. Empty if it has none. */
   attachmentNames: string[];
-}
-
-/**
- * `CollectionBean.name` (swagger.json) is typed only as `I18NString`, which
- * is itself documented as a bare `{ type: "object" }` -- no shape at all, the
- * same kind of gap `AttachmentBean` has for `filename`/`type` (see this
- * file's header comment). In practice openEQUELLA's REST responses serialise
- * it as a plain string already resolved to the session's locale; this
- * defensively also accepts an `I18NStrings`-shaped object (`{ strings: {
- * [locale]: string } }`) in case a deployment does something else, and falls
- * back to the uuid rather than letting a missing display label crash `check`
- * / `oeq_check` over what is, worst case, cosmetic.
- */
-function extractDisplayName(name: unknown, fallback: string): string {
-  if (typeof name === 'string' && name) return name;
-  if (name && typeof name === 'object') {
-    const strings = (name as { strings?: Record<string, string> }).strings;
-    if (strings) {
-      const first = Object.values(strings).find((v) => typeof v === 'string' && v);
-      if (first) return first;
-    }
-  }
-  return fallback;
 }
 
 /**
@@ -479,9 +497,22 @@ export class OeqClient {
    * is asked for because `info` REPLACES the default rather than adding to it;
    * it does not in fact yield a `name`, but asking costs nothing and stops the
    * omission looking deliberate.
+   *
+   * `titleHeader` is REQUIRED and has no default. It is the schema's declared
+   * item name path in spreadsheet-header form (`MWDL/title` at BYU-Idaho,
+   * something else everywhere else). Defaulting it would be worse than a
+   * compile error: a clause naming a path the schema does not declare matches
+   * nothing, so the caller is told the batch is clean by a query that could
+   * never have found anything. Callers read it from the schema -- see
+   * discovery.ts#parseSchema and schema.ts#extractItemNamePath.
    */
-  async searchByTitle(collectionUuid: string, title: string, limit = 50): Promise<SearchHit[]> {
-    const clause = `/xml/MWDL/title = '${escapeWhereValue(title)}'`;
+  async searchByTitle(
+    collectionUuid: string,
+    title: string,
+    titleHeader: string,
+    limit = 50,
+  ): Promise<SearchHit[]> {
+    const clause = `/xml/${titleHeader} = '${escapeWhereValue(title)}'`;
     const url =
       `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
       `&where=${encodeURIComponent(clause)}` +
@@ -518,8 +549,24 @@ export class OeqClient {
    */
   async currentUser(): Promise<CurrentUser> {
     const res = await this.request('/api/content/currentuser');
-    const body = (await res.json()) as { username: string; firstName: string; lastName: string };
-    return { username: body.username, firstName: body.firstName, lastName: body.lastName };
+    const body = (await res.json()) as {
+      id?: unknown;
+      username?: unknown;
+      firstName?: unknown;
+      lastName?: unknown;
+      guest?: unknown;
+    };
+    const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    return {
+      id: str(body.id),
+      username: str(body.username),
+      firstName: str(body.firstName),
+      lastName: str(body.lastName),
+      // `=== true`, not truthiness: only the server saying so makes this a
+      // guest session. See CurrentUser.guest -- this is the field that tells a
+      // 200 from a sign-in.
+      guest: body.guest === true,
+    };
   }
 
   /**
@@ -532,8 +579,27 @@ export class OeqClient {
    */
   async getCollection(uuid: string): Promise<CollectionSummary> {
     const res = await this.request(`/api/collection/${encodeURIComponent(uuid)}`);
-    const body = (await res.json()) as { uuid: string; name?: unknown };
-    return { uuid: body.uuid, name: extractDisplayName(body.name, body.uuid) };
+    const body = (await res.json()) as { uuid: string; name?: unknown; schema?: { uuid?: unknown } };
+    return {
+      uuid: body.uuid,
+      name: displayName(body.name, body.uuid),
+      schemaUuid: typeof body.schema?.uuid === 'string' ? body.schema.uuid : '',
+    };
+  }
+
+  /**
+   * `GET /schema/{uuid}` -> the schema's declared name path and its valid
+   * xpaths, parsed by discovery.ts#parseSchema (which is where the response
+   * shape is documented and pinned to a recorded fixture).
+   *
+   * Choosing a collection determines its schema -- `getCollection` above
+   * returns the uuid -- so nothing has to configure this separately. Used by
+   * the pre-flight to check a configured attachment-uuid path against the
+   * paths the schema actually declares.
+   */
+  async getSchema(uuid: string): Promise<SchemaInfo> {
+    const res = await this.request(`/api/schema/${encodeURIComponent(uuid)}`);
+    return parseSchema(await res.json());
   }
 
   /**
@@ -542,14 +608,39 @@ export class OeqClient {
    * the response shape). Used by `check`/`oeq_check` with
    * `privilege: 'CREATE_ITEM'` to confirm the current user can actually
    * contribute to the target collection -- and, if not, to list the ones
-   * they can.
+   * they can. Also by the desktop's Setup screen, which offers the operator
+   * the collections they can actually contribute to instead of asking them
+   * for a uuid.
+   *
+   * The body is read by `discovery.ts#parseCollections`, NOT by an inline
+   * parse here. There used to be one, and it dropped each entry's
+   * `schema.uuid` -- the single fact that lets a chosen collection resolve to
+   * its schema without a second request, which is exactly what Setup needs to
+   * offer or check an attachment-uuid path. See parseCollections.
+   *
+   * `full=true` IS NOT OPTIONAL. CONFIRMED against the live instance: without
+   * it every entry comes back as `uuid, name, nameStrings, readonly, links`
+   * and carries no `schema` field whatsoever, so `schemaUuid` was '' for every
+   * collection and the entire discovery design -- choose a collection, get its
+   * schema in one hop -- silently produced nothing. The declared title path,
+   * the attachment-field check and the offline schema cache all degraded
+   * without a single error. It was missing here for exactly as long as
+   * nothing asserted on the request.
+   *
+   * Returns the whole `CollectionList`, not just the rows: an empty list from
+   * an unauthenticated session is not an empty list, and only the `available`
+   * count that comes back beside the rows can tell those apart. Callers decide
+   * what to say about it -- see `CollectionList.withheld`.
    */
-  async listCollections(opts: { privilege?: string; length?: number } = {}): Promise<CollectionSummary[]> {
+  async listCollections(
+    opts: { privilege?: string; length?: number } = {},
+  ): Promise<CollectionList> {
     const params = new URLSearchParams();
     if (opts.privilege) params.set('privilege', opts.privilege);
     params.set('length', String(opts.length ?? 100));
+    // See above: without this, no entry carries a schema.
+    params.set('full', 'true');
     const res = await this.request(`/api/collection?${params.toString()}`);
-    const body = (await res.json()) as { results: { uuid: string; name?: unknown }[] };
-    return body.results.map((r) => ({ uuid: r.uuid, name: extractDisplayName(r.name, r.uuid) }));
+    return parseCollections(await res.json());
   }
 }

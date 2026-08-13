@@ -7,18 +7,20 @@ import type { InstanceChoice } from '../ipc.js';
  * Task 7 brief and the identical reasoning in preload.cts for CHANNELS: the
  * point of the boundary is that the renderer's only path to real data is
  * window.oeq, never a directly-imported main-process module, so nothing here
- * can quietly reach around the bridge. Only the fields the UI actually
- * displays for the instance PICKER are copied here. `redirectUri` is not
- * one of them -- it no longer lives on `InstanceChoice` at all (see ipc.ts):
- * it is per-instance STORED CONFIGURATION now (secrets.ts), collected and
- * shown on the Setup screen itself, not the instance dropdown.
+ * can quietly reach around the bridge.
  *
- * Guarded by tests/desktop/ui/instances.test.ts, which imports the real
- * INSTANCES (a test runs under plain Node, not the sandboxed renderer, so
- * that import is fine there) and asserts this literal matches it exactly, so
- * the two copies cannot silently drift apart.
+ * Ships EMPTY. BYU-Idaho's two addresses used to be hardcoded here; a tool
+ * handed to other institutions must not arrive knowing them. Instances are
+ * added by the operator on Setup and remembered per Windows account
+ * (secrets.ts); the app reads them at startup through
+ * `window.oeq.listInstances()` and keeps them in its own state, so this
+ * literal is the SHIPPED list and not the whole list.
+ *
+ * Kept rather than deleted because it is the mechanism, not the data: it is
+ * how anything ever shipped would reach the sandboxed renderer.
+ * tests/desktop/ui/instances.test.ts imports the real INSTANCES (a test runs
+ * under plain Node, not the sandboxed renderer, so that import is fine there)
+ * and asserts this literal matches it exactly, so the two copies cannot
+ * silently drift apart.
  */
-export const UI_INSTANCES: Pick<InstanceChoice, 'id' | 'label' | 'baseUrl'>[] = [
-  { id: 'production', label: 'Production', baseUrl: 'https://content.byui.edu' },
-  { id: 'test', label: 'Test', baseUrl: 'https://content-test.byui.edu' },
-];
+export const UI_INSTANCES: InstanceChoice[] = [];
