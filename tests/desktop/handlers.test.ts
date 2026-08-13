@@ -406,7 +406,7 @@ describe('signOut', () => {
 
   it('ends the live session for the site being signed out of, and clears the token', async () => {
     await saveToken();
-    const ended = vi.fn(async () => {});
+    const ended = vi.fn(async () => 'ended' as const);
     rememberSession(SITE, { logout: ended });
     const ipc = fakeIpcMain();
     registerHandlers(ipc as never, getWindowStub());
@@ -418,14 +418,45 @@ describe('signOut', () => {
   });
 
   /**
+   * THE HANDLER HAS TO SAY WHAT IT DOES NOT KNOW.
+   *
+   * `logout()` never throws, on purpose (core/passwordAuth.ts): a logout that
+   * failed is not worth interrupting anyone over. But it used to return
+   * nothing either, so an unreachable site and a confirmed logout arrived here
+   * identically, this handler resolved the same way for both, and the renderer
+   * told the operator "signed out" -- true of this computer, unknown of the
+   * server. On a shared machine that is the difference between the control
+   * working and appearing to. The outcome comes back so the UI can say so.
+   */
+  it('reports a logout the server never confirmed', async () => {
+    await saveToken();
+    rememberSession(SITE, { logout: async () => 'unconfirmed' as const });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    expect(await ipc.call('oeq:signOut', SITE)).toEqual({ sessions: 1, unconfirmed: 1 });
+    // AND the local half still happened. The report is a report, not a refusal.
+    expect(await tokenStore().loadRaw()).toBeNull();
+  });
+
+  it('reports a confirmed logout as nothing to warn about', async () => {
+    await saveToken();
+    rememberSession(SITE, { logout: async () => 'ended' as const });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    expect(await ipc.call('oeq:signOut', SITE)).toEqual({ sessions: 1, unconfirmed: 0 });
+  });
+
+  /**
    * THE MUTATION GUARD for `endSessionsFor` vs `endAllSessions`. An operator
    * with a test site and a production site signed in to both would otherwise
    * be signed out of the one they did not ask about -- a surprising side
    * effect on a security control is its own defect.
    */
   it('does not end another site’s session', async () => {
-    const mine = vi.fn(async () => {});
-    const theirs = vi.fn(async () => {});
+    const mine = vi.fn(async () => 'ended' as const);
+    const theirs = vi.fn(async () => 'ended' as const);
     rememberSession(SITE, { logout: mine });
     rememberSession(OTHER, { logout: theirs });
     const ipc = fakeIpcMain();
@@ -452,7 +483,9 @@ describe('signOut', () => {
     const ipc = fakeIpcMain();
     registerHandlers(ipc as never, getWindowStub());
 
-    await expect(ipc.call('oeq:signOut', SITE)).resolves.toBeUndefined();
+    // Reported, not thrown, and not conditional: the operator asked to be
+    // signed out and that half is not conditional on the network being up.
+    await expect(ipc.call('oeq:signOut', SITE)).resolves.toEqual({ sessions: 1, unconfirmed: 1 });
     expect(await tokenStore().loadRaw()).toBeNull();
   });
 
@@ -463,7 +496,9 @@ describe('signOut', () => {
     const ipc = fakeIpcMain();
     registerHandlers(ipc as never, getWindowStub());
 
-    await expect(ipc.call('oeq:signOut', SITE)).resolves.toBeUndefined();
+    // Nothing to end is nothing to warn about: an operator whose site never
+    // signed in must not be told their session may still be live.
+    await expect(ipc.call('oeq:signOut', SITE)).resolves.toEqual({ sessions: 0, unconfirmed: 0 });
     expect(await tokenStore().loadRaw()).toBeNull();
   });
 
@@ -480,6 +515,7 @@ describe('signOut', () => {
     rememberSession(SITE, {
       logout: async () => {
         seen.push((await tokenStore().loadRaw()) ? 'still stored' : 'already gone');
+        return 'ended' as const;
       },
     });
     const ipc = fakeIpcMain();

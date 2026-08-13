@@ -32,9 +32,17 @@ export interface QuitApp {
  */
 export const LOGOUT_ON_QUIT_TIMEOUT_MS = 2000;
 
+/**
+ * `endSessions` is typed by what this hook DOES with the answer, which is
+ * nothing. `endAllSessions` reports how many sessions it ended and how many
+ * the server never confirmed (session.ts's SessionEndReport), and the sign-out
+ * handler passes that to the renderer so the operator can be told -- but there
+ * is nobody left to tell here. The window is closing. Naming the report type
+ * would only invite a later reader to think this could act on it.
+ */
 export function registerQuitLogout(
   app: QuitApp,
-  deps: { endSessions?: () => Promise<number>; timeoutMs?: number } = {},
+  deps: { endSessions?: () => Promise<unknown>; timeoutMs?: number } = {},
 ): void {
   const endSessions = deps.endSessions ?? endAllSessions;
   const timeoutMs = deps.timeoutMs ?? LOGOUT_ON_QUIT_TIMEOUT_MS;
