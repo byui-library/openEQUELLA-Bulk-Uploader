@@ -26,8 +26,17 @@ export class FakeElement {
    * look live.
    */
   private children = new Map<string, FakeElement>();
+  /** As `children`, for the group `querySelectorAll` returns. Cleared with it. */
+  private groups = new Map<string, FakeElement[]>();
 
   className = '';
+  /**
+   * `data-*` attributes, which Review reads inside its own listeners
+   * (`select.dataset['header']`). Empty here: nothing in these tests drives a
+   * per-column override, and a fake that invented one would be asserting
+   * against itself.
+   */
+  dataset: Record<string, string> = {};
   textContent = '';
   value = '';
   checked = false;
@@ -44,6 +53,7 @@ export class FakeElement {
   set innerHTML(next: string) {
     this.html = next;
     this.children.clear();
+    this.groups.clear();
   }
 
   addEventListener(type: string, fn: Listener): void {
@@ -80,6 +90,28 @@ export class FakeElement {
     return el;
   }
 
+  /**
+   * Every match for a selector, as Review, Confirm and the extract screens ask
+   * for when they wire a repeated control.
+   *
+   * ONE STUB PER OCCURRENCE, counted in the markup, rather than an empty array:
+   * a fake that answered "no matches" to a selector the markup really does
+   * carry would let a renderer stop wiring a whole group of controls with every
+   * test still green. Nothing here fires one -- the group exists so the
+   * renderers run at all.
+   */
+  querySelectorAll(selector: string): FakeElement[] {
+    const existing = this.groups.get(selector);
+    if (existing) return existing;
+    const els = Array.from({ length: occurrences(this.html, selector) }, () => {
+      const el = new FakeElement();
+      el.ownerDocument = this.ownerDocument;
+      return el;
+    });
+    this.groups.set(selector, els);
+    return els;
+  }
+
   /** Fire an event at a rendered control, as a click or change would. */
   fire(selector: string, type = 'click', event: Record<string, unknown> = {}): void {
     const el = this.querySelector(selector);
@@ -102,8 +134,21 @@ export class FakeElement {
  * `p.error`).
  */
 function present(html: string, selector: string): boolean {
-  if (selector.startsWith('#')) return html.includes(`id="${selector.slice(1)}"`);
-  return html.includes(selector.replace(/^[a-z]*\./i, ''));
+  return html.includes(token(selector));
+}
+
+/** The literal substring a selector is matched by. See `present`. */
+function token(selector: string): string {
+  if (selector.startsWith('#')) return `id="${selector.slice(1)}"`;
+  // An attribute selector (`input[name^="dup-"]`) is matched on its attribute
+  // value, which is the part that actually appears in the markup.
+  const attr = /\[[a-z-]+[~^|*$]?="([^"]+)"\]/i.exec(selector);
+  if (attr?.[1] !== undefined) return attr[1];
+  return selector.replace(/^[a-z]*\./i, '');
+}
+
+function occurrences(html: string, selector: string): number {
+  return html.split(token(selector)).length - 1;
 }
 
 export interface FakeDom {

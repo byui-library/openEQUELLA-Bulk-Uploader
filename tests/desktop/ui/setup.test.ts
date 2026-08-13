@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   attachmentPathVerdict,
+  backLabel,
   instanceFrom,
+  renderSetup,
   setupMarkup,
   settingsFrom,
   suggestAttachmentPath,
@@ -9,6 +11,7 @@ import {
   type SetupFields,
   type SetupProps,
 } from '../../../src/desktop/ui/screens/setup.js';
+import { FakeElement } from '../../helpers/fakeDom.js';
 
 /**
  * The Setup screen is asserted as the markup it produces, not as a DOM: this
@@ -60,6 +63,9 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   onLiveChange: () => {},
   onForgetPassword: () => {},
   onSave: () => {},
+  // First run by default: nowhere to go back to, so no Back is offered.
+  returnTo: null,
+  onBack: () => {},
   ...over,
 });
 
@@ -622,5 +628,81 @@ describe('settingsFrom', () => {
       // registered on the OAuth client and has been guessed wrong twice here.
       redirectUri: 'https://oeq.example.edu/',
     });
+  });
+});
+
+/**
+ * SETUP WAS A ONE-WAY DOOR. Its only control was "Save credentials", so an
+ * operator who opened it from Choose to check one setting could only leave by
+ * saving -- and saving is exactly what somebody who came to LOOK does not want
+ * to do. The way out has to cost nothing and has to say so.
+ *
+ * IT MUST NOT EXIST ON FIRST RUN. Setup is the launch screen when no site has
+ * been added, and there is genuinely nowhere behind it; a Back there would
+ * either do nothing or invent a destination. `returnTo` is null in exactly that
+ * case (app.ts's `setupEnteredFrom`, cleared by `seedSetupForm`).
+ */
+describe('the way back out of Setup', () => {
+  it('offers no Back on first run, where there is nowhere to return to', () => {
+    expect(setupMarkup(props({ returnTo: null }))).not.toContain('id="setup-back"');
+  });
+
+  it('offers Back when Setup was opened from another screen', () => {
+    expect(setupMarkup(props({ returnTo: 'choose' }))).toContain('id="setup-back"');
+    expect(setupMarkup(props({ returnTo: 'signin' }))).toContain('id="setup-back"');
+  });
+
+  /**
+   * NAMES THE DESTINATION, because there are three screens Setup can be opened
+   * from and a bare "Back" leaves the operator guessing which one they are
+   * about to land on.
+   */
+  it('names where Back goes', () => {
+    expect(backLabel('choose')).toBe('Back to choosing what to upload');
+    expect(backLabel('signin')).toBe('Back to sign in');
+    expect(backLabel('results')).toBe('Back to the upload summary');
+    expect(setupMarkup(props({ returnTo: 'choose' }))).toContain('Back to choosing what to upload');
+  });
+
+  /**
+   * SAYS WHAT IT COSTS. The one thing an operator cannot see is whether
+   * leaving throws away what they typed, or -- far worse, and the mistake the
+   * neighbouring "Change credentials…" route really does make -- something
+   * already saved.
+   */
+  it('says nothing typed is kept and nothing saved is touched', () => {
+    const html = setupMarkup(props({ returnTo: 'choose' }));
+    expect(html).toMatch(/without saving/i);
+    expect(html).toMatch(/nothing already saved is changed or removed/i);
+  });
+
+  // Back sits left of Save, as it does on Review and Confirm, and takes the
+  // same low-emphasis `secondary` treatment so it cannot be mistaken for the
+  // action the screen exists for.
+  it('is a secondary button left of Save credentials', () => {
+    const html = setupMarkup(props({ returnTo: 'choose' }));
+    expect(html.indexOf('setup-back')).toBeLessThan(html.indexOf('Save credentials'));
+    expect(html).toMatch(/id="setup-back"[^>]*class="secondary"|class="secondary"[^>]*id="setup-back"/);
+  });
+
+  // type="button", not a second submit: this button is inside #setup-form, and
+  // a default-type button there would SAVE -- the precise thing Back exists to
+  // avoid, failing in the most expensive possible direction.
+  it('is not a submit button', () => {
+    const html = setupMarkup(props({ returnTo: 'choose' }));
+    const back = html.slice(html.indexOf('id="setup-back"') - 40, html.indexOf('id="setup-back"') + 120);
+    expect(back).toContain('type="button"');
+  });
+
+  it('calls onBack when clicked, and saves nothing', () => {
+    const root = new FakeElement();
+    const calls = { back: 0, save: 0 };
+    renderSetup(root as unknown as HTMLElement, props({
+      returnTo: 'choose',
+      onBack: () => (calls.back += 1),
+      onSave: () => (calls.save += 1),
+    }));
+    root.fire('#setup-back');
+    expect(calls).toEqual({ back: 1, save: 0 });
   });
 });

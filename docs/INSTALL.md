@@ -162,10 +162,19 @@ Three more settings appear on this screen **only after the site has been saved
 and you have signed in** — the program has to ask openEQUELLA for them, so they
 cannot be shown before that. Reach it again from the Sign-in screen's
 **Settings for …** button, or from **Site settings for …** at the foot of the
-screen where you choose a collection. Saving from there puts you straight back
-where you were, with your collection, spreadsheet and folder still chosen —
-neither route touches your saved password. (**Change credentials…**, beside the
-first of those, is the one that does: it clears every site you have added.)
+screen where you choose a collection or the one that reports a finished batch.
+Saving from there puts you straight back where you were, with your collection,
+spreadsheet and folder still chosen — and if you only came to look, the
+**Back to …** button leaves without saving anything. None of those routes
+touches your saved password. (**Change credentials…**, beside the first of
+them, is the one that does: it clears every site you have added.)
+
+**Pointed at the wrong site?** The bar across the top names the site you are
+about to upload to, and **Sign out of …** — at the foot of the same two
+screens — ends that session and returns you to Sign-in, where you can pick a
+different one. It is offered only before a batch starts and after one has
+finished; while files are uploading there is deliberately no way off that
+screen.
 
 - **Collection you contribute to** — a dropdown of the collections your account
   is actually allowed to add to, read from your site. You never have to find or
