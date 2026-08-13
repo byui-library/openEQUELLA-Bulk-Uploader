@@ -532,7 +532,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            1197 tests, 78 files
+npm test            1236 tests, 79 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
