@@ -39,7 +39,16 @@ if (!base || !username || !password) {
   process.exit(2);
 }
 
-const loginUrl = new URL('/api/auth/login', base);
+/**
+ * The .mjs twin of `instanceEndpoint()` in src/core/instanceUrl.ts -- copied
+ * rather than imported because this script runs under plain `node` and cannot
+ * import TypeScript. `new URL('/api/...', 'https://host/oeq')` drops the
+ * `/oeq`, because an absolute path replaces the base's path outright, and
+ * openEQUELLA is commonly deployed under a prefix.
+ */
+const endpoint = (path) => new URL(path.replace(/^\/+/, ''), `${base.replace(/\/+$/, '')}/`);
+
+const loginUrl = endpoint('/api/auth/login');
 loginUrl.searchParams.set('username', username);
 loginUrl.searchParams.set('password', password);
 
@@ -64,7 +73,7 @@ if (!jsessionOnly) {
 // with 200 and an empty list, so the collection count alone cannot tell a
 // failed sign-in from an account with no collections. currentuser can.
 const whoami = async (label, cookieHeader) => {
-  const res = await fetch(new URL('/api/content/currentuser', base), {
+  const res = await fetch(endpoint('/api/content/currentuser'), {
     headers: { Cookie: cookieHeader },
   });
   let body = null;
@@ -80,7 +89,7 @@ const whoami = async (label, cookieHeader) => {
 const COLLECTIONS = '/api/collection?privilege=CREATE_ITEM&length=100';
 
 const count = async (label, cookieHeader) => {
-  const res = await fetch(new URL(COLLECTIONS, base), { headers: { Cookie: cookieHeader } });
+  const res = await fetch(endpoint(COLLECTIONS), { headers: { Cookie: cookieHeader } });
   let body = null;
   try {
     body = await res.json();

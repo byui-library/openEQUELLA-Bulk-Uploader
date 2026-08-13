@@ -1,7 +1,7 @@
 import { ApiError } from './errors.js';
 import type { AuthProvider } from './auth.js';
 import { GUEST_SESSION_EXPLANATION } from './identity.js';
-import { normaliseInstanceUrl } from './instanceUrl.js';
+import { instanceEndpoint, normaliseInstanceUrl } from './instanceUrl.js';
 import { redactSecret } from './redact.js';
 
 /**
@@ -137,7 +137,7 @@ export class UsernamePasswordAuth implements AuthProvider {
   }
 
   private async login(startedInGeneration: number): Promise<Session> {
-    const url = new URL(LOGIN_PATH, this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, LOGIN_PATH);
     url.searchParams.set('username', this.username);
     url.searchParams.set('password', this.password);
 
@@ -220,7 +220,7 @@ export class UsernamePasswordAuth implements AuthProvider {
    * live instance and fail every sign-in for the wrong reason.
    */
   private async confirmSignedIn(session: Session): Promise<void> {
-    const url = new URL(CURRENT_USER_PATH, this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, CURRENT_USER_PATH);
     let res: Response;
     let body: string;
     try {
@@ -268,9 +268,11 @@ export class UsernamePasswordAuth implements AuthProvider {
     }
   }
 
-  /** Origin + path only — never the query string, which carries the password. */
+  /** Origin + path only — never the query string, which carries the password.
+   *  `pathname` (not `origin` alone) is what keeps a hosting prefix here: this
+   *  must name the endpoint the code actually called. */
   private safeEndpoint(): string {
-    const url = new URL(LOGIN_PATH, this.baseUrl);
+    const url = instanceEndpoint(this.baseUrl, LOGIN_PATH);
     return `${url.origin}${url.pathname}`;
   }
 
@@ -313,7 +315,7 @@ export class UsernamePasswordAuth implements AuthProvider {
     if (!session) return;
 
     try {
-      await this.fetchImpl(new URL(LOGOUT_PATH, this.baseUrl), {
+      await this.fetchImpl(instanceEndpoint(this.baseUrl, LOGOUT_PATH), {
         method: 'PUT',
         // The whole jar, for the same reason every other request carries it:
         // without the routing cookies the PUT reaches a backend that does not

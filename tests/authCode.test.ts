@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AuthorizationCodeAuth } from '../src/core/authCode.js';
 import { FileTokenStore } from '../src/core/tokenStore.js';
 import { ApiError, OeqError } from '../src/core/errors.js';
@@ -420,5 +420,85 @@ describe('AuthorizationCodeAuth — secret handling and malformed responses', ()
     } finally {
       await probe.close();
     }
+  });
+});
+
+/**
+ * openEQUELLA is very commonly deployed under a path prefix. Both OAuth URLs
+ * this provider builds used to be absolute-path-resolved against the base,
+ * which discards the prefix outright, so at such a site the browser was sent
+ * to a non-existent /oauth/authorise and the exchange POSTed into thin air.
+ *
+ * `redirect_uri` is a SEPARATE, verbatim value (see the class doc comment) --
+ * these tests pin the endpoint URLs only, and check the redirect_uri came
+ * through untouched.
+ */
+describe('AuthorizationCodeAuth — an instance hosted under a path prefix', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const PREFIXED = 'https://library.example.edu/oeq';
+
+  it('builds the authorize URL under the prefix, and leaves redirect_uri verbatim', () => {
+    const auth = new AuthorizationCodeAuth(
+      PREFIXED,
+      'client-1',
+      'secret',
+      `${PREFIXED}/`,
+      new FileTokenStore(tokenPath()),
+    );
+    const url = new URL(auth.getAuthorizeUrl());
+    expect(url.origin + url.pathname).toBe('https://library.example.edu/oeq/oauth/authorise');
+    expect(url.searchParams.get('redirect_uri')).toBe('https://library.example.edu/oeq/');
+  });
+
+  it('exchanges the code under the prefix', async () => {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (input: string | URL) => {
+      seen.push(String(input));
+      return new Response(JSON.stringify({ access_token: 'tok-1', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const auth = new AuthorizationCodeAuth(
+      PREFIXED,
+      'client-1',
+      'secret',
+      `${PREFIXED}/`,
+      new FileTokenStore(tokenPath()),
+    );
+    await auth.exchangeCode('the-code');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.startsWith('https://library.example.edu/oeq/')).toBe(true);
+    expect(new URL(seen[0]!).pathname).toBe('/oeq/oauth/access_token');
+  });
+
+  it('still hits the host root when there is no prefix', async () => {
+    const auth = new AuthorizationCodeAuth(
+      'https://oeq.example.edu',
+      'client-1',
+      'secret',
+      'https://oeq.example.edu/',
+      new FileTokenStore(tokenPath()),
+    );
+    expect(new URL(auth.getAuthorizeUrl()).pathname).toBe('/oauth/authorise');
+  });
+
+  it('names the prefixed endpoint when the network fails, without the query string', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    const auth = new AuthorizationCodeAuth(
+      PREFIXED,
+      'client-1',
+      'secret',
+      `${PREFIXED}/`,
+      new FileTokenStore(tokenPath()),
+    );
+    const err = await auth.exchangeCode('the-code').catch((e: unknown) => e);
+    expect((err as ApiError).message).toContain('https://library.example.edu/oeq/oauth/access_token');
+    expect((err as ApiError).message).not.toContain('client_secret');
   });
 });
