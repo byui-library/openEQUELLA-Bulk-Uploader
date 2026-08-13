@@ -451,6 +451,13 @@ button.link-button:hover:not(:disabled) {
 .progress-bar__fill {
   height: 100%;
   background: var(--accent);
+  /* Start empty. Without this a block element's `width: auto` fills its
+     parent, so a fill whose width never got assigned reads as a COMPLETED
+     batch rather than an unstarted one -- measured at 1159px of an 1162px
+     track in Electron while the CSP was silently dropping the inline style
+     that used to carry the width. An honest default matters because the
+     failure is invisible: the operator just sees a bar. */
+  width: 0;
   /* The width itself is updated on every progress event, which is what
      actually makes the bar move; this transition just smooths each of those
      discrete jumps instead of snapping, so the screen reads as live rather
