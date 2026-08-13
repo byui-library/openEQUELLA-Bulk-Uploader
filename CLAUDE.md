@@ -34,13 +34,22 @@ hand -- core, `oeq-upload extract`, and three desktop screens.
 a profile JSON in `templates/`; supporting a new collection is configuration,
 never code. One ships: `templates/alumni-obituary.profile.json`.
 
-**The institution-agnostic work is built and UNMERGED**, on
-`feature/institution-agnostic`. Username/password sign-in, collections and
-schemas discovered from the API, an operator-managed instance list, nothing
-BYU-Idaho-specific read at runtime, and `check` grown into a compatibility
-probe. **1236 tests across 79 files**, typecheck clean, `build:desktop` clean.
-Spec 1 of two; publishing the repository (licence, an outsider-facing README,
-the audit of ~196 commits of history) is spec 2 and **has not started**.
+**The institution-agnostic work is MERGED** (PRs #7, #8, #9). Username/password
+sign-in, collections and schemas discovered from the API, an operator-managed
+instance list, nothing BYU-Idaho-specific read at runtime, and `check` grown
+into a compatibility probe. **1305 tests across 83 files**, typecheck clean,
+`build:desktop` clean. `main` carries everything and no PR is open.
+
+That is spec 1 of two. Publishing the repository — a licence, a README written
+for outside readers, and the audit of ~196 commits of history — is spec 2 and
+**has not started**. It is the only step that cannot be undone, which is why it
+was kept separate.
+
+**Not yet released.** `package.json` is still at 1.0.0; nothing has been tagged
+since. Two things staff must be told before v1.1.0 reaches them: **they will
+re-enter their credentials once** (deliberate — the store version changed and
+Setup explains it), and **they must set the attachment field**, or their
+contributions silently lose `BYUI_extended/attachments/attachment`.
 
 **Password auth is VERIFIED against a live instance** — 2026-08-13,
 `content-test.byui.edu`, an ordinary openEQUELLA account, driven through the
