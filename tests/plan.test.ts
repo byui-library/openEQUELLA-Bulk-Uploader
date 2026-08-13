@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
 import {
@@ -8,6 +9,7 @@ import {
   markSkipped,
   resolveIdentifierPath,
   NO_IDENTIFIER_PATH_WARNING,
+  GUEST_SESSION_WARNING,
 } from '../src/core/plan.js';
 import {
   extractDefinition,
@@ -303,6 +305,51 @@ describe('preflightDuplicates', () => {
     const empty = { ...manifestWith(undefined), entries: [] };
     const schema = { titleHeader: 'local/dc/title', paths: new Set(['local/dc/title']) };
     expect(await preflightDuplicates(client, empty, schema)).toHaveLength(0);
+  });
+
+  /**
+   * An unauthenticated openEQUELLA does not refuse a search -- it answers 200
+   * with nothing in it, so every identifier in the batch looks unused. A
+   * pre-flight that reported that as clean would be lying with a straight
+   * face, which is the same failure as reading a field nobody filled in
+   * (docs/superpowers/specs/2026-08-06-duplicate-prevention-design.md).
+   *
+   * The session is checked ONCE for the batch, before any search, because the
+   * answer cannot differ between rows.
+   */
+  describe('when nobody is signed in', () => {
+    /** The real recorded guest response: 200, `guest: true`, not a 401. */
+    const guest = JSON.parse(
+      readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+    ) as { username: string; firstName: string; lastName: string; guest: boolean };
+
+    it('says the identifiers were not checked, rather than reporting them clean', async () => {
+      mock.state.currentUser = guest;
+      mock.state.existingIdentifiers = ['a.mp4'];
+      const warnings = await preflightDuplicates(client, manifestWith('a.mp4'), mwdlSchema);
+      expect(warnings).toEqual([GUEST_SESSION_WARNING]);
+      expect(warnings[0]).toMatch(/signed in/i);
+    });
+
+    it('issues no search at all', async () => {
+      mock.state.currentUser = guest;
+      await preflightDuplicates(client, manifestWith('a.mp4'), mwdlSchema);
+      expect(mock.state.searchUrls).toEqual([]);
+    });
+
+    it('warns once for the batch, not once per row', async () => {
+      mock.state.currentUser = guest;
+      const manifest = manifestWith('a.mp4');
+      manifest.entries.push({ ...manifest.entries[0]!, rowNumber: 3, fileName: 'b.mp4' });
+      expect(await preflightDuplicates(client, manifest, mwdlSchema)).toHaveLength(1);
+    });
+
+    /** No identifier to check means no reason to ask who is signed in. */
+    it('says nothing when no row carries an identifier to check', async () => {
+      mock.state.currentUser = guest;
+      expect(await preflightDuplicates(client, manifestWith(undefined), mwdlSchema)).toEqual([]);
+    });
+
   });
 });
 

@@ -1,13 +1,40 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { UsernamePasswordAuth } from '../src/core/passwordAuth.js';
 
 const BASE = 'https://oeq.example.edu';
 
+/**
+ * A sign-in is TWO requests now: the POST that establishes the session, and
+ * the GET that confirms the session belongs to somebody. openEQUELLA answers
+ * an unauthenticated request as the guest user with an ordinary 200, so a
+ * cookie is not proof of anything on its own -- which is why every stub below
+ * has to answer both, and why the counting assertions filter for the sign-in
+ * itself rather than counting requests.
+ */
+const isLogin = (url: string) => new URL(url).pathname === '/api/auth/login';
+const isVerify = (url: string) => new URL(url).pathname === '/api/content/currentuser';
+
+/** What a real account looks like. `guest` is the field that decides. */
+const REAL_USER = { id: 'u-1', username: 'jsmith', firstName: 'J', lastName: 'Smith', guest: false };
+
+/** The real recorded response an UNAUTHENTICATED session gets: 200, not 401. */
+const GUEST_USER: unknown = JSON.parse(
+  readFileSync('tests/fixtures/api/currentuser-guest.json', 'utf8'),
+);
+
+const userResponse = (user: unknown = REAL_USER) =>
+  new Response(JSON.stringify(user), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+
 /** A fetch stub that returns a JSESSIONID cookie and counts its calls. */
-function loginStub(cookie = 'abc123') {
+function loginStub(cookie = 'abc123', user: unknown = REAL_USER) {
   const calls: string[] = [];
   const impl = vi.fn(async (input: string | URL) => {
     calls.push(String(input));
+    if (isVerify(String(input))) return userResponse(user);
     return new Response('', {
       status: 200,
       headers: { 'set-cookie': `JSESSIONID=${cookie}; Path=/; HttpOnly` },
@@ -17,18 +44,22 @@ function loginStub(cookie = 'abc123') {
 }
 
 /**
- * A fetch stub issuing a DISTINCT session per call, so a test can tell which
- * sign-in a given cookie came from. Needed for the generation tests below --
- * a fixed cookie cannot distinguish "re-signed in" from "handed back the
- * stale one".
+ * A fetch stub issuing a DISTINCT session per SIGN-IN, so a test can tell
+ * which sign-in a given cookie came from. Needed for the generation tests
+ * below -- a fixed cookie cannot distinguish "re-signed in" from "handed back
+ * the stale one". Numbered by sign-ins rather than by requests so that the
+ * confirmation request each sign-in makes does not shift the numbering.
  */
 function sequentialLoginStub() {
   const calls: string[] = [];
   const impl = vi.fn(async (input: string | URL) => {
     calls.push(String(input));
+    if (isVerify(String(input))) return userResponse();
     return new Response('', {
       status: 200,
-      headers: { 'set-cookie': `JSESSIONID=session-${calls.length}; Path=/; HttpOnly` },
+      headers: {
+        'set-cookie': `JSESSIONID=session-${calls.filter(isLogin).length}; Path=/; HttpOnly`,
+      },
     });
   });
   return { impl: impl as unknown as typeof fetch, calls };
@@ -46,7 +77,7 @@ describe('UsernamePasswordAuth', () => {
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
     await auth.authHeader();
     await auth.authHeader();
-    expect(calls).toHaveLength(1);
+    expect(calls.filter(isLogin)).toHaveLength(1);
   });
 
   /**
@@ -60,14 +91,124 @@ describe('UsernamePasswordAuth', () => {
     await auth.authHeader();
     auth.invalidate();
     await auth.authHeader();
-    expect(calls).toHaveLength(2);
+    expect(calls.filter(isLogin)).toHaveLength(2);
   });
 
   it('collapses concurrent sign-ins into one request', async () => {
     const { impl, calls } = loginStub();
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
     await Promise.all([auth.authHeader(), auth.authHeader(), auth.authHeader()]);
-    expect(calls).toHaveLength(1);
+    expect(calls.filter(isLogin)).toHaveLength(1);
+  });
+
+  /**
+   * PART A. A 200 with a JSESSIONID is not proof of sign-in: the very bug this
+   * closes was a login that returned 200, set cookies, and left the session
+   * authenticated as `guest` -- and openEQUELLA reports that state with an
+   * ordinary 200 on every subsequent request, never a 401. So a session that
+   * cannot say who it belongs to must fail HERE, at sign-in, rather than
+   * silently uploading nothing and reporting every duplicate check clean.
+   */
+  describe('confirming the session is somebody', () => {
+    it('refuses a sign-in whose session the server answers as guest', async () => {
+      const { impl } = loginStub('abc123', GUEST_USER);
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await expect(auth.authHeader()).rejects.toThrow(/does not recognise the session/i);
+    });
+
+    /** The message has to name the cause, not merely fail. */
+    it('says the session belongs to nobody rather than blaming the password', async () => {
+      const { impl } = loginStub('abc123', GUEST_USER);
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      const error = await auth.authHeader().catch((e: unknown) => e);
+      expect((error as Error).message).toMatch(/guest/i);
+      expect((error as Error).message).toMatch(/nobody is signed in/i);
+    });
+
+    it('caches nothing, so the next caller signs in again rather than reusing a guest session', async () => {
+      const { impl, calls } = loginStub('abc123', GUEST_USER);
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await expect(auth.getToken()).rejects.toThrow();
+      await expect(auth.getToken()).rejects.toThrow();
+      expect(calls.filter(isLogin)).toHaveLength(2);
+    });
+
+    it('signs in normally for a real user', async () => {
+      const { impl } = loginStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      expect(await auth.getToken()).toBe('abc123');
+    });
+
+    it('confirms with the session it just established, not a bare request', async () => {
+      const seen: (string | null)[] = [];
+      const impl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+        if (isVerify(String(input))) {
+          seen.push(new Headers(init?.headers).get('cookie'));
+          return userResponse();
+        }
+        const headers = new Headers();
+        headers.append('set-cookie', 'AWSALB=lb; Path=/');
+        headers.append('set-cookie', 'JSESSIONID=abc123; Path=/; HttpOnly');
+        return new Response('', { status: 200, headers });
+      }) as unknown as typeof fetch;
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.authHeader();
+      // The WHOLE jar: JSESSIONID alone is what authenticated as guest against
+      // the live instance, so confirming with it alone would fail every
+      // sign-in for the same wrong reason.
+      expect(seen).toEqual(['AWSALB=lb; JSESSIONID=abc123']);
+    });
+
+    /** One request per sign-in. Not one per call, or a batch pays for it. */
+    it('confirms once per sign-in, not once per call', async () => {
+      const { impl, calls } = loginStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.authHeader();
+      await auth.authHeader();
+      await auth.getToken();
+      expect(calls.filter(isVerify)).toHaveLength(1);
+      expect(calls.filter(isLogin)).toHaveLength(1);
+    });
+
+    it('confirms again after invalidate, because that session is a new one', async () => {
+      const { impl, calls } = loginStub();
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await auth.authHeader();
+      auth.invalidate();
+      await auth.authHeader();
+      expect(calls.filter(isVerify)).toHaveLength(2);
+    });
+
+    /**
+     * A confirmation that could not be made is not a confirmation. Accepting
+     * an unreadable answer would restore exactly the assumption this check
+     * exists to remove: that a 200 means somebody is signed in.
+     */
+    it('refuses a sign-in it could not confirm at all', async () => {
+      // 200, but HTML: an SSO portal or a proxy answering in openEQUELLA's
+      // place. Nothing here says who the session is.
+      const impl = vi.fn(async (input: string | URL) => {
+        if (isVerify(String(input))) return new Response('<html>a login page</html>', { status: 200 });
+        return new Response('', {
+          status: 200,
+          headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/; HttpOnly' },
+        });
+      }) as unknown as typeof fetch;
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await expect(auth.authHeader()).rejects.toThrow(/could not confirm/i);
+    });
+
+    it('refuses a sign-in whose confirmation the server rejected', async () => {
+      const impl = vi.fn(async (input: string | URL) => {
+        if (isVerify(String(input))) return new Response('nope', { status: 403 });
+        return new Response('', {
+          status: 200,
+          headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/; HttpOnly' },
+        });
+      }) as unknown as typeof fetch;
+      const auth = new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl);
+      await expect(auth.authHeader()).rejects.toThrow(/could not confirm/i);
+    });
   });
 
   /**
@@ -86,11 +227,11 @@ describe('UsernamePasswordAuth', () => {
 
     // But it must NOT have been cached, so the next call signs in afresh.
     expect(await auth.getToken()).toBe('session-2');
-    expect(calls).toHaveLength(2);
+    expect(calls.filter(isLogin)).toHaveLength(2);
 
     // And that one WAS cached, so a third call makes no request.
     expect(await auth.getToken()).toBe('session-2');
-    expect(calls).toHaveLength(2);
+    expect(calls.filter(isLogin)).toHaveLength(2);
   });
 
   /**
@@ -107,7 +248,7 @@ describe('UsernamePasswordAuth', () => {
 
     const [firstSession, secondSession] = await Promise.all([first, second]);
 
-    expect(calls).toHaveLength(2);
+    expect(calls.filter(isLogin)).toHaveLength(2);
     expect(firstSession).toBe('session-1');
     expect(secondSession).toBe('session-2');
     expect(secondSession).not.toBe(firstSession);
@@ -143,7 +284,8 @@ describe('UsernamePasswordAuth', () => {
    * implementation uses getSetCookie().
    */
   function multiCookieStub(cookies: string[]) {
-    const impl = vi.fn(async () => {
+    const impl = vi.fn(async (input: string | URL) => {
+      if (isVerify(String(input))) return userResponse();
       const headers = new Headers();
       for (const c of cookies) headers.append('set-cookie', c);
       return new Response('', { status: 200, headers });
@@ -289,7 +431,8 @@ describe('UsernamePasswordAuth', () => {
      */
     it('replaces the whole jar on re-sign-in rather than merging with the old one', async () => {
       let signIn = 0;
-      const impl = vi.fn(async () => {
+      const impl = vi.fn(async (input: string | URL) => {
+        if (isVerify(String(input))) return userResponse();
         signIn += 1;
         const headers = new Headers();
         headers.append('set-cookie', `AWSALB=lb-${signIn}; Path=/`);
@@ -324,6 +467,7 @@ describe('UsernamePasswordAuth', () => {
           path: new URL(String(input)).pathname,
           cookie: headers.get('cookie'),
         });
+        if (isVerify(String(input))) return userResponse();
         return new Response('', {
           status: 200,
           headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/; HttpOnly' },
@@ -338,8 +482,10 @@ describe('UsernamePasswordAuth', () => {
       await auth.authHeader();
       await auth.logout();
 
+      // The GET in the middle is the sign-in confirming who it signed in as.
       expect(seen.map((r) => `${r.method} ${r.path}`)).toEqual([
         'POST /api/auth/login',
+        'GET /api/content/currentuser',
         'PUT /api/auth/logout',
       ]);
     });
@@ -355,7 +501,7 @@ describe('UsernamePasswordAuth', () => {
       await auth.authHeader();
       await auth.logout();
 
-      expect(seen[1]?.cookie).toBe('JSESSIONID=abc123');
+      expect(seen.find((r) => r.path.endsWith('/logout'))?.cookie).toBe('JSESSIONID=abc123');
     });
 
     /**
@@ -369,9 +515,12 @@ describe('UsernamePasswordAuth', () => {
       const impl = vi.fn(async (input: string | URL) => {
         calls.push(String(input));
         if (String(input).includes('/logout')) throw new Error('connect ECONNREFUSED');
+        if (isVerify(String(input))) return userResponse();
         return new Response('', {
           status: 200,
-          headers: { 'set-cookie': `JSESSIONID=session-${calls.length}; Path=/; HttpOnly` },
+          headers: {
+            'set-cookie': `JSESSIONID=session-${calls.filter(isLogin).length}; Path=/; HttpOnly`,
+          },
         });
       }) as unknown as typeof fetch;
 
@@ -380,8 +529,10 @@ describe('UsernamePasswordAuth', () => {
       await expect(auth.logout()).resolves.toBeUndefined();
 
       // Locally gone regardless: the next caller signs in afresh rather than
-      // being handed the session this process just tried to end.
-      expect(await auth.getToken()).toBe('session-3');
+      // being handed the session this process just tried to end. Sessions are
+      // numbered by sign-in, so this is the SECOND one -- a different session
+      // from the one logout tried to end, which is the whole assertion.
+      expect(await auth.getToken()).toBe('session-2');
     });
 
     it('makes no request at all when there was never a session', async () => {
@@ -519,8 +670,14 @@ describe('the password never escapes', () => {
     await auth.authHeader();
     await auth.logout();
 
-    expect(calls).toHaveLength(2);
-    expect(findsSecret(calls[1])).toBe(false);
+    // Everything the sign-in itself is not: the confirmation GET and the
+    // logout PUT. Neither has any business naming a credential.
+    const afterSignIn = calls.filter((c) => !isLogin(c));
+    expect(afterSignIn.map((c) => new URL(c).pathname)).toEqual([
+      '/api/content/currentuser',
+      '/api/auth/logout',
+    ]);
+    expect(findsSecret(afterSignIn)).toBe(false);
     // And in no request's PATH, where even the sign-in must keep it out.
     expect(findsSecret(calls.map((c) => new URL(c).pathname))).toBe(false);
   });
