@@ -4,6 +4,7 @@ import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { OeqClient } from '../core/client.js';
 import type { Instance, Settings } from './secrets.js';
 import type { TokenStore } from '../core/tokenStore.js';
+import type { LogoutOutcome } from '../core/passwordAuth.js';
 import { ValidationError } from '../core/errors.js';
 
 /**
@@ -100,7 +101,27 @@ export function buildConfig(instance: Instance, settings: Settings, collectionUu
  * it -- which the signOut handler already does.
  */
 interface EndableSession {
-  logout(): Promise<void>;
+  logout(): Promise<LogoutOutcome>;
+}
+
+/**
+ * What ending a set of sessions established.
+ *
+ * `sessions` is the old return value -- how many this process was holding and
+ * asked to end. `unconfirmed` is how many of those the server never confirmed:
+ * a request that failed, or one it answered non-2xx (core/passwordAuth.ts).
+ *
+ * TWO NUMBERS, NOT A BOOLEAN AND NOT A LIST. A site accumulates one session per
+ * handler call, and they do not all succeed or all fail together; the caller
+ * needs to know whether ANY is in doubt, which `unconfirmed > 0` answers, and
+ * the counts are the only part of a session that may cross to the renderer. A
+ * session's cookies, its address and who it belonged to must not.
+ */
+export interface SessionEndReport {
+  /** Sessions this call was holding for the instance(s), and asked to end. */
+  sessions: number;
+  /** How many of those the server did not confirm ending. */
+  unconfirmed: number;
 }
 
 /**
@@ -154,30 +175,59 @@ export function rememberSession(instanceId: string, provider: unknown): void {
 }
 
 /**
- * End every session held for one instance, and report how many there were.
+ * End every session held for one instance, and report what that established.
  *
  * THE REGISTRY ENTRY IS DROPPED FIRST, and unconditionally -- the same rule
  * `logout()` itself follows locally. Whatever happens on the wire, this
  * process is no longer holding those sessions, and a retry would only re-send
  * a PUT for a session it can no longer prove anything about.
  *
- * A failure is REPORTED, not swallowed. Both callers have to carry on
- * regardless (the credential is forgotten either way; the app quits either
- * way), but that is their decision to take visibly rather than one hidden
- * here.
+ * A FAILURE IS REPORTED, NOT SWALLOWED -- and reporting it means RETURNING it,
+ * not throwing. It used to reject, which sounds like the same thing and is
+ * not: both callers had to carry on regardless (the credential is forgotten
+ * either way; the app quits either way), so both wrapped this in an empty
+ * catch, and the failure died there. The desktop then told the operator
+ * "signed out" whatever had happened on the wire. The count of unconfirmed
+ * logouts comes back instead, and the caller decides who needs telling.
+ *
+ * NOTHING IS LEFT UNTRIED BECAUSE SOMETHING ELSE FAILED. Each logout is
+ * settled on its own, so one provider throwing -- which breaks `logout()`'s
+ * never-throws contract, but a fake or a future provider may -- cannot leave
+ * the sessions after it live. A throw counts as unconfirmed, never as ended.
  */
-export async function endSessionsFor(instanceId: string): Promise<number> {
+export async function endSessionsFor(instanceId: string): Promise<SessionEndReport> {
   const sessions = liveSessions.get(instanceId);
-  if (!sessions) return 0;
+  if (!sessions) return { sessions: 0, unconfirmed: 0 };
   liveSessions.delete(instanceId);
-  await Promise.all([...sessions].map((s) => s.logout()));
-  return sessions.size;
+  const outcomes = await Promise.all(
+    [...sessions].map(async (s): Promise<LogoutOutcome> => {
+      try {
+        return await s.logout();
+      } catch {
+        // Not hidden -- turned into the one thing this process actually knows:
+        // the server never confirmed.
+        return 'unconfirmed';
+      }
+    }),
+  );
+  return {
+    sessions: sessions.size,
+    unconfirmed: outcomes.filter((o) => o === 'unconfirmed').length,
+  };
 }
 
-/** Every instance's sessions, for the quit hook. Same rules as above. */
-export async function endAllSessions(): Promise<number> {
-  const counts = await Promise.all([...liveSessions.keys()].map((id) => endSessionsFor(id)));
-  return counts.reduce((total, n) => total + n, 0);
+/** Every instance's sessions, for the quit hook. Same rules as above, and the
+ *  same two numbers summed across sites: one site's logout can be confirmed
+ *  while another's is not. */
+export async function endAllSessions(): Promise<SessionEndReport> {
+  const reports = await Promise.all([...liveSessions.keys()].map((id) => endSessionsFor(id)));
+  return reports.reduce(
+    (total, r) => ({
+      sessions: total.sessions + r.sessions,
+      unconfirmed: total.unconfirmed + r.unconfirmed,
+    }),
+    { sessions: 0, unconfirmed: 0 },
+  );
 }
 
 /** Drop every remembered session WITHOUT ending it. Exists for tests, which

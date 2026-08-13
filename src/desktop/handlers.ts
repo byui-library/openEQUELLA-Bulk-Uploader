@@ -22,6 +22,7 @@ import {
   buildConfig,
   endSessionsFor,
   requireInstance,
+  type SessionEndReport,
 } from './session.js';
 import { readSheet } from '../core/sheet.js';
 import {
@@ -396,11 +397,20 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
    * when there are none (session.ts).
    *
    * THE LOCAL FORGET IS UNCONDITIONAL. The operator asked for the password to
-   * be gone, and that is not conditional on the network -- so a failed logout
-   * is swallowed here rather than propagated, exactly as
-   * `UsernamePasswordAuth.logout()` swallows its own. Making the forget
+   * be gone, and that is not conditional on the network. Making the forget
    * conditional on the logout would leave the credential on disk because a
    * machine was offline, which is the outcome this handler exists to prevent.
+   *
+   * The catch below is belt-and-braces now rather than the mechanism:
+   * `endSessionsFor` REPORTS a failed logout instead of throwing (session.ts),
+   * so nothing is expected to reach it -- but the forget must survive a
+   * provider that breaks that contract, and this is a security control.
+   *
+   * IT DOES NOT YET TELL THE OPERATOR when the site never confirmed the
+   * session ended, which `signOut` below does (ui/signout.ts). Setup has
+   * nowhere to put that sentence today, and the exposure is smaller -- Forget
+   * is about the credential, and the session it could not confirm expires by
+   * itself. Known gap, not an oversight.
    */
   ipcMain.handle(
     CHANNELS.forgetPassword,
@@ -464,16 +474,22 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
    * there in OAuth mode, it is the half that can fail, and the operator asked
    * to be signed out -- which is not conditional on the network. A failed
    * logout leaves nothing behind here that a timeout will not collect.
+   *
+   * AND THE OUTCOME IS RETURNED, which is the part that used to be missing.
+   * This wrapped `endSessionsFor` in an empty catch, so a logout that failed
+   * resolved exactly like one that worked and `handleSignOut` (ui/app.ts) took
+   * the operator to the signed-out screen with nothing to read. The claim was
+   * half true -- signed out here, unknown there -- and unknowable from the UI.
+   * `endSessionsFor` now reports rather than throws (session.ts), so there is
+   * no empty catch left to hide it in: the counts cross to the renderer, which
+   * says so without blocking anybody.
    */
   ipcMain.handle(
     CHANNELS.signOut,
-    async (_e, instanceId: Parameters<OeqApi['signOut']>[0]) => {
-      try {
-        await endSessionsFor(instanceId);
-      } catch {
-        // Deliberately empty. See above: the local half still has to happen.
-      }
+    async (_e, instanceId: Parameters<OeqApi['signOut']>[0]): Promise<SessionEndReport> => {
+      const report = await endSessionsFor(instanceId);
       await tokens().clear();
+      return report;
     },
   );
 

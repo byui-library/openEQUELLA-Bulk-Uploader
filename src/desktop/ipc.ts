@@ -9,6 +9,13 @@ import type { DuplicateFinding } from '../core/duplicates.js';
 // erased at compile time and never becomes a runtime require (see
 // tests/desktop/rendererPurity.test.ts).
 import type { Settings, SettingsAuthMode } from './secrets.js';
+// Also `import type`, and for the same reason: session.ts reaches the auth
+// providers and the filesystem through them. The type is declared where it is
+// produced (session.ts) and re-exported below, so the renderer can name what
+// `signOut` answers with without importing a main-process module by path.
+import type { SessionEndReport } from './session.js';
+
+export type { SessionEndReport };
 
 /**
  * One saved site, as the renderer sees it. Mirrors secrets.ts's `Instance`
@@ -188,8 +195,16 @@ export interface OeqApi {
    * cleared a file that had never been written and left the session live while
    * the app returned to the sign-in screen. Only the renderer knows which site
    * it is on, so it has to say (handlers.ts).
+   *
+   * ANSWERS WITH WHAT IT COULD ESTABLISH, and never rejects for a failed
+   * logout. `UsernamePasswordAuth.logout()` deliberately does not throw -- a
+   * logout that failed is not worth interrupting anyone over, and the session
+   * expires on its own -- but that must not be read as "it worked". The report
+   * carries how many sessions were ended and how many the site never confirmed
+   * (session.ts), so the renderer can tell the operator the truth instead of
+   * showing the same signed-out screen either way (ui/signout.ts).
    */
-  signOut(instanceId: string): Promise<void>;
+  signOut(instanceId: string): Promise<SessionEndReport>;
   /**
    * Who is signed in on this instance, or null.
    *
