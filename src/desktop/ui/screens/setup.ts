@@ -659,6 +659,35 @@ function collectionSection(props: SetupProps): string {
  * but a real `BYUI_extended/...` here would be an institution's answer shipped
  * to every other one, in the one place a placeholder reads as a default.
  */
+/**
+ * The standing caveat under the attachment field, shown whatever the verdict.
+ *
+ * WHY IT NAMES A PATH THIS TOOL WOULD REJECT. `item/attachments/attachment/uuid`
+ * is what openEQUELLA's own sync documentation points at, and an operator who
+ * has read that documentation will arrive expecting to type it here. They must
+ * not: it is not in the schema -- checked against BYU-Idaho's, which declares
+ * `item/attachments/attachment/type` and `.../attributes/entry/string` but no
+ * `uuid` -- so this screen would tell them their own site's documented path is
+ * undeclared, which reads as the tool being broken.
+ *
+ * It is not declared because nothing writes it. Two records settle that: an
+ * item created by openEQUELLA's OWN contribution wizard carries
+ * `BYUI_extended/attachments/attachment` with the uuid and an EMPTY `<item/>`,
+ * and so does one created by this tool. Whatever representation sync reads
+ * that path from, openEQUELLA generates it from the attachment records
+ * themselves -- the file being attached is what populates it.
+ *
+ * So the note tells them where to look without telling them to type it, and
+ * says the thing that actually resolves the question: match whatever your own
+ * wizard produces.
+ */
+const SYNC_NOTE =
+  'Some sites record the attachment ID at a different path. openEQUELLA also keeps its own ' +
+  'attachment records, and a sync configuration may read ' +
+  '‘item/attachments/attachment/uuid’ from those — that one is generated when the file is ' +
+  'attached and needs nothing here. If you are unsure, contribute one item through ' +
+  'openEQUELLA’s own web interface and match whatever it writes.';
+
 function attachmentSection(props: SetupProps): string {
   const verdict = attachmentPathVerdict(
     props.fields.attachmentUuidPath,
@@ -689,7 +718,8 @@ function attachmentSection(props: SetupProps): string {
           value="${escapeHtml(props.fields.attachmentUuidPath)}"
         />
         ${list}
-        <p class="hint verdict verdict--${verdict.kind}">${escapeHtml(verdict.message)}</p>`;
+        <p class="hint verdict verdict--${verdict.kind}">${escapeHtml(verdict.message)}</p>
+        <p class="hint">${escapeHtml(SYNC_NOTE)}</p>`;
 }
 
 /**
