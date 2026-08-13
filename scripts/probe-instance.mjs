@@ -122,7 +122,14 @@ if (!loginRes.ok || !jsession) {
   process.exit(1);
 }
 
-const headers = { Cookie: jsession.split(';')[0] };
+// EVERY cookie the sign-in set, not just JSESSIONID -- the same defect this
+// script exists to catch, and it bit here first. Behind a load balancer the
+// AWSALB/ROUTEID cookies decide which backend a request reaches; JSESSIONID
+// alone lands on one that has never seen the session, and openEQUELLA answers
+// that as GUEST with 200 and empty results. Every question below would then be
+// answered for the wrong identity, and the output would look plausible.
+// Measured on content-test.byui.edu, 2026-08-12; see src/core/passwordAuth.ts.
+const headers = { Cookie: cookies.map((c) => c.split(';')[0]).join('; ') };
 const get = async (path) => {
   if (!path) return null;
   const res = await fetch(new URL(path, base), { headers });
