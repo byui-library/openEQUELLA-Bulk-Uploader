@@ -1,5 +1,6 @@
 // src/core/ai/provider.ts
 import { ApiError } from '../errors.js';
+import { describeReason } from '../errorReason.js';
 import { instanceEndpoint } from '../instanceUrl.js';
 import { redactSecret } from '../redact.js';
 import { isLoopbackEndpoint } from './endpoint.js';
@@ -70,21 +71,13 @@ const DEFAULT_MAX_TOKENS = 500;
  *  a spreadsheet note. */
 const MAX_QUOTED_BODY = 200;
 
-/** Most of a CAUSE CHAIN to quote back in an error. Separate from the body cap
- *  above because they bound different things for different reasons -- one is a
- *  hostile server's output, this one is a runtime's -- and a reader following
- *  either comment should not land on an argument about the other. */
-const MAX_QUOTED_REASON = 200;
-
-/**
- * How far up a `cause` chain to read.
- *
- * Node wraps a network failure once (`TypeError: fetch failed` over the real
- * error); a gateway or proxy client can wrap it twice more. Four covers those
- * and stops: a chain that cycles back on itself would otherwise spin for ever,
- * and there is no useful diagnosis five levels down.
+/*
+ * The cause chain has a cap of its own, and it lives with `describeReason` in
+ * `errorReason.ts` -- separate from the body cap above, because they bound
+ * different things for different reasons: one is a hostile server's output,
+ * the other a runtime's, and a reader following either comment should not land
+ * on an argument about the other.
  */
-const MAX_CAUSE_DEPTH = 4;
 
 export interface ProviderConfig {
   /**
@@ -408,36 +401,3 @@ function describeDuration(ms: number): string {
   return ms >= 1000 ? `${Math.round(ms / 1000)} seconds` : `${ms} milliseconds`;
 }
 
-/**
- * What actually went wrong, read through the `cause` chain.
- *
- * Node's fetch throws `TypeError: fetch failed` and puts `getaddrinfo
- * ENOTFOUND` or `connect ECONNREFUSED` on `cause`, so reading `message` alone
- * preserves a reason that says nothing.
- *
- * `redact` IS A PARAMETER, NOT A STEP THE CALLER TAKES AFTERWARDS. The result
- * is capped, and redacting a capped string is too late: the cut lands inside
- * the secret and the redactor is handed a fragment it cannot match. Each
- * message is redacted as it is read, and the joined string again before it is
- * cut, so no boundary can fall inside a secret.
- *
- * EXACT DUPLICATES ARE DROPPED. `new Error(cause.message, { cause })` is a real
- * and common wrapper, and it would otherwise print its message twice. Only
- * whole-string equality is compared: a wrapper that CONTAINS its cause's
- * message ("fetch failed: connect ECONNREFUSED" over "connect ECONNREFUSED")
- * keeps both, deliberately, because deciding which of two overlapping strings
- * to discard is how a reader loses the half that mattered.
- */
-function describeReason(error: unknown, redact: (text: string) => string = (text) => text): string {
-  const parts: string[] = [];
-  let current: unknown = error;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current != null; depth += 1) {
-    const message = redact(current instanceof Error ? current.message : String(current));
-    if (message !== '' && !parts.includes(message)) parts.push(message);
-    current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
-  }
-  const reason = redact(parts.join(': '));
-  return reason === ''
-    ? 'the connection failed for an unstated reason'
-    : reason.slice(0, MAX_QUOTED_REASON);
-}
