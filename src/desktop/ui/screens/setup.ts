@@ -11,6 +11,7 @@ import { escapeHtml, keepCaret } from '../dom.js';
 // touches `node:` or `electron`. tests/desktop/rendererPurity.test.ts walks
 // this edge and fails the build if that ever stops being true.
 import { MODEL_TIMEOUT_MS } from '../../../core/ai/provider.js';
+import { MODEL_DEFAULTS } from '../../../core/ai/defaults.js';
 // One rule for how a model address is shown, shared with the confirmation
 // dialog so the two screens cannot name the same endpoint differently.
 import { describeHost } from '../../../core/ai/endpoint.js';
@@ -281,9 +282,9 @@ export const TEXT_INPUTS = [
 export const MODEL_FIELD_DEFAULTS = {
   /** Characters from one document. A few thousand suits a local model; a page
    *  of prose is well under it, so most documents go whole. */
-  budget: '8000',
+  budget: String(MODEL_DEFAULTS.budget),
   /** Requests per run. A ceiling on one batch, not a monthly allowance. */
-  cap: '500',
+  cap: String(MODEL_DEFAULTS.cap),
   timeout: String(Math.round(MODEL_TIMEOUT_MS / 1000)),
 } as const;
 

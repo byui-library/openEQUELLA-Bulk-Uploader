@@ -31,6 +31,10 @@ export interface ExtractState {
   /** Rows actually written by the run, which can be fewer than the folder scan found. */
   savedWritten: number;
   savedFlagged: number;
+  /** Rows a language model wrote into. Reported beside savedFlagged rather than
+   *  inside it -- an expected model write is not a problem to triage, and a
+   *  machine writing into a permanent record is not a thing to hide either. */
+  savedAiWritten: number;
   /** True while the Add-column picker is open. */
   adding: boolean;
   /** The picker's search box. */
@@ -56,6 +60,7 @@ export function initialExtractState(): ExtractState {
     savedPath: null,
     savedWritten: 0,
     savedFlagged: 0,
+    savedAiWritten: 0,
     adding: false,
     addQuery: '',
     removed: null,

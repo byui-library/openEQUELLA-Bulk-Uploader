@@ -79,6 +79,7 @@ export function renderExtract(
       renderExtractSave(root, {
         fileCount: state.savedPath === null ? (state.scan?.supported.length ?? 0) : state.savedWritten,
         flagged: state.savedFlagged,
+        aiWritten: state.savedAiWritten,
         savedPath: state.savedPath,
         busy: state.busy,
         error: state.error,

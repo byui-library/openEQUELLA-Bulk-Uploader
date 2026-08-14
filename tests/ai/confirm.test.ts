@@ -1,7 +1,7 @@
-// tests/desktop/ui/aiConfirm.test.ts
+// tests/ai/confirm.test.ts
 import { describe, it, expect } from 'vitest';
-import { aiConfirmation, type AiConfirmInput } from '../../../src/desktop/ui/aiConfirm.js';
-import { ATTACHMENT_COLUMN, type Profile } from '../../../src/core/extract/types.js';
+import { aiConfirmation, type AiConfirmInput } from '../../src/core/ai/confirm.js';
+import { ATTACHMENT_COLUMN, type Profile } from '../../src/core/extract/types.js';
 
 /** One column asking for a model, which is what ships. */
 const profile: Profile = {

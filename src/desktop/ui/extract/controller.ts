@@ -3,7 +3,7 @@ import type { OeqApi } from '../../ipc.js';
 import { addColumn, removeColumn, moveColumn, setSources, setDefault } from '../../../core/extract/columns.js';
 import type { Profile, Source } from '../../../core/extract/types.js';
 import { errorMessage } from '../errors.js';
-import { aiConfirmation } from '../aiConfirm.js';
+import { aiConfirmation } from '../../../core/ai/confirm.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
 
 export interface ExtractControllerOptions {
@@ -33,7 +33,7 @@ export interface ExtractControllerOptions {
    * CSV to a path the operator picks; the recovery is to not use the file. What
    * it costs is money and text leaving the machine, which is what the dialog
    * states, and a run on a local model is not made to click through anything
-   * at all (ui/aiConfirm.ts).
+   * at all (core/ai/confirm.ts).
    */
   confirm?: (text: string) => boolean;
   /** Called when the operator leaves the flow. */
@@ -272,8 +272,24 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       // still call the whole thing off in between.
       if (!(await approveModelRun(state.profile))) return;
       await guard(async () => {
-        const report = await options.api.extractRun({ dir: state.dir!, profile: state.profile!, outPath });
-        return { savedPath: report.outPath, savedWritten: report.written, savedFlagged: report.flagged };
+        const report = await options.api.extractRun({
+          dir: state.dir!,
+          profile: state.profile!,
+          outPath,
+          // THE SAME ID `approveModelRun` JUST READ THE ENDPOINT FROM. The run
+          // resolves its own settings in the main process, where the API key
+          // lives; passing the id is what makes the two reads land on one
+          // per-instance entry. Send a different id -- or none -- and the
+          // operator is shown one endpoint and their documents go to another,
+          // or to none at all after they agreed to a send.
+          instanceId: options.instanceId ?? '',
+        });
+        return {
+          savedPath: report.outPath,
+          savedWritten: report.written,
+          savedFlagged: report.flagged,
+          savedAiWritten: report.aiWritten,
+        };
       });
     },
 

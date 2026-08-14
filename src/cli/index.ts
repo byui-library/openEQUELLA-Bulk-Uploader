@@ -732,6 +732,16 @@ export function buildProgram(env: Env = process.env): Command {
     .option('--schema-file <path>', 'local schema export', 'schema/_entity.xml')
     .option('--dry-run', 'show the first few rows without writing anything')
     .option('--init-profile', 'write a starter profile for this folder, then stop')
+    .option(
+      '--ai',
+      'let a language model fill the columns whose profile asks for one, using ' +
+        'OEQ_MODEL_BASE_URL, OEQ_MODEL, OEQ_MODEL_KEY, OEQ_MODEL_BUDGET and OEQ_MODEL_CAP',
+    )
+    // NOT A PROMPT. `--ai` against a remote endpoint prints what it is about to
+    // send and stops unless this is given: a scheduled job has no terminal, so
+    // asking would either hang for ever or read EOF and call it consent. See
+    // `approve` in cli/extract.ts.
+    .option('--yes', 'agree in advance to what --ai says it will send, for an unattended run')
     .action(async (o: ExtractCliOptions) => {
       await runExtract(o, (message) => console.log(message));
     });

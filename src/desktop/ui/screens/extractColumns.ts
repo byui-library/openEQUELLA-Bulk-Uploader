@@ -4,6 +4,7 @@ import { describeFilename } from '../extract/segments.js';
 import { describeSource, sourceOptions, type SourceEvidence } from '../extract/sources.js';
 import { plainLabel } from '../extract/picker.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
+import { countNeedingReview } from '../../../core/ai/review.js';
 
 export interface ExtractColumnsProps {
   profile: Profile;
@@ -108,7 +109,7 @@ function previewTable(props: ExtractColumnsProps): string {
           .join('')}</tr>`,
     )
     .join('');
-  const flagged = props.preview.filter((r) => r.notes.length > 0).length;
+  const flagged = previewReviewCount(props.preview);
 
   return `
     <h3>Preview &mdash; first ${props.preview.length} file(s)
@@ -116,6 +117,38 @@ function previewTable(props: ExtractColumnsProps): string {
     </h3>
     <div class="preview-scroll"><table class="preview"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
     ${previewNotes(props.preview)}`;
+}
+
+/**
+ * How many previewed rows have something genuinely wrong.
+ *
+ * ## Why this is not `notes.length > 0` any more
+ *
+ * Every cell a language model writes is flagged, without exception -- that is
+ * the safety property the feature rests on. So on a profile with a model column,
+ * every row carries a note, and a count of noted rows reads "5 need review" for
+ * a preview in which nothing at all went wrong. `countNeedingReview` subtracts
+ * the model's own notes by identity against `aiWritten`, never by recognising
+ * their wording; see core/ai/review.ts.
+ *
+ * ## And why it is applied here even though the preview cannot show one today
+ *
+ * `extractPreview` does not run the model pass -- it re-renders on every column
+ * edit, and a paid call per keystroke is not a feature -- so `aiWritten` is
+ * empty on this screen in practice. The subtraction is applied all the same,
+ * because the alternative is a screen that starts miscounting the day anything
+ * hands it a model-written row, and that is exactly how this defect reached the
+ * run report. A reviewer flagged both surfaces; both are fixed the same way.
+ *
+ * `previewNotes` below deliberately does NOT subtract: the LIST keeps showing
+ * every note, including the model's, because the flag on a model-written cell is
+ * the whole argument for letting it write at all and hiding it at the moment of
+ * decision would be worse than miscounting.
+ *
+ * Exported so it can be tested directly: this project has no DOM environment.
+ */
+export function previewReviewCount(preview: readonly ExtractedRow[]): number {
+  return countNeedingReview(preview);
 }
 
 /**
