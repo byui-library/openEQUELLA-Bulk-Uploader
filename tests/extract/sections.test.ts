@@ -77,6 +77,34 @@ describe('readSection', () => {
     expect(capped).toBe(true);
   });
 
+  /**
+   * The cap stops at the last whole WORD, and a tail with no spaces in it has
+   * no word to stop at.
+   *
+   * OCR is why this is not hypothetical: a scan that fails produces long
+   * unbroken runs, and the operator's corpus is scanned material. Cutting back
+   * to whatever space happened to appear earliest collapsed 4,000 characters to
+   * a single letter -- and a short NON-EMPTY value is worse than none, because
+   * it satisfies the tier cascade in `rows.ts` and the `opening` fallback
+   * behind it never runs.
+   */
+  it('keeps a capped section whose tail has one early space and nothing after it', () => {
+    const scanned = `Abstract A ${'X'.repeat(9000)}`;
+    const { text, capped } = readSection(scanned, 'Abstract');
+    expect(text.length).toBeGreaterThan(3900);
+    expect(capped).toBe(true);
+  });
+
+  /**
+   * With no space at all, `lastIndexOf(' ')` is -1 and `slice(0, -1)` drops the
+   * final character instead of keeping the string -- a quiet off-by-one that
+   * only shows on this input.
+   */
+  it('keeps every character of a capped section with no spaces at all', () => {
+    const { text } = readSection(`Abstract\n${'X'.repeat(9000)}`, 'Abstract');
+    expect(text).toBe('X'.repeat(4000));
+  });
+
   // A section that ended at a heading is a section. One that ran to the cap
   // never ended, which usually means the heading was not a heading at all --
   // a benefits PDF matched "Summary" mid-page and produced 3,996 characters
