@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { buildPrompt, cleanReply } from '../../src/core/ai/prompt.js';
 
+/**
+ * The cleaned text, or `''` for any outcome that is not usable.
+ *
+ * Only for the blocks below that ask "was this destroyed?" -- where the
+ * question is about the text and the outcome is beside the point. Every block
+ * that asks "what happened, and what will Task 7 write on the row?" asserts on
+ * `outcome` directly, because that is the part a caller acts on.
+ */
+const cleaned = (reply: string): string => {
+  const result = cleanReply(reply);
+  return result.outcome === 'ok' ? result.text : '';
+};
+
 describe('buildPrompt', () => {
   it('names the field being written and includes the document', () => {
     const p = buildPrompt({ field: 'a description', document: 'The document text.', instruction: null });
@@ -11,22 +24,16 @@ describe('buildPrompt', () => {
   /**
    * A model that invents a date is the failure this whole design guards
    * against. The instruction has to say so, not imply it.
+   *
+   * BOTH SENTENCES ARE ASSERTED IN ONE TEST. A second test matching
+   * `/not.*invent|only.*document/i` was strictly implied by the first half of
+   * this one and could never fail on its own -- it read as coverage while
+   * adding none, and deleting either sentence from the prompt has to be red.
    */
-  it('tells the model not to invent facts', () => {
-    expect(buildPrompt({ field: 'a description', document: 'x', instruction: null })).toMatch(
-      /not.*invent|only.*document/i,
-    );
-  });
-
-  /**
-   * Named as its own assertion because the regex above is satisfied by "use
-   * only what the document states" alone. Deleting the invention sentence would
-   * otherwise leave every test in this file green.
-   */
-  it('says it in the plainest words available', () => {
-    expect(buildPrompt({ field: 'a description', document: 'x', instruction: null })).toMatch(
-      /do not invent/i,
-    );
+  it('tells the model not to invent facts, in the plainest words available', () => {
+    const p = buildPrompt({ field: 'a description', document: 'x', instruction: null });
+    expect(p).toMatch(/do not invent/i);
+    expect(p).toMatch(/use only what the document states/i);
   });
 
   it('carries a profile instruction when one is given', () => {
@@ -90,15 +97,15 @@ describe('buildPrompt', () => {
 
 describe('cleanReply', () => {
   it('strips a preamble a chat model adds', () => {
-    expect(cleanReply('Here is a description:\n\nA study of birds.')).toBe('A study of birds.');
+    expect(cleaned('Here is a description:\n\nA study of birds.')).toBe('A study of birds.');
   });
 
   it('strips surrounding quotes', () => {
-    expect(cleanReply('"A study of birds."')).toBe('A study of birds.');
+    expect(cleaned('"A study of birds."')).toBe('A study of birds.');
   });
 
   it('leaves a clean reply alone', () => {
-    expect(cleanReply('A study of birds.')).toBe('A study of birds.');
+    expect(cleaned('A study of birds.')).toBe('A study of birds.');
   });
 
   /**
@@ -107,8 +114,8 @@ describe('cleanReply', () => {
    * replacing the preamble pattern with `/^[^\n]*\n/` leaves it green.
    */
   it('leaves a multi-line reply alone, every line of it', () => {
-    const text = 'Died 1994-03-02; born 1921-08-11.\nAttended Ricks College.';
-    expect(cleanReply(text)).toBe(text);
+    const text = 'Died March 5, 2019; born June 5, 1928.\nAttended Ricks College.';
+    expect(cleaned(text)).toBe(text);
   });
 
   /**
@@ -116,8 +123,8 @@ describe('cleanReply', () => {
    * than leaving the cell blank.
    */
   it('treats a refusal as no answer', () => {
-    expect(cleanReply("I'm sorry, I cannot help with that.")).toBe('');
-    expect(cleanReply('As an AI language model, I cannot determine this.')).toBe('');
+    expect(cleanReply("I'm sorry, I cannot help with that.").outcome).toBe('refused');
+    expect(cleanReply('As an AI language model, I cannot determine this.').outcome).toBe('refused');
   });
 });
 
@@ -138,19 +145,46 @@ describe('what the cleaner must NOT destroy', () => {
    * the death date under it is the one fact the batch exists to record.
    */
   it('keeps a first line that ends in a colon but is not a preamble', () => {
-    expect(cleanReply('Obituary of Alder Hawthorn:\n\nDied 1994; born 1921.')).toBe(
+    expect(cleaned('Obituary of Alder Hawthorn:\n\nDied 1994; born 1921.')).toBe(
       'Obituary of Alder Hawthorn:\n\nDied 1994; born 1921.',
     );
   });
 
+  /**
+   * NAMING A LEAD-IN IS NOT ENOUGH. `this is`, `here is` and `below is` open
+   * ordinary English, and accepting any eighty characters after them meant a
+   * line naming what the record IS got deleted -- the exact failure the
+   * narrowing was meant to remove, arriving through the narrowed pattern.
+   * The lead-in has to name the artifact as well.
+   */
+  it.each([
+    'This is the personal diary of Willow Bracken:\n\nKept from 1911 to 1948.',
+    'Here is the town of Rexburg as it looked in 1912:\n\nA photograph.',
+    'Below is a list of the graduating class:\n\nForty-one names.',
+    'The following is the text of the address:\n\nDelivered at commencement.',
+    // Names an artifact word, but goes on describing a document rather than
+    // stopping at it. That is what separates an announcement from a sentence.
+    'Below is a summary of the minutes:\n\nForty-one names.',
+    'Here is a description of the diary written by his daughter:\n\nKept from 1911.',
+  ])('keeps an ordinary English opening: %s', (reply) => {
+    expect(cleaned(reply)).toBe(reply);
+  });
+
   it('still strips the preambles models actually write', () => {
-    expect(cleanReply('Sure! Here is the description you asked for:\n\nA study of birds.')).toBe(
+    expect(cleaned('Sure! Here is the description you asked for:\n\nA study of birds.')).toBe(
       'A study of birds.',
     );
-    expect(cleanReply('Certainly:\n\nA study of birds.')).toBe('A study of birds.');
-    expect(cleanReply('The following is a description:\n\nA study of birds.')).toBe(
+    expect(cleaned('Certainly:\n\nA study of birds.')).toBe('A study of birds.');
+    expect(cleaned('The following is a description:\n\nA study of birds.')).toBe(
       'A study of birds.',
     );
+    expect(cleaned('Here is my answer:\n\nA study of birds.')).toBe('A study of birds.');
+  });
+
+  /** The single most common chat lead-in there is, and it was missing while
+   *  `i've written` was present. */
+  it("strips Here's, which is what a model writes more often than Here is", () => {
+    expect(cleaned("Here's the description:\n\nA study of birds.")).toBe('A study of birds.');
   });
 
   /**
@@ -160,16 +194,16 @@ describe('what the cleaner must NOT destroy', () => {
    */
   it('leaves a description that quotes the document at both ends intact', () => {
     const quoting = '"A remarkable man," his brother said, "and he will be missed."';
-    expect(cleanReply(quoting)).toBe(quoting);
+    expect(cleaned(quoting)).toBe(quoting);
   });
 
   it('strips curly quotes too, which is what a model actually emits', () => {
-    expect(cleanReply('“A study of birds.”')).toBe('A study of birds.');
+    expect(cleaned('“A study of birds.”')).toBe('A study of birds.');
   });
 
   it('leaves a reply that merely contains a quotation alone', () => {
     const text = 'He was, in his brother\'s words, "a remarkable man".';
-    expect(cleanReply(text)).toBe(text);
+    expect(cleaned(text)).toBe(text);
   });
 });
 
@@ -183,54 +217,142 @@ describe('refusals the plan would have written into the catalogue', () => {
   /** Anchoring at the start misses every refusal with a lead-in, and a lead-in
    *  is exactly what a chat model produces. */
   it('catches a refusal that opens with a clause', () => {
-    expect(cleanReply('Based on the document, I cannot determine a description.')).toBe('');
-    expect(cleanReply('Unfortunately, I am unable to summarise this document.')).toBe('');
+    expect(cleanReply('Based on the document, I cannot determine a description.').outcome).toBe(
+      'refused',
+    );
+    expect(cleanReply('Unfortunately, I am unable to summarise this document.').outcome).toBe(
+      'refused',
+    );
   });
 
   /** The plan tested the refusal BEFORE stripping the preamble, so a refusal
    *  behind one escaped entirely. */
   it('catches a refusal hidden behind a preamble', () => {
-    expect(cleanReply('Here is my answer:\n\nI cannot describe this document.')).toBe('');
+    expect(cleanReply('Here is my answer:\n\nI cannot describe this document.').outcome).toBe(
+      'refused',
+    );
   });
 
   it('catches a refusal inside quotation marks', () => {
-    expect(cleanReply('"I\'m sorry, I cannot help with that."')).toBe('');
+    expect(cleanReply('"I\'m sorry, I cannot help with that."').outcome).toBe('refused');
   });
 
-  /**
-   * The counterweight. Refusal wording is first-person and about the assistant;
-   * a catalogue description is third-person and about a document. Only the
-   * opening sentence is examined, so a quotation deeper in a real description
-   * cannot trip it.
-   */
-  it('does not mistake a quoted sentence deep in a description for a refusal', () => {
-    const text =
-      'A tribute read at the funeral. His daughter wrote that she cannot imagine ' +
-      'life without him, and that I cannot say more than he was kind.';
-    expect(cleanReply(text)).toBe(text);
-  });
-
-  it('does not mistake a document about inability for a refusal', () => {
-    const text = 'A report on why the college could not admit more students in 1943.';
-    expect(cleanReply(text)).toBe(text);
+  it("catches a self-identifying model that does not use the word 'cannot'", () => {
+    expect(cleanReply('As an AI, I do not have access to the scanned pages.').outcome).toBe(
+      'refused',
+    );
   });
 });
 
 /**
- * THE CONTRACT TASK 7 IS WRITTEN AGAINST. Empty means the call produced no
- * usable answer -- a failure with a reason -- never an empty description to
- * write into a cell.
+ * The counterweights. Each of these is a REAL catalogue description that the
+ * refusal test blanked, and each was found by execution rather than by reading.
  */
-describe('empty means failure, never a value', () => {
-  it('reports a reply that was only whitespace as no answer', () => {
-    expect(cleanReply('   \n\n  ')).toBe('');
+describe('descriptions the refusal test must not blank', () => {
+  /**
+   * `as an ai` is the odd member of the set: not refusal wording at all but
+   * self-identification, and the only term in it that matches third-person
+   * prose. A university repository in 2026 accumulates exactly these documents.
+   */
+  it('keeps a document that is ABOUT artificial intelligence', () => {
+    const text =
+      'Discusses the ethics of deploying a chatbot as an AI assistant in academic libraries.';
+    expect(cleaned(text)).toBe(text);
   });
 
-  it('reports a reply that was only a preamble as no answer', () => {
-    expect(cleanReply('Here is the description:\n\n')).toBe('');
+  /**
+   * Opening with a quotation from the item is standard archival practice for
+   * letters, diaries and oral histories -- the material this tool is pointed
+   * at. The quoted clause and its attribution are ONE sentence, so both sat
+   * inside the window and the whole description was thrown away.
+   */
+  it('keeps a description that opens with a quotation from the source', () => {
+    const text =
+      '"I cannot describe the joy of that day," wrote Sorrel Fennel in this 1918 letter home.';
+    expect(cleaned(text)).toBe(text);
   });
 
-  it('reports empty quotation marks as no answer', () => {
-    expect(cleanReply('""')).toBe('');
+  it('does not mistake a quoted sentence deep in a description for a refusal', () => {
+    const text =
+      'A tribute read at the funeral. His daughter wrote that she cannot imagine ' +
+      'life without him, and that I cannot say more than he was kind.';
+    expect(cleaned(text)).toBe(text);
+  });
+
+  it('does not mistake a document about inability for a refusal', () => {
+    const text = 'A report on why the college could not admit more students in 1943.';
+    expect(cleaned(text)).toBe(text);
+  });
+
+  /**
+   * The window has an UPPER bound as well as a lower one. Shrinking it to 20
+   * turns tests above red; without this one, widening it to 2000 costs nothing
+   * -- and a wide window is what blanks a real description whose later clauses
+   * quote somebody.
+   */
+  it('does not read first-person wording far past the opening as a refusal', () => {
+    const filler = 'describing the harvest and the weather and the long walk to town, ';
+    const text = `A letter from the mission field ${filler.repeat(3)}in which the writer says that I cannot recall a colder winter.`;
+    expect(text.indexOf('I cannot')).toBeGreaterThan(200);
+    expect(cleaned(text)).toBe(text);
+  });
+});
+
+/**
+ * THE CONTRACT TASK 7 IS WRITTEN AGAINST.
+ *
+ * A result carries the text ONLY when it is usable. There is no `.text` to read
+ * on a failure, so a caller cannot write a blank and call it success even by
+ * accident -- and the reason says which of the three things happened, because
+ * "the model gave no answer" is FALSE for two of them: the model answered and
+ * this tool discarded it.
+ */
+describe('the result says which of three things happened', () => {
+  it('reports a refusal as refused, and keeps what was discarded', () => {
+    const result = cleanReply("I'm sorry, I cannot help with that.");
+    expect(result.outcome).toBe('refused');
+    if (result.outcome === 'ok') throw new Error('unreachable');
+    expect(result.reason).toMatch(/declined/i);
+    // The discarded text is recoverable. Reporting "no answer" and binning the
+    // evidence leaves the operator with nothing to judge.
+    expect(result.discarded).toBe("I'm sorry, I cannot help with that.");
+  });
+
+  it('reports a reply that was only a preamble as such, not as no answer', () => {
+    const result = cleanReply('Here is the description:\n\n');
+    expect(result.outcome).toBe('preamble-only');
+    if (result.outcome === 'ok') throw new Error('unreachable');
+    expect(result.reason).toMatch(/introduction|preamble/i);
+    expect(result.discarded).toBe('Here is the description:');
+  });
+
+  it('reports a reply that cleaned away to nothing as empty', () => {
+    const result = cleanReply('""');
+    expect(result.outcome).toBe('empty');
+    if (result.outcome === 'ok') throw new Error('unreachable');
+    expect(result.reason).toMatch(/no text/i);
+  });
+
+  it('reports whitespace as empty', () => {
+    expect(cleanReply('   \n\n  ').outcome).toBe('empty');
+  });
+
+  it('reports a usable reply as ok, with the text on it', () => {
+    const result = cleanReply('A study of birds.');
+    expect(result.outcome).toBe('ok');
+    if (result.outcome !== 'ok') throw new Error('unreachable');
+    expect(result.text).toBe('A study of birds.');
+  });
+
+  /** Three distinct reasons, so a row note cannot say the same wrong thing for
+   *  all of them. */
+  it('gives each failure its own words', () => {
+    const reasons = ["I'm sorry, I cannot help.", 'Here is the description:\n\n', '""'].map(
+      (reply) => {
+        const result = cleanReply(reply);
+        return result.outcome === 'ok' ? 'ok' : result.reason;
+      },
+    );
+    expect(new Set(reasons).size).toBe(3);
   });
 });
