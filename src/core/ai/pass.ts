@@ -27,6 +27,51 @@ export interface ModelPassSettings {
 }
 
 /**
+ * Refuse settings the run would refuse, before a single file is opened.
+ *
+ * ## It builds the real provider and throws it away
+ *
+ * Every check is therefore the one that would actually have run on the first
+ * row -- the base address parsing, and the refusal to send a bearer key over
+ * plain http to anywhere but this machine -- rather than a copy of those rules
+ * free to drift out of step with them. Constructing an `OpenAiCompatibleProvider`
+ * opens no socket and costs nothing.
+ *
+ * ## Why "before a single file is opened" is the whole point
+ *
+ * A configuration fault affects every row identically. Discovering it on row one
+ * of four hundred means the folder has already been walked and read; discovering
+ * it through the provider constructor means the message arrives in the code's
+ * units rather than the operator's. Worse on the CLI: the confirmation an
+ * operator is asked to agree to is rendered from these numbers, so a bad one is
+ * not merely a late error -- it makes the consent artifact itself nonsense.
+ *
+ * It does NOT check the budget or the cap: `assertUsableBudget` and
+ * `assertUsableCap` are exported from their own modules for callers to ask
+ * directly, and `fillWithModel` asks both again before its loop.
+ */
+export function assertUsableModelPass(settings: ModelPassSettings): void {
+  void buildProvider(settings);
+}
+
+/** One construction, so `runModelPass` and the pre-flight above cannot disagree
+ *  about what a usable endpoint is. */
+function buildProvider(settings: ModelPassSettings, fetchImpl?: typeof fetch): OpenAiCompatibleProvider {
+  return new OpenAiCompatibleProvider(
+    {
+      baseUrl: settings.baseUrl,
+      model: settings.model,
+      // An empty string is "no key", not a key of length zero: `provider.ts`
+      // reads a falsy value as "send no Authorization header", and a local
+      // runtime is the case that has none.
+      ...(settings.apiKey ? { apiKey: settings.apiKey } : {}),
+      ...(settings.timeoutMs === undefined ? {} : { timeoutMs: settings.timeoutMs }),
+    },
+    fetchImpl,
+  );
+}
+
+/**
  * Run the model pass over rows that have already been extracted.
  *
  * ## Why this is one function rather than two copies
@@ -55,20 +100,7 @@ export async function runModelPass(
   settings: ModelPassSettings,
   fetchImpl?: typeof fetch,
 ): Promise<void> {
-  const provider = new OpenAiCompatibleProvider(
-    {
-      baseUrl: settings.baseUrl,
-      model: settings.model,
-      // An empty string is "no key", not a key of length zero: `provider.ts`
-      // reads a falsy value as "send no Authorization header", and a local
-      // runtime is the case that has none.
-      ...(settings.apiKey ? { apiKey: settings.apiKey } : {}),
-      ...(settings.timeoutMs === undefined ? {} : { timeoutMs: settings.timeoutMs }),
-    },
-    fetchImpl,
-  );
-
-  await fillWithModel(targets, profile, provider, {
+  await fillWithModel(targets, profile, buildProvider(settings, fetchImpl), {
     budget: settings.budget,
     cap: settings.cap,
     // Both read off the profile rather than passed in, so a template's house

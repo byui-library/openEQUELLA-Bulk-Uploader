@@ -223,6 +223,42 @@ export interface DocumentData {
   tables: DocumentTable[];
 }
 
+/**
+ * One cell a language model wrote, as the row remembers it.
+ *
+ * ## Why the kind of field is stored and not just the note
+ *
+ * `review.ts` subtracts a model write from the "rows needing review" count,
+ * because an expected write is not a problem to triage. That reasoning holds
+ * for PROSE and not for FACTS. The design puts them in different buckets and
+ * says so: a fact field "stays flagged for review even when an operator enables
+ * it". A description that reads oddly is a quality problem a cataloguer can fix;
+ * an invented death date is indistinguishable from a real one to everyone
+ * downstream, permanently, in a collection with no moderation queue.
+ *
+ * Without this flag the counter cannot tell them apart -- a batch in which a
+ * model filled forty dates would report "None need review", and `fill.ts` has
+ * already cleared `flagged` for each of them, so nothing else on the row says
+ * otherwise either.
+ *
+ * IT IS NOT DERIVED AT COUNTING TIME, deliberately. `factKind` needs the
+ * COLUMN, and the counter runs on three surfaces -- one of them a sandboxed
+ * renderer -- two of which have a row and no profile. Recording the answer where
+ * the answer is known keeps one judgement in one place, made by the code that
+ * already had to make it in order to word the note.
+ */
+export interface AiWrite {
+  /** The exact string pushed onto `notes` for this cell. Compared by identity,
+   *  never matched as prose. */
+  note: string;
+  /**
+   * True where the column holds a date, a name, or anything else a reader
+   * cannot check by reading. See `factKind` in core/ai/fill.ts for what it can
+   * and -- importantly -- cannot detect.
+   */
+  factField: boolean;
+}
+
 /** One output row, before serialisation. */
 export interface ExtractedRow {
   /** Keyed by column path. Every column in the profile is present, possibly empty. */
@@ -260,9 +296,9 @@ export interface ExtractedRow {
    */
   flagged: Record<string, string>;
   /**
-   * Column path -> the exact note saying a language model wrote that cell.
+   * Column path -> the record of a language model having written that cell.
    *
-   * EVERY MODEL WRITE APPEARS HERE, and the value is the same string that was
+   * EVERY MODEL WRITE APPEARS HERE, and `note` is the same string that was
    * pushed onto `notes`. Two things need that, and neither can be had by
    * reading note prose:
    *
@@ -280,7 +316,7 @@ export interface ExtractedRow {
    * ONLY WRITTEN COLUMNS APPEAR. A cell the model was asked about and failed on
    * is absent, exactly like `flagged`.
    */
-  aiWritten: Record<string, string>;
+  aiWritten: Record<string, AiWrite>;
 }
 
 export interface ExtractResult {

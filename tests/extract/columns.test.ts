@@ -119,3 +119,60 @@ describe('setDefault', () => {
     expect(setDefault(withDefault, 'MWDL/date', '').columns[2]).not.toHaveProperty('default');
   });
 });
+
+
+/**
+ * ## Removing the column an `aiProvenance` points at
+ *
+ * `parseProfile` refuses a provenance path that is not a writable column,
+ * because `csv.ts` builds the sheet from `columns` and a value written anywhere
+ * else is created and silently discarded. That runs at LOAD time. This function
+ * rewrites the profile in memory and the desktop's `extractRun` never re-parses,
+ * so without this the editor could produce a profile the loader would have
+ * refused -- and the one disclosure that survives an upload would go quietly
+ * nowhere on every item in the batch.
+ *
+ * `saveProfileAs` re-parses, so SAVING surfaced it. Running did not.
+ */
+describe('removeColumn and aiProvenance', () => {
+  const withProvenance = (): Profile => ({
+    ...profile(),
+    columns: [...profile().columns, { path: 'MWDL/conversionSpecifications', sources: [] }],
+    aiProvenance: { path: 'MWDL/conversionSpecifications', append: 'Written by {model}' },
+  });
+
+  it('drops a provenance setting whose column is being removed', () => {
+    const after = removeColumn(withProvenance(), 'MWDL/conversionSpecifications');
+    expect(after.aiProvenance).toBeUndefined();
+  });
+
+  /** Dropped, not refused: removing a column is an ordinary edit, and blocking
+   *  it over a setting elsewhere would leave no way forward but hand-editing
+   *  JSON. */
+  it('still removes the column', () => {
+    const after = removeColumn(withProvenance(), 'MWDL/conversionSpecifications');
+    expect(after.columns.map((c) => c.path)).not.toContain('MWDL/conversionSpecifications');
+  });
+
+  it('leaves a provenance setting pointing at a different column alone', () => {
+    const after = removeColumn(withProvenance(), 'MWDL/date');
+    expect(after.aiProvenance).toEqual({
+      path: 'MWDL/conversionSpecifications',
+      append: 'Written by {model}',
+    });
+  });
+
+  it('does not mutate the profile it was given', () => {
+    const before = withProvenance();
+    removeColumn(before, 'MWDL/conversionSpecifications');
+    expect(before.aiProvenance).toBeDefined();
+  });
+
+  /** The result is a profile the loader would accept -- which is the whole
+   *  property, since nothing re-parses it before a run. */
+  it('leaves a profile parseProfile still accepts', async () => {
+    const { parseProfile } = await import('../../src/core/extract/profile.js');
+    const after = removeColumn(withProvenance(), 'MWDL/conversionSpecifications');
+    expect(() => parseProfile(after)).not.toThrow();
+  });
+});

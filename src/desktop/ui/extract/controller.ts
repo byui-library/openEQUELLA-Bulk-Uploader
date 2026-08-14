@@ -113,6 +113,24 @@ export function createExtractController(options: ExtractControllerOptions): Extr
   };
 
   /**
+   * The two separate answers a confirmation produces.
+   *
+   * THEY ARE NOT THE SAME QUESTION, and collapsing them to one boolean is what
+   * let an unreadable settings store turn into an unannounced hosted send.
+   * "Build the spreadsheet" and "send documents to a model" have different
+   * defaults: the first should proceed through almost anything, because
+   * extraction works offline and has no prerequisites; the second must not
+   * happen unless somebody said so.
+   */
+  interface ModelApproval {
+    /** Whether to run the extract at all. False only on a real refusal. */
+    proceed: boolean;
+    /** Whether the operator agreed to documents leaving this machine. Carried to
+     *  `extractRun`, which sends only on a true. */
+    sendToModel: boolean;
+  }
+
+  /**
    * Whether this run may go ahead, having told the operator what it will send.
    *
    * TRUE IS THE ANSWER IN EVERY CASE BUT ONE -- a real refusal of a real
@@ -127,28 +145,49 @@ export function createExtractController(options: ExtractControllerOptions): Extr
    * the half of the tool that has no prerequisites, over a feature the operator
    * may never have configured.
    */
-  async function approveModelRun(profile: Profile): Promise<boolean> {
+  async function approveModelRun(profile: Profile): Promise<ModelApproval> {
     let model: Awaited<ReturnType<OeqApi['getModel']>> = null;
     try {
       model = await options.api.getModel(options.instanceId ?? '');
     } catch {
-      model = null;
+      // AN UNREADABLE STORE IS NOT PERMISSION TO SEND. It used to answer "carry
+      // on" -- which was right about the extract and wrong about the model,
+      // because the main process then made its OWN read of the same store,
+      // possibly succeeded, and sent a whole batch to a hosted endpoint with no
+      // dialog ever shown. `sendToModel: false` is now carried to the run, so a
+      // read this side could not make cannot be overruled by a read the other
+      // side could.
+      return { proceed: true, sendToModel: false };
     }
-    if (model === null) return true;
+    if (model === null) return { proceed: true, sendToModel: false };
+
+    // NO SCAN IS NOT AN EMPTY FOLDER. `aiConfirmation` returns null for zero
+    // documents -- correctly, since a dialog offering to send nothing teaches
+    // the operator that this dialog means nothing -- and null is an approval. So
+    // folding "we do not know how many files there are" into the same zero would
+    // make a missing count read as consent to a run of unknown size. Unreachable
+    // today, because `chooseFolder` sets `dir` and `scan` together and `save()`
+    // requires `dir`; it is a fragile way to gate consent all the same.
+    if (state.scan === null) return { proceed: true, sendToModel: false };
 
     const text = aiConfirmation({
       profile,
       // The whole folder, not the preview: the run reads every file fresh
       // (extractHandlers.ts), so the preview's five rows would understate the
       // count by two orders of magnitude on a real batch.
-      documents: state.scan?.supported.length ?? 0,
+      documents: state.scan.supported.length,
       model: model.model,
       baseUrl: model.baseUrl,
       budget: model.budget,
       cap: model.cap,
     });
-    if (text === null) return true;
-    return (options.confirm ?? ((message: string) => window.confirm(message)))(text);
+    // No dialog warranted -- a loopback endpoint, no column asking, no
+    // documents, a cap of zero. Not a question, and for the loopback case the
+    // model genuinely does run, so this is an approval and not a refusal.
+    if (text === null) return { proceed: true, sendToModel: true };
+
+    const agreed = (options.confirm ?? ((message: string) => window.confirm(message)))(text);
+    return { proceed: agreed, sendToModel: agreed };
   }
 
   return {
@@ -270,7 +309,8 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       // standing for a run that never happened. A confirmation should be the
       // step immediately before the thing it confirms, with nothing that can
       // still call the whole thing off in between.
-      if (!(await approveModelRun(state.profile))) return;
+      const approval = await approveModelRun(state.profile);
+      if (!approval.proceed) return;
       await guard(async () => {
         const report = await options.api.extractRun({
           dir: state.dir!,
@@ -283,6 +323,8 @@ export function createExtractController(options: ExtractControllerOptions): Extr
           // operator is shown one endpoint and their documents go to another,
           // or to none at all after they agreed to a send.
           instanceId: options.instanceId ?? '',
+          // The consent, carried rather than re-derived. See `ModelApproval`.
+          modelApproved: approval.sendToModel,
         });
         return {
           savedPath: report.outPath,

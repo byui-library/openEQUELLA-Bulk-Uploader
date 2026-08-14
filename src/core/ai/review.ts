@@ -24,8 +24,8 @@ import type { ExtractedRow } from '../extract/types.js';
  *
  * ## By identity, never by matching the note's prose
  *
- * `aiWritten` stores the exact string the fill pass pushed onto `notes` (see
- * `ExtractedRow.aiWritten`), so this subtracts by set membership. Recognising
+ * `aiWritten[path].note` is the exact string the fill pass pushed onto `notes`
+ * (see `ExtractedRow.aiWritten`), so this subtracts by set membership. Recognising
  * the wording instead would be wrong in both directions: a reworded note would
  * silently stop being subtracted, and a DIFFERENT note that happens to mention
  * a model -- "not sent to the model -- this file has no text to read" -- would
@@ -33,15 +33,30 @@ import type { ExtractedRow } from '../extract/types.js';
  *
  * ## What is deliberately NOT subtracted
  *
- * "No model is configured, so nothing was written here" is a genuine problem: a
- * column asked for a value and did not get one. It reaches `notes` and never
+ * **A model-written FACT FIELD.** The design puts prose and facts in different
+ * buckets and says a fact field "stays flagged for review even when an operator
+ * enables them". A description that reads oddly is a quality problem a
+ * cataloguer can fix; an invented death date cannot be told from a real one by
+ * anyone downstream, permanently. Subtracting it would produce "None need
+ * review" on a batch in which a model filled forty dates -- and `fill.ts` has
+ * already cleared `flagged` for each of them, so nothing else on the row would
+ * say otherwise. Nothing ships enabled on a fact field, and this is why that is
+ * a policy rather than the only thing standing between a batch and this
+ * counter.
+ *
+ * **"No model is configured, so nothing was written here."** A genuine problem:
+ * a column asked for a value and did not get one. It reaches `notes` and never
  * `aiWritten`, so it counts -- and it must, because a thing that could not run
  * being reported as if it had is the failure this codebase has shipped four
  * times.
  */
 export function needsReview(row: ExtractedRow): boolean {
-  const written = new Set(Object.values(row.aiWritten));
-  return row.notes.some((note) => !written.has(note));
+  const routine = new Set(
+    Object.values(row.aiWritten)
+      .filter((write) => !write.factField)
+      .map((write) => write.note),
+  );
+  return row.notes.some((note) => !routine.has(note));
 }
 
 /** Rows with something genuinely wrong. The triage number. */

@@ -6,7 +6,7 @@ import { ATTACHMENT_COLUMN, type Column, type ExtractedRow, type Profile } from 
  *
  * THE COLUMN HALF OF THE RULE, ON ITS OWN, because two callers need exactly
  * this and neither can answer it from a row. `eligibleColumns` below applies the
- * per-cell half on top; the desktop's confirmation dialog (ui/aiConfirm.ts)
+ * per-cell half on top; the confirmation dialog (core/ai/confirm.ts)
  * multiplies the count by the number of documents to say how many requests a
  * run may make, before a single file has been read and long before any row
  * exists.

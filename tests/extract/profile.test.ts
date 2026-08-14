@@ -373,3 +373,44 @@ describe('parseProfile and the provenance field', () => {
     expect(problems.map((p) => p.path)).toContain('MWDL/conversionSpecifications');
   });
 });
+
+/**
+ * The placeholder check reads EVERY brace, not only the ones that look like a
+ * name.
+ *
+ * `joinPlaceholders` matches `\{([A-Za-z][A-Za-z0-9_]*)\}`, which catches
+ * `{modle}` and misses `{ model }`, `{model-name}` and `{2}` -- each a plausible
+ * typo, and each written verbatim into every item in the batch, in a collection
+ * with no moderation queue, with nothing downstream ever mentioning it.
+ */
+describe('parseProfile and a mistyped provenance placeholder', () => {
+  const withAppend = (append: string) => ({
+    ...GOOD,
+    columns: [...GOOD.columns, { path: 'MWDL/conversionSpecifications', sources: [] }],
+    aiProvenance: { path: 'MWDL/conversionSpecifications', append },
+  });
+
+  it('refuses a name with spaces inside the braces', () => {
+    expect(() => parseProfile(withAppend('Written by { model }'))).toThrow(/not substituted/i);
+  });
+
+  it('refuses a hyphenated name', () => {
+    expect(() => parseProfile(withAppend('Written by {model-name}'))).toThrow(/model-name/);
+  });
+
+  it('refuses a number', () => {
+    expect(() => parseProfile(withAppend('Written by {2}'))).toThrow(/not substituted/i);
+  });
+
+  it('refuses an empty brace pair', () => {
+    expect(() => parseProfile(withAppend('Written by {}'))).toThrow(/not substituted/i);
+  });
+
+  it('refuses the wrong case, which does not substitute either', () => {
+    expect(() => parseProfile(withAppend('Written by {Model}'))).toThrow(/Model/);
+  });
+
+  it('still accepts the one that works', () => {
+    expect(() => parseProfile(withAppend('Written by {model}'))).not.toThrow();
+  });
+});

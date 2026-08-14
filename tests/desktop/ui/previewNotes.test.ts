@@ -97,7 +97,7 @@ describe('the preview heading and a row a model wrote', () => {
     sources: {},
     notes: [AI_NOTE],
     flagged: {},
-    aiWritten: { 'MWDL/description': AI_NOTE },
+    aiWritten: { 'MWDL/description': { note: AI_NOTE, factField: false } },
   });
 
   it('does not count a model write among the rows needing review', () => {
