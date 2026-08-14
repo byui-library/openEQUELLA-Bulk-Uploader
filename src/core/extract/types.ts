@@ -80,7 +80,16 @@ export type Source =
    */
   | { presence: { any: string[]; then: string } }
   /** The filename itself, verbatim. Only used by ATTACHMENT_COLUMN. */
-  | { filename: true };
+  | { filename: true }
+  /**
+   * Ask a language model, in the async pass that runs after extraction.
+   *
+   * A MARKER, NOT A FETCH. `resolve` returns empty for it -- extraction is
+   * synchronous, pure and offline, and stays that way. `core/ai/fill.ts` reads
+   * the finished rows and fills only what `eligibleColumns` permits. Placed
+   * last in a source list by convention; the rule does not depend on position.
+   */
+  | { ai: true };
 
 /** How a date column is normalised: automatically, or by a format the profile declares. */
 export type DateTransform = 'date' | { date: string };

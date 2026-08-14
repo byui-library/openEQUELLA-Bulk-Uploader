@@ -272,6 +272,12 @@ function resolve(source: Source, context: Context): Resolved {
     return { value: '' };
   }
 
+  // A marker, not a fetch. `resolve` is synchronous and `src/core/extract/`
+  // never touches the network -- the property that lets an operator build a
+  // spreadsheet without signing in to anything. The async pass in
+  // `core/ai/fill.ts` acts on the marker after the row is finished.
+  if ('ai' in source) return { value: '' };
+
   return { value: context.doc.properties[source.property] ?? '' };
 }
 
