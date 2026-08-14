@@ -108,6 +108,54 @@ describe('shipped templates', () => {
     await expect(loadTemplate('no-such-template')).rejects.toThrow();
   });
 
+  describe('the model is offered where it helps and nowhere else', () => {
+    it('asks for a model on the description, after the deterministic sources', async () => {
+      const profile = await loadTemplate('alumni-obituary');
+      const description = profile.columns.find((c) => c.path === 'MWDL/description');
+      const sources = description?.sources ?? [];
+      expect(sources.some((s) => 'ai' in s)).toBe(true);
+      // Last, so every deterministic source has its turn first. The rule does
+      // not depend on order, but a reader of the profile should see the
+      // intended precedence.
+      expect('ai' in (sources[sources.length - 1] ?? {})).toBe(true);
+    });
+
+    /**
+     * A death date is a FACT. A model that fills one produces something no
+     * reviewer can distinguish from a real one, in a collection with no
+     * moderation queue. Prose only, in this release.
+     */
+    it('asks for a model on no other column', async () => {
+      const profile = await loadTemplate('alumni-obituary');
+      const asked = profile.columns.filter((c) => c.sources.some((s) => 'ai' in s)).map((c) => c.path);
+      expect(asked).toEqual(['MWDL/description']);
+    });
+
+    /**
+     * A MODEL-WRITTEN DESCRIPTION AND A COMPOSED ONE MUST LOOK ALIKE IN THE
+     * CATALOGUE. The compose source above produces `Died <iso>; Born <iso>;
+     * Attended Ricks College`, dropping any clause it could not fill, and the
+     * model is asked for the same shape rather than left to invent a format --
+     * otherwise one batch reads one way and the next reads another, in a
+     * permanent record nobody re-edits. Asserted against the compose string
+     * itself so the two cannot drift apart silently.
+     */
+    it('asks the model for the same shape the compose source produces', async () => {
+      const profile = await loadTemplate('alumni-obituary');
+      const compose = profile.columns
+        .find((c) => c.path === 'MWDL/description')
+        ?.sources.find((s) => 'compose' in s);
+      const template = compose && 'compose' in compose ? compose.compose : '';
+      const instruction = profile.aiInstruction ?? '';
+
+      for (const literal of template.split(/\{[^}]*\}/).map((part) => part.replace(/[;\s]+/g, ' ').trim())) {
+        if (literal === '') continue;
+        expect(instruction).toContain(literal);
+      }
+      expect(instruction).toMatch(/Attended Ricks College/);
+    });
+  });
+
   /**
    * The id crosses IPC from the renderer. Without the guard, a traversal like
    * '../../package' would be read and parsed.
