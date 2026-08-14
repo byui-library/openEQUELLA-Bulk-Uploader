@@ -47,8 +47,12 @@ export interface FillOptions {
    *
    * Requests, not rows: a row with two enabled columns is two calls and two
    * lots of spend, and counting rows would let a cap of 500 make a thousand
-   * calls. With one column enabled -- what ships -- the two numbers are the
-   * same, which is why the confirmation dialog can go on saying "documents".
+   * calls. With one column enabled -- what ships -- the two numbers happen to
+   * be equal, and NOTHING RELIES ON THAT. `confirm.ts` states every figure in
+   * requests rather than documents, precisely so the wording stays true the
+   * moment a profile enables a second column. An earlier version of this
+   * comment said the dialog "can go on saying documents"; it does not, and
+   * that sentence outlived the code it described.
    */
   cap: number;
   /**

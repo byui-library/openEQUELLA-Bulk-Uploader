@@ -314,7 +314,9 @@ leave them in place or delete them - either works.
 `_source` earns its keep on titles in particular. Most documents record a
 sensible title, but a fair few record something left over from how the file was
 made — an internal reference number, or the name of the Word file it was
-exported from. Sort by `_source` in Excel, glance down the rows that say
+exported from. `_source` is a single cell per row listing every column's origin
+at once — `attachment name=filename; MWDL/title=properties` — so sorting on it
+will not group anything. Use Excel's search or a text filter for
 `title=properties`, and you will spot those in a moment.
 
 ### If the dates come out wrong
@@ -338,10 +340,15 @@ one. If you want, it can ask a language model to write that column instead.
 
 **You do not have to do anything.** On the Setup screen there is a collapsed
 section, *"Optional: let a language model fill gaps the documents do not
-answer"*. **Leave it empty and none of this applies to you**: no model is
-contacted, nothing leaves this computer, and your spreadsheets are built exactly
-as they are today. There is no prompt, no warning and no half-working version.
-Ignoring this section costs you nothing.
+answer"*. **Leave it empty and no model is contacted and nothing leaves this
+computer.** There is no prompt, no warning and no half-working version.
+
+One small thing does change if your column setup asks for a model — and the
+**Alumni Obituary** starter kit does. Any description that came out empty gains
+a line in `_notes` saying a language model was asked for and none was set up.
+It is a note, not a problem: those rows were already flagged, because a
+description only comes out empty when no death date could be found either, and
+that is flagged on its own. Nothing else about the spreadsheet is different.
 
 **Nobody has yet checked whether what a model writes here is any good.** The
 program has been tested thoroughly on *what it sends, when it is allowed to
@@ -370,11 +377,13 @@ wait for an answer.
 
 #### What you will see when it runs
 
-- **You are asked first, before any file is opened.** A message says how many
-  requests are about to be made, to which service, using which model, and at
-  most how much of your text is going. Nothing is sent until you agree, and
-  nothing is uploaded to openEQUELLA by this step — it writes into your
-  spreadsheet only.
+- **You are asked before any document leaves this computer.** The message comes
+  at the very end, after you have chosen the folder, set up the columns and
+  picked where to save — deliberately, so that nothing can still call the run
+  off after you have agreed to it. It says how many requests are about to be
+  made, to which service, using which model, and at most how much of your text
+  is going. Nothing is sent until you agree, and nothing is uploaded to
+  openEQUELLA by this step — it writes into your spreadsheet only.
 
   **A model on your own computer does not ask.** Nothing is leaving the machine
   and nothing is being charged, so there is nothing to agree to. That is
@@ -387,8 +396,9 @@ wait for an answer.
   document with two such columns uses two.
 
 - **Everything a model wrote is flagged**, with no exceptions, in `_notes`. The
-  `_source` column reads `ai` for those cells, so you can sort by it in Excel
-  and read only what a machine wrote.
+  `_source` column records `MWDL/description=ai` for such a cell. It holds every
+  column's origin in one cell, so sorting on it groups nothing — search or
+  filter the column for `=ai` to find the rows a machine wrote into.
 
 - **A stronger warning on dates and names.** Those cells say that an invented
   date cannot be told from a real one by anyone reading the catalogue
