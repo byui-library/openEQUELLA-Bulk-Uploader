@@ -152,6 +152,41 @@ export interface Profile {
   /** e.g. "{last}_{first}_{title}_{date}.pdf" */
   pattern: string;
   columns: Column[];
+  /**
+   * Where to record, IN THE ITEM ITSELF, that a language model wrote something.
+   *
+   * ABSENT BY DEFAULT AND THE TOOL NEVER PICKS IT. Choosing a path on an
+   * institution's behalf is the assumption an entire release was spent removing;
+   * a wrong one writes outside the schema on every item in the batch.
+   *
+   * IT IS THE ONLY DISCLOSURE THAT SURVIVES THE UPLOAD. Everything else
+   * `core/ai/fill.ts` writes goes into `_notes`, which `plan.ts` drops with
+   * every other annotation column before anything is contributed -- so a future
+   * reader of the catalogue sees none of it. This is a value in a real column
+   * and it is uploaded like any other.
+   *
+   * `path` MUST BE A DECLARED, WRITABLE COLUMN of this profile, and
+   * `parseProfile` refuses one that is not. `csv.ts` builds the spreadsheet by
+   * walking `columns`, so a value written anywhere else is created and silently
+   * dropped -- and being a column is also what puts this path through
+   * `validateAgainstSchema` along with every other one, which is the whole of
+   * the schema check the design asks for.
+   *
+   * `append` may use `{model}` and nothing else; an unknown placeholder is
+   * refused at load rather than written out literally into a permanent record.
+   * Joined to whatever the column already holds with '; ', once per row.
+   */
+  aiProvenance?: { path: string; append: string };
+  /**
+   * House style for the model, passed through to the prompt. See
+   * `core/ai/prompt.ts`.
+   *
+   * PROFILE-LEVEL, not per column, because it describes how this collection
+   * writes rather than what one field holds -- and because v1 enables the model
+   * on one column, so a per-column setting would be five ways to say the same
+   * thing four of which are never read.
+   */
+  aiInstruction?: string;
   /** Checks that report on a row without producing a value. */
   checks?: {
     /**
