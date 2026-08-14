@@ -342,6 +342,26 @@ export interface OeqApi {
     profile: Profile;
     outPath: string;
     instanceId?: string;
+    /**
+     * That the operator has been shown what would be sent and agreed to it.
+     *
+     * THE SIDE THAT SENDS MUST KNOW SOMEBODY AGREED, and before this it did not:
+     * the main process resolved the endpoint from its own read of the store and
+     * sent, carrying no evidence of consent and unable to tell an approved run
+     * from an unapproved one. The two sides are independent reads of the same
+     * store WITH DIFFERENT FAILURE MODES -- the renderer treated a throw from
+     * `getModel` as "no model, carry on without asking", the main process treats
+     * a throw as "no model, send nothing" -- so a transient IPC failure on the
+     * renderer's read produced a full hosted send with no dialog at any point.
+     * They agreed on the interpretation; they did not agree on the observation,
+     * and only the observation gated the send.
+     *
+     * ABSENT OR FALSE MEANS SEND NOTHING. The default is the safe direction, so
+     * a caller that has not thought about consent cannot spend money by
+     * omission, and the renderer's unreadable-store case now declines to send
+     * rather than sending unasked.
+     */
+    modelApproved?: boolean;
   }): Promise<ExtractRunReport>;
   /**
    * Every valid schema xpath, for the Add-column picker.

@@ -329,6 +329,7 @@ describe('extract run and the model pass', () => {
       profile: aiProfile,
       outPath: join(dir, 'out.csv'),
       instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
     });
     expect(spy).not.toHaveBeenCalled();
   });
@@ -349,6 +350,7 @@ describe('extract run and the model pass', () => {
       profile: aiProfile,
       outPath: out,
       instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
     });
     expect(await readFile(out, 'utf8')).toMatch(/no model is configured/i);
   });
@@ -368,6 +370,7 @@ describe('extract run and the model pass', () => {
       profile: aiProfile,
       outPath: out,
       instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
     });
     const csv = await readFile(out, 'utf8');
     expect(csv).toContain('A description of the evening.');
@@ -396,6 +399,7 @@ describe('extract run and the model pass', () => {
       profile: aiProfile,
       outPath: join(dir, 'out.csv'),
       instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
     });
     expect(modelFor).toHaveBeenCalledWith('https://oeq.example.edu');
   });
@@ -418,6 +422,7 @@ describe('extract run and the model pass', () => {
       profile,
       outPath: join(dir, 'out.csv'),
       instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
     });
     expect(modelFor).not.toHaveBeenCalled();
     expect(spy).not.toHaveBeenCalled();
@@ -444,6 +449,7 @@ describe('extract run and the model pass', () => {
       profile: aiProfile,
       outPath: join(dir, 'out.csv'),
       instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
     });
     expect(report.flagged).toBe(0);
     // Reported in its own number rather than hidden: a machine wrote into a
@@ -464,6 +470,7 @@ describe('extract run and the model pass', () => {
       profile: aiProfile,
       outPath: join(dir, 'out.csv'),
       instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
     });
     expect(report.flagged).toBe(1);
     expect(report.aiWritten).toBe(0);
@@ -483,5 +490,143 @@ describe('extract run and the model pass', () => {
     const dir = await prose();
     await ipc.call('oeq:extractPreview', { dir, profile: aiProfile });
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ## The side that sends has to know somebody agreed
+ *
+ * Before this, `extractRun` resolved the endpoint from its OWN read of the store
+ * and sent -- carrying no evidence of consent and unable to tell an approved run
+ * from an unapproved one. The renderer's read and this one are independent, and
+ * they had DIFFERENT FAILURE MODES: a throw from `getModel` meant "no model,
+ * carry on without asking" on one side and "no model, send nothing" on the
+ * other. So a transient IPC failure on the renderer's read -- which is exactly
+ * when no dialog is shown -- produced a full hosted send.
+ *
+ * They agreed on what an unreadable store MEANS. They were making different
+ * observations, and only this side's observation gated the send.
+ */
+describe('extract run and consent', () => {
+  const aiProfile: Profile = {
+    version: 1,
+    pattern: '{title}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ placeholder: 'title' }] },
+      { path: 'MWDL/description', sources: [{ ai: true }] },
+    ],
+  };
+
+  const SETTINGS = {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'sk-secret',
+    budget: 4000,
+    cap: 10,
+    timeoutMs: 120_000,
+  };
+
+  async function prose(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-consent-'));
+    await writeFile(
+      join(dir, 'Recital.pdf'),
+      makePdf({
+        text:
+          'This programme records what the college said about a long evening of music in a ' +
+          'small hall, and what the players meant to it.',
+      }),
+    );
+    return dir;
+  }
+
+  /** Runs one batch with a fully configured endpoint and whatever consent is
+   *  given, and reports whether anything went out. */
+  async function run(consent: { modelApproved?: boolean }) {
+    const ipc = fakeIpcMain();
+    const spy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: 'A description.' } }] }), {
+          status: 200,
+        }),
+    );
+    const modelFor = vi.fn(async () => SETTINGS);
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor,
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const dir = await prose();
+    const out = join(dir, 'out.csv');
+    await ipc.call('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: out,
+      instanceId: 'https://oeq.example.edu',
+      ...consent,
+    });
+    return { spy, modelFor, csv: await readFile(out, 'utf8') };
+  }
+
+  it('sends nothing when consent was refused, however well configured the endpoint is', async () => {
+    const { spy, csv } = await run({ modelApproved: false });
+    expect(spy).not.toHaveBeenCalled();
+    expect(csv).not.toContain('A description.');
+  });
+
+  /**
+   * ABSENT MEANS NO. The default is the safe direction, so a caller that has
+   * not thought about consent cannot spend money by omission -- and the
+   * renderer's unreadable-store case, which shows no dialog, reaches here as an
+   * absence rather than as an approval.
+   */
+  it('sends nothing when nothing said anyone agreed', async () => {
+    const { spy } = await run({});
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  /** It does not even LOOK at the store without consent: a read that could
+   *  succeed here is exactly how this side used to overrule the other. */
+  it('does not resolve the endpoint at all without consent', async () => {
+    const { modelFor } = await run({ modelApproved: false });
+    expect(modelFor).not.toHaveBeenCalled();
+  });
+
+  it('sends when the operator agreed', async () => {
+    const { spy, csv } = await run({ modelApproved: true });
+    expect(spy).toHaveBeenCalled();
+    expect(csv).toContain('A description.');
+  });
+
+  /**
+   * The cell still says why it is empty -- and says the right why. An operator
+   * whose model settings are fine but whose run did not use them must not be
+   * told the thing they configured is not configured: that is a diagnosis naming
+   * the one place the problem is not.
+   */
+  it('says the model did not run, not that none is configured', async () => {
+    const { csv } = await run({ modelApproved: false });
+    expect(csv).toMatch(/no model was run for this batch/i);
+    expect(csv).not.toMatch(/no model is configured/i);
+  });
+
+  it('says none is configured when consent was given and there was nothing to use', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: async () => null,
+    });
+    const dir = await prose();
+    const out = join(dir, 'out.csv');
+    await ipc.call('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: out,
+      instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
+    });
+    expect(await readFile(out, 'utf8')).toMatch(/no model is configured/i);
   });
 });

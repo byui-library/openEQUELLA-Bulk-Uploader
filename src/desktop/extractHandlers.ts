@@ -177,13 +177,25 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
     CHANNELS.extractRun,
     async (
       _e,
-      args: { dir: string; profile: Profile; outPath: string; instanceId?: string },
+      args: {
+        dir: string;
+        profile: Profile;
+        outPath: string;
+        instanceId?: string;
+        modelApproved?: boolean;
+      },
     ): Promise<ExtractRunReport> => {
       // THE MODEL PASS BELONGS HERE AND NOT IN extractPreview. The preview
       // re-renders on every column edit, so running it there is a paid call per
       // keystroke. This is the one place a document is read for real.
       const wantsModel = modelColumns(args.profile).length > 0;
-      const settings = wantsModel ? await modelSettingsFor(args.instanceId) : null;
+      // CONSENT IS A CONDITION OF RESOLVING THE ENDPOINT AT ALL, not a thing
+      // checked after. Without `modelApproved` this handler decided on its own
+      // reading of the store whether to send -- so a renderer whose read of that
+      // same store failed, and which therefore never showed the dialog, still
+      // produced a full hosted send. See `OeqApi.extractRun`.
+      const settings =
+        wantsModel && args.modelApproved === true ? await modelSettingsFor(args.instanceId) : null;
 
       // Documents are kept only when something is going to read them: holding
       // four hundred of them for a run that will send none is memory spent on
@@ -198,10 +210,21 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
 
       if (wantsModel) {
         if (settings === null) {
-          // A column asked for a model and there is none. Said per cell: a
-          // silently empty cell cannot be told from a document that had nothing
-          // to say, which is a thing that could not run reported as if it had.
-          noteMissingModel(result.rows, args.profile);
+          // A column asked for a model and none ran. Said per cell: a silently
+          // empty cell cannot be told from a document that had nothing to say,
+          // which is a thing that could not run reported as if it had.
+          //
+          // WHICH sentence follows from why. Approved and still nothing means
+          // none is configured -- the operator was never asked, because there
+          // was nothing to ask about. Not approved means one may well be
+          // configured and this run did not use it, so telling them it is
+          // "not configured" would send them to the one place the problem is
+          // not.
+          noteMissingModel(
+            result.rows,
+            args.profile,
+            args.modelApproved === true ? 'not-configured' : 'not-approved',
+          );
         } else {
           await runModelPass(targets, args.profile, settings, options.fetchImpl);
         }

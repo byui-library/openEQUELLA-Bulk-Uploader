@@ -735,7 +735,11 @@ export function buildProgram(env: Env = process.env): Command {
     .option(
       '--ai',
       'let a language model fill the columns whose profile asks for one, using ' +
-        'OEQ_MODEL_BASE_URL, OEQ_MODEL, OEQ_MODEL_KEY, OEQ_MODEL_BUDGET and OEQ_MODEL_CAP',
+        'OEQ_MODEL_BASE_URL, OEQ_MODEL, OEQ_MODEL_KEY, OEQ_MODEL_BUDGET, OEQ_MODEL_CAP and ' +
+        // Listed even though it is rarely set: `provider.ts` tells a timed-out
+        // operator to "allow more time", and without this in --help that advice
+        // names an action they cannot find.
+        'OEQ_MODEL_TIMEOUT_SECONDS',
     )
     // NOT A PROMPT. `--ai` against a remote endpoint prints what it is about to
     // send and stops unless this is given: a scheduled job has no terminal, so
@@ -743,7 +747,12 @@ export function buildProgram(env: Env = process.env): Command {
     // `approve` in cli/extract.ts.
     .option('--yes', 'agree in advance to what --ai says it will send, for an unattended run')
     .action(async (o: ExtractCliOptions) => {
-      await runExtract(o, (message) => console.log(message));
+      // `env`, like every other action here (`planAction(o, env)`,
+      // `runAction(o, env)`, `checkAction(env)`). Without it the model variables
+      // were the one part of the program `buildProgram(env)` could not
+      // influence, which is invisible until a test or an embedder passes an
+      // environment and finds it silently ignored.
+      await runExtract(o, (message) => console.log(message), env);
     });
 
   return program;

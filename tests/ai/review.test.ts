@@ -6,6 +6,15 @@ import type { ExtractedRow } from '../../src/core/extract/types.js';
 const AI_NOTE =
   'MWDL/description: written by a language model from the document text -- please check it before uploading.';
 
+const DATE_NOTE =
+  'MWDL/deathDate: written by a language model from the document text, and this column holds a date.';
+
+/** A model write into a prose column. Routine, and subtracted from the count. */
+const prose = (note: string) => ({ note, factField: false });
+/** A model write into a date, a name or an identifier. NOT subtracted -- see
+ *  `needsReview`, and the design's separation of prose from fact. */
+const fact = (note: string) => ({ note, factField: true });
+
 const row = (over: Partial<ExtractedRow> = {}): ExtractedRow => ({
   cells: {},
   sources: {},
@@ -32,7 +41,7 @@ describe('needsReview', () => {
 
   /** The whole point: an expected model write is not a problem to be triaged. */
   it('is false for a row whose only note is a model write', () => {
-    const r = row({ notes: [AI_NOTE], aiWritten: { 'MWDL/description': AI_NOTE } });
+    const r = row({ notes: [AI_NOTE], aiWritten: { 'MWDL/description': prose(AI_NOTE) } });
     expect(needsReview(r)).toBe(false);
   });
 
@@ -40,7 +49,7 @@ describe('needsReview', () => {
   it('is true for a row that has a real problem as well as a model write', () => {
     const r = row({
       notes: [AI_NOTE, 'this file has no text layer'],
-      aiWritten: { 'MWDL/description': AI_NOTE },
+      aiWritten: { 'MWDL/description': prose(AI_NOTE) },
     });
     expect(needsReview(r)).toBe(true);
   });
@@ -54,7 +63,7 @@ describe('needsReview', () => {
   it('counts a note the model pass did not write, even one that mentions a model', () => {
     const r = row({
       notes: [AI_NOTE, 'MWDL/abstract: not sent to the model -- this file has no text to read.'],
-      aiWritten: { 'MWDL/description': AI_NOTE },
+      aiWritten: { 'MWDL/description': prose(AI_NOTE) },
     });
     expect(needsReview(r)).toBe(true);
   });
@@ -72,9 +81,9 @@ describe('needsReview', () => {
 });
 
 describe('countNeedingReview and countModelWritten', () => {
-  const written = row({ notes: [AI_NOTE], aiWritten: { 'MWDL/description': AI_NOTE } });
+  const written = row({ notes: [AI_NOTE], aiWritten: { 'MWDL/description': prose(AI_NOTE) } });
   const broken = row({ notes: ['no text layer'] });
-  const both = row({ notes: [AI_NOTE, 'no text layer'], aiWritten: { 'MWDL/description': AI_NOTE } });
+  const both = row({ notes: [AI_NOTE, 'no text layer'], aiWritten: { 'MWDL/description': prose(AI_NOTE) } });
   const clean = row();
 
   it('counts only the rows with a real problem', () => {
@@ -95,5 +104,58 @@ describe('countNeedingReview and countModelWritten', () => {
   it('is zero on both counts for a batch nothing happened to', () => {
     expect(countNeedingReview([clean, clean])).toBe(0);
     expect(countModelWritten([clean, clean])).toBe(0);
+  });
+});
+
+/**
+ * ## A model-written FACT is not a routine flag
+ *
+ * The design separates prose from fact and says a fact field "stays flagged for
+ * review even when an operator enables them". A description that reads oddly is
+ * a quality problem a cataloguer can fix; an invented death date cannot be told
+ * from a real one by anyone downstream, permanently, in a collection with no
+ * moderation queue.
+ *
+ * `fill.ts` has already deleted `row.flagged` for the cell by the time this
+ * runs, so if the counter subtracts it too, NOTHING on the row says a machine
+ * guessed at a date -- and the batch reports "None need review".
+ *
+ * Nothing ships enabled on a fact column. That is a policy, and this is what
+ * stops the policy being the only thing between a batch and the counter.
+ */
+describe('needsReview and a model-written fact field', () => {
+  it('counts a row whose only note is a model-written date', () => {
+    const r = row({ notes: [DATE_NOTE], aiWritten: { 'MWDL/deathDate': fact(DATE_NOTE) } });
+    expect(needsReview(r)).toBe(true);
+  });
+
+  it('still does not count the prose write beside it', () => {
+    const r = row({ notes: [AI_NOTE], aiWritten: { 'MWDL/description': prose(AI_NOTE) } });
+    expect(needsReview(r)).toBe(false);
+  });
+
+  it('counts a row carrying both, once', () => {
+    const r = row({
+      notes: [AI_NOTE, DATE_NOTE],
+      aiWritten: {
+        'MWDL/description': prose(AI_NOTE),
+        'MWDL/deathDate': fact(DATE_NOTE),
+      },
+    });
+    expect(needsReview(r)).toBe(true);
+    expect(countNeedingReview([r])).toBe(1);
+  });
+
+  /** Both are still model writes -- the operator is told a machine wrote into
+   *  two cells, whatever kind of column they were. */
+  it('counts both kinds as model-written', () => {
+    const r = row({
+      notes: [AI_NOTE, DATE_NOTE],
+      aiWritten: {
+        'MWDL/description': prose(AI_NOTE),
+        'MWDL/deathDate': fact(DATE_NOTE),
+      },
+    });
+    expect(countModelWritten([r])).toBe(1);
   });
 });

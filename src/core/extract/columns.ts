@@ -39,7 +39,25 @@ export function addColumn(profile: Profile, path: string): Profile {
 export function removeColumn(profile: Profile, path: string): Profile {
   assertEditable(path);
   const i = indexOf(profile, path);
-  return { ...profile, columns: profile.columns.filter((_, n) => n !== i) };
+  const next: Profile = { ...profile, columns: profile.columns.filter((_, n) => n !== i) };
+
+  // AN `aiProvenance` POINTING AT THE COLUMN JUST REMOVED IS DROPPED WITH IT.
+  //
+  // `parseProfile` refuses a provenance path that is not a writable column,
+  // because `csv.ts` builds the sheet from `columns` and a value written
+  // anywhere else is created and silently discarded. That check runs at LOAD
+  // time; this function rewrites the profile in memory and the desktop's
+  // `extractRun` never re-parses -- so without this, deleting the column in the
+  // editor left a setting the loader would have refused, and the one disclosure
+  // that survives an upload would have gone quietly nowhere.
+  //
+  // Dropped rather than refused: removing a column is an ordinary edit, and
+  // blocking it because of a setting elsewhere in the profile would leave the
+  // operator no way forward except to hand-edit JSON. `fill.ts#discloseInItem`
+  // still checks and reports, because "an earlier step guaranteed it" is the
+  // reasoning that was wrong here in the first place.
+  if (next.aiProvenance?.path === path) delete next.aiProvenance;
+  return next;
 }
 
 /**

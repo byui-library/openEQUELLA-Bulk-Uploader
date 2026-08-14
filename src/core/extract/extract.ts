@@ -31,6 +31,21 @@ export interface ExtractOptions {
    * without signing in to anything.
    */
   onRow?: (row: ExtractedRow, doc: DocumentData) => void;
+  /**
+   * A listing already taken, instead of walking the directory again.
+   *
+   * THE CONSENT ARTIFACT AND THE RUN MUST COUNT THE SAME FILES. The CLI lists
+   * the folder to tell the operator how many requests a model run will make, and
+   * then this function listed it a second time to decide what to read. Two walks
+   * of one directory can disagree -- a file arrives, a sync finishes, something
+   * is deleted -- so the number somebody agreed to was a second opinion about
+   * the batch rather than the batch itself. Passing the listing down makes it
+   * one answer, and saves a walk of a four-hundred-file folder as a side effect.
+   *
+   * Omitted, this reads the folder itself, which is what every other caller
+   * wants.
+   */
+  listing?: FolderListing;
 }
 
 function skipReason(filename: string): string {
@@ -85,7 +100,13 @@ export async function extractFolder(
 ): Promise<ExtractResult> {
   const { reader = readDocument, onProgress, signal, onRow } = options;
 
-  const { supported, skipped } = await listFolder(dir);
+  const found = options.listing ?? (await listFolder(dir));
+  const { supported } = found;
+  // COPIED, never appended to in place. Read failures are pushed onto this
+  // below, and a caller that handed its own listing in -- the CLI, which showed
+  // the operator a count taken from it -- must not have that list grow
+  // underneath it as a side effect of the run.
+  const skipped = [...found.skipped];
   const rows: ExtractedRow[] = [];
 
   let done = 0;

@@ -135,17 +135,45 @@ export function assertUsableCap(cap: number): void {
  * real problem: a column asked for a value and did not get one, so the row must
  * keep counting as needing review.
  */
-export function noteMissingModel(rows: ExtractedRow[], profile: Profile): void {
+export function noteMissingModel(
+  rows: ExtractedRow[],
+  profile: Profile,
+  reason: MissingModelReason,
+): void {
   for (const row of rows) {
     for (const path of eligibleColumns(profile, row)) {
-      row.notes.push(
-        `${path}: no model is configured, so nothing was written here. ` +
-          `Set one up on the Setup screen, or with OEQ_MODEL_BASE_URL and OEQ_MODEL from the ` +
-          `command line -- or fill this cell in by hand.`,
-      );
+      row.notes.push(`${path}: ${MISSING_MODEL[reason]}`);
     }
   }
 }
+
+/**
+ * Why no model filled a cell that asked for one.
+ *
+ * THREE DIFFERENT EVENTS, THREE DIFFERENT SENTENCES, and the reason this is an
+ * argument rather than a constant is that they were briefly one sentence. An
+ * operator who has `OEQ_MODEL_BASE_URL` and `OEQ_MODEL` set and merely forgot
+ * `--ai` was told, four hundred times, that no model is configured, and pointed
+ * at the two variables they had already set. The remedy was never mentioned.
+ *
+ * That is this codebase's named failure shape -- a diagnosis naming the one
+ * place the problem is not -- and it had a test pinning it, so nobody would have
+ * noticed.
+ */
+export type MissingModelReason = 'not-configured' | 'not-requested' | 'not-approved';
+
+const MISSING_MODEL: Record<MissingModelReason, string> = {
+  'not-configured':
+    `no model is configured, so nothing was written here. ` +
+    `Set one up on the Setup screen, or with OEQ_MODEL_BASE_URL and OEQ_MODEL from the ` +
+    `command line -- or fill this cell in by hand.`,
+  'not-requested':
+    `this column asks for a language model, and --ai was not given, so nothing was written ` +
+    `here. Re-run with --ai to fill it -- or fill this cell in by hand.`,
+  'not-approved':
+    `no model was run for this batch, so nothing was written here. If you expected one, ` +
+    `check the model settings for this site on the Setup screen -- or fill this cell in by hand.`,
+};
 
 /**
  * The section headings a profile already knows about, for `slice.ts` to prefer
@@ -181,6 +209,16 @@ export function modelSections(profile: Profile): string[] {
  * it.
  */
 const AI_SOURCE = 'ai';
+
+/**
+ * What is written into `_source` for the provenance cell.
+ *
+ * DISTINCT FROM `ai`, and the distinction is not pedantry: no model wrote that
+ * text. The profile author did, and this tool stamped it with a model's name. A
+ * reviewer sorting the spreadsheet by `_source` to read everything a machine
+ * composed would otherwise be handed a sentence they wrote themselves.
+ */
+const PROVENANCE_SOURCE = 'ai-provenance';
 
 /** Most of a discarded reply to quote back, in code points. Enough to recognise
  *  a refusal or a stray preamble; not enough to paste a generated paragraph
@@ -486,7 +524,12 @@ export async function fillWithModel(
       // The structural record. See `aiWritten` in types.ts: it is what lets a
       // counter separate "a model wrote here, as designed" from "this row has a
       // problem", and what stops a second pass paying for this cell again.
-      row.aiWritten[path] = note;
+      // `factKind` is asked once, here, where the column is in hand and the
+      // answer has already been computed to word the note. `review.ts` runs on
+      // three surfaces, two of which hold a row and no profile, so it cannot ask
+      // again -- and a second copy of this judgement would be free to disagree
+      // with the sentence the operator is reading.
+      row.aiWritten[path] = { note, factField: factKind(column) !== null };
       // The source's doubt has been acted on. Leaving it would keep the cell
       // eligible for ever, and the note it holds describes a value that is no
       // longer in the cell.
@@ -534,7 +577,7 @@ export async function fillWithModel(
  * saw is a false statement in a permanent catalogue -- and it would appear on
  * every row of a batch whose endpoint was down.
  *
- * ## The path is a real column, and that was settled at load time
+ * ## The path was a real column at LOAD time, and that is not the same as now
  *
  * `parseProfile` refuses an `aiProvenance` whose path is not a declared,
  * writable column, because `csv.ts` builds the sheet from `profile.columns` and
@@ -542,10 +585,40 @@ export async function fillWithModel(
  * puts the path through `validateAgainstSchema` with every other one -- which is
  * the entire schema check, and the reason this function needs no schema. It
  * could not have one: `src/core/extract/` never touches the network.
+ *
+ * BUT THE PROFILE THAT REACHES HERE HAS NOT NECESSARILY BEEN THROUGH THE
+ * LOADER SINCE. The desktop's column editor rewrites it in memory --
+ * `removeColumn` returns `{ ...profile, columns: filtered }` and carries
+ * `aiProvenance` forward untouched -- and `extractRun` never re-parses. Delete
+ * the provenance column in the editor and run, and the loader's guarantee is a
+ * statement about a profile that no longer exists: the disclosure would be
+ * written into `row.cells`, dropped by `csv.ts`, and the ONE output of this
+ * feature that survives the upload would be silently gone. Exactly the failure
+ * `checkProvenance` was built to prevent, arriving through the one door it
+ * cannot cover.
+ *
+ * `columns.ts#removeColumn` now drops an `aiProvenance` that names the column
+ * being removed, which closes it at the source. This checks anyway, and says so
+ * in `_notes` rather than writing into nothing, because "the loader guaranteed
+ * it" is precisely the reasoning that was wrong the first time.
  */
 function discloseInItem(row: ExtractedRow, profile: Profile, model: string): void {
   const provenance = profile.aiProvenance;
   if (provenance === undefined) return;
+
+  // The same two exclusions `checkProvenance` applies, asked of the profile
+  // actually in hand. `composeOnly` is dropped from the sheet by `csv.ts`, so a
+  // column that has become one is as good as absent.
+  const column = profile.columns.find((c) => c.path === provenance.path);
+  if (column === undefined || column.composeOnly === true) {
+    row.notes.push(
+      `A language model wrote a value on this row, and the note recording that was to go in ` +
+        `'${provenance.path}' -- but this profile has no such column any more, so it could not be ` +
+        `written and will not reach openEQUELLA. Add the column back, or remove "aiProvenance" ` +
+        `from the profile.`,
+    );
+    return;
+  }
 
   // `parseProfile` has already refused any other placeholder, so a literal
   // brace surviving to here is one the loader passed and this substitution is
@@ -556,6 +629,20 @@ function discloseInItem(row: ExtractedRow, profile: Profile, model: string): voi
   // is already in it -- "Scanned to PDF" -- is a true statement about the same
   // document that must not be destroyed to make room for this one.
   row.cells[provenance.path] = existing === '' ? note : `${existing}; ${note}`;
+
+  // RECORDED LIKE ANY OTHER FILLED CELL. `_source` is how a reviewer sorts a
+  // spreadsheet to read only what this pass touched, and a cell that changed
+  // without appearing there reads as one the document supplied. Not `AI_SOURCE`:
+  // no model wrote this text -- the profile did, and the tool stamped it.
+  row.sources[provenance.path] = PROVENANCE_SOURCE;
+
+  // "Fill that cell in by hand" is now false: it has content. Cleared for the
+  // same reason and by the same means as the model's own writes above -- by the
+  // string `rows.ts` produces, never by matching a prefix.
+  if (column.flagIfEmpty === true) {
+    const stale = row.notes.indexOf(expectedButEmptyNote(provenance.path));
+    if (stale !== -1) row.notes.splice(stale, 1);
+  }
 }
 
 /**

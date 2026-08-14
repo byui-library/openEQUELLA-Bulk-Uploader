@@ -9,16 +9,20 @@ import {
 } from '../core/schema.js';
 import { loadProfile, saveProfile, validateAgainstSchema } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
-import { extractFolder, listFolder } from '../core/extract/extract.js';
+import { extractFolder, listFolder, type FolderListing } from '../core/extract/extract.js';
 import { scanEvidence } from '../core/extract/evidence.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { aiConfirmation } from '../core/ai/confirm.js';
+import { describeHost } from '../core/ai/endpoint.js';
 import { modelColumns } from '../core/ai/eligible.js';
-import { noteMissingModel, type FillTarget } from '../core/ai/fill.js';
+import { noteMissingModel, type FillTarget, type MissingModelReason } from '../core/ai/fill.js';
 import { MODEL_DEFAULTS } from '../core/ai/defaults.js';
-import { runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
+import { assertUsableModelPass, runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
+import { assertUsableCap } from '../core/ai/fill.js';
+import { assertUsableBudget } from '../core/ai/slice.js';
+import { timeoutSecondsProblem } from '../core/ai/provider.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
-import type { Profile } from '../core/extract/types.js';
+import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
 
 export interface ExtractCliOptions {
   dir: string;
@@ -46,10 +50,13 @@ const PREVIEW_ROWS = 5;
  * The environment variables that configure a model, and the one that decides
  * whether there is one at all.
  *
- * `OEQ_MODEL_BASE_URL` IS THE SWITCH. Absent, there is no endpoint, so there is
- * nothing to send to and no partially-configured state to reason about -- the
- * same rule `secrets.ts#getModel` follows for the desktop, stated once per
- * surface because the two stores are different and the rule must not be.
+ * `OEQ_MODEL_BASE_URL` IS THE SWITCH. Absent, there is no endpoint and the
+ * feature does not exist -- the same rule `secrets.ts#getModel` follows for the
+ * desktop. What must NOT differ between the two surfaces is what counts as a
+ * usable endpoint once one is named: the desktop's `assertUsableModel` argues
+ * that case at length, and `modelFromEnv` below applies the same rules through
+ * the same functions. It once applied none of them, which let half an endpoint
+ * send document text to a paid host.
  */
 export const MODEL_ENV = {
   baseUrl: 'OEQ_MODEL_BASE_URL',
@@ -66,34 +73,127 @@ export const MODEL_ENV = {
 /**
  * The model endpoint the environment describes, or null for "there is none".
  *
- * A MISTYPED NUMBER IS REFUSED HERE RATHER THAN COERCED. `Number('eight')` is
- * `NaN`, and a NaN cap compares false against everything -- so `used >= cap`
- * never fires, the ceiling the operator set silently does not exist, and every
- * row in the batch goes to a paid endpoint. `assertUsableCap` and
- * `assertUsableBudget` are the same one rule the settings screen asks, and
- * `fillWithModel` asks them again before the loop; this only decides that a
- * blank variable means "use the default" rather than "use nothing".
+ * ## Every value is checked HERE, and the message names the variable
+ *
+ * This function used to coerce and hand on, leaving each rule to fire somewhere
+ * downstream -- and downstream is too late in three separate ways, all of which
+ * a reviewer reproduced:
+ *
+ * - **`OEQ_MODEL` unset while `OEQ_MODEL_BASE_URL` is set** sent document text
+ *   to a hosted endpoint with `"model": ""` in the body, once per row, all
+ *   failing, all charged for by whatever a gateway charges for accepting a
+ *   request. `--ai`'s own error names `OEQ_MODEL`, and then nothing enforced it.
+ *   The desktop refuses exactly this in `secrets.ts#assertUsableModel`; the
+ *   store differs between the two surfaces and the RULE must not.
+ * - **`OEQ_MODEL_CAP=eight`** made `Number` return `NaN`, and the confirmation
+ *   rendered from it: "About to send up to NaN model requests... Your limit is
+ *   NaN". That text is the only thing between an operator and a paid batch, and
+ *   it was being generated from input the other front end rejects outright.
+ *   `assertUsableCap` would have caught it -- after the whole folder was read.
+ * - **`OEQ_MODEL_TIMEOUT_SECONDS`** reported from the provider constructor,
+ *   after every file had been read, in milliseconds. `timeoutSecondsProblem`
+ *   exists precisely because that seam produced "a unit they were not shown and
+ *   a number they did not type", and this variable walked straight back into it.
+ *
+ * NOT A SECOND COPY OF ANY RULE. `assertUsableBudget`, `assertUsableCap` and
+ * `timeoutSecondsProblem` are the same functions the settings screen and the
+ * fill pass ask; `assertUsableModelPass` constructs the real provider and
+ * discards it, so the address check and the plain-http-with-a-key refusal are
+ * the ones that would actually have run. All this adds is WHICH VARIABLE was
+ * wrong, which is the one thing those rules cannot know.
+ *
+ * `OEQ_MODEL_BASE_URL` IS STILL THE SWITCH: absent, this returns null and the
+ * feature does not exist. Absent is not a misconfiguration and is never an
+ * error here -- `runExtract` decides whether `--ai` makes it one.
  */
 export function modelFromEnv(env: NodeJS.ProcessEnv): ModelPassSettings | null {
   const baseUrl = env[MODEL_ENV.baseUrl]?.trim();
   if (!baseUrl) return null;
-  const seconds = env[MODEL_ENV.timeoutSeconds]?.trim();
-  return {
+
+  const model = env[MODEL_ENV.model]?.trim() ?? '';
+  if (model === '') {
+    throw new ValidationError(
+      `${MODEL_ENV.baseUrl} is set but ${MODEL_ENV.model} is empty, so there is no model to ask. ` +
+        `Set ${MODEL_ENV.model} to the model's name at that endpoint -- 'llama3' for a local ` +
+        `Ollama, 'gpt-4o-mini' for OpenAI. Without it the request goes out naming no model at ` +
+        `all, and every row fails after the document has already been sent.`,
+    );
+  }
+
+  const settings: ModelPassSettings = {
     baseUrl,
-    model: env[MODEL_ENV.model]?.trim() ?? '',
+    model,
     apiKey: env[MODEL_ENV.key]?.trim() ?? '',
-    budget: numberOr(env[MODEL_ENV.budget], MODEL_DEFAULTS.budget),
-    cap: numberOr(env[MODEL_ENV.cap], MODEL_DEFAULTS.cap),
-    ...(seconds ? { timeoutMs: Number(seconds) * 1000 } : {}),
+    budget: checkedNumber(env, MODEL_ENV.budget, MODEL_DEFAULTS.budget, assertUsableBudget),
+    cap: checkedNumber(env, MODEL_ENV.cap, MODEL_DEFAULTS.cap, assertUsableCap),
+    ...timeoutFromEnv(env),
   };
+
+  // LAST, because it is the check that needs the finished object. Constructing
+  // the real provider means the address rule and the "a bearer key does not
+  // cross plain http" rule are the ones that would have run on the first row --
+  // not a copy of them that is free to drift.
+  try {
+    assertUsableModelPass(settings);
+  } catch (cause) {
+    throw new ValidationError(
+      `${MODEL_ENV.baseUrl} (and ${MODEL_ENV.key}, if set) are not usable together: ` +
+        `${(cause as Error).message}`,
+      { cause },
+    );
+  }
+  return settings;
 }
 
-/** A blank or unset variable takes the default; anything else is passed through
- *  as typed, including a value the rules below will refuse. Silently correcting
- *  a mistyped ceiling would hide the mistake and spend the money. */
-function numberOr(raw: string | undefined, fallback: number): number {
-  const text = raw?.trim();
-  return text === undefined || text === '' ? fallback : Number(text);
+/**
+ * A number from the environment, refused by the project's own rule for it, with
+ * the variable named.
+ *
+ * A blank or unset variable takes the default. Anything else must survive
+ * `assert` -- the same function the settings screen and `fillWithModel` call, so
+ * there is one answer to what a budget or a cap may be and this only says where
+ * a bad one came from.
+ */
+function checkedNumber(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  assert: (value: number) => void,
+): number {
+  const text = env[name]?.trim();
+  if (text === undefined || text === '') return fallback;
+  const value = Number(text);
+  try {
+    // Catches `NaN` through the shared rule rather than through a check written
+    // here: both `assertUsableBudget` and `assertUsableCap` refuse a non-finite
+    // number, and a NaN cap is the worst of these -- it compares false against
+    // everything, so `used >= cap` never fires and the ceiling the operator
+    // agreed to silently does not exist.
+    assert(value);
+  } catch (cause) {
+    throw new ValidationError(`${name} is '${text}'. ${(cause as Error).message}`, { cause });
+  }
+  return value;
+}
+
+/**
+ * The time limit, in the unit the variable is named for, or nothing.
+ *
+ * ASKED AND ANSWERED IN SECONDS. `timeoutSecondsProblem` exists because
+ * multiplying by 1000 before checking told an operator their value "must be
+ * between 1 and 2147483647" about a number they did not type, in a unit they
+ * were never shown. Reaching that seam through an environment variable rather
+ * than a text box does not make it better.
+ */
+function timeoutFromEnv(env: NodeJS.ProcessEnv): { timeoutMs?: number } {
+  const text = env[MODEL_ENV.timeoutSeconds]?.trim();
+  if (text === undefined || text === '') return {};
+  const seconds = Number(text);
+  const problem = timeoutSecondsProblem(seconds);
+  if (problem !== null) {
+    throw new ValidationError(`${MODEL_ENV.timeoutSeconds} is '${text}'. ${problem}`);
+  }
+  return { timeoutMs: seconds * 1000 };
 }
 
 /**
@@ -212,6 +312,20 @@ export async function runExtract(
   // could -- see its docblock for the two that qualify by a quirk and are
   // excluded.
   const wantsModel = modelColumns(profile).length > 0;
+
+  // `--ai` ON A PROFILE NO MODEL COULD WRITE IS REFUSED, exactly as `--ai` with
+  // no endpoint is. Both are an explicit instruction that cannot be carried
+  // out, and doing one silently while throwing on the other was an
+  // inconsistency with nothing behind it. Silently ignoring a flag somebody
+  // typed is how a run "with the model on" quietly turns out not to have been.
+  if (options.ai === true && !wantsModel) {
+    throw new ValidationError(
+      `--ai was given, but no column in this profile asks for a language model, so there is ` +
+        `nothing for one to write. Add { "ai": true } to a column's "sources" -- last, after ` +
+        `the sources that read the document -- or drop --ai.`,
+    );
+  }
+
   const settings = options.ai === true ? modelFromEnv(env) : null;
 
   /**
@@ -243,41 +357,64 @@ export async function runExtract(
   // Kept only when there is a pass to feed. `onRow` hands out the document that
   // was just read; holding four hundred of them for a run that will not send any
   // is memory spent on nothing.
-  const runsModel = wantsModel && settings !== null && !dryRun;
+  // Narrowed into a local rather than asserted at the call site: `settings!`
+  // told the compiler what the reader had to work out for themselves.
+  const sending = wantsModel && !dryRun ? settings : null;
+
+  /**
+   * Why the model columns are coming out empty, or null when they are not.
+   *
+   * A DRY RUN WITH AN ENDPOINT GETS NO PER-CELL NOTE: the line printed below
+   * says the model was deliberately not asked, nothing is written to a file
+   * anyway, and "no model is configured" would be flatly untrue about a machine
+   * that has one.
+   */
+  const unfilled: MissingModelReason | null =
+    !wantsModel || sending !== null ? null
+    : dryRun && settings !== null ? null
+    : options.ai === true ? 'not-configured'
+    : 'not-requested';
 
   const targets: FillTarget[] = [];
-  const collect = runsModel
-    ? { onRow: (row: (typeof targets)[number]['row'], doc: (typeof targets)[number]['doc']) => {
-        targets.push({ row, doc });
-      } }
-    : {};
+  const collect =
+    sending === null
+      ? {}
+      : { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } };
 
-  if (runsModel) {
-    // BEFORE A SINGLE FILE IS OPENED. The count comes from the folder listing,
-    // which is what the desktop's dialog uses too, so an operator who declines
-    // has not paid for anything -- not even the reading.
-    const { supported } = await listFolder(options.dir);
-    approve(options, profile, settings!, supported.length, log);
+  /** Taken once when the operator has to be shown a count, and handed to the
+   *  run so both describe the same batch. See `ExtractOptions.listing`. */
+  let listing: FolderListing | undefined;
+
+  if (sending !== null) {
+    // BEFORE A SINGLE FILE IS READ, so an operator who declines has not paid for
+    // anything -- not even the reading. The count comes from `listFolder`, which
+    // `extractFolder` calls again below; ONE listing is taken here and handed
+    // down, because two walks of the same directory can disagree (a file added
+    // or removed in between), and the number the operator agreed to must be the
+    // number the run works from rather than a second opinion about it.
+    listing = await listFolder(options.dir);
+    approve(options, profile, sending, listing.supported.length, log);
   } else if (wantsModel && settings !== null) {
     log(
-      `Dry run -- no model was asked anything and nothing was sent to ${settings.baseUrl}. ` +
-        `The columns that would be filled by one are shown empty below. Run without --dry-run to fill them.`,
+      // `describeHost`, not the raw address: a gateway's published URL can carry
+      // a key in its path or query, and neither belongs on a screen. Every other
+      // surface that names an endpoint goes through this helper.
+      `Dry run -- no model was asked anything and nothing was sent to ` +
+        `${describeHost(settings.baseUrl)}. The columns that would be filled by one are shown ` +
+        `empty below. Run without --dry-run to fill them.`,
     );
   }
 
-  const result = await extractFolder(options.dir, profile, collect);
+  const result = await extractFolder(options.dir, profile, { ...collect, ...(listing ? { listing } : {}) });
 
-  if (wantsModel && !dryRun) {
-    if (settings === null) {
-      // The column asked and there is nothing to ask. Said per cell, because a
-      // silently empty cell is indistinguishable from a document that had
-      // nothing to say -- the failure this codebase has shipped four times.
-      noteMissingModel(result.rows, profile);
-    } else {
-      await runModelPass(targets, profile, settings, fetchImpl);
-    }
+  if (sending !== null) {
+    await runModelPass(targets, profile, sending, fetchImpl);
+  } else if (unfilled !== null) {
+    // Said per cell, because a silently empty cell is indistinguishable from a
+    // document that had nothing to say -- the failure this codebase has shipped
+    // four times. WHICH sentence is the other half of getting that right.
+    noteMissingModel(result.rows, profile, unfilled);
   }
-
 
   if (result.skipped.length > 0) {
     log(`Skipped ${result.skipped.length} file(s):`);

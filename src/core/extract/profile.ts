@@ -79,9 +79,29 @@ const profileSchema = z
   .strict();
 
 
-/** Every `{name}` used inside a join template. */
+/** Every `{name}` used inside a join template, by the rule for what a name may
+ *  be. What `join` and `compose` accept, and the only thing they substitute. */
 function joinPlaceholders(template: string): string[] {
   return [...template.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)].map((m) => m[1]!);
+}
+
+/**
+ * Every `{...}` in a template, whatever is inside it.
+ *
+ * WIDER THAN `joinPlaceholders` ON PURPOSE, and used only by `checkProvenance`.
+ * That function's job is to refuse anything that would be written into a
+ * permanent catalogue record verbatim, and the narrow pattern above cannot see
+ * most of the ways to get that wrong: it matches `{modle}` but not `{ model }`,
+ * `{model-name}` or `{2}`, each of which is a plausible typo and each of which
+ * would appear, exactly as typed, on every item in the batch.
+ *
+ * The narrow rule stays where it is. `join` and `compose` resolve a name against
+ * the profile's own aliases and already fail loudly on an unknown one; this is
+ * for the single field where a brace has one legal spelling and everything else
+ * is a mistake nothing downstream would ever mention.
+ */
+function anyPlaceholders(template: string): string[] {
+  return [...template.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]!);
 }
 
 /**
@@ -308,7 +328,7 @@ function checkProvenance(profile: Profile): void {
   }
 
   const allowed = new Set<string>(PROVENANCE_PLACEHOLDERS);
-  for (const name of joinPlaceholders(provenance.append)) {
+  for (const name of anyPlaceholders(provenance.append)) {
     if (!allowed.has(name)) {
       throw new ValidationError(
         `"aiProvenance" uses {${name}}, which is not substituted, so it would be written ` +

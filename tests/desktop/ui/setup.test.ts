@@ -971,7 +971,7 @@ describe('the sync caveat under the attachment field', () => {
  * hides its own setting until that setting exists can never be used to create
  * it. So the field is unconditionally present here, and what is pinned instead
  * is that it stays out of the way, offers nothing to forget that does not
- * exist, and -- in aiConfirm.test.ts and extract/controller.test.ts -- that no
+ * exist, and -- in tests/ai/confirm.test.ts and extract/controller.test.ts -- that no
  * document is sent and no dialog is shown until an endpoint is stored.
  */
 describe('the Setup screen’s model section', () => {
