@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { ApiError } from '../../src/core/errors.js';
 import {
   MODEL_TIMEOUT_MS,
   OpenAiCompatibleProvider,
@@ -89,19 +90,76 @@ describe('OpenAiCompatibleProvider', () => {
     expect(spy.headers['authorization']).toBe('Bearer sk-secret');
   });
 
-  it('sends the model and the prompt as a chat completion', async () => {
-    let body: unknown;
+  /** A fetch double that records the JSON body it was given. */
+  function bodySpy() {
+    let body: Record<string, unknown> = {};
     const impl = vi.fn(async (_i: string | URL, init?: RequestInit) => {
-      body = JSON.parse(String(init?.body));
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return reply('x');
     }) as unknown as typeof fetch;
-    await new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'llama3' }, impl).complete(
+    return {
+      get body() {
+        return body;
+      },
+      impl,
+    };
+  }
+
+  /**
+   * TEMPERATURE ZERO IS NOT A DETAIL. prompt.ts spends its opening docblock on
+   * invention being the failure this design exists to prevent, and the request
+   * used to ship with the backend's own default -- 1.0 at OpenAI, 0.8 at
+   * Ollama, which is the setting most likely to produce it. `max_tokens` stops
+   * a model that fails to stop, which would otherwise burn the whole time limit
+   * generating text nobody reads.
+   */
+  it('sends the model, the prompt and sampling settled against invention', async () => {
+    const spy = bodySpy();
+    await new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'llama3' }, spy.impl).complete(
       'the prompt',
     );
-    expect(body).toEqual({
+    expect(spy.body).toEqual({
       model: 'llama3',
       messages: [{ role: 'user', content: 'the prompt' }],
+      temperature: 0,
+      max_tokens: 500,
     });
+  });
+
+  /**
+   * OMITTABLE, NOT MERELY CONFIGURABLE. Reasoning models of the o1/o3 class
+   * reject any temperature but their own, and some gateways reject parameters
+   * they do not recognise -- so a hardcoded value would make this provider
+   * unusable against real endpoints.
+   */
+  it('sends no temperature at all when configured null', async () => {
+    const spy = bodySpy();
+    await new OpenAiCompatibleProvider(
+      { baseUrl: 'http://x/v1', model: 'm', temperature: null },
+      spy.impl,
+    ).complete('p');
+    expect('temperature' in spy.body).toBe(false);
+    // null means OMIT, not "send null" -- a backend rejects the second.
+    expect(spy.body['max_tokens']).toBe(500);
+  });
+
+  it('sends no max_tokens at all when configured null', async () => {
+    const spy = bodySpy();
+    await new OpenAiCompatibleProvider(
+      { baseUrl: 'http://x/v1', model: 'm', maxTokens: null },
+      spy.impl,
+    ).complete('p');
+    expect('max_tokens' in spy.body).toBe(false);
+  });
+
+  it('honours a temperature and a token ceiling the operator chose', async () => {
+    const spy = bodySpy();
+    await new OpenAiCompatibleProvider(
+      { baseUrl: 'http://x/v1', model: 'm', temperature: 0.3, maxTokens: 64 },
+      spy.impl,
+    ).complete('p');
+    expect(spy.body['temperature']).toBe(0.3);
+    expect(spy.body['max_tokens']).toBe(64);
   });
 
   it('returns the message content', async () => {
@@ -138,6 +196,132 @@ describe('OpenAiCompatibleProvider', () => {
     await expect(
       new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl).complete('p'),
     ).rejects.toThrow(/no text/i);
+  });
+});
+
+/**
+ * Configuration is refused at construction, in words about the setting.
+ *
+ * Not at the first row, and never as a raw `TypeError`. `fill.ts` catches
+ * `ApiError` and writes its message onto the row, so anything else escaping
+ * from here reaches the operator as "Invalid URL" or "did not answer within 0
+ * milliseconds" -- both of which point at the model rather than at the box they
+ * mistyped.
+ */
+describe('what the constructor refuses', () => {
+  const ok = vi.fn(async () => reply('x')) as unknown as typeof fetch;
+
+  /**
+   * THE ONE COMBINATION THAT LOSES A CREDENTIAL. The docblock used to argue
+   * from loopback while the code checked nothing, so a bearer key went to a
+   * remote host over plain http with no error and no warning.
+   */
+  it('refuses to send a key over plain http to a remote host', () => {
+    expect(
+      () =>
+        new OpenAiCompatibleProvider(
+          { baseUrl: 'http://models.example.edu/v1', model: 'm', apiKey: 'sk-secret' },
+          ok,
+        ),
+    ).toThrow(/not encrypted|clear text/i);
+  });
+
+  it('refuses a key over plain http to a private LAN address, which is not this machine', () => {
+    expect(
+      () =>
+        new OpenAiCompatibleProvider(
+          { baseUrl: 'http://192.168.1.10:11434/v1', model: 'm', apiKey: 'sk-secret' },
+          ok,
+        ),
+    ).toThrow(/not encrypted|clear text/i);
+  });
+
+  /** The three shapes that must stay free. Refusing any of them would break the
+   *  local half of the design, or a site the operator has already judged. */
+  it('permits plain http to loopback, https anywhere, and keyless remote http', () => {
+    expect(
+      () =>
+        new OpenAiCompatibleProvider(
+          { baseUrl: 'http://localhost:11434/v1', model: 'm', apiKey: 'sk-secret' },
+          ok,
+        ),
+    ).not.toThrow();
+    expect(
+      () =>
+        new OpenAiCompatibleProvider(
+          { baseUrl: 'https://models.example.edu/v1', model: 'm', apiKey: 'sk-secret' },
+          ok,
+        ),
+    ).not.toThrow();
+    expect(
+      () => new OpenAiCompatibleProvider({ baseUrl: 'http://models.example.edu/v1', model: 'm' }, ok),
+    ).not.toThrow();
+  });
+
+  it('says so in words about the setting when the address will not parse', () => {
+    expect(() => new OpenAiCompatibleProvider({ baseUrl: 'not a url', model: 'm' }, ok)).toThrow(
+      /not a usable model address/i,
+    );
+    // And as an ApiError, not the raw `TypeError: Invalid URL` the URL
+    // constructor throws.
+    expect(() => new OpenAiCompatibleProvider({ baseUrl: '', model: 'm' }, ok)).toThrow(ApiError);
+  });
+
+  /**
+   * `AbortSignal.timeout` validates its own argument and throws RangeError or
+   * TypeError. Zero is worse than either: accepted, and then every call in the
+   * batch fails with "did not answer within 0 milliseconds".
+   */
+  it.each([
+    ['zero', 0],
+    ['negative', -1],
+    ['not a number', Number.NaN],
+    ['beyond setTimeout', 1e12],
+    ['a string from a settings box', '30s' as unknown as number],
+  ])('refuses a time limit that is %s', (_label, timeoutMs) => {
+    expect(
+      () => new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm', timeoutMs }, ok),
+    ).toThrow(/time limit/i);
+  });
+
+  it('accepts a time limit an operator would plausibly set', () => {
+    expect(
+      () =>
+        new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm', timeoutMs: 300_000 }, ok),
+    ).not.toThrow();
+  });
+});
+
+/**
+ * A malformed answer is an ApiError, whatever shape it takes.
+ *
+ * `JSON.parse('null')` followed by `parsed.choices?.[0]` throws `TypeError:
+ * Cannot read properties of null` from OUTSIDE every catch block -- unredacted,
+ * not an ApiError, and unreadable to the operator whose row it lands on. A
+ * proxy answering `null` is not exotic.
+ */
+describe('every malformed answer', () => {
+  it.each([
+    ['null', 'null'],
+    ['a number', '123'],
+    ['a bare string', '"hello"'],
+    ['an array', '[1,2]'],
+    ['choices null', '{"choices":null}'],
+    ['choices empty', '{"choices":[]}'],
+    ['a choice with no message', '{"choices":[{}]}'],
+    ['a null choice', '{"choices":[null]}'],
+    ['a null message', '{"choices":[{"message":null}]}'],
+    ['content a number', '{"choices":[{"message":{"content":42}}]}'],
+    ['content null', '{"choices":[{"message":{"content":null}}]}'],
+    ['content an array', '{"choices":[{"message":{"content":["a"]}}]}'],
+    ['an empty object', '{}'],
+  ])('reports %s as an ApiError rather than escaping raw', async (_label, payload) => {
+    const impl = vi.fn(async () => new Response(payload, { status: 200 })) as unknown as typeof fetch;
+    const error = await new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl)
+      .complete('p')
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as Error).message).toMatch(/no text/i);
   });
 });
 
@@ -186,6 +370,102 @@ describe('what went wrong on the wire survives', () => {
       throwing(new Error('socket hang up')),
     );
     await expect(p.complete('x')).rejects.toThrow(/models\.example\.edu\/gateway\/v1\/chat\/completions/);
+  });
+
+  /** A gateway client can wrap Node's wrapper. The bound is four, so four
+   *  levels must arrive -- otherwise the constant is whatever anyone types. */
+  it('reads four levels deep, which is what the bound says', async () => {
+    const chain = new Error('outermost', {
+      cause: new Error('second', { cause: new Error('third', { cause: new Error('fourth') }) }),
+    });
+    const p = new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, throwing(chain));
+    const error = await p.complete('x').catch((e: unknown) => e);
+    expect((error as Error).message).toMatch(/outermost: second: third: fourth/);
+  });
+
+  /** And stops there. Nothing five levels down diagnoses anything, and the
+   *  bound is what stops a cyclic chain spinning. */
+  it('stops at four, so the bound is a bound', async () => {
+    const chain = new Error('one', {
+      cause: new Error('two', {
+        cause: new Error('three', { cause: new Error('four', { cause: new Error('five') }) }),
+      }),
+    });
+    const p = new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, throwing(chain));
+    const error = await p.complete('x').catch((e: unknown) => e);
+    expect((error as Error).message).toMatch(/four/);
+    expect((error as Error).message).not.toMatch(/five/);
+  });
+
+  it('survives a cause chain that points back at itself', async () => {
+    const outer = new Error('outer');
+    const inner = new Error('inner', { cause: outer });
+    (outer as { cause?: unknown }).cause = inner;
+    const p = new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, throwing(outer));
+    await expect(p.complete('x')).rejects.toThrow(/outer: inner/);
+  });
+
+  /**
+   * `new Error(cause.message, { cause })` is a real and common wrapper. Without
+   * the dedup its message is printed twice, in a note an operator has to read.
+   */
+  it('does not print a wrapper that merely repeats its cause', async () => {
+    const inner = new Error('connect ECONNREFUSED 127.0.0.1:11434');
+    const p = new OpenAiCompatibleProvider(
+      { baseUrl: 'http://localhost:11434/v1', model: 'm' },
+      throwing(new Error(inner.message, { cause: inner })),
+    );
+    const error = await p.complete('x').catch((e: unknown) => e);
+    expect((error as Error).message.match(/ECONNREFUSED/g)).toHaveLength(1);
+  });
+
+  /**
+   * A wrapper that CONTAINS its cause keeps both, deliberately. Deciding which
+   * of two overlapping strings to discard is how a reader loses the half that
+   * mattered.
+   */
+  it('keeps a wrapper that merely contains its cause', async () => {
+    const inner = new Error('connect ECONNREFUSED');
+    const p = new OpenAiCompatibleProvider(
+      { baseUrl: 'http://localhost:11434/v1', model: 'm' },
+      throwing(new Error('fetch failed: connect ECONNREFUSED', { cause: inner })),
+    );
+    await expect(p.complete('x')).rejects.toThrow(/fetch failed: connect ECONNREFUSED: connect/);
+  });
+
+  /** A runtime that dumps a stack into its message must not paste it into a
+   *  spreadsheet cell. */
+  it('cuts a runaway reason short', async () => {
+    const p = new OpenAiCompatibleProvider(
+      { baseUrl: 'http://x/v1', model: 'm' },
+      throwing(new Error('R'.repeat(5000))),
+    );
+    const error = await p.complete('x').catch((e: unknown) => e);
+    expect((error as Error).message.match(/R+/)?.[0].length).toBeLessThanOrEqual(200);
+  });
+});
+
+/** The same cap, on the other side: a hostile or confused server must not get a
+ *  document-sized string into a note either. */
+describe('a quoted response body is bounded', () => {
+  it('cuts a runaway non-2xx body short', async () => {
+    const impl = vi.fn(
+      async () => new Response('B'.repeat(5000), { status: 500 }),
+    ) as unknown as typeof fetch;
+    const error = await new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl)
+      .complete('p')
+      .catch((e: unknown) => e);
+    expect((error as Error).message.match(/B+/)?.[0].length).toBeLessThanOrEqual(200);
+  });
+
+  it('cuts a runaway non-JSON body short', async () => {
+    const impl = vi.fn(
+      async () => new Response('B'.repeat(5000), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const error = await new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl)
+      .complete('p')
+      .catch((e: unknown) => e);
+    expect((error as Error).message.match(/B+/)?.[0].length).toBeLessThanOrEqual(200);
   });
 });
 
@@ -320,12 +600,35 @@ describe('the key never escapes', () => {
     expect(new Set(KEY_FORMS).size).toBe(3);
   });
 
+  /**
+   * The shortest run of the key that still identifies it.
+   *
+   * A WHOLE-STRING SEARCH CANNOT SEE A TRUNCATION LEAK. Where a message is cut
+   * to a length and the boundary lands inside the key, what survives is a
+   * PREFIX -- and for a 164-character OpenAI project key that prefix can be 163
+   * characters of it. `KEY_FORMS.some(includes)` finds none of that, which is
+   * how this file could assert "the key never escapes" while the key was
+   * escaping. Every prefix from here up is searched instead, so a straddle is
+   * caught wherever the boundary happens to fall.
+   *
+   * Eight characters, because a redactor that replaces whole forms leaves no
+   * prefix at all -- so anything above the length of an accidental collision
+   * ("sk-" plus a few) is a real leak.
+   */
+  const MIN_IDENTIFYING = 8;
+
+  const KEY_FRAGMENTS = KEY_FORMS.flatMap((form) =>
+    Array.from({ length: form.length - MIN_IDENTIFYING + 1 }, (_, i) =>
+      form.slice(0, MIN_IDENTIFYING + i),
+    ),
+  );
+
   const findsKey = (value: unknown): boolean => {
     const seen = new Set<unknown>();
     const walk = (v: unknown): boolean => {
       if (v == null || seen.has(v)) return false;
       seen.add(v);
-      if (typeof v === 'string') return KEY_FORMS.some((form) => v.includes(form));
+      if (typeof v === 'string') return KEY_FRAGMENTS.some((form) => v.includes(form));
       if (v instanceof Error) {
         // Own enumerable properties matter as much as the built-ins: ApiError
         // carries the server's response in `body`, and message/stack/cause
@@ -372,6 +675,45 @@ describe('the key never escapes', () => {
     expect(findsKey(await provider(impl).complete('p').catch((e: unknown) => e))).toBe(false);
   });
 
+  /**
+   * REDACT FIRST, TRUNCATE SECOND -- and this is the test that says so.
+   *
+   * Every message here is capped so a hostile server cannot paste a document
+   * into a spreadsheet note. Truncating BEFORE redacting cuts the key in half
+   * and hands the redactor a fragment it cannot match, so a prefix walks
+   * straight out. The padding below is sized to land the boundary inside the
+   * key deliberately; in the field it lands there by chance, which is worse,
+   * because nothing looks wrong.
+   */
+  describe('even when the cut lands inside it', () => {
+    /** Every offset that puts a different part of the key across the boundary.
+     *  One padding length would pass by luck. */
+    for (const pad of [150, 160, 164, 170, 180, 190, 195, 199]) {
+      it(`survives a reason truncated ${pad} characters in`, async () => {
+        const impl = vi.fn(async () => {
+          throw new TypeError('fetch failed', {
+            cause: new Error(`${'x'.repeat(pad)} Bearer ${KEY}`),
+          });
+        }) as unknown as typeof fetch;
+        expect(findsKey(await provider(impl).complete('p').catch((e: unknown) => e))).toBe(false);
+      });
+
+      it(`survives a non-2xx body truncated ${pad} characters in`, async () => {
+        const impl = vi.fn(
+          async () => new Response(`${'x'.repeat(pad)} Bearer ${KEY}`, { status: 401 }),
+        ) as unknown as typeof fetch;
+        expect(findsKey(await provider(impl).complete('p').catch((e: unknown) => e))).toBe(false);
+      });
+
+      it(`survives a non-JSON body truncated ${pad} characters in`, async () => {
+        const impl = vi.fn(
+          async () => new Response(`${'x'.repeat(pad)} Bearer ${KEY}`, { status: 200 }),
+        ) as unknown as typeof fetch;
+        expect(findsKey(await provider(impl).complete('p').catch((e: unknown) => e))).toBe(false);
+      });
+    }
+  });
+
   it('is absent when the body is not JSON', async () => {
     const impl = vi.fn(
       async () => new Response(`<html>bad key ${KEY}</html>`, { status: 200 }),
@@ -382,6 +724,49 @@ describe('the key never escapes', () => {
   it('is absent from a timeout', async () => {
     const impl = vi.fn(async () => new Promise<Response>(() => {})) as unknown as typeof fetch;
     expect(findsKey(await provider(impl).complete('p').catch((e: unknown) => e))).toBe(false);
+  });
+
+  /**
+   * WHERE THE OPERATOR PASTED THE KEY INTO THE ADDRESS.
+   *
+   * Not hypothetical: gateways exist whose published URL carries the key as a
+   * path segment, and an operator who has one types it into the address box.
+   * Every message naming the endpoint therefore has to be redacted, and without
+   * these three the redaction on the timeout branch and on the address-refusal
+   * branch is dead code that no test can see -- which is exactly how a
+   * "without exception" claim stops being true.
+   */
+  describe('even when it was pasted into the address', () => {
+    const inPath = `https://gw.example.com/proxy/${KEY}/v1`;
+
+    it('is absent from a timeout naming the endpoint', async () => {
+      const impl = vi.fn(async () => new Promise<Response>(() => {})) as unknown as typeof fetch;
+      const p = new OpenAiCompatibleProvider(
+        { baseUrl: inPath, model: 'm', apiKey: KEY, timeoutMs: 20 },
+        impl,
+      );
+      expect(findsKey(await p.complete('x').catch((e: unknown) => e))).toBe(false);
+    });
+
+    it('is absent from an unreachable endpoint', async () => {
+      const impl = vi.fn(async () => {
+        throw new Error('socket hang up');
+      }) as unknown as typeof fetch;
+      const p = new OpenAiCompatibleProvider({ baseUrl: inPath, model: 'm', apiKey: KEY }, impl);
+      expect(findsKey(await p.complete('x').catch((e: unknown) => e))).toBe(false);
+    });
+
+    it('is absent from the refusal of an address that will not parse', () => {
+      const impl = vi.fn(async () => reply('x')) as unknown as typeof fetch;
+      let thrown: unknown;
+      try {
+        new OpenAiCompatibleProvider({ baseUrl: `not a url ${KEY}`, model: 'm', apiKey: KEY }, impl);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ApiError);
+      expect(findsKey(thrown)).toBe(false);
+    });
   });
 
   /**

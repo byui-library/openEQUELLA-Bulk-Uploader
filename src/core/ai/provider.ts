@@ -2,6 +2,7 @@
 import { ApiError } from '../errors.js';
 import { instanceEndpoint } from '../instanceUrl.js';
 import { redactSecret } from '../redact.js';
+import { isLoopbackEndpoint } from './endpoint.js';
 
 /**
  * How long to wait for one completion before giving up.
@@ -30,29 +31,78 @@ import { redactSecret } from '../redact.js';
  * takes hours rather than for ever, and each row still says what happened.
  * A configuration slower than this -- a 70B on CPU, a machine under load --
  * raises `timeoutMs` rather than having everybody else wait for it.
+ *
+ * `DEFAULT_MAX_TOKENS` below is the other half of this argument: a model that
+ * fails to stop generating would otherwise burn the whole two minutes and time
+ * out having produced text nobody sees.
  */
 export const MODEL_TIMEOUT_MS = 120_000;
 
-/** Most of a response body to quote back in an error. Enough to recognise an
- *  HTML error page or a rate-limit message; not enough to paste a document. */
-const MAX_QUOTED = 200;
+/** `setTimeout`'s ceiling, which `AbortSignal.timeout` inherits and enforces by
+ *  throwing a RangeError. Checked here so a mistyped settings field produces a
+ *  sentence about the setting instead. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
-/** How far up a `cause` chain to read. Node wraps a network failure once;
- *  a gateway client can wrap it twice more. Bounded so a cyclic chain cannot
- *  spin. */
+/**
+ * Sampling temperature.
+ *
+ * ZERO, BECAUSE INVENTION IS THE FAILURE THIS DESIGN EXISTS TO PREVENT.
+ * `prompt.ts` spends its opening docblock on that point and then the request
+ * used to ship with whatever the backend felt like: OpenAI defaults to 1.0 and
+ * Ollama to 0.8, which is the setting most likely to produce exactly what the
+ * prompt is written against. A catalogue description is not creative writing.
+ */
+const DEFAULT_TEMPERATURE = 0;
+
+/**
+ * Most tokens to generate for one cell.
+ *
+ * A catalogue description is a sentence or three -- the shipped house style is
+ * a single line. Five hundred tokens is several times that and still nowhere
+ * near any model's limit, so it never truncates a real answer, while a model
+ * that gets stuck repeating itself is stopped in seconds rather than running to
+ * its context limit and timing out.
+ */
+const DEFAULT_MAX_TOKENS = 500;
+
+/** Most of a RESPONSE BODY to quote back in an error. Enough to recognise an
+ *  HTML error page or a rate-limit message; not enough to paste a document into
+ *  a spreadsheet note. */
+const MAX_QUOTED_BODY = 200;
+
+/** Most of a CAUSE CHAIN to quote back in an error. Separate from the body cap
+ *  above because they bound different things for different reasons -- one is a
+ *  hostile server's output, this one is a runtime's -- and a reader following
+ *  either comment should not land on an argument about the other. */
+const MAX_QUOTED_REASON = 200;
+
+/**
+ * How far up a `cause` chain to read.
+ *
+ * Node wraps a network failure once (`TypeError: fetch failed` over the real
+ * error); a gateway or proxy client can wrap it twice more. Four covers those
+ * and stops: a chain that cycles back on itself would otherwise spin for ever,
+ * and there is no useful diagnosis five levels down.
+ */
 const MAX_CAUSE_DEPTH = 4;
 
 export interface ProviderConfig {
   /**
    * Base URL up to and including /v1. Ollama, LM Studio, OpenAI, Azure.
    *
-   * NOT put through `normaliseInstanceUrl`, deliberately. That function refuses
-   * plain http, because openEQUELLA's sign-in carries the password in the query
-   * string -- a fact about openEQUELLA's API, not about HTTP. Every local model
-   * runtime serves plain http on loopback (`http://localhost:11434`), nothing
-   * is sent there but document text the operator already holds, and the whole
-   * local half of this design rests on that working. `instanceEndpoint` does no
-   * such check, which is why it is the one used here.
+   * NOT put through `normaliseInstanceUrl`, deliberately, and the reason is
+   * narrow: that function refuses plain http because openEQUELLA's sign-in
+   * carries the password in the QUERY STRING. That is a fact about
+   * openEQUELLA's API and it does not transfer here.
+   *
+   * WHAT DOES TRANSFER IS THE CREDENTIAL. A bearer key over plain http to a
+   * remote host is readable by everything on the path, so exactly one
+   * combination is refused -- http, plus a key, plus a host that is not this
+   * machine (see `endpoint.ts`). Plain http to loopback stays free, which is
+   * what every local runtime serves and what the local half of this design
+   * rests on; https stays free; and a keyless remote http endpoint stays free,
+   * because there is no credential to lose and the document text is the
+   * operator's own call.
    */
   baseUrl: string;
   model: string;
@@ -60,6 +110,19 @@ export interface ProviderConfig {
   apiKey?: string;
   /** Milliseconds to wait for one completion. See `MODEL_TIMEOUT_MS`. */
   timeoutMs?: number;
+  /**
+   * Sampling temperature, or `null` to send none at all.
+   *
+   * OMITTABLE, NOT MERELY CONFIGURABLE. Reasoning models of the o1/o3 class
+   * reject any temperature but their own default, and some gateways reject
+   * parameters they do not recognise -- so a hardcoded value would make this
+   * provider unusable against real endpoints. `null` sends nothing and lets the
+   * backend decide; `undefined` takes `DEFAULT_TEMPERATURE`.
+   */
+  temperature?: number | null;
+  /** Most tokens to generate, or `null` to send none. Same reasoning as
+   *  `temperature`. `undefined` takes `DEFAULT_MAX_TOKENS`. */
+  maxTokens?: number | null;
 }
 
 /**
@@ -73,34 +136,96 @@ export interface ProviderConfig {
  * KNOWS NOTHING ABOUT DOCUMENTS. It takes a prompt and returns text. What to
  * send and what the answer means belong to prompt.ts and fill.ts.
  *
- * EVERY FAILURE THROWS, including a 200 whose body carries no content. A caller
- * that cannot tell "the model said nothing" from "the call failed" would write
- * an empty description and call it success -- the exact shape of failure this
- * codebase has been bitten by repeatedly.
+ * EVERY FAILURE THROWS AN `ApiError`, including a 200 whose body carries no
+ * content, a configuration that will not parse, and a malformed setting. A
+ * caller that cannot tell "the model said nothing" from "the call failed" would
+ * write an empty description and call it success -- the exact shape of failure
+ * this codebase has been bitten by repeatedly. `ApiError` specifically, and
+ * without exception, because `fill.ts` puts the message on the row: a raw
+ * `TypeError` escaping from here reaches the operator as
+ * "Cannot read properties of null", which is not something anybody can act on.
  *
- * EVERY MESSAGE THAT LEAVES THIS CLASS IS REDACTED, without exception, and
- * `tests/ai/provider.test.ts` walks every string reachable from a thrown error
- * to prove it. The message ends up in a spreadsheet note the operator emails
- * around asking for help, so one un-redacted path is one leaked key.
+ * EVERY MESSAGE THAT LEAVES THIS CLASS IS REDACTED **BEFORE IT IS TRUNCATED**.
+ * The order is the whole of it. Cutting a message to a length and then
+ * redacting leaves the redactor a fragment of the key to match, matches
+ * nothing, and lets a prefix walk out -- up to 163 characters of a
+ * 164-character key. `tests/ai/provider.test.ts` searches for every prefix of
+ * the key, not merely the whole thing, because a whole-string walker asserted
+ * this class was clean while it was leaking.
  */
 export class OpenAiCompatibleProvider {
+  /** Built once, in the constructor, so a base URL that will not parse is a
+   *  sentence about the setting rather than a `TypeError: Invalid URL` thrown
+   *  from outside every try block, once per row. */
+  private readonly endpoint: URL;
+  private readonly timeoutMs: number;
+
   constructor(
     private readonly config: ProviderConfig,
     private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+  ) {
+    try {
+      this.endpoint = instanceEndpoint(config.baseUrl, '/chat/completions');
+    } catch {
+      throw new ApiError(
+        // The address is quoted back because the operator typed it and needs to
+        // see what arrived. Redacted first: they may have pasted a key into it.
+        this.redact(
+          `"${config.baseUrl}" is not a usable model address. It should look like ` +
+            `http://localhost:11434/v1 for a local model, or https://api.openai.com/v1.`,
+        ),
+        0,
+        '',
+      );
+    }
+
+    // A BEARER KEY DOES NOT CROSS THE NETWORK IN CLEAR. See ProviderConfig.
+    if (
+      this.endpoint.protocol === 'http:' &&
+      config.apiKey &&
+      !isLoopbackEndpoint(config.baseUrl)
+    ) {
+      throw new ApiError(
+        `The model address ${safeEndpoint(this.endpoint)} is not encrypted, and an API key ` +
+          `would be sent to it in clear text where anything on the network can read it. ` +
+          `Use https for a remote model. Plain http is fine for a model running on this ` +
+          `computer, which needs no key.`,
+        0,
+        '',
+      );
+    }
+
+    this.timeoutMs = config.timeoutMs ?? MODEL_TIMEOUT_MS;
+    // `AbortSignal.timeout` validates its own argument and throws RangeError or
+    // TypeError -- neither of which is an ApiError, and `fill.ts` catches
+    // ApiError. Zero is worse than either: it is accepted, and then every call
+    // in the batch fails with "did not answer within 0 milliseconds", which
+    // reads as a broken model rather than a mistyped box.
+    if (
+      !Number.isFinite(this.timeoutMs) ||
+      this.timeoutMs <= 0 ||
+      this.timeoutMs > MAX_TIMEOUT_MS
+    ) {
+      throw new ApiError(
+        `The model time limit must be a number of milliseconds between 1 and ` +
+          `${MAX_TIMEOUT_MS}, but it was '${String(config.timeoutMs)}'. ` +
+          `${MODEL_TIMEOUT_MS} is the default, and suits a local model on a slow machine.`,
+        0,
+        '',
+      );
+    }
+  }
 
   async complete(prompt: string): Promise<string> {
-    const url = instanceEndpoint(this.config.baseUrl, '/chat/completions');
+    const url = this.endpoint;
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     // The key goes HERE and nowhere else. Not in the URL, which reaches server
     // and proxy access logs that the header does not.
     if (this.config.apiKey) headers['authorization'] = `Bearer ${this.config.apiKey}`;
 
-    const timeoutMs = this.config.timeoutMs ?? MODEL_TIMEOUT_MS;
-    // `AbortSignal.timeout` exists from Node 17.3 and this process is Node 22,
-    // so there is nothing to fall back to. Its timer does not hold the event
-    // loop open, which matters for a CLI that should exit when the work is done.
-    const signal = AbortSignal.timeout(timeoutMs);
+    // Its timer does not hold the event loop open, which matters for a CLI that
+    // should exit when the work is done.
+    const signal = AbortSignal.timeout(this.timeoutMs);
 
     let body: string;
     let res: Response;
@@ -114,10 +239,7 @@ export class OpenAiCompatibleProvider {
             // process's promise; the signal is what actually cancels the
             // request and frees the socket.
             signal,
-            body: JSON.stringify({
-              model: this.config.model,
-              messages: [{ role: 'user', content: prompt }],
-            }),
+            body: JSON.stringify(this.requestBody(prompt)),
           });
           // Reading the body is inside the limit too. A response whose stream
           // stops half way is the same hang arriving one step later.
@@ -131,9 +253,12 @@ export class OpenAiCompatibleProvider {
       // the operator to the one place the problem is not.
       if (signal.aborted) {
         throw new ApiError(
+          // Redacted despite being built only from values this class made: the
+          // endpoint carries the operator's own path, and gateways exist whose
+          // published URL puts the key in it.
           this.redact(
             `The model at ${safeEndpoint(url)} did not answer within ` +
-              `${describeDuration(timeoutMs)}. A local model on a slow machine can ` +
+              `${describeDuration(this.timeoutMs)}. A local model on a slow machine can ` +
               `legitimately take longer -- allow more time, or use a smaller model.`,
           ),
           0,
@@ -144,11 +269,12 @@ export class OpenAiCompatibleProvider {
       // DNS failure, a refused connection and a TLS error alike -- three
       // different problems with three different fixes. It is read through the
       // cause chain because Node's own fetch throws `TypeError: fetch failed`
-      // and hides the useful half underneath, and it is redacted because it is
-      // a string from somewhere this code does not control.
+      // and hides the useful half underneath, and the redactor is passed INTO
+      // that reader so every message is redacted before anything is cut.
       throw new ApiError(
         this.redact(
-          `Could not reach the model at ${safeEndpoint(url)}: ${describeReason(error)}. ` +
+          `Could not reach the model at ${safeEndpoint(url)}: ` +
+            `${describeReason(error, (text) => this.redact(text))}. ` +
             `Check the address and that the model is running.`,
         ),
         0,
@@ -161,33 +287,55 @@ export class OpenAiCompatibleProvider {
 
     if (!res.ok) {
       throw new ApiError(
-        this.redact(`The model returned ${res.status}. ${body.slice(0, MAX_QUOTED)}`),
+        // redact THEN slice. The other order cuts the key in half and the
+        // redactor matches nothing. See the class docblock.
+        `The model returned ${res.status}. ${this.redact(body).slice(0, MAX_QUOTED_BODY)}`,
         res.status,
         this.redact(body),
       );
     }
 
-    let parsed: { choices?: { message?: { content?: unknown } }[] };
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(body) as typeof parsed;
+      parsed = JSON.parse(body);
     } catch {
       throw new ApiError(
-        this.redact(
-          `The model at ${safeEndpoint(url)} answered with something that was not JSON: ` +
-            `${body.slice(0, MAX_QUOTED)}`,
-        ),
+        `The model at ${this.redact(safeEndpoint(url))} answered with something that was ` +
+          `not JSON: ${this.redact(body).slice(0, MAX_QUOTED_BODY)}`,
         res.status,
         this.redact(body),
       );
     }
 
-    const content = parsed.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || content.trim() === '') {
+    const content = readContent(parsed);
+    if (content === null || content.trim() === '') {
       // Not an empty description. See the class comment: a caller that could
       // not tell these apart would write the blank and call it success.
       throw new ApiError('The model returned no text.', res.status, '');
     }
     return content.trim();
+  }
+
+  /**
+   * The chat-completions request body.
+   *
+   * `temperature` and `max_tokens` are OMITTED when configured `null`, rather
+   * than sent as null -- a parameter a backend rejects is worse than one it
+   * defaults. See `ProviderConfig`.
+   */
+  private requestBody(prompt: string): Record<string, unknown> {
+    const temperature = this.config.temperature === undefined
+      ? DEFAULT_TEMPERATURE
+      : this.config.temperature;
+    const maxTokens = this.config.maxTokens === undefined
+      ? DEFAULT_MAX_TOKENS
+      : this.config.maxTokens;
+    return {
+      model: this.config.model,
+      messages: [{ role: 'user', content: prompt }],
+      ...(temperature === null ? {} : { temperature }),
+      ...(maxTokens === null ? {} : { max_tokens: maxTokens }),
+    };
   }
 
   /**
@@ -205,12 +353,11 @@ export class OpenAiCompatibleProvider {
       onAbort = () => reject(new Error('timed out'));
       signal.addEventListener('abort', onAbort, { once: true });
     });
-    // Attached before the race so that an abort arriving AFTER the work has
-    // already won is a handled rejection rather than an unhandled one, which
-    // Node reports as a process-level warning and, in some configurations,
-    // exits over.
-    expired.catch(() => {});
     try {
+      // `Promise.race` subscribes to every element synchronously, so `expired`
+      // is handled from this line onwards and a later abort cannot become an
+      // unhandled rejection. No separate guard is needed, and one that was here
+      // has been removed: it asserted a mechanism that does not exist.
       return await Promise.race([work(), expired]);
     } finally {
       if (onAbort) signal.removeEventListener('abort', onAbort);
@@ -220,6 +367,33 @@ export class OpenAiCompatibleProvider {
   private redact(text: string): string {
     return this.config.apiKey ? redactSecret(text, this.config.apiKey) : text;
   }
+}
+
+/**
+ * The assistant's text, or null for any shape that does not carry one.
+ *
+ * EVERY STEP IS CHECKED, because `JSON.parse` returns whatever the server sent
+ * and the optional-chaining version of this trusted the top of the tree:
+ * `JSON.parse('null')` then `.choices?.[0]` throws `TypeError: Cannot read
+ * properties of null` from outside every catch block, so a two-word body from a
+ * confused proxy escaped as a raw TypeError with no redaction and nothing an
+ * operator could act on.
+ *
+ * NULL IS NOT AN EMPTY DESCRIPTION. The caller throws on it. Returning `''`
+ * here and letting it be written would be the failure this whole class is
+ * arranged to prevent.
+ */
+function readContent(parsed: unknown): string | null {
+  const choices = readProperty(parsed, 'choices');
+  if (!Array.isArray(choices)) return null;
+  const message = readProperty(choices[0], 'message');
+  const content = readProperty(message, 'content');
+  return typeof content === 'string' ? content : null;
+}
+
+function readProperty(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null) return undefined;
+  return (value as Record<string, unknown>)[key];
 }
 
 /** Origin + path, never the query string. The same discipline as the
@@ -239,17 +413,31 @@ function describeDuration(ms: number): string {
  *
  * Node's fetch throws `TypeError: fetch failed` and puts `getaddrinfo
  * ENOTFOUND` or `connect ECONNREFUSED` on `cause`, so reading `message` alone
- * preserves a reason that says nothing. Duplicates are dropped -- a wrapper
- * that copies its cause's message would otherwise print it twice.
+ * preserves a reason that says nothing.
+ *
+ * `redact` IS A PARAMETER, NOT A STEP THE CALLER TAKES AFTERWARDS. The result
+ * is capped, and redacting a capped string is too late: the cut lands inside
+ * the secret and the redactor is handed a fragment it cannot match. Each
+ * message is redacted as it is read, and the joined string again before it is
+ * cut, so no boundary can fall inside a secret.
+ *
+ * EXACT DUPLICATES ARE DROPPED. `new Error(cause.message, { cause })` is a real
+ * and common wrapper, and it would otherwise print its message twice. Only
+ * whole-string equality is compared: a wrapper that CONTAINS its cause's
+ * message ("fetch failed: connect ECONNREFUSED" over "connect ECONNREFUSED")
+ * keeps both, deliberately, because deciding which of two overlapping strings
+ * to discard is how a reader loses the half that mattered.
  */
-function describeReason(error: unknown): string {
+function describeReason(error: unknown, redact: (text: string) => string = (text) => text): string {
   const parts: string[] = [];
   let current: unknown = error;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && current != null; depth += 1) {
-    const message = current instanceof Error ? current.message : String(current);
+    const message = redact(current instanceof Error ? current.message : String(current));
     if (message !== '' && !parts.includes(message)) parts.push(message);
     current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
   }
-  const reason = parts.join(': ');
-  return reason === '' ? 'the connection failed for an unstated reason' : reason.slice(0, MAX_QUOTED);
+  const reason = redact(parts.join(': '));
+  return reason === ''
+    ? 'the connection failed for an unstated reason'
+    : reason.slice(0, MAX_QUOTED_REASON);
 }
