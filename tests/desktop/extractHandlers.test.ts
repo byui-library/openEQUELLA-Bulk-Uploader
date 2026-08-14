@@ -1,6 +1,6 @@
 // tests/desktop/extractHandlers.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerExtractHandlers, __resetExtractCache } from '../../src/desktop/extractHandlers.js';
@@ -254,5 +254,234 @@ describe('extract handlers and the cached schema', () => {
 
     const scan = await ipc.call<{ starter: Profile }>('oeq:extractScan', dir, 'https://other.example.edu');
     expect(scan.starter.columns.map((c) => c.path)).not.toContain('OTHER/summary');
+  });
+});
+
+/**
+ * ## The run is where the model pass happens, and where it must not
+ *
+ * `extractPreview` deliberately does not run it: the preview re-renders on
+ * every column edit, and a paid call per keystroke is not a feature anyone
+ * asked for. `extractRun` is the one place a document is read for real.
+ *
+ * The settings are RESOLVED HERE, in the main process, from an injected
+ * resolver -- the same arrangement `cachedSchema` has, and for the same reason:
+ * this module stays free of the secret store, and the API key never crosses the
+ * IPC boundary into the renderer (see `ModelChoice` in ipc.ts, which is what the
+ * renderer is actually given, and which has no key in it).
+ */
+describe('extract run and the model pass', () => {
+  const aiProfile: Profile = {
+    version: 1,
+    pattern: '{title}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ placeholder: 'title' }] },
+      { path: 'MWDL/description', sources: [{ ai: true }] },
+    ],
+  };
+
+  const SETTINGS = {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'sk-secret',
+    budget: 4000,
+    cap: 10,
+    timeoutMs: 120_000,
+  };
+
+  const answers = (content: string) =>
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }),
+    ) as unknown as typeof fetch;
+
+  async function prose(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-ai-'));
+    await writeFile(
+      join(dir, 'Recital.pdf'),
+      makePdf({
+        text:
+          'This programme records what the college said about a long evening of music in a ' +
+          'small hall, and what the players meant to it.',
+      }),
+    );
+    return dir;
+  }
+
+  /**
+   * THE ZERO-PREREQUISITE PROMISE, in the process that would do the sending. An
+   * operator who never configured an endpoint gets today's behaviour and no
+   * request leaves the machine.
+   */
+  it('sends nothing when no model is stored for the instance', async () => {
+    const ipc = fakeIpcMain();
+    const spy = vi.fn();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: async () => null,
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const dir = await prose();
+    await ipc.call('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: join(dir, 'out.csv'),
+      instanceId: 'https://oeq.example.edu',
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  /** And says so, per cell, rather than leaving a blank that looks like a
+   *  document that had nothing to say. */
+  it('says in the spreadsheet that the column asked for a model there was none of', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: async () => null,
+    });
+    const dir = await prose();
+    const out = join(dir, 'out.csv');
+    await ipc.call('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: out,
+      instanceId: 'https://oeq.example.edu',
+    });
+    expect(await readFile(out, 'utf8')).toMatch(/no model is configured/i);
+  });
+
+  it('writes what the model said, and flags it', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: async () => SETTINGS,
+      fetchImpl: answers('A description of the evening.'),
+    });
+    const dir = await prose();
+    const out = join(dir, 'out.csv');
+    await ipc.call('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: out,
+      instanceId: 'https://oeq.example.edu',
+    });
+    const csv = await readFile(out, 'utf8');
+    expect(csv).toContain('A description of the evening.');
+    expect(csv).toMatch(/written by a language model/i);
+  });
+
+  /**
+   * THE TWO HALVES MUST AGREE ABOUT WHAT WILL BE SENT. The renderer's
+   * confirmation is built from `getModel(instanceId)` and this pass from
+   * `modelFor(instanceId)` -- two reads of the same per-instance entry. If the
+   * run resolved its settings from anywhere else, the operator would be shown
+   * one endpoint and their documents sent to another.
+   */
+  it('resolves the settings for the instance the renderer confirmed against', async () => {
+    const ipc = fakeIpcMain();
+    const modelFor = vi.fn(async () => SETTINGS);
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor,
+      fetchImpl: answers('A description.'),
+    });
+    const dir = await prose();
+    await ipc.call('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: join(dir, 'out.csv'),
+      instanceId: 'https://oeq.example.edu',
+    });
+    expect(modelFor).toHaveBeenCalledWith('https://oeq.example.edu');
+  });
+
+  /** No column asked, so nothing is resolved and nothing is sent -- whatever is
+   *  stored. Configuring an endpoint does not enable it on a profile. */
+  it('asks for no settings and sends nothing when no column wants a model', async () => {
+    const ipc = fakeIpcMain();
+    const modelFor = vi.fn(async () => SETTINGS);
+    const spy = vi.fn();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor,
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const dir = await prose();
+    await ipc.call('oeq:extractRun', {
+      dir,
+      profile,
+      outPath: join(dir, 'out.csv'),
+      instanceId: 'https://oeq.example.edu',
+    });
+    expect(modelFor).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE COUNTER THIS UNBLOCKS. "N need review" is the operator's triage signal,
+   * and with a model enabled on one column every row carries a note -- so it
+   * would read 400 of 400 and the batch's one genuine failure would be
+   * invisible. Reported by identity against `aiWritten`, never by matching the
+   * note's prose.
+   */
+  it('does not report a model write as a row needing review', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: async () => SETTINGS,
+      fetchImpl: answers('A description of the evening.'),
+    });
+    const dir = await prose();
+    const report = await ipc.call<{ flagged: number; aiWritten: number }>('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: join(dir, 'out.csv'),
+      instanceId: 'https://oeq.example.edu',
+    });
+    expect(report.flagged).toBe(0);
+    // Reported in its own number rather than hidden: a machine wrote into a
+    // catalogue record, and the operator is told how many.
+    expect(report.aiWritten).toBe(1);
+  });
+
+  it('still reports a row that could not be filled at all', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: async () => null,
+    });
+    const dir = await prose();
+    const report = await ipc.call<{ flagged: number; aiWritten: number }>('oeq:extractRun', {
+      dir,
+      profile: aiProfile,
+      outPath: join(dir, 'out.csv'),
+      instanceId: 'https://oeq.example.edu',
+    });
+    expect(report.flagged).toBe(1);
+    expect(report.aiWritten).toBe(0);
+  });
+
+  /** The preview re-renders on every column edit. A paid call per keystroke is
+   *  not a feature anybody asked for. */
+  it('never runs the model for a preview', async () => {
+    const ipc = fakeIpcMain();
+    const spy = vi.fn();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: async () => SETTINGS,
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    const dir = await prose();
+    await ipc.call('oeq:extractPreview', { dir, profile: aiProfile });
+    expect(spy).not.toHaveBeenCalled();
   });
 });

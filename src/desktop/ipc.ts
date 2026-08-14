@@ -327,8 +327,22 @@ export interface OeqApi {
   extractScan(dir: string, instanceId?: string): Promise<ExtractScan>;
   /** First few rows for the live preview. Cheap enough to call on every edit. */
   extractPreview(args: { dir: string; profile: Profile }): Promise<ExtractedRow[]>;
-  /** Write the spreadsheet. */
-  extractRun(args: { dir: string; profile: Profile; outPath: string }): Promise<ExtractRunReport>;
+  /**
+   * Write the spreadsheet.
+   *
+   * `instanceId` says whose stored model endpoint the run may use, and is the
+   * SAME id the renderer's confirmation was built from (`getModel`). Two reads
+   * of one per-instance entry: without it the operator could be shown one
+   * endpoint and their documents sent to another. Omitted, or naming an
+   * instance with nothing stored, means no model -- and every column that asked
+   * for one says so in `_notes`.
+   */
+  extractRun(args: {
+    dir: string;
+    profile: Profile;
+    outPath: string;
+    instanceId?: string;
+  }): Promise<ExtractRunReport>;
   /**
    * Every valid schema xpath, for the Add-column picker.
    *
@@ -399,7 +413,18 @@ export interface ExtractScan {
 export interface ExtractRunReport {
   outPath: string;
   written: number;
+  /**
+   * Rows with something genuinely wrong -- the triage number.
+   *
+   * A MODEL WRITE IS NOT COUNTED HERE. Every one carries a note, so counting
+   * notes would report "400 of 400 need review" the moment a model is enabled
+   * and bury the batch's one genuine failure, which is the loss `flagIfEmpty`
+   * exists to prevent. See core/ai/review.ts.
+   */
   flagged: number;
+  /** Rows a language model wrote into. Its own number rather than hidden: a
+   *  machine wrote text that is about to become a permanent record. */
+  aiWritten: number;
 }
 
 export const CHANNELS = {

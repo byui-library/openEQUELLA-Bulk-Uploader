@@ -1,11 +1,28 @@
-// src/desktop/ui/aiConfirm.ts
+// src/core/ai/confirm.ts
 //
-// RENDERER MODULE: nothing reachable from here may import `node:*` or
-// `electron`. Both of its core imports are pure and were written to be reached
-// from here -- see `endpoint.ts`'s docblock, which says so explicitly.
-import { describeHost, isLoopbackEndpoint } from '../../core/ai/endpoint.js';
-import { modelColumns } from '../../core/ai/eligible.js';
-import type { Profile } from '../../core/extract/types.js';
+// ## Why this is in core rather than in the renderer, where it was written
+//
+// TWO SURFACES ASK THE SAME QUESTION AND MUST ASK IT IN THE SAME WORDS. The
+// desktop shows this in a dialog before `extractRun`; `oeq-upload extract --ai`
+// prints it and refuses to go on without `--yes`. An operator who reads the
+// dialog on Monday and runs the CLI on Tuesday is agreeing to the same thing,
+// and a second copy of this text would be free to drift into describing a
+// different one.
+//
+// It lived in `src/desktop/ui/`, which the CLI can technically import -- every
+// dependency here is pure core. That is exactly the problem: the import would
+// have been legal on the day it was written and silently fatal the day somebody
+// added an `electron` import to a file under `ui/`, which is a reasonable thing
+// to do to a file under `ui/`. Moving it makes the dependency point the way the
+// layering already points.
+//
+// STILL RENDERER-SAFE, and it has to stay so: nothing reachable from
+// `src/desktop/ui/` may import `node:*` or `electron`, and such an import does
+// not fail loudly -- it blanks the window with nothing on the terminal.
+// `tests/desktop/rendererPurity.test.ts` walks the graph and fails the build.
+import { describeHost, isLoopbackEndpoint } from './endpoint.js';
+import { modelColumns } from './eligible.js';
+import type { Profile } from '../extract/types.js';
 
 export interface AiConfirmInput {
   /**

@@ -2,7 +2,12 @@ import { escapeHtml } from '../dom.js';
 
 export interface ExtractSaveProps {
   fileCount: number;
+  /** Rows with something genuinely wrong. See core/ai/review.ts -- a model
+   *  write is not one of them, or this number would read 400 of 400. */
   flagged: number;
+  /** Rows a language model wrote into. Its own sentence, because "needs review"
+   *  and "a machine wrote this" are different things to tell somebody. */
+  aiWritten: number;
   savedPath: string | null;
   busy: boolean;
   error: string | null;
@@ -33,6 +38,17 @@ export function renderExtractSave(root: HTMLElement, props: ExtractSaveProps): v
                  props.flagged === 0
                    ? 'None need review.'
                    : `<strong>${props.flagged}</strong> need review &mdash; see the <code>_notes</code> column.`
+               }
+               ${
+                 // Said separately, and only when it happened. A machine wrote
+                 // text that is about to become a permanent catalogue record;
+                 // folding it into "need review" would bury the rows that
+                 // genuinely went wrong, and leaving it out altogether would
+                 // hide the thing the operator most needs to check.
+                 props.aiWritten === 0
+                   ? ''
+                   : `<strong>${props.aiWritten}</strong> had a value written by a language model &mdash;
+                      every one is flagged. Check them against the documents before uploading.`
                }
              </p>
              <p><strong>Open it in Excel and check it before uploading.</strong>

@@ -103,6 +103,74 @@ export function assertUsableCap(cap: number): void {
 }
 
 /**
+ * Say, on every cell that wanted a model and could not have one, that there was
+ * none -- the counterpart to `fillWithModel`, for the case where it is not run.
+ *
+ * ## The cell must not simply come out blank
+ *
+ * A column that asked for a model at an institution that configured none
+ * produces an empty cell, and an empty cell is indistinguishable from a document
+ * that had nothing to say. That is a thing which could not run being reported as
+ * if it had, and it is the failure this codebase has shipped four times: a
+ * successful-looking result from a check that never happened.
+ *
+ * ## Per cell, naming the column
+ *
+ * One warning on the batch cannot say WHICH of a profile's columns was left
+ * unfilled, and an operator scanning `_notes` for a row is looking for the
+ * column name. The grammar is `${path}: `, the same prefix `rows.ts#fill` and
+ * every note in this module use, so a column is found the same way in all of
+ * them.
+ *
+ * ## Only cells the model would actually have been asked about
+ *
+ * `eligibleColumns`, not `modelColumns`: a cell a document already filled would
+ * never have been sent, so announcing a missing model there is noise on a row
+ * where nothing is missing. This is the same rule the fill pass runs, asked of
+ * the same finished row, so the two cannot disagree about which cells were in
+ * play.
+ *
+ * NOT RECORDED IN `aiWritten`, deliberately. That map is what `review.ts`
+ * subtracts to tell a routine model write from a real problem, and this IS a
+ * real problem: a column asked for a value and did not get one, so the row must
+ * keep counting as needing review.
+ */
+export function noteMissingModel(rows: ExtractedRow[], profile: Profile): void {
+  for (const row of rows) {
+    for (const path of eligibleColumns(profile, row)) {
+      row.notes.push(
+        `${path}: no model is configured, so nothing was written here. ` +
+          `Set one up on the Setup screen, or with OEQ_MODEL_BASE_URL and OEQ_MODEL from the ` +
+          `command line -- or fill this cell in by hand.`,
+      );
+    }
+  }
+}
+
+/**
+ * The section headings a profile already knows about, for `slice.ts` to prefer
+ * when a document will not fit whole.
+ *
+ * READ FROM THE PROFILE RATHER THAN ASKED FOR SEPARATELY. A `{ section: 'Abstract' }`
+ * source is the operator saying "this collection's documents put the interesting
+ * part under this heading" -- which is precisely the question the slice needs
+ * answered, and they have already answered it. A second setting would be one more
+ * box to fill in correctly, empty on every profile written before it existed, and
+ * free to drift out of step with the sources beside it.
+ *
+ * Deduplicated and in profile order, so a document is sliced the same way twice.
+ */
+export function modelSections(profile: Profile): string[] {
+  const headings = new Set<string>();
+  for (const column of profile.columns) {
+    for (const source of column.sources) {
+      if ('section' in source) headings.add(source.section);
+    }
+  }
+  return [...headings];
+}
+
+/**
  * What is written into `_source` for a cell a model wrote.
  *
  * SET HERE RATHER THAN THROUGH `rows.ts#sourceKind`, which has no `ai` case and

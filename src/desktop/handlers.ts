@@ -784,5 +784,12 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     // preference to the bundled export -- which is BYU-Idaho's and correct
     // nowhere else. Null falls back to the bundle; see cachedSchema.
     cachedSchema,
+    // THE ONE PLACE THE API KEY IS READ FOR A RUN, and it stays in this
+    // process. `getModel` above answers the renderer with `ModelChoice`, which
+    // mirrors these settings minus the key on purpose; the run needs the key
+    // itself, so it resolves it here rather than being handed one across the
+    // IPC boundary. Same instance id both times, so the endpoint the operator
+    // confirmed against is the endpoint their documents go to.
+    modelFor: (instanceId: string) => secrets().getModel(instanceId),
   });
 }
