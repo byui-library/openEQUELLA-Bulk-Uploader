@@ -537,6 +537,80 @@ describe('escapeWhereValue', () => {
  * naive fix that rebuilt the URL could drop it and break search and discovery
  * at a prefixed site only.
  */
+/**
+ * A NETWORK FAILURE SAYS WHAT FAILED.
+ *
+ * Every API request this tool makes passes through `request()`, and it read
+ * `cause.message` only -- which for Node's fetch is the literal string "fetch
+ * failed" and nothing else. A wrong address, a stopped server and an expired
+ * certificate all reported the same eight words, in the message the operator
+ * is shown and the one they paste into an email asking for help.
+ */
+describe('OeqClient — a network failure names the reason', () => {
+  const stubAuth = {
+    getToken: async () => 'tok',
+    authHeader: async () => ({ 'X-Authorization': 'access_token=tok' }),
+    invalidate: () => {},
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const failWith = (error: unknown) => {
+    vi.stubGlobal('fetch', async () => {
+      throw error;
+    });
+    return new OeqClient('https://oeq.example.edu', stubAuth);
+  };
+
+  it('names a DNS failure Node hid under a cause', async () => {
+    const client = failWith(
+      new TypeError('fetch failed', {
+        cause: new Error('getaddrinfo ENOTFOUND oeq.example.edu'),
+      }),
+    );
+    await expect(client.currentUser()).rejects.toThrow(/ENOTFOUND/);
+  });
+
+  it('names a refused connection', async () => {
+    const client = failWith(
+      new TypeError('fetch failed', { cause: new Error('connect ECONNREFUSED 10.0.0.1:443') }),
+    );
+    await expect(client.currentUser()).rejects.toThrow(/ECONNREFUSED/);
+  });
+
+  it('names a certificate failure', async () => {
+    const client = failWith(
+      new TypeError('fetch failed', { cause: new Error('unable to verify the first certificate') }),
+    );
+    await expect(client.currentUser()).rejects.toThrow(/verify the first certificate/);
+  });
+
+  /** The three above must not all read the same, which is the defect. */
+  it('gives three different failures three different messages', async () => {
+    const messages: string[] = [];
+    for (const reason of ['ENOTFOUND host', 'ECONNREFUSED 1.2.3.4:443', 'certificate expired']) {
+      const client = failWith(new TypeError('fetch failed', { cause: new Error(reason) }));
+      const error = await client.currentUser().catch((e: unknown) => e);
+      messages.push((error as Error).message);
+    }
+    expect(new Set(messages).size).toBe(3);
+  });
+
+  it('still says which request it was', async () => {
+    const client = failWith(new TypeError('fetch failed', { cause: new Error('ECONNRESET') }));
+    await expect(client.currentUser()).rejects.toThrow(/\/api\/content\/currentuser/);
+  });
+
+  it('reports it as a status-0 ApiError, as it always has', async () => {
+    const client = failWith(new Error('boom'));
+    const error = await client.currentUser().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(0);
+  });
+});
+
 describe('OeqClient — an instance hosted under a path prefix', () => {
   const PREFIXED = 'https://library.example.edu/oeq';
 

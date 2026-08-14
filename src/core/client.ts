@@ -82,6 +82,7 @@
  */
 import type { AuthProvider } from './auth.js';
 import { ApiError, ValidationError } from './errors.js';
+import { describeReason } from './errorReason.js';
 import { instanceEndpoint } from './instanceUrl.js';
 import {
   displayName,
@@ -260,7 +261,16 @@ export class OeqClient {
       // status code. Model it as ApiError status 0, matching auth.ts's
       // convention, so `.retryable` (which treats 0 as transient) applies
       // uniformly here too.
-      const detail = cause instanceof Error ? cause.message : String(cause);
+      //
+      // describeReason, NOT `cause.message`. Node's fetch throws `TypeError:
+      // fetch failed` and puts the reason on `cause`, so this line used to
+      // report the same eight words for a wrong address, a stopped server and
+      // an expired certificate -- through the one function every API request
+      // this tool makes passes. No redactor: nothing here holds a secret, and
+      // the URL is never interpolated into the message (only `path`, which
+      // carries no credential; auth.ts and passwordAuth.ts keep their own
+      // safeEndpoint discipline for the two endpoints that do).
+      const detail = describeReason(cause);
       throw new ApiError(
         `${method} ${path} failed before a response was received: ${detail}`,
         0,
