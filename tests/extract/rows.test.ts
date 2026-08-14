@@ -851,4 +851,21 @@ describe('an ai source resolves to nothing', () => {
     const row = buildRow(profile, 'a.pdf', EMPTY_DOC);
     expect(row.cells['MWDL/title']).toBe('a');
   });
+
+  /**
+   * The other half, and the one that protects a real value: a marker placed
+   * after a source that succeeded must not blank what that source found. This
+   * is the position the profile convention actually puts it in -- last, behind
+   * every deterministic source -- so it is the case that runs on every row.
+   */
+  it('does not blank a value an earlier source already found', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/title', sources: [{ filenameStem: true }, { ai: true }] }],
+    };
+    const row = buildRow(profile, 'a.pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/title']).toBe('a');
+    expect(row.sources['MWDL/title']).toBe('filename');
+  });
 });
