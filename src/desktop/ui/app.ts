@@ -1,4 +1,12 @@
-import type { OeqApi, ColumnReport, InstanceChoice, PlanReport, RunProgress, RunReport } from '../ipc.js';
+import type {
+  OeqApi,
+  ColumnReport,
+  InstanceChoice,
+  ModelChoice,
+  PlanReport,
+  RunProgress,
+  RunReport,
+} from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
 import type { ItemState } from '../../core/types.js';
 import { initialScreen, nextScreen, settingsReturnTo, type Screen } from './state.js';
@@ -7,12 +15,13 @@ import { renderBanner } from './banner.js';
 import {
   attachmentPathToFill,
   renderSetup,
+  MODEL_FIELD_DEFAULTS,
   type SetupFields,
   type SetupTextField,
 } from './screens/setup.js';
 // `import type`: secrets.ts reaches `node:fs` and this module runs in the
 // sandboxed renderer, where a runtime import of it would blank the window.
-import type { Settings, SettingsAuthMode } from '../secrets.js';
+import type { ModelSettings, Settings, SettingsAuthMode } from '../secrets.js';
 import { signOutNotice } from './signout.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
@@ -76,6 +85,10 @@ interface AppState extends BatchState {
   // The username of the account stored for `setupInstanceId`, or null. The
   // password itself never comes back from the main process (ipc.ts).
   setupStoredUsername: string | null;
+  // The model endpoint stored for `setupInstanceId`, or null when there is
+  // none -- which is the shipped state and the common one. WITHOUT its key,
+  // for the same reason the password never comes back (ipc.ts's ModelChoice).
+  setupStoredModel: ModelChoice | null;
   // The collections `setupInstanceId` can contribute to, and why they could
   // not be read. Null is "not read"; an EMPTY ARRAY is "this account can
   // create nothing", which is a real state the screen states plainly rather
@@ -161,6 +174,17 @@ function blankSetupFields(): SetupFields {
     // warned about a sandbox is a nuisance; not being warned about production
     // is an unrecoverable batch (ui/banner.ts).
     live: true,
+    // The two that turn the model on start EMPTY, and that is the whole
+    // zero-prerequisite promise arriving in the form: with no address and no
+    // model name, `modelFrom` answers null, nothing is stored, and no screen
+    // anywhere mentions a model again. The three numbers are pre-filled so that
+    // turning it on is two boxes rather than five (screens/setup.ts).
+    modelBaseUrl: '',
+    modelName: '',
+    modelKey: '',
+    modelBudget: MODEL_FIELD_DEFAULTS.budget,
+    modelCap: MODEL_FIELD_DEFAULTS.cap,
+    modelTimeout: MODEL_FIELD_DEFAULTS.timeout,
   };
 }
 
@@ -178,6 +202,7 @@ function initialState(): AppState {
     setupFields: blankSetupFields(),
     setupRedirectTouched: false,
     setupStoredUsername: null,
+    setupStoredModel: null,
     setupCollections: null,
     setupCollectionsError: null,
     setupCollectionsWithheld: false,
@@ -270,6 +295,7 @@ function render(): void {
         credentialsDropped: state.credentialsDropped,
         fields: state.setupFields,
         storedUsername: state.setupStoredUsername,
+        storedModel: state.setupStoredModel,
         collections: state.setupCollections,
         collectionsError: state.setupCollectionsError,
         collectionsWithheld: state.setupCollectionsWithheld,
@@ -287,6 +313,7 @@ function render(): void {
         onCollectionChange: handleSetupCollectionChange,
         onLiveChange: handleSetupLiveChange,
         onForgetPassword: handleForgetPassword,
+        onForgetModel: handleForgetModel,
         onSave: handleSaveSettings,
       });
       break;
@@ -485,12 +512,14 @@ function seedSetupForm(id: string): void {
   };
   state.setupRedirectTouched = false;
   state.setupStoredUsername = null;
+  state.setupStoredModel = null;
 }
 
 function handleSetupInstanceChange(id: string): void {
   seedSetupForm(id);
   render();
   void refreshStoredUsername();
+  void refreshStoredModel();
   void refreshSetupCollections();
 }
 
@@ -668,6 +697,79 @@ async function handleForgetPassword(): Promise<void> {
   render();
 }
 
+/**
+ * The model endpoint stored for the site Setup is pointed at, if any.
+ *
+ * FAILS SOFT TO NULL, and null is the safe answer as well as the honest one:
+ * it is "no model configured", which is the state in which this feature does
+ * not exist at all -- nothing is sent, nothing is offered, and the app behaves
+ * exactly as it did before any of this was written. A store that cannot be read
+ * must never produce a screen offering to forget something that may not be
+ * there, nor a run that sends documents somewhere on the strength of a guess.
+ */
+async function refreshStoredModel(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') {
+    state.setupStoredModel = null;
+    return;
+  }
+  let stored: ModelChoice | null = null;
+  try {
+    stored = await window.oeq.getModel(instanceId);
+  } catch {
+    stored = null;
+  }
+  // The operator may have switched sites while this was in flight; a stale
+  // answer for the previous site must never be attributed to the new one.
+  if (state.setupInstanceId !== instanceId) return;
+  state.setupStoredModel = stored;
+  // The stored numbers go back into the boxes so the section describes what is
+  // actually configured rather than the defaults. The KEY does not, and never
+  // will -- getModel does not return it (ipc.ts).
+  if (stored !== null) {
+    state.setupFields = {
+      ...state.setupFields,
+      modelBaseUrl: stored.baseUrl,
+      modelName: stored.model,
+      modelBudget: String(stored.budget),
+      modelCap: String(stored.cap),
+      modelTimeout: String(Math.round(stored.timeoutMs / 1000)),
+    };
+  }
+  render();
+}
+
+/**
+ * "Forget these model settings". Removes the endpoint and its key for this
+ * site and puts the boxes back to their defaults, so the feature is once again
+ * absent everywhere.
+ *
+ * The site, its sign-in and its per-site settings are untouched -- that
+ * separation is the reason the endpoint is stored in its own map rather than
+ * inside the instance entry (secrets.ts).
+ */
+async function handleForgetModel(): Promise<void> {
+  try {
+    await window.oeq.forgetModel(state.setupInstanceId);
+  } catch (err) {
+    state.setupError = errorMessage(err);
+    render();
+    return;
+  }
+  state.setupStoredModel = null;
+  state.setupFields = {
+    ...state.setupFields,
+    modelBaseUrl: '',
+    modelName: '',
+    modelKey: '',
+    modelBudget: MODEL_FIELD_DEFAULTS.budget,
+    modelCap: MODEL_FIELD_DEFAULTS.cap,
+    modelTimeout: MODEL_FIELD_DEFAULTS.timeout,
+  };
+  state.setupError = null;
+  render();
+}
+
 async function handleSaveSettings(
   instance: {
     label: string;
@@ -677,6 +779,14 @@ async function handleSaveSettings(
     schemaUuid: string;
   },
   settings: Settings,
+  /**
+   * The model endpoint, or null for "nothing entered" -- which is the shipped
+   * state. Null STORES NOTHING and removes nothing: a stored endpoint is never
+   * rendered back into the key box, so an operator who came here to rename a
+   * site submits blank model fields, and treating that as a deletion would
+   * discard configuration they never touched. Removal is `handleForgetModel`.
+   */
+  model: ModelSettings | null,
 ): Promise<void> {
   if (instance.baseUrl === '') {
     state.setupError = 'Enter the address of your openEQUELLA site.';
@@ -706,6 +816,13 @@ async function handleSaveSettings(
     // entry that was written -- including when the operator typed a spelling
     // that normalised onto a site they had already added.
     const saved = await window.oeq.saveInstance(instance, settings);
+    // AFTER the instance, because the endpoint is keyed by the id the main
+    // process just derived from the address -- an operator adding a site and
+    // its model in one pass has no id until this point. It REJECTS a budget,
+    // cap or time limit core's own guards refuse (secrets.ts#setModel), and the
+    // catch below puts that message on this screen, where the box is, rather
+    // than letting it surface hundreds of rows into a run.
+    if (model !== null) await window.oeq.setModel({ instanceId: saved.id, settings: model });
     // Decided BEFORE state.instanceId is repointed below, because the question
     // is whether this save stayed on the site the waiting Choose selections
     // belong to. A save that landed somewhere else goes to Sign-in, where a
@@ -723,8 +840,11 @@ async function handleSaveSettings(
     // Neither secret stays in the renderer once it has been stored. Setup
     // shows a saved password as "Signed in as ..." (refreshed below), never
     // back in a field, and the client secret has never been rendered back.
-    state.setupFields = { ...state.setupFields, password: '', clientSecret: '' };
+    // The model key joins them: it is the third secret this form collects, and
+    // it is stored by the time this line runs.
+    state.setupFields = { ...state.setupFields, password: '', clientSecret: '', modelKey: '' };
     void refreshStoredUsername();
+    void refreshStoredModel();
     // The credentials this site needed may only just have arrived, so the
     // collections it can contribute to are askable for the first time.
     void refreshSetupCollections();

@@ -6,6 +6,7 @@ import {
   attachmentPathVerdict,
   backLabel,
   instanceFrom,
+  modelFrom,
   renderSetup,
   setupMarkup,
   settingsFrom,
@@ -35,8 +36,24 @@ const fields = (over: Partial<SetupFields> = {}): SetupFields => ({
   attachmentUuidPath: '',
   collectionUuid: '',
   live: true,
+  modelBaseUrl: '',
+  modelName: '',
+  modelKey: '',
+  modelBudget: '',
+  modelCap: '',
+  modelTimeout: '',
   ...over,
 });
+
+/** A model endpoint as the renderer sees one: no key, only whether there is one. */
+const MODEL = {
+  baseUrl: 'http://localhost:11434/v1',
+  model: 'llama3',
+  budget: 8000,
+  cap: 200,
+  timeoutMs: 120_000,
+  hasApiKey: false,
+};
 
 const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   instances: [
@@ -59,6 +76,8 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   collectionsWithheld: false,
   schemaPaths: null,
   attachmentPathFilled: false,
+  storedModel: null,
+  onForgetModel: () => {},
   error: null,
   saving: false,
   onInstanceChange: () => {},
@@ -931,5 +950,150 @@ describe('the sync caveat under the attachment field', () => {
   /** The answer that settles it without needing this tool to be right. */
   it('points at the wizard as the thing to match', () => {
     expect(setupMarkup(props())).toMatch(/own web interface and match whatever it writes/);
+  });
+});
+
+/**
+ * ## What "the feature does not exist when nothing is configured" means HERE
+ *
+ * The plan carried a test whose name and assertion disagreed --
+ * `it('is not offered until an endpoint is entered')` asserting that the
+ * endpoint FIELD is present. Both halves cannot be right, so this is what the
+ * design actually asks for.
+ *
+ * The design says: "With no endpoint configured the feature does not exist. No
+ * prompt, no error, no degraded mode, no mention on any screen." The thing that
+ * must be absent is the **feature** -- the sending, the dialog, any claim that a
+ * model wrote something. The endpoint FIELD is the one exception that proves it:
+ * Setup is the screen that configures the thing, and a settings screen which
+ * hides its own setting until that setting exists can never be used to create
+ * it. So the field is unconditionally present here, and what is pinned instead
+ * is that it stays out of the way, offers nothing to forget that does not
+ * exist, and -- in aiConfirm.test.ts and extract/controller.test.ts -- that no
+ * document is sent and no dialog is shown until an endpoint is stored.
+ */
+describe('the Setup screen’s model section', () => {
+  it('always offers the endpoint field, because nothing could ever be configured otherwise', () => {
+    expect(setupMarkup(props())).toContain('id="setup-model-base-url"');
+    expect(setupMarkup(props())).toContain('id="setup-model-name"');
+  });
+
+  /** A local endpoint needs no key, and asking for one implies it does. */
+  it('says the key is only needed for a hosted endpoint', () => {
+    expect(setupMarkup(props())).toMatch(/hosted/i);
+    expect(setupMarkup(props())).toMatch(/model running on this computer needs no key/i);
+  });
+
+  /**
+   * OUT OF THE WAY UNTIL IT IS SET UP. The overwhelming majority of
+   * installations configure no model at all, and a section shouting at them on
+   * the one screen every operator must complete is the "mention on a screen"
+   * the design rules out. Collapsed is not hidden: the same treatment the
+   * Advanced OAuth disclosure already gets.
+   */
+  it('stays collapsed when nothing is configured, and opens when something is', () => {
+    expect(setupMarkup(props())).toMatch(/<details id="setup-model"(?!\s+open)/);
+    expect(setupMarkup(props({ storedModel: MODEL }))).toMatch(/<details id="setup-model" open/);
+  });
+
+  it('offers nothing to forget when nothing is configured', () => {
+    expect(setupMarkup(props())).not.toContain('id="setup-model-forget"');
+  });
+
+  it('offers a way to remove it once one is stored, and names what is stored', () => {
+    const html = setupMarkup(props({ storedModel: MODEL }));
+    expect(html).toContain('id="setup-model-forget"');
+    expect(html).toContain('llama3');
+    expect(html).toContain('localhost:11434');
+  });
+
+  /** The same rule as the password: a stored secret is never rendered back
+   *  into a field where it can be read off the screen or copied out. */
+  it('never renders a stored key back into the box', () => {
+    const html = setupMarkup(props({ storedModel: { ...MODEL, hasApiKey: true } }));
+    expect(html).not.toContain('sk-');
+    expect(html).toMatch(/key is stored/i);
+  });
+
+  it('carries every typed model box in TEXT_INPUTS, or the caret is lost after one character', () => {
+    for (const id of [
+      'setup-model-base-url',
+      'setup-model-name',
+      'setup-model-key',
+      'setup-model-budget',
+      'setup-model-cap',
+      'setup-model-timeout',
+    ]) {
+      expect(TEXT_INPUTS).toContain(`#${id}`);
+    }
+  });
+
+  it('renders every input TEXT_INPUTS names, so the list cannot outlive the markup', () => {
+    const html = setupMarkup(props({ storedModel: MODEL }));
+    for (const selector of TEXT_INPUTS) {
+      expect(html).toContain(`id="${selector.slice(1)}"`);
+    }
+  });
+});
+
+describe('modelFrom', () => {
+  const withModel = (over: Partial<SetupFields> = {}): SetupProps =>
+    props({
+      fields: fields({
+        modelBaseUrl: 'http://localhost:11434/v1',
+        modelName: 'llama3',
+        modelKey: '',
+        modelBudget: '8000',
+        modelCap: '200',
+        modelTimeout: '120',
+        ...over,
+      }),
+    });
+
+  /** Nothing typed, nothing configured. This is the zero-prerequisite promise
+   *  arriving at the one screen that could break it. */
+  it('is null when no endpoint is entered', () => {
+    expect(modelFrom(props())).toBeNull();
+  });
+
+  it('is null when an address is entered but no model is named', () => {
+    expect(modelFrom(withModel({ modelName: '  ' }))).toBeNull();
+  });
+
+  it('reads the whole endpoint back', () => {
+    expect(modelFrom(withModel())).toEqual({
+      baseUrl: 'http://localhost:11434/v1',
+      model: 'llama3',
+      apiKey: '',
+      budget: 8000,
+      cap: 200,
+      timeoutMs: 120_000,
+    });
+  });
+
+  /** Seconds on screen, milliseconds on the wire. An operator does not think
+   *  in milliseconds, and `ProviderConfig.timeoutMs` does not think in seconds. */
+  it('reads the time limit in seconds and stores it in milliseconds', () => {
+    expect(modelFrom(withModel({ modelTimeout: '300' }))?.timeoutMs).toBe(300_000);
+  });
+
+  /**
+   * A BLANK BOX IS NOT ZERO. `Number('')` is 0, and a cap of 0 is a legitimate
+   * setting meaning "make no requests at all" -- so a blank box read that way
+   * would configure a model that silently never runs, and every row would say
+   * it was stopped by a limit the operator never set. NaN is refused by
+   * core's own guard with a sentence naming the setting.
+   */
+  it.each(['modelBudget', 'modelCap', 'modelTimeout'] as const)(
+    'refuses a blank %s rather than reading it as zero',
+    (field) => {
+      const settings = modelFrom(withModel({ [field]: '   ' }));
+      expect(settings).not.toBeNull();
+      expect(Object.values(settings!).some((v) => typeof v === 'number' && Number.isNaN(v))).toBe(true);
+    },
+  );
+
+  it('hands a mistyped number through as NaN, for the store’s own guard to refuse', () => {
+    expect(modelFrom(withModel({ modelCap: 'lots' }))?.cap).toBeNaN();
   });
 });

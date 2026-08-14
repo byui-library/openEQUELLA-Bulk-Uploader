@@ -1,11 +1,16 @@
-import type { InstanceChoice } from '../../ipc.js';
+import type { InstanceChoice, ModelChoice } from '../../ipc.js';
 import type { CollectionSummary } from '../../../core/client.js';
 // `import type`: secrets.ts reaches `node:fs`, and this module is rendered in
 // the sandboxed renderer. A type-only import is erased at compile time and
 // never becomes a runtime require -- see tests/desktop/rendererPurity.test.ts.
-import type { Settings, SettingsAuthMode } from '../../secrets.js';
+import type { ModelSettings, Settings, SettingsAuthMode } from '../../secrets.js';
 import type { Screen } from '../state.js';
 import { escapeHtml, keepCaret } from '../dom.js';
+// A VALUE import, and it is safe: core/ai/provider.ts reaches only errors.ts,
+// errorReason.ts, instanceUrl.ts, redact.ts and endpoint.ts, none of which
+// touches `node:` or `electron`. tests/desktop/rendererPurity.test.ts walks
+// this edge and fails the build if that ever stops being true.
+import { MODEL_TIMEOUT_MS } from '../../../core/ai/provider.js';
 import { setupNotice } from '../setupNotice.js';
 // One wording for "the server withheld this list", shared with the Choose
 // screen so the two cannot drift into describing the same state differently.
@@ -50,6 +55,29 @@ export interface SetupFields {
   collectionUuid: string;
   /** Whether this is a live site. Defaults ON -- see the checkbox's own copy. */
   live: boolean;
+  /**
+   * The optional language-model endpoint, as typed.
+   *
+   * EVERY ONE OF THESE IS A STRING, INCLUDING THE THREE NUMBERS. They are text
+   * boxes: what is in them mid-typing is `'80'` on the way to `'8000'`, and a
+   * field held as a number cannot represent that, nor an empty box, nor `'lots'`.
+   * `modelFrom` converts once, at the boundary, and hands anything unusable
+   * through as NaN for core's own guards to refuse by name -- see its docblock.
+   *
+   * BLANK IS THE SHIPPED STATE AND MEANS NO MODEL AT ALL. Not "disabled": there
+   * is nothing to disable, nothing is sent anywhere, and no other screen
+   * mentions any of this.
+   */
+  modelBaseUrl: string;
+  modelName: string;
+  /** Never rendered back from the store. Same rule as the password. */
+  modelKey: string;
+  /** Characters to send from one document. */
+  modelBudget: string;
+  /** Most model requests one run may make. */
+  modelCap: string;
+  /** SECONDS, converted to milliseconds by `modelFrom`. Nobody types 120000. */
+  modelTimeout: string;
 }
 
 /**
@@ -114,6 +142,17 @@ export interface SetupProps {
    * operator edits the field.
    */
   attachmentPathFilled: boolean;
+  /**
+   * The model endpoint already stored for this instance, or null when there is
+   * none -- which is the shipped state and the overwhelmingly common one.
+   *
+   * WITHOUT THE KEY, exactly as `storedUsername` is without the password. The
+   * screen needs two things from a stored endpoint: enough to say what is
+   * configured, and the fact that there is something to forget. A key rendered
+   * back into a box is a secret readable off the screen and copyable out of it,
+   * bought for nothing.
+   */
+  storedModel: ModelChoice | null;
   error: string | null;
   saving: boolean;
   /**
@@ -147,6 +186,9 @@ export interface SetupProps {
   onCollectionChange(uuid: string): void;
   onLiveChange(live: boolean): void;
   onForgetPassword(): void;
+  /** Behind "Forget these model settings". Removes the endpoint and its key,
+   *  and leaves the site and its credentials exactly where they are. */
+  onForgetModel(): void;
   onSave(
     instance: {
       label: string;
@@ -156,6 +198,17 @@ export interface SetupProps {
       schemaUuid: string;
     },
     settings: Settings,
+    /**
+     * The model endpoint to store, or null for "nothing was entered".
+     *
+     * NULL IS NOT "REMOVE IT". An operator who came to Setup to rename a site
+     * submits this form with the model boxes as they found them -- and, because
+     * a stored endpoint is not rendered back into them, that is blank. Treating
+     * blank as a deletion would throw away configuration they never touched,
+     * which is the identical trap `saveInstance` avoids for a blank password.
+     * The only way to remove an endpoint is `onForgetModel`.
+     */
+    model: ModelSettings | null,
   ): void;
 }
 
@@ -174,7 +227,41 @@ export const TEXT_INPUTS = [
   '#setup-client-secret',
   '#setup-redirect-uri',
   '#setup-attachment-path',
+  '#setup-model-base-url',
+  '#setup-model-name',
+  '#setup-model-key',
+  '#setup-model-budget',
+  '#setup-model-cap',
+  '#setup-model-timeout',
 ] as const;
+
+/**
+ * What the model boxes start out holding.
+ *
+ * STARTING VALUES, NOT RULES. What a budget, a cap or a time limit may BE is
+ * decided by `assertUsableBudget`, `assertUsableCap` and `assertUsableTimeout`
+ * in `src/core/ai/`, and nothing here restates them -- these are only what is
+ * pre-filled so an operator who types an address and a model name has a working
+ * configuration without having to invent three numbers. Every one of them is
+ * theirs to change, and the labels say what each is for.
+ *
+ * The address and the model name are deliberately NOT among them. Those two are
+ * what turn the feature on, so guessing either would configure a model nobody
+ * asked for -- and `http://localhost:11434/v1` pre-filled is a tool that looks
+ * set up when nothing is listening.
+ *
+ * The time limit is `MODEL_TIMEOUT_MS` in seconds rather than a second copy of
+ * the number: provider.ts argues that value out at length, and a form default
+ * that quietly disagreed with the code's own would be the first thing to rot.
+ */
+export const MODEL_FIELD_DEFAULTS = {
+  /** Characters from one document. A few thousand suits a local model; a page
+   *  of prose is well under it, so most documents go whole. */
+  budget: '8000',
+  /** Requests per run. A ceiling on one batch, not a monthly allowance. */
+  cap: '500',
+  timeout: String(Math.round(MODEL_TIMEOUT_MS / 1000)),
+} as const;
 
 /**
  * What Back says it goes back to.
@@ -752,6 +839,173 @@ function liveSection(props: SetupProps): string {
 }
 
 /**
+ * The optional language-model endpoint.
+ *
+ * ## Why this section is on screen at all, when the feature must not be
+ *
+ * The design is emphatic: "With no endpoint configured the feature does not
+ * exist. No prompt, no error, no degraded mode, no mention on any screen." That
+ * rule is about the FEATURE -- documents leaving the machine, a confirmation
+ * dialog, a cell claiming a model wrote it. None of that happens until an
+ * address is stored, and nothing anywhere else in the app changes.
+ *
+ * Setup is the one exception, and it has to be: this is the screen that creates
+ * the configuration, and a settings screen which hides its own setting until
+ * that setting exists can never be used to make one. So the compromise is
+ * COLLAPSED, not hidden -- the same treatment the Advanced OAuth disclosure
+ * gets, for the same reason. It opens by itself once something is stored,
+ * because at that point it is describing a live setting the operator has a
+ * reason to look at.
+ *
+ * ## The key box
+ *
+ * A stored key is NEVER rendered back into it -- the password rule, for the
+ * password's reasons. The label says a local model needs none, because a box
+ * asking for a key is an implicit claim that one is required, and the local
+ * runtimes this feature exists to serve have no concept of one.
+ */
+function modelSection(props: SetupProps): string {
+  const f = props.fields;
+  const stored = props.storedModel;
+
+  const current =
+    stored === null
+      ? ''
+      : `
+          <div class="signed-in-card">
+            <p>
+              Using <strong>${escapeHtml(stored.model)}</strong> at
+              <strong>${escapeHtml(hostOf(stored.baseUrl))}</strong>${
+                stored.hasApiKey ? ' — an API key is stored for it' : ''
+              }.
+            </p>
+            <div class="button-row">
+              <button id="setup-model-forget" type="button" class="secondary">
+                Forget these model settings
+              </button>
+            </div>
+            <p class="note">
+              Removing these leaves this site, its sign-in and everything else
+              untouched — extraction simply goes back to filling those columns
+              from the documents alone.
+            </p>
+          </div>`;
+
+  return `
+      <details id="setup-model" ${stored === null ? '' : 'open'}>
+        <summary>Optional: let a language model fill gaps the documents do not answer</summary>
+        <p class="hint">
+          Leave this empty and nothing here applies: no model is contacted, nothing
+          leaves this computer, and your spreadsheets are built exactly as they are
+          today. Fill it in and a model may write <strong>only</strong> into columns a
+          profile asked it to, and only where the extractor found nothing or already
+          flagged its answer as a guess. Everything it writes is flagged for you to
+          check.
+        </p>
+        ${current}
+
+        <label for="setup-model-base-url">
+          Model address — <code>http://localhost:11434/v1</code> for Ollama on this
+          computer, or <code>https://api.openai.com/v1</code> for a hosted one
+        </label>
+        <input
+          id="setup-model-base-url"
+          name="modelBaseUrl"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="e.g. http://localhost:11434/v1"
+          value="${escapeHtml(f.modelBaseUrl)}"
+        />
+
+        <label for="setup-model-name">Model name at that address — for example <code>llama3</code></label>
+        <input
+          id="setup-model-name"
+          name="modelName"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          value="${escapeHtml(f.modelName)}"
+        />
+
+        <label for="setup-model-key">
+          API key — needed only for a <strong>hosted</strong> service that charges for
+          use. A model running on this computer needs no key, so leave this empty.
+        </label>
+        <input
+          id="setup-model-key"
+          name="modelKey"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          value="${escapeHtml(f.modelKey)}"
+        />
+        <p class="hint">
+          ${
+            stored?.hasApiKey === true
+              ? 'A key is stored for this site. Leave this empty to keep it, or type a new one to replace it.'
+              : 'Stored encrypted for your Windows account only, exactly like your password.'
+          }
+        </p>
+
+        <label for="setup-model-budget">
+          Most characters to send from one document — a smaller model needs a
+          smaller number. Longer documents are cut down to their opening and any
+          headed sections.
+        </label>
+        <input
+          id="setup-model-budget"
+          name="modelBudget"
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          spellcheck="false"
+          value="${escapeHtml(f.modelBudget)}"
+        />
+
+        <label for="setup-model-cap">
+          Most requests one run may make — the ceiling on what a single batch can
+          cost. One request per column the model may fill, so a row with two such
+          columns costs two. Anything past it is left blank and flagged.
+        </label>
+        <input
+          id="setup-model-cap"
+          name="modelCap"
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          spellcheck="false"
+          value="${escapeHtml(f.modelCap)}"
+        />
+
+        <label for="setup-model-timeout">
+          Seconds to wait for one answer — raise this if a model on this computer
+          is slow rather than broken. Ninety seconds is ordinary for a small model
+          on an older machine.
+        </label>
+        <input
+          id="setup-model-timeout"
+          name="modelTimeout"
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          spellcheck="false"
+          value="${escapeHtml(f.modelTimeout)}"
+        />
+      </details>`;
+}
+
+/** A base URL's host for display, or the address itself if it will not parse --
+ *  what the operator typed is more use to them than the word "invalid". */
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
+}
+
+/**
  * The whole screen as markup, separated from `renderSetup` so it can be
  * asserted against as a string -- this project has no jsdom, and the existing
  * screen tests (ui/duplicates.ts and its test) read the markup a renderer
@@ -818,6 +1072,8 @@ export function setupMarkup(props: SetupProps): string {
         ${authSection(props, forWhat)}
 
         ${collectionSection(props)}
+
+        ${modelSection(props)}
 
         ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
@@ -892,6 +1148,61 @@ export function instanceFrom(props: SetupProps): {
   };
 }
 
+/**
+ * One typed number, or NaN.
+ *
+ * A BLANK BOX IS NaN AND NOT ZERO, which is the whole reason this exists rather
+ * than a bare `Number()`. `Number('')` is 0, and 0 is a legitimate run cap
+ * meaning "make no requests at all" -- so an operator who filled in an address
+ * and left the cap box alone would configure a model that silently never runs,
+ * with every row reporting that it hit a limit nobody set. NaN is refused,
+ * loudly, by name.
+ */
+function typedNumber(text: string): number {
+  const trimmed = text.trim();
+  return trimmed === '' ? Number.NaN : Number(trimmed);
+}
+
+/**
+ * The model endpoint this screen would store, or null when none was entered.
+ *
+ * NULL WHEN THE ADDRESS OR THE MODEL NAME IS BLANK, because half an endpoint
+ * cannot be called and "partly configured" is not a state this feature has: it
+ * is on or it does not exist. `app.ts` stores nothing at all for a null, so an
+ * operator who never touches this section keeps exactly today's behaviour.
+ *
+ * NOTHING IS VALIDATED HERE, DELIBERATELY. The rules about what a budget, a cap
+ * and a time limit may be belong to `assertUsableBudget` (core/ai/slice.ts),
+ * `assertUsableCap` (core/ai/fill.ts) and `assertUsableTimeout`
+ * (core/ai/provider.ts) -- the code that actually runs with these numbers --
+ * and `secrets.ts#setModel` calls those three on the way in. A copy of them
+ * here would be a second opinion free to drift from the first, and the shape of
+ * failure that produces is the worst one available: a value this screen accepts
+ * and the run then refuses, hundreds of rows later, by a message about a text
+ * box the operator closed an hour ago. So a mistyped number passes through as
+ * NaN and comes straight back as an error on this screen, in core's own words.
+ *
+ * The time limit is the one conversion: SECONDS on screen, milliseconds in
+ * `ProviderConfig`. Nobody types 120000, and nothing downstream thinks in
+ * seconds.
+ */
+export function modelFrom(props: SetupProps): ModelSettings | null {
+  const f = props.fields;
+  const baseUrl = f.modelBaseUrl.trim();
+  const model = f.modelName.trim();
+  if (baseUrl === '' || model === '') return null;
+  return {
+    baseUrl,
+    model,
+    // Blank means "keep whatever is stored for this endpoint" -- resolved in
+    // secrets.ts#setModel, which is the only place that can see the stored one.
+    apiKey: f.modelKey,
+    budget: typedNumber(f.modelBudget),
+    cap: typedNumber(f.modelCap),
+    timeoutMs: typedNumber(f.modelTimeout) * 1000,
+  };
+}
+
 export function settingsFrom(props: SetupProps): Settings {
   const f = props.fields;
   if (f.authMode === 'password') {
@@ -947,6 +1258,12 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   field('#setup-client-secret', 'clientSecret');
   field('#setup-redirect-uri', 'redirectUri');
   field('#setup-attachment-path', 'attachmentUuidPath');
+  field('#setup-model-base-url', 'modelBaseUrl');
+  field('#setup-model-name', 'modelName');
+  field('#setup-model-key', 'modelKey');
+  field('#setup-model-budget', 'modelBudget');
+  field('#setup-model-cap', 'modelCap');
+  field('#setup-model-timeout', 'modelTimeout');
 
   root.querySelector<HTMLSelectElement>('#setup-collection')?.addEventListener('change', (e) => {
     props.onCollectionChange((e.target as HTMLSelectElement).value);
@@ -969,10 +1286,14 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
     .querySelector<HTMLButtonElement>('#setup-forget-password')
     ?.addEventListener('click', () => props.onForgetPassword());
 
+  root
+    .querySelector<HTMLButtonElement>('#setup-model-forget')
+    ?.addEventListener('click', () => props.onForgetModel());
+
   root.querySelector<HTMLButtonElement>('#setup-back')?.addEventListener('click', () => props.onBack());
 
   root.querySelector<HTMLFormElement>('#setup-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
-    props.onSave(instanceFrom(props), settingsFrom(props));
+    props.onSave(instanceFrom(props), settingsFrom(props), modelFrom(props));
   });
 }

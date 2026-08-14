@@ -61,6 +61,33 @@ export interface FillTarget {
 }
 
 /**
+ * Refuse a run cap nothing sensible can be counted against.
+ *
+ * A NaN cap is the worse of the two configuration faults this pass can carry:
+ * it compares false against everything, so `used >= cap` never fires, the
+ * ceiling the operator agreed to silently does not exist, and every row in the
+ * batch is sent to a paid endpoint.
+ *
+ * EXPORTED SO THE SETTINGS STORE CAN ASK BEFORE ANYTHING IS SAVED, for the same
+ * reason `assertUsableBudget` is (see slice.ts). A mistyped box should be
+ * refused on the screen where it was typed, not four hundred rows into a run --
+ * and the two answers cannot disagree if there is only one of them. A second
+ * copy on the way in is free to drift from the one that actually runs, which
+ * would let the settings screen accept a value the run then refuses.
+ *
+ * ZERO IS ALLOWED, and is not the same as a mistake: it means "make no requests
+ * at all", every row says it was stopped by the limit, and nothing is spent.
+ */
+export function assertUsableCap(cap: number): void {
+  if (!Number.isFinite(cap) || cap < 0) {
+    throw new ValidationError(
+      `The model run limit must be zero or a positive number, but it was '${String(cap)}'. ` +
+        `It is the most requests one run may make; nothing beyond it is sent, and every row it stops says so.`,
+    );
+  }
+}
+
+/**
  * What is written into `_source` for a cell a model wrote.
  *
  * SET HERE RATHER THAN THROUGH `rows.ts#sourceKind`, which has no `ai` case and
@@ -260,12 +287,7 @@ export async function fillWithModel(
   // compares false against everything, so the ceiling the operator agreed to
   // silently does not exist and every row is sent.
   assertUsableBudget(options.budget);
-  if (!Number.isFinite(options.cap) || options.cap < 0) {
-    throw new ValidationError(
-      `The model run limit must be zero or a positive number, but it was '${String(options.cap)}'. ` +
-        `It is the most requests one run may make; nothing beyond it is sent, and every row it stops says so.`,
-    );
-  }
+  assertUsableCap(options.cap);
 
   let used = 0;
 

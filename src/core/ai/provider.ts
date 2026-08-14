@@ -45,6 +45,34 @@ export const MODEL_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 /**
+ * Refuse a time limit this provider cannot honour.
+ *
+ * `AbortSignal.timeout` validates its own argument and throws `RangeError` or
+ * `TypeError` -- neither of which is an `ApiError`, and `fill.ts` catches
+ * `ApiError`. Zero is worse than either: it is accepted, and then every call in
+ * the batch fails with "did not answer within 0 milliseconds", which reads as a
+ * broken model rather than as a mistyped box.
+ *
+ * EXPORTED SO THE SETTINGS STORE CAN ASK BEFORE ANYTHING IS SAVED, the same
+ * arrangement `assertUsableBudget` (slice.ts) and `assertUsableCap` (fill.ts)
+ * already have. There is one rule for what a time limit may be, and the screen
+ * that collects it and the code that uses it both read that one rule -- a copy
+ * on the settings side would be free to accept a value this constructor then
+ * refuses, four hundred rows later.
+ */
+export function assertUsableTimeout(timeoutMs: number): void {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS) {
+    throw new ApiError(
+      `The model time limit must be a number of milliseconds between 1 and ` +
+        `${MAX_TIMEOUT_MS}, but it was '${String(timeoutMs)}'. ` +
+        `${MODEL_TIMEOUT_MS} is the default, and suits a local model on a slow machine.`,
+      0,
+      '',
+    );
+  }
+}
+
+/**
  * Sampling temperature.
  *
  * ZERO, BECAUSE INVENTION IS THE FAILURE THIS DESIGN EXISTS TO PREVENT.
@@ -189,24 +217,7 @@ export class OpenAiCompatibleProvider {
     }
 
     this.timeoutMs = config.timeoutMs ?? MODEL_TIMEOUT_MS;
-    // `AbortSignal.timeout` validates its own argument and throws RangeError or
-    // TypeError -- neither of which is an ApiError, and `fill.ts` catches
-    // ApiError. Zero is worse than either: it is accepted, and then every call
-    // in the batch fails with "did not answer within 0 milliseconds", which
-    // reads as a broken model rather than a mistyped box.
-    if (
-      !Number.isFinite(this.timeoutMs) ||
-      this.timeoutMs <= 0 ||
-      this.timeoutMs > MAX_TIMEOUT_MS
-    ) {
-      throw new ApiError(
-        `The model time limit must be a number of milliseconds between 1 and ` +
-          `${MAX_TIMEOUT_MS}, but it was '${String(config.timeoutMs)}'. ` +
-          `${MODEL_TIMEOUT_MS} is the default, and suits a local model on a slow machine.`,
-        0,
-        '',
-      );
-    }
+    assertUsableTimeout(this.timeoutMs);
   }
 
   async complete(prompt: string): Promise<string> {
