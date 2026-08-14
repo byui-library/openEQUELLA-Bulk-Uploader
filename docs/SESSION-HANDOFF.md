@@ -4,16 +4,18 @@ Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **1968 passing across 100 files**.
+1. `npm install && npm test` — expect **2004 passing across 101 files**.
    `npm run typecheck`, `npm run build` and `npm run build:desktop` are all
    clean.
 2. **You are probably on `feature/llm-provider`.** It carries 25 commits and
    **is not merged**. `main` carries **v1.1.1**. The repository is **public**
    (`byui-library/openEQUELLA-Bulk-Uploader`, Apache-2.0) — spec 2 happened;
    anything committed here is world-readable.
-3. **The language-model feature is built and has NEVER been run against a real
-   model.** That is the next thing to do and it is the operator's to do. See
-   "The language model: built, unproven" below before touching any of it.
+3. **The language-model feature has now been run against a real model, and it
+   fabricated.** A verification layer was built in response and refuses a value
+   the document does not support; what nobody has judged yet is whether the
+   descriptions it keeps are any good. See "The language model: run against a
+   real model, and guarded" below before touching any of it.
 4. **Three things you must not assume.** All are below in full; each would be
    an expensive mistake:
    - **A session behind a load balancer needs EVERY cookie, not just
@@ -30,31 +32,69 @@ Read this first.
      which the sync documentation names, is **generated** by openEQUELLA and is
      not in the schema; nothing writes it.
 
-## The language model: built, unproven — 2026-08-14
+## The language model: run against a real model, and guarded — 2026-08-14
 
 **All 14 tasks of
 [the plan](superpowers/plans/2026-08-14-llm-provider.md) are implemented on
 `feature/llm-provider`.** One OpenAI-compatible provider serves a local runtime
 or a hosted endpoint; `src/core/ai/` holds the rule, the slicer, the prompt,
-the provider, the fill pass and the confirmation. `CLAUDE.md` carries the
-domain facts this established — read those before changing any of it.
+the provider, the fill pass, the verification and the confirmation. `CLAUDE.md`
+carries the domain facts this established — read those before changing any of it.
 
-**The one thing left is the one thing no test can do.** Nothing has ever been
-sent to a real model. Output quality cannot be asserted, and Task 13 exists
-solely so a person reads every generated description against its source
-document, looking for an invented date, place or relative. Until that happens
-this branch should not merge.
+**It has now been run against a real model**, which is the thing this section
+used to say had never happened: ten scanned obituaries, `llama3.2:3b` served
+locally by Ollama, on 2026-08-14. Ten generated descriptions and the 1-of-10
+eligibility figure below are not in conflict — the shipped template sends almost
+nothing, so getting ten outputs to read means the scratch evaluation profile
+Task 13 prescribes, never a loosened rule.
 
-**Task 13 needs a deliberately degraded batch, and the plan's original premise
-was wrong.** It claimed tier 3 flags every obituary row so every row is
-eligible. The shipped template's description uses `compose`, which attaches no
-note, and has no `{ opening: true }` source at all — so the model fires only
-where `compose` produced nothing, which needs the death date, the birth date
-**and** the Ricks mention all missing at once. Expect low single-digit percent
-on a real batch, possibly zero on ten files. **Do not read that as the feature
-being broken, and do not loosen the eligibility rule to make the evaluation
-easier** — build a batch that genuinely defeats extraction, or use a scratch
-profile that is never shipped.
+**What it found: the model fabricates, and the prompt does not stop it.** 2 of 10
+generated descriptions asserted facts the source documents do not contain — an
+affiliated institution neither document mentions, and in one case a full death
+date for a document that states **no date of any kind**. The shipped prompt says
+*"Use only what the document states. Do not invent names, dates, places or
+events"* and the profile instruction says to include the affiliation clause only
+where the document supports it. Neither held.
+
+**It is not a misreading.** The dateless document was processed three times at
+temperature 0 and produced three different death dates. It is generating a
+plausibly shaped value to fill a slot.
+
+**Everything downstream behaved correctly, which is the point.** The cell was
+flagged, `_source` read `ai`, the note told the operator to check. **A flag is
+not a guard**: in a collection with no moderation workflow, a fabricated date a
+reviewer skims past is permanent and indistinguishable from a real one.
+
+**What was built in response: `src/core/ai/verify.ts`**, commit `8224934`. Every
+generated value is checked against the whole document before it is written, and
+`fill.ts` refuses the **whole** value if any checkable claim is unsupported —
+never a repaired one, because this tool does not edit generated prose. Built from
+invented fixtures only, then run against those ten real documents it had never
+seen: **2 of 2 fabrications refused, 8 of 8 supported descriptions kept, zero
+false rejections.** The refused row ends with an empty cell, no `ai` in
+`_source`, and a note naming each unsupported claim. The design records the three
+decisions and their reasoning under "Verification: what may be written into a
+cell".
+
+**What is still unjudged: whether the eight kept descriptions are any good.**
+Groundedness is not quality. Verification answers "does the document support
+this?"; nobody has yet answered "is this worth cataloguing?", and no test can.
+That is Task 13 and it is still open — a person reading every generated
+description against its source. Note also what verification cannot do: it catches
+a claim the document does not support, and it cannot tell whether a supported
+date is attached to the right person. A model can still say something false using
+only true tokens.
+
+**A normal batch fires on almost nothing, and that is now measured rather than
+predicted: 1 of 10 rows** on the shipped template. The plan's original premise
+was wrong — it claimed tier 3 flags every obituary row so every row is eligible.
+The shipped template's description uses `compose`, which attaches no note, and
+has no `{ opening: true }` source at all, so the model fires only where `compose`
+produced nothing: the death date, the birth date **and** the Ricks mention all
+missing at once. That happened on one document of ten. **Do not read that as the
+feature being broken, and do not loosen the eligibility rule to make an
+evaluation easier** — build a batch that genuinely defeats extraction, or use a
+scratch profile that is never shipped.
 
 **Why the rule is not loosening**, decided 2026-08-14 on archival grounds: a
 description assembled from extracted facts is evidence with a traceable origin,
@@ -268,7 +308,8 @@ Sign-in is confirmed working on **both** instances; there is no open loop there.
 **Superseded.** The operator deferred it on 2026-08-10 (*"Let's hold off on the
 ai piece for now"*) and un-deferred it on 2026-08-14, widening it to "any of
 the major AI LLMs including local models". It is built on
-`feature/llm-provider` — see "The language model: built, unproven" at the top.
+`feature/llm-provider` — see "The language model: run against a real model, and
+guarded" at the top.
 
 Tiers 1–3 still fill the description without a network call, and **that remains
 the behaviour wherever no endpoint is configured**, which is the point: with
@@ -635,7 +676,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            1968 tests, 100 files
+npm test            2004 tests, 101 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
@@ -710,7 +751,7 @@ anything wins; three of them are built:
 | 1 | table cell / label / document property | built earlier |
 | 2 | `{ "section": "Abstract" }` — text under a heading | **built** (`src/core/extract/sections.ts`) |
 | 3 | `{ "opening": true }` — first substantial paragraph | **built** (`src/core/extract/opening.ts`) |
-| 4 | a language model | **built** on `feature/llm-provider`, never run against a real model |
+| 4 | a language model | **built** on `feature/llm-provider`; run against a real model 2026-08-14, and its output is now verified against the document before it is written |
 
 Measured on the operator's own folders after building tiers 2 and 3:
 

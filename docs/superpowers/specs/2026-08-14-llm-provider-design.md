@@ -168,6 +168,97 @@ fields — dates, names, identifiers, anything from a controlled vocabulary —
 stay flagged for review even when an operator enables them, and the flag says
 which kind of field it was.
 
+## Verification: what may be written into a cell
+
+Added 2026-08-14, after the first run against a real model. **"The rule" above
+governs which CELLS the model may write. This governs what may be written INTO
+them, and the two are different guarantees** — the first protects values the
+document stated, and says nothing at all about whether what arrives in an
+eligible cell is true.
+
+### What the run found
+
+Ten scanned obituaries, `llama3.2:3b` served locally by Ollama. **2 of 10
+generated descriptions asserted facts the source documents do not contain** — an
+affiliated institution neither document mentions, and a full death date for a
+document that states no date of any kind. (Ten outputs to read means an
+evaluation profile asking for the model alone, as Task 13 of the plan prescribes.
+On the shipped template the model fires on **1 of those 10 rows**, because
+`compose` produced a value for the other nine — the eligibility rule working, not
+the feature failing.)
+
+The prompt already forbids exactly that (*"Use only what the document states. Do
+not invent names, dates, places or events"*), and the profile instruction already
+says to include the affiliation clause only where the document supports it.
+Neither held, and **the prompt cannot be made the defence**: this design's whole
+premise is "any of the major LLMs including local models", so the tool cannot
+know how capable the model behind an endpoint is.
+
+**The invention is not a misreading.** The document stating no date was processed
+three times at temperature 0 and produced three different death dates. A
+plausibly shaped value is being generated to fill a slot.
+
+**Everything downstream behaved correctly, and that is what made the point.** The
+cell was flagged, `_source` read `ai`, the note asked the operator to check.
+**A flag is not a guard.** In a collection with no moderation workflow, a
+fabricated date a reviewer skims past is permanent and indistinguishable from a
+real one.
+
+So: **the model proposes; the tool verifies.** `src/core/ai/verify.ts` reads the
+generated value against the whole document — not the slice that was sent, or a
+supported value would depend on the character budget — and returns the claims the
+document does not support.
+
+**Measured.** Built from invented fixtures only, then run against those ten real
+documents it had never seen: **2 of 2 fabrications refused, 8 of 8 supported
+descriptions kept, zero false rejections.** End to end, the refused row yields an
+empty cell, no `ai` in `_source`, and a note naming each unsupported claim.
+
+### Three decisions, taken by the operator
+
+**1. Reject the whole value, never repair it.** The tool does not edit generated
+prose. Stripping the offending clause leaves a half-removed sentence that reads
+as complete while meaning something different — a worse outcome than no
+description, because nothing about it looks wrong. A refusal leaves the cell
+exactly as it was found, which for an eligible cell is empty or holding the
+flagged guess it would have replaced.
+
+**2. Checkable claims only — dates, numbers, and assertions the profile already
+has a check for.** Paraphrase is legitimate description, and a check that read
+prose for support would have rejected the eight good ones. **A false rejection is
+expensive**: it discards a good description and teaches the operator to distrust
+the check. The claim kinds are the ones that can be compared against the
+document's own text without judging language. Proper nouns are deliberately not
+checked — OCR damage in a scan makes a real name look unsupported, and the batch
+this feature exists for is scanned pages.
+
+**3. Always on, with no setting.** This project has twice shipped a check that
+reported success without running — `MWDL/identifier` against a column the
+extractor never produced, and `MWDL/title` at any institution but this one. Both
+reported "no duplicates" by never having looked. A switch is how that happens a
+third time.
+
+### What it deliberately does not know
+
+**Nothing about any collection.** Not what an obituary is, not what a death date
+is, not that any institution exists. Every rule derives from the profile's own
+configuration — a `presence` source declares its trigger list, which is an
+operator saying "this collection cares whether the document evidences this" — and
+from the document's own text. A profile declaring no `presence` source gets no
+assertion check and **nothing is substituted**. A list of colleges would be the
+institution-specific assumption an entire release was spent removing.
+
+### What verification does not buy
+
+**It catches a claim the document does not support. That is all it catches.** It
+cannot tell whether a supported date is attached to the right person: a model can
+state something false using only tokens the document contains, and nothing here
+reads the sentence around a date to see what it says about it. An empty result
+means every checkable claim is supported, **not** that the value is true.
+
+Every model-written cell therefore stays flagged, exactly as before. Verification
+raises the floor; it does not replace the review.
+
 ## What gets sent
 
 **Whole document if it fits the model's context. Beyond that, the opening plus
@@ -291,9 +382,24 @@ Widening is editing a profile. If it requires code, the architecture is wrong.
   the zero-prerequisite promise.
 - **Against a real local model:** the one end-to-end path that costs nothing to
   run repeatedly, and the only way to see what the prompt actually produces.
+  **Done, 2026-08-14** — and it found the fabrication the verification section
+  above records. It is the only thing that could have.
+- **Groundedness, which CAN be tested and now is.** `tests/ai/verify.test.ts`
+  asserts, against invented fixtures, that a date the document does not state is
+  refused, that a claim finer than anything the document states is refused as
+  not that precise, and that supported dates, numbers and assertions are kept —
+  along with free prose, which is not treated as a claim at all. It is a
+  property of one value against one document, so it needs no model to run and no
+  opinion about what a good description is. Distinct from quality below: a
+  grounded description can still be a poor one.
 - **What cannot be tested:** output quality, at all. No assertion can say a
   description is good. That judgement is the operator's, on a real batch, and
-  the plan must say so rather than implying coverage it does not have.
+  the plan must say so rather than implying coverage it does not have. **Still
+  true after the run of 2026-08-14**: eight descriptions survived verification
+  and nobody has yet judged whether they are worth keeping. Verification answers
+  "does the document support this?", which is a different question from "is this
+  any good?" — and answering the first must not be read as having answered the
+  second.
 
 ## Rejected alternatives
 

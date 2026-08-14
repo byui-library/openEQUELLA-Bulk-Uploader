@@ -53,7 +53,7 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **1968 tests across 100 files.**
+exists to remove. **2004 tests across 101 files.**
 
 That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
 is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
@@ -109,13 +109,20 @@ it; the shipped obituary template enables it on `MWDL/description` and on
 nothing else. Design:
 [docs/superpowers/specs/2026-08-14-llm-provider-design.md](docs/superpowers/specs/2026-08-14-llm-provider-design.md).
 
-**Its output quality is UNVERIFIED and must not be described otherwise.** No
-assertion in the suite can say a description is good, and none tries; nothing has
-yet been run against a real model. What IS tested is the machinery: the rule
+**It has now been run against a real model, and that split the question in two.**
+On 2026-08-14, ten scanned obituaries through `llama3.2:3b` served locally by
+Ollama: **fabrication is measured and guarded, and output quality is still
+UNVERIFIED.** Two of the ten generated descriptions asserted facts the documents
+do not contain, so `src/core/ai/verify.ts` was built and every generated value is
+now checked against the document before it is written — see the verification fact
+below for the evidence and the measurement. **Nobody has yet judged whether the
+eight descriptions it kept are any GOOD.** That is a separate question:
+groundedness is not quality, no assertion in the suite can say a description
+reads well or serves a cataloguer, and none tries. Task 13 of the plan — a person
+reading every generated description against its source and forming that
+judgement — is what remains. What was already tested is the machinery: the rule
 about what may be overwritten, the cap, every failure path, and the guarantee
-that an institution which configures no endpoint sends nothing anywhere. Task 13
-of the plan — run it against a real Ollama and read every description — has not
-been done.
+that an institution which configures no endpoint sends nothing anywhere.
 
 **Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
 in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
@@ -155,6 +162,7 @@ src/core/ai/      The language-model pass. SEPARATE FROM extract/ because it is 
   eligible.ts       Pure. The rule: which cells a model may write. The safety property.
   slice.ts          Pure. How much of a document to send, and how the budget is divided.
   prompt.ts         Pure. Builds the request; cleans and judges the reply.
+  verify.ts         Pure. Which claims in a reply the document does not support. The guard.
   provider.ts       One OpenAI-compatible HTTP call. Injectable fetch. Every failure throws.
   fill.ts           The pass itself. Mutates rows, flags every write, discloses in the item.
   pass.ts           One construction of provider+options, so CLI and desktop cannot diverge.
@@ -463,7 +471,50 @@ shape, never as a value the code may assume.
   free to disagree with the one the operator is reading in `_notes`. Note the
   live consequence on the shipped obituary template: `compose` attaches no note,
   so a partially composed description (`Born 1938-07-22` and nothing else) is a
-  stated value and is never sent.
+  stated value and is never sent. **Measured on a real batch of ten documents,
+  2026-08-14: the model fired on 1 of 10 rows**, because `compose` produced a
+  value for the other nine. That is the rule working as designed, not the feature
+  failing, and it is the number to expect.
+- **A language model fabricates checkable facts, the prompt does not stop it, and
+  a flag is not a guard — so a generated value is verified against the document
+  before it is written, and one carrying an unsupported claim is refused whole.**
+  Established by running the feature against a real batch on 2026-08-14 — ten
+  scanned obituaries, `llama3.2:3b` served locally by Ollama. (Ten generated
+  descriptions and the 1-of-10 eligibility figure above are not in conflict:
+  the shipped template sends almost nothing, so getting ten outputs to read means
+  the scratch evaluation profile Task 13 of the plan prescribes — never a
+  loosened rule.) **2 of 10 generated descriptions asserted facts the source
+  documents do not contain**: an
+  affiliated institution neither document mentions, and in one case a full death
+  date for a document that states no date of any kind. The shipped prompt says,
+  in as many words, *"Use only what the document states. Do not invent names,
+  dates, places or events"*, and the profile instruction says to include the
+  affiliation clause only where the document supports it. **Neither held.** It is
+  not a misreading either: that document was processed **three times at
+  temperature 0 and produced three different death dates**, so what is happening
+  is the generation of a plausibly shaped value to fill a slot. Everything
+  downstream behaved correctly — the cell was flagged, `_source` read `ai`, and
+  the note told the operator to check — and that is exactly what made the point.
+  In a collection with no moderation workflow, a fabricated date a reviewer skims
+  past is permanent and indistinguishable from a real one. `verify.ts` therefore
+  runs between a usable reply and a written cell, never after, and `fill.ts`
+  discards the WHOLE value when any checkable claim fails: this tool does not
+  edit generated prose, and a half-removed sentence reads as complete while
+  meaning something different. **Built from invented fixtures only, then run
+  against those ten real documents it had never seen: 2 of 2 fabrications
+  refused, 8 of 8 supported descriptions kept, zero false rejections.** The
+  checks derive from the profile's own configuration — a `presence` source's
+  trigger list is an operator saying which claims this collection cares about —
+  and from the document's own text. **Nothing in it knows anything about any
+  collection**, which is what makes it survive at another institution; a list of
+  colleges would be the hardcoded assumption an entire release was spent
+  removing. **What it buys is bounded, and saying so is part of the fact.** It
+  catches a claim the document does not support. It cannot tell whether a
+  supported date is attached to the right person — a model can still say
+  something false using only true tokens — and it does not read prose at all,
+  because paraphrase is legitimate description and checking it would have
+  rejected the eight good ones. Every model-written cell stays flagged for that
+  reason.
 - **Consent must be CARRIED, not re-derived.** `extractRun` used to resolve the
   model endpoint from its own read of the store and send, holding no evidence
   anyone had agreed. The renderer's read and the main process's read agreed on

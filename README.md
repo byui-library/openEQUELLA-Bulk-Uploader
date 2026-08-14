@@ -127,12 +127,14 @@ What the probe of 2026-08-12 **did** confirm live, against `content.byui.edu`:
 | `GET /api/schema/{uuid}` | declares `namePath` and `descriptionPath`; `/MWDL/title` and `/MWDL/description` here |
 | `definition` is nested **JSON**, not XML | so the XML parser cannot be reused on the API path |
 
-**The language model pass has never been run against a real model.** Its
-machinery is tested against a stubbed provider — the rule about what may be
-overwritten, the cap, the failure paths, the guarantee that an unconfigured
-institution sends nothing anywhere — but **no test can assert that a generated
-description is good**, and none tries to. See *Letting a language model write a
-description*; it is off unless you configure an endpoint.
+**The language model pass has been run against a real model once** — ten scanned
+documents through a small local model, 2026-08-14. It fabricated on 2 of them, so
+the tool now checks every generated value against the document before writing it
+and discards one that states something the document does not support. **No test
+can assert that a generated description is good**, though, and none tries to:
+whether the ones that survive the check are worth keeping is still your
+judgement. See *Letting a language model write a description*; it is off unless
+you configure an endpoint.
 
 What has **not** been confirmed anywhere: other openEQUELLA versions, other
 authentication configurations, and any schema that is not BYU-Idaho's MWDL. Apostrophe escaping in a `where` clause is still assumed
@@ -781,12 +783,14 @@ only a guess, a language model can be asked to write the cell instead. It is
 **off unless you configure an endpoint**, and it can point at a model running on
 your own computer or at a hosted service.
 
-> **Output quality is unverified.** Nothing in this repository can assert that a
-> generated description is good — no test can — and this feature has not yet been
-> run against a real model on a real batch. Everything below describes machinery
-> that works; whether what comes out of it is worth keeping is your judgement,
-> made by reading the descriptions against the documents. Every cell a model
-> writes is flagged for exactly that reason.
+> **The tool checks the model's work, and output quality is still unverified.**
+> A model answer that states something the document does not support is
+> discarded — see *When the tool refuses the model's answer* below. What no test
+> can assert is that a description which passes that check is any *good*, and
+> nobody has yet judged a real batch. Everything below describes machinery that
+> works; whether what comes out of it is worth keeping is your judgement, made by
+> reading the descriptions against the documents. Every cell a model writes is
+> flagged for exactly that reason.
 
 #### With nothing configured, nothing is contacted and nothing is sent
 
@@ -946,6 +950,38 @@ explanation.
   unreachable answer leaves the cell as it found it and says what happened,
   quoting back up to 80 characters of anything the model said that was thrown
   away. There is no retry.
+- **A refusal, where the answer states something the document does not.** The
+  cell is left exactly as it was and the note names each unsupported claim — see
+  below.
+
+#### When the tool refuses the model's answer
+
+Before anything is written, the generated value is checked against the document
+it came from. **Dates, numbers, and anything the profile already has a check
+for** must appear in the document; where one does not, the answer is discarded
+whole and the cell is left as it was, empty or holding whatever it held before.
+Nothing is edited or partially kept — a sentence with a clause removed reads as
+complete while meaning something else.
+
+The note names the claim in the model's own words and says why it failed:
+
+```text
+MWDL/description: left blank -- the model's answer was refused, because it
+stated things this document does not support. "2024-01-06": the document states
+no such date. The model did answer and the call succeeded -- this tool discarded
+the answer -- so there is nothing to retry; read the document and fill this cell
+in by hand. What it said, which was not used: "Died 2024-01-06; Born 1938-07-22"
+```
+
+There is nothing to retry, because nothing went wrong at the endpoint: the call
+succeeded and the model answered. Read the document and fill the cell in by hand.
+
+**Free prose is not checked**, because paraphrase is a legitimate way to describe
+a document and checking it would throw away good descriptions. **And a check that
+passes does not make a value true**: it means every checkable claim appears in
+the document, not that the sentence around it says the right thing — a date can
+be real and attached to the wrong person. Every model-written cell stays flagged
+for that reason, and reading them against the documents is still the job.
 
 #### The rule: what a model may and may not overwrite
 
@@ -970,9 +1006,10 @@ death date, no birth date and no Ricks College mention, all three missing from
 the same document. A document that yielded only a birth date produces
 `Born 1938-07-22`, which is real, unflagged, and never sent.
 
-So expect the model to write on a **low single-digit percentage** of a real
-batch, and quite possibly on none of ten files. On the measured obituary
-folder, 9 of 10 documents gave up a death date. That is not the feature failing.
+So expect the model to write on a **small fraction** of a real batch. Measured on
+a real folder of ten scanned obituaries: **the model fired on 1 of them**,
+because `compose` produced a value for the other nine — 9 of 10 of those
+documents gave up a death date. That is not the feature failing.
 
 **It is deliberate, and it is the archival position.** A description assembled
 from extracted facts is evidence: every part of it can be traced back to
@@ -1016,11 +1053,16 @@ one look alike in the catalogue. This is the shipped one, in full:
 "aiInstruction": "Write one line in this form, omitting any part the document does not state: Died <date>; Born <date>; Attended Ricks College. Use ISO dates (YYYY-MM-DD). Include the last clause only if the document says the person attended Ricks College or BYU-Idaho."
 ```
 
-**The last sentence is doing the most work in that string.** It is what stops a
-model appending *Attended Ricks College* to a record that never mentioned it —
-an assertion about a real person, in a permanent catalogue with no moderation
-queue. If you write an instruction of your own, give every claim it invites the
-same evidence requirement.
+**The last sentence is doing the most work in that string** — and on its own it
+is not enough. It asks the model not to append *Attended Ricks College* to a
+record that never mentioned it, which would be an assertion about a real person
+in a permanent catalogue with no moderation queue. **Measured against a small
+local model, the instruction did not hold**: it made exactly that claim about
+documents that do not support it, which is why the check described under *When
+the tool refuses the model's answer* exists and runs regardless of what the
+instruction says. Write one of your own by all means, and give every claim it
+invites the same evidence requirement — but treat it as a request, not a
+guarantee.
 
 **Think hard before enabling one on a fact field.** A death date, a name, an
 identifier or a term from a controlled vocabulary is not a quality problem when
