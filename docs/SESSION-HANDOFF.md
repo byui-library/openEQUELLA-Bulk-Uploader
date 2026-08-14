@@ -1,18 +1,19 @@
-# Session handoff — updated 2026-08-13
+# Session handoff — updated 2026-08-14
 
 Read this first.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **1450 passing across 88 files**.
-   `npm run typecheck` and `npm run build:desktop` are both clean.
-2. **The institution-agnostic work is merged and released.** `main` carries
-   **v1.1.0** (tagged 2026-08-13, both installers built by CI). PRs #7–#11 are
-   in; the branches are pruned.
-3. **Open, awaiting the operator:** PR #12 (Apache 2.0 licence) and
-   `fix/attachment-field-wording` (the Setup changes below). The repository is
-   **still private** — making it public is the last step of spec 2 and is the
-   operator's to take.
+1. `npm install && npm test` — expect **1968 passing across 100 files**.
+   `npm run typecheck`, `npm run build` and `npm run build:desktop` are all
+   clean.
+2. **You are probably on `feature/llm-provider`.** It carries 25 commits and
+   **is not merged**. `main` carries **v1.1.1**. The repository is **public**
+   (`byui-library/openEQUELLA-Bulk-Uploader`, Apache-2.0) — spec 2 happened;
+   anything committed here is world-readable.
+3. **The language-model feature is built and has NEVER been run against a real
+   model.** That is the next thing to do and it is the operator's to do. See
+   "The language model: built, unproven" below before touching any of it.
 4. **Three things you must not assume.** All are below in full; each would be
    an expensive mistake:
    - **A session behind a load balancer needs EVERY cookie, not just
@@ -28,6 +29,50 @@ Read this first.
      interface and match what it produces. `item/attachments/attachment/uuid`,
      which the sync documentation names, is **generated** by openEQUELLA and is
      not in the schema; nothing writes it.
+
+## The language model: built, unproven — 2026-08-14
+
+**All 14 tasks of
+[the plan](superpowers/plans/2026-08-14-llm-provider.md) are implemented on
+`feature/llm-provider`.** One OpenAI-compatible provider serves a local runtime
+or a hosted endpoint; `src/core/ai/` holds the rule, the slicer, the prompt,
+the provider, the fill pass and the confirmation. `CLAUDE.md` carries the
+domain facts this established — read those before changing any of it.
+
+**The one thing left is the one thing no test can do.** Nothing has ever been
+sent to a real model. Output quality cannot be asserted, and Task 13 exists
+solely so a person reads every generated description against its source
+document, looking for an invented date, place or relative. Until that happens
+this branch should not merge.
+
+**Task 13 needs a deliberately degraded batch, and the plan's original premise
+was wrong.** It claimed tier 3 flags every obituary row so every row is
+eligible. The shipped template's description uses `compose`, which attaches no
+note, and has no `{ opening: true }` source at all — so the model fires only
+where `compose` produced nothing, which needs the death date, the birth date
+**and** the Ricks mention all missing at once. Expect low single-digit percent
+on a real batch, possibly zero on ten files. **Do not read that as the feature
+being broken, and do not loosen the eligibility rule to make the evaluation
+easier** — build a batch that genuinely defeats extraction, or use a scratch
+profile that is never shipped.
+
+**Why the rule is not loosening**, decided 2026-08-14 on archival grounds: a
+description assembled from extracted facts is evidence with a traceable origin,
+and `_source` records one origin per cell, so replacing it would merge verified
+fact and machine assertion with no way to tell them apart. An incomplete but
+traceable description outranks a complete but unverifiable one. The model may
+fill a gap; it may never overwrite one.
+
+**Worth doing eventually:** `flagged` currently means both "a human should check
+this" and "the model may replace this". An incomplete composed value deserves
+the first and not the second. Separating them is the honest version of what
+"let the model improve a partial description" was reaching for.
+
+**Known, not fixed:** `m.miles` appears in 40 test fixtures across four files,
+and `milesm` once in `tests/passwordAuth.test.ts`. Both are the operator's real
+surname rather than a botanical pseudonym, both violate this repo's own rule,
+and the repository is now public. The scrub was deliberately kept out of the
+LLM branch so it can be reviewed on its own.
 
 ### What v1.1.1 adds, and why
 
@@ -144,14 +189,17 @@ The lesson generalises past this codebase: **a 200 is not proof of identity.**
 If a probe cannot say *which user* the server thinks it is talking to, it has
 not verified sign-in.
 
-### DO NOT ASSUME: spec 2 has not started
+### Spec 2 has happened — the repository is PUBLIC
 
-Publishing the repository — **a licence, a README written for outside readers,
-and the audit of ~196 commits of history** — is
-[spec 2](superpowers/specs/2026-08-12-institution-agnostic-design.md), and none
-of it exists. It was kept separate on purpose: it is the only step that cannot
-be undone. Whether BYU-Idaho's `alumni-obituary` template and
-`schema/_entity.xml` ship as worked examples is decided there, not here.
+**Superseded.** This section used to say publishing had not started. As of
+2026-08-14: `LICENSE` exists, `package.json` declares `Apache-2.0`, the README
+carries a section written for outside readers, and `gh repo view` returns
+`"isPrivate": false`. History is 298 commits, not the ~196 estimated here.
+
+**Anything committed to this repository is world-readable.** That changes what
+may safely go in a fixture, a comment or a doc — see the pseudonym rule in
+`CLAUDE.md`, and the `m.miles` note above, which is now a public exposure
+rather than an untidiness.
 
 ### What the probe found — 2026-08-12, content.byui.edu
 
@@ -215,12 +263,16 @@ sign-in fix. To cut another: bump package.json, tag `vX.Y.Z`, push the tag.
 
 Sign-in is confirmed working on **both** instances; there is no open loop there.
 
-### Do not start the AI description tier
+### The AI description tier — deferred, then built
 
-The operator deferred it on 2026-08-10: *"Let's hold off on the ai piece for
-now."* Tiers 1–3 fill the description without a network call, and that is the
-shipped behaviour. Tier 4 needs a provider decision and its own conversation.
-Do not begin it unasked.
+**Superseded.** The operator deferred it on 2026-08-10 (*"Let's hold off on the
+ai piece for now"*) and un-deferred it on 2026-08-14, widening it to "any of
+the major AI LLMs including local models". It is built on
+`feature/llm-provider` — see "The language model: built, unproven" at the top.
+
+Tiers 1–3 still fill the description without a network call, and **that remains
+the behaviour wherever no endpoint is configured**, which is the point: with
+nothing set up, nothing is contacted and nothing is sent.
 
 ### What is waiting on the operator
 
@@ -583,7 +635,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            1450 tests, 88 files
+npm test            1968 tests, 100 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
@@ -658,7 +710,7 @@ anything wins; three of them are built:
 | 1 | table cell / label / document property | built earlier |
 | 2 | `{ "section": "Abstract" }` — text under a heading | **built** (`src/core/extract/sections.ts`) |
 | 3 | `{ "opening": true }` — first substantial paragraph | **built** (`src/core/extract/opening.ts`) |
-| 4 | a language model | **not started** — needs its own conversation |
+| 4 | a language model | **built** on `feature/llm-provider`, never run against a real model |
 
 Measured on the operator's own folders after building tiers 2 and 3:
 
