@@ -1,4 +1,5 @@
 // src/core/ai/slice.ts
+import { ValidationError } from '../errors.js';
 import { readSection } from '../extract/sections.js';
 import { readOpening } from '../extract/opening.js';
 
@@ -6,7 +7,9 @@ export type SliceShape = 'whole' | 'opening+sections' | 'empty';
 
 export interface Slice {
   text: string;
-  /** Recorded on the row, so a surprising output can be explained. */
+  /** Intended to be recorded on the row by the fill pass -- Task 7. Nothing
+   *  records it yet, so a surprising output cannot yet be explained from the
+   *  spreadsheet. */
   shape: SliceShape;
 }
 
@@ -23,6 +26,13 @@ const SEPARATOR = '\n\n';
 /**
  * Shorter than this, a TRUNCATED part is a fragment rather than a passage.
  *
+ * `opening.ts` already fixes the length below which this codebase refuses to
+ * call a block prose at all -- `MIN_PROSE = 60` -- and a fragment shorter than
+ * that cannot carry a fact whatever it is cut from. This is that floor plus
+ * room for the heading line a section part carries in front of its body
+ * (`Executive Summary\n` is 18 characters), so a section is judged on its body
+ * rather than on its title.
+ *
  * Applies only to truncation. A section that is genuinely two lines long is
  * included whole -- it is short because the document is, not because the
  * budget cut it -- and dropping it would throw away the one thing the operator
@@ -37,14 +47,24 @@ const MIN_USEFUL = 80;
  * A part cut mid-word arrives at the model as damaged text, and damaged text is
  * where invention starts: a model handed "he died on 6 Janu" has to decide what
  * the rest said. Better to send less and have it be whole.
+ *
+ * WHERE THERE IS NO USABLE BOUNDARY, CUT HARD. A run with no spaces in it, or
+ * one space near the front, is not words -- it is an OCR run, a base64 blob or
+ * a long identifier -- so there is no word to break, and cutting to that one
+ * early space would return three characters and then discard them for being a
+ * fragment. `sections.ts` had exactly that bug, and it collapsed a
+ * 4,000-character section to a single letter.
  */
 function fitToBudget(part: string, limit: number): string {
   if (part.length <= limit) return part;
 
   const head = part.slice(0, limit);
   const lastSpace = head.lastIndexOf(' ');
-  const cut = (lastSpace > 0 ? head.slice(0, lastSpace) : head).trimEnd();
-  return cut.length >= MIN_USEFUL ? cut : '';
+  const atBoundary = (lastSpace > 0 ? head.slice(0, lastSpace) : '').trimEnd();
+  if (atBoundary.length >= MIN_USEFUL) return atBoundary;
+
+  const hard = head.trimEnd();
+  return hard.length >= MIN_USEFUL ? hard : '';
 }
 
 /**
@@ -67,12 +87,27 @@ function fitToBudget(part: string, limit: number): string {
  * matters most: the operator named that heading because it is where the answer
  * lives, and the opening is the tier this tool already flags as a guess.
  *
- * So each part gets an EQUAL SHARE OF WHAT IS LEFT, claimed sections-first,
- * with whatever a short part does not need handed back to the pool. Equal
- * shares bound what any one part can take; claiming in signal order decides who
- * benefits when a part comes in under its share; returning the remainder means
- * nothing is wasted. It is deterministic and needs no constant anyone has to
- * justify.
+ * So the budget is divided in TWO PASSES.
+ *
+ * **Pass one gives every part an equal share of what is left, claimed
+ * lowest-signal first.** An equal share is a CEILING: `floor(remaining / parts
+ * still to claim)`, so claiming early is a restriction and not an advantage,
+ * and a part that wants less than its share hands the rest back. Claiming order
+ * therefore decides one thing only -- who is sacrificed when the budget is too
+ * tight for everyone, because the earliest claimant faces the smallest share
+ * and is the first to fall under `MIN_USEFUL`. That must be the opening, the
+ * part this tool already flags as a guess, so the opening claims first and a
+ * section the operator named claims after it.
+ *
+ * **Pass two hands the leftover to the parts that were cut short,
+ * highest-signal first.** Without it, pass one's ceiling becomes a floor: a
+ * 49-character section beside an 845-character opening leaves the opening cut
+ * at its equal share and a quarter of the budget unspent, which for the local
+ * models this feature exists to serve is document the operator paid for and did
+ * not send. This is the pass where being early IS the advantage, so the order
+ * is reversed.
+ *
+ * Both passes are single and fixed-order, so the result is deterministic.
  *
  * Rejected:
  *
@@ -92,6 +127,18 @@ function fitToBudget(part: string, limit: number): string {
  * though it had -- and would hand the model a prompt with no document under it.
  */
 export function sliceForModel(text: string, options: SliceOptions): Slice {
+  // The budget reaches here from an operator's text box. Left to propagate,
+  // NaN makes every length comparison false and every slice empty, so the whole
+  // batch comes back `empty` and the fill pass reports "no text to read" on
+  // files that are full of text -- a false cause, pointing nowhere near the
+  // mistyped field. Refused at the door instead.
+  if (!Number.isFinite(options.budget) || options.budget <= 0) {
+    throw new ValidationError(
+      `The model character budget must be a positive number, but it was '${String(options.budget)}'. ` +
+        `Set it to the most text to send from one document -- a few thousand characters for a local model.`,
+    );
+  }
+
   const trimmed = text.trim();
   if (trimmed === '') return { text: '', shape: 'empty' };
   if (trimmed.length <= options.budget) return { text: trimmed, shape: 'whole' };
@@ -100,19 +147,33 @@ export function sliceForModel(text: string, options: SliceOptions): Slice {
   // document has them in.
   const parts: string[] = [];
   const opening = readOpening(trimmed);
-  if (opening !== '') parts.push(opening);
-  const openingIndex = opening !== '' ? 0 : -1;
+  let openingIndex = -1;
+  if (opening !== '') {
+    parts.push(opening);
+    // Derived, not assumed to be 0: correct only by accident if anything is
+    // ever pushed ahead of the opening.
+    openingIndex = parts.length - 1;
+  }
 
   for (const heading of options.sections) {
     const body = readSection(trimmed, heading).text.trim();
-    if (body !== '') parts.push(`${heading}\n${body}`);
+    if (body === '') continue;
+    // A section the opening already contains costs the budget twice and sends
+    // the model the same sentences instead of more document. `readOpening`
+    // returns the first prose LINE, and a PDF's extracted text is often one
+    // enormous line holding the abstract too -- which is the shape of every one
+    // of the twelve real articles in CLAUDE.md, none of which has `Abstract` at
+    // a line start.
+    if (opening.includes(body)) continue;
+    parts.push(`${heading}\n${body}`);
   }
   if (parts.length === 0) return { text: '', shape: 'empty' };
 
-  // Claimed sections first, opening last: the section is what the operator
-  // named, and the opening is the part this tool already treats as a guess.
-  const claimOrder = parts.map((_, index) => index).filter((index) => index !== openingIndex);
-  if (openingIndex !== -1) claimOrder.push(openingIndex);
+  // Lowest signal claims FIRST, because the earliest claimant faces the
+  // smallest share and is the first to be dropped as a fragment. See the
+  // two-pass explanation above -- claiming early is a ceiling, not a privilege.
+  const bySignal = parts.map((_, index) => index).filter((index) => index !== openingIndex);
+  const claimOrder = openingIndex === -1 ? [...bySignal] : [openingIndex, ...bySignal];
 
   // The separators are reserved up front rather than accounted for as parts are
   // kept, so the total cannot exceed the budget however many parts survive.
@@ -126,6 +187,18 @@ export function sliceForModel(text: string, options: SliceOptions): Slice {
     const fitted = fitToBudget(parts[index]!, share);
     kept[index] = fitted;
     remaining -= fitted.length;
+  }
+
+  // Pass two: the leftover goes to the parts pass one cut short, highest signal
+  // first -- the named sections, then the opening.
+  for (const index of [...bySignal, ...(openingIndex === -1 ? [] : [openingIndex])]) {
+    if (remaining <= 0) break;
+    const part = parts[index]!;
+    const already = kept[index]!;
+    if (already.length === part.length) continue;
+    const grown = fitToBudget(part, already.length + remaining);
+    remaining -= grown.length - already.length;
+    kept[index] = grown;
   }
 
   const assembled = kept.filter((part) => part !== '').join(SEPARATOR);
