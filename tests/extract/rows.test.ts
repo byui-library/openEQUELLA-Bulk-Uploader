@@ -755,7 +755,11 @@ describe('a finished row remembers which cells were only a guess', () => {
       ),
     );
     expect(row.flagged['MWDL/description']).toMatch(/start of the document/);
-    expect(row.flagged['MWDL/title']).toBeUndefined();
+    // `toBeUndefined` passes for a key that is PRESENT with value undefined, so
+    // it cannot see the note being recorded unconditionally. The contract is
+    // that only flagged columns appear at all, and Task 9's confirmation dialog
+    // will count these keys -- so count them here.
+    expect(Object.keys(row.flagged)).toStrictEqual(['MWDL/description']);
   });
 
   it('leaves flagged empty when every value was stated', () => {
@@ -764,6 +768,45 @@ describe('a finished row remembers which cells were only a guess', () => {
       pattern: '{name}.pdf',
       columns: [{ path: 'MWDL/title', sources: [{ filenameStem: true }] }],
     };
-    expect(buildRow(profile, 'a.pdf', EMPTY_DOC).flagged).toEqual({});
+    // toStrictEqual, not toEqual: toEqual ignores a present-but-undefined key.
+    expect(buildRow(profile, 'a.pdf', EMPTY_DOC).flagged).toStrictEqual({});
+  });
+
+  /**
+   * A transform note is NOT a flag, and these two pin that distinction -- the
+   * entire claim of this change. The source was certain it had the right value
+   * for the column; only rendering it is in doubt. A model replacing it would
+   * be overwriting something the document really does say.
+   */
+  it('does not flag a name the transform could not confidently split', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/creators/creator', sources: [{ label: 'Performer' }], transform: 'people' }],
+    };
+    const row = buildRow(profile, 'a.pdf', {
+      text: 'Performer: Thorn, Rowan',
+      hasTextLayer: true,
+      properties: {},
+      tables: [],
+    });
+    expect(row.notes.join(' ')).toMatch(/may be one name or two/);
+    expect(row.flagged).toStrictEqual({});
+  });
+
+  it('does not flag a date the transform could not recognise', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/date', sources: [{ label: 'Date' }], transform: 'date' }],
+    };
+    const row = buildRow(profile, 'a.pdf', {
+      text: 'Date: sometime in the spring',
+      hasTextLayer: true,
+      properties: {},
+      tables: [],
+    });
+    expect(row.notes.join(' ')).toMatch(/was not recognised as a date/);
+    expect(row.flagged).toStrictEqual({});
   });
 });

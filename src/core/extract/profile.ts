@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { ValidationError } from '../errors.js';
 import { suggest } from '../schema.js';
 import { placeholders } from './pattern.js';
-import { ATTACHMENT_COLUMN, type DocumentProperty, type Profile } from './types.js';
+import { ATTACHMENT_COLUMN, type DocumentProperty, type Profile, type Source } from './types.js';
 
 const PROPERTY_NAMES = ['title', 'author', 'subject', 'keywords', 'created'] as const;
 
@@ -31,7 +31,18 @@ const sourceSchema = z.union([
     presence: z.object({ any: z.array(z.string().min(1)).min(1), then: z.string().min(1) }).strict(),
   }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
+  z.object({ ai: z.literal(true) }).strict(),
 ]);
+
+/**
+ * Fails to compile if the Source union in types.ts grows a member this loader
+ * cannot parse. Without it a source can be type-legal and loader-illegal at
+ * once -- which is exactly what happened when `{ ai: true }` was added to the
+ * union and this schema was not, leaving a profile the code accepted and
+ * `parseProfile` rejected.
+ */
+const _sourcesAreExhaustive: Source extends z.infer<typeof sourceSchema> ? true : never = true;
+void _sourcesAreExhaustive;
 
 const columnSchema = z
   .object({
