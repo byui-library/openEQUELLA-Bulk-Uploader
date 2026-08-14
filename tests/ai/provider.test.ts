@@ -782,3 +782,56 @@ describe('the key never escapes', () => {
     expect(findsKey(seen)).toBe(false);
   });
 });
+
+/**
+ * The design says "Never a partial value". A reply cut off at the token limit
+ * is a well-formed non-empty string, so nothing downstream can tell it from a
+ * finished one: it passes `cleanReply` as `ok` and lands in a permanent
+ * catalogue record ending mid-sentence, carrying the ordinary "please check
+ * this" note and nothing saying it was cut.
+ */
+describe('a reply the model was cut off in the middle of', () => {
+  const truncated = (content: string, finish: string) =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content }, finish_reason: finish }] }),
+      { status: 200 },
+    );
+
+  it('is a failure, not a value', async () => {
+    const impl = vi.fn(async () =>
+      truncated('A long description that stops mid-sen', 'length'),
+    ) as unknown as typeof fetch;
+    await expect(
+      new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl).complete('p'),
+    ).rejects.toThrow(ApiError);
+  });
+
+  it('says the answer was cut short rather than that the model said nothing', async () => {
+    const impl = vi.fn(async () => truncated('Half a sen', 'length')) as unknown as typeof fetch;
+    const error = await new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl)
+      .complete('p')
+      .catch((e: unknown) => e);
+    expect((error as Error).message).toMatch(/middle of its answer|token limit/i);
+  });
+
+  /** `stop` is the ordinary finished answer and must not be disturbed. */
+  it('accepts a reply that finished normally', async () => {
+    const impl = vi.fn(async () => truncated('A description.', 'stop')) as unknown as typeof fetch;
+    await expect(
+      new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl).complete('p'),
+    ).resolves.toBe('A description.');
+  });
+
+  /**
+   * Several backends omit `finish_reason` entirely -- Ollama's compatibility
+   * layer among them. Treating absence as truncation would fail every call
+   * against them, which is the opposite of the one wire format this class
+   * exists to provide.
+   */
+  it('does not treat a missing finish_reason as truncation', async () => {
+    const impl = vi.fn(async () => reply('A description.')) as unknown as typeof fetch;
+    await expect(
+      new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl).complete('p'),
+    ).resolves.toBe('A description.');
+  });
+});
