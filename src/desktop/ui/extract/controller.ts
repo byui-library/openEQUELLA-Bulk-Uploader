@@ -3,6 +3,7 @@ import type { OeqApi } from '../../ipc.js';
 import { addColumn, removeColumn, moveColumn, setSources, setDefault } from '../../../core/extract/columns.js';
 import type { Profile, Source } from '../../../core/extract/types.js';
 import { errorMessage } from '../errors.js';
+import { aiConfirmation } from '../aiConfirm.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
 
 export interface ExtractControllerOptions {
@@ -18,6 +19,23 @@ export interface ExtractControllerOptions {
    * extraction runs either way (ipc.ts's schemaPaths).
    */
   instanceId?: string;
+  /**
+   * Ask the operator to approve something, and answer whether they did.
+   *
+   * INJECTED so `save()` can be tested without a DOM -- this project has no
+   * jsdom, deliberately -- and defaulted to `window.confirm`, which is the
+   * pattern app.ts's "Change credentials…" already uses for a click that cannot
+   * be undone.
+   *
+   * NOT THE PUBLISH GATE, and the difference is deliberate. Confirm's typed
+   * item count exists because publishing puts real items into a live collection
+   * with no moderation queue -- there is nothing to undo. This step writes a
+   * CSV to a path the operator picks; the recovery is to not use the file. What
+   * it costs is money and text leaving the machine, which is what the dialog
+   * states, and a run on a local model is not made to click through anything
+   * at all (ui/aiConfirm.ts).
+   */
+  confirm?: (text: string) => boolean;
   /** Called when the operator leaves the flow. */
   onExit(): void;
   /** Called after every state change; the caller decides which screen to draw. */
@@ -93,6 +111,45 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     if (state.profile === null) return;
     await guard(async () => ({ ...(await refreshPreview(fn(state.profile!))), removed: null }));
   };
+
+  /**
+   * Whether this run may go ahead, having told the operator what it will send.
+   *
+   * TRUE IS THE ANSWER IN EVERY CASE BUT ONE -- a real refusal of a real
+   * dialog. `aiConfirmation` returns null for every state in which nothing
+   * would be sent (no endpoint stored, no column asking for one, no documents,
+   * a cap of zero) and for an endpoint on this machine, and a null is not a
+   * question to be answered.
+   *
+   * A STORE THAT CANNOT BE READ IS "NO MODEL", never a reason to stop the
+   * extract. Extraction works offline and without any of this; refusing to
+   * build a spreadsheet because a settings file would not decrypt would break
+   * the half of the tool that has no prerequisites, over a feature the operator
+   * may never have configured.
+   */
+  async function approveModelRun(profile: Profile): Promise<boolean> {
+    let model: Awaited<ReturnType<OeqApi['getModel']>> = null;
+    try {
+      model = await options.api.getModel(options.instanceId ?? '');
+    } catch {
+      model = null;
+    }
+    if (model === null) return true;
+
+    const text = aiConfirmation({
+      profile,
+      // The whole folder, not the preview: the run reads every file fresh
+      // (extractHandlers.ts), so the preview's five rows would understate the
+      // count by two orders of magnitude on a real batch.
+      documents: state.scan?.supported.length ?? 0,
+      model: model.model,
+      baseUrl: model.baseUrl,
+      budget: model.budget,
+      cap: model.cap,
+    });
+    if (text === null) return true;
+    return (options.confirm ?? ((message: string) => window.confirm(message)))(text);
+  }
 
   return {
     state: () => state,
@@ -206,6 +263,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
 
     async save() {
       if (state.dir === null || state.profile === null) return;
+      if (!(await approveModelRun(state.profile))) return;
       const outPath = await options.api.chooseCsvPath();
       if (outPath === null) return;
       await guard(async () => {
