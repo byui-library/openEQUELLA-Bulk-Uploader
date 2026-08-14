@@ -493,9 +493,16 @@ export function unsupportedClaims(
 
   // One claim per distinct thing said, however many times it was said. A note
   // naming the same invented date three times reads as three problems.
+  //
+  // The separator below is WRITTEN AS AN ESCAPE, NEVER AS A RAW 0x00. A literal
+  // NUL byte there made git and ripgrep classify this entire file as binary, so
+  // every content search over it silently returned nothing -- including the
+  // grep offered as evidence that this module names no institution. Re-run
+  // properly the conclusion held, but the check had never run: the exact
+  // failure this module exists to prevent, sitting inside this module.
   const seen = new Set<string>();
   return claims.filter((claim) => {
-    const identity = `${claim.kind} ${claim.claim}`;
+    const identity = `${claim.kind}\u0000${claim.claim}`;
     if (seen.has(identity)) return false;
     seen.add(identity);
     return true;
