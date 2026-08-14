@@ -2,6 +2,142 @@
 
 Read this first.
 
+## RESUME HERE — session of 2026-08-14 (language model)
+
+**Branch `feature/llm-provider`, 32 commits, NOT merged and NOT yet reviewed to
+completion.** `npm test` → **2004 across 101 files**, typecheck, `build` and
+`build:desktop` all clean, working tree clean. The branch was pushed at the end
+of the session; nothing is on `main`.
+
+**Do not open a PR yet.** A code review of the verification layer returned
+`CHANGES REQUESTED` and **9 of its 11 findings are unfixed**. They are listed
+below with the inputs that reproduce them. The two that are done are the
+real-data scrub (`a238858`) and the NUL byte (`b30921b`).
+
+### The one-paragraph version
+
+A language model was wired in as a last-resort source for cells extraction could
+not fill. It was run against a real batch and **it fabricated**: 2 of 10
+generated descriptions asserted facts the documents do not contain, including a
+full death date for a document stating no date at all — three runs at
+temperature 0, three different dates. A verification layer
+(`src/core/ai/verify.ts`) now refuses a generated value carrying a claim the
+document does not support. Measured against that batch it refused 2 of 2 and
+kept 8 of 8, zero false rejections — **but that sample is n=10, one model, one
+collection, one language, and every gap below is absent from it by
+construction.**
+
+### What to fix first, in order
+
+1. **A date with no year is never checked.** `He died on January 6.` over a
+   document stating no date is **written into the catalogue today**. `FORMS` in
+   `verify.ts` has no month+day form and no separator form without a four-digit
+   year, and "no form matched" is treated as "no claim made". Same hole passes
+   fabricated *precision* whenever only the year is recognised —
+   `Died 2024-01-06T00:00:00Z.` (the `T` breaks the ISO form),
+   `Died in January of 2024.`, `Died January the 6th, 2024.` — each over a
+   document saying merely "in 2024". **This is the founding failure, still
+   open**, and `2024-01-06T00:00:00Z` is a routine model output shape.
+2. **`blank()` mixes UTF-16 offsets with code-point indices** (`verify.ts`,
+   around the span-masking helper). `span.start`/`end` come from
+   `RegExpExecArray.index`; `[...text]` is a code-point array. Ten emoji earlier
+   in a reply shift the mask and swallow a fabricated number; two expose `20` of
+   `2024` and refuse a good description. Fix: `text.split('')`. Note `quoted()`
+   in `fill.ts` is *correctly* code-point-based — do not conflate them.
+3. **Twelve classes of false rejection**, each a correct description refused
+   whole. Cheap format wins: `6.1.2024`, `4/2/98` (two-digit year),
+   `the 6th of January 2024`, thousands separators (`1.200`, `1 200`), spelled
+   numbers above ninety-nine, ordinal words, `3.5` vs "three and a half".
+4. **Non-English collections are unusable.** `MONTH_NAMES` is English-only, so
+   every day-precision date claim is refused at, say, a Spanish- or
+   German-language institution. **Not asking for multilingual parsing** — asking
+   that the note stop overstating: *"the document states no such date"* is a
+   claim about the document when all that is known is that no date **this tool
+   can recognise** supports it. Refusing remains the safe direction; the wording
+   and the documented limitation are what must change.
+5. **Five failures are reported under the wrong kind** — a congregation size
+   reported as a missing *date*, a phone number as a date, `06.01` as a number.
+   A note sending the operator to look for the one thing that is not the problem
+   is this codebase's named failure shape, inside the sentence they act on.
+6. **The year↔number equivalence runs both ways.** `Enrolment reached 2019.`
+   over `He died in 2019.` passes; `Born in 1938.` over `He owned 1938 books.`
+   passes. The docblock justifies only one direction and does not say it is
+   symmetric.
+7. **Four surviving mutations.** `SMALLEST_CHECKED` 10→30 is green across the
+   whole suite. Deleting `Number.isInteger(value) &&` is green. Deleting the
+   empty-span `continue` is green. **Deleting the empty-trigger filter is green
+   and is the dangerous one** — one blank string in a profile's `any` list makes
+   `includes('')` true and silently disables the assertion check for that source.
+8. **Two docblocks state the opposite of the code.** The `UNITS`/`TENS` comment
+   claims a gap in the list "can only ever make the check more permissive"; it
+   feeds the *supporting* set, so a gap causes a false **rejection**.
+   `SMALLEST_CHECKED`'s comment says numbers below it are unchecked; `3.5` is
+   checked, because the exemption is gated on `Number.isInteger`.
+9. **No test demonstrates the constraint the module exists to satisfy.** Every
+   fixture is a death notice. Add one built on a wholly different collection — a
+   journal article whose `presence` trigger is a funding body and whose document
+   states a page count — so the agnosticism is shown, not just asserted.
+
+Smaller, same review: `unsupportedClaims` re-derives the document's dates and
+numbers for **every cell of every row** and scans every span taken so far per
+match (quadratic in four-digit runs) — hoist it per row, the way `fill.ts`
+already hoists the slice. `fill.ts`'s "running it twice sends nothing the second
+time" is now true only of *written* cells; a refused cell stays eligible and
+re-charges. `verify.ts` refers to a `SEPARATED` identifier that does not exist,
+and says "run twice" where it was three runs.
+
+### Then, and only then
+
+- **Judge whether the kept descriptions are any good.** Groundedness is not
+  quality and no test can answer it. Reading the eight that were kept, most do
+  not follow the house style — names prepended, an age where a death date
+  belongs, `Attended Rick's College`, and one substituting a different
+  institution entirely (which passes verification, because it is not a trigger
+  the profile declares). **My read: that is a 3B-model problem, not a prompt
+  problem.** Do not elaborate the prompt against a weak model — get a capable
+  one and re-judge.
+- **Ollama's GPU backend on this machine is broken**, independently of anything
+  here: every model 500s with `ROCm error: invalid device function`, including
+  on a bare "Say OK." with this tool uninvolved. The session worked around it by
+  running `ollama serve` on port 11435 with `HIP_VISIBLE_DEVICES=-1`,
+  `ROCR_VISIBLE_DEVICES=-1`, `OLLAMA_LLM_LIBRARY=cpu`. That instance was stopped.
+- **Hand-test the desktop app.** Nothing on this branch has been driven through
+  the GUI. This project's record is that one screenshot of an empty dropdown
+  produced six defects with 1236 tests green throughout.
+- **Then** open the PR.
+
+### Two privacy items, both outstanding
+
+- **`m.miles` appears in 40 test fixtures across four files**, and `milesm` once
+  in `tests/passwordAuth.test.ts`. The operator's real surname, not a botanical
+  pseudonym, in a **public** repository. Deliberately kept off this branch so it
+  can be reviewed on its own.
+- **Real document text is in published history.** The phrase *"in the early
+  hours of Saturday morning"*, quoted from a real scanned obituary, reached
+  `verify.ts` and two fixtures during this session and was removed in `a238858`
+  — **but it was already on `origin/main`** in three commits from the
+  collection-templates work (`7897136`, `4156bfe`, `7f8ad6d`). Removing it from
+  published history is a separate decision, not a code change.
+- `tests/obits/` and a bare `obits/` are now gitignored (`481cf1a`). They
+  arrived **untracked and not ignored**, one `git add -A` from publishing ten
+  scanned obituaries naming real people with their dates.
+
+### Reproducing the run
+
+```bash
+npm run build
+OEQ_MODEL_BASE_URL=http://127.0.0.1:11435/v1 OEQ_MODEL=llama3.2:3b \
+OEQ_MODEL_TIMEOUT_SECONDS=600 \
+  node dist/cli/index.js extract --dir "tests/obits" \
+    --profile templates/alumni-obituary.profile.json --out out.csv --ai
+```
+
+Fires on **1 of 10** rows with the shipped template — that is the eligibility
+rule working, not a fault. To get ten outputs to read, copy the template and
+give the description an `{ "ai": true }` source alone. **That scratch profile is
+for evaluation and must never ship**, and the eligibility rule must not be
+loosened to make an evaluation easier.
+
 ## START HERE
 
 1. `npm install && npm test` — expect **2004 passing across 101 files**.
