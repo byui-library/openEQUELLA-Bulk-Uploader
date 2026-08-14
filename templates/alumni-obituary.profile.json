@@ -2,6 +2,7 @@
   "version": 1,
   "pattern": "{first} {last} Obituary.pdf",
   "checks": { "filenameWordsInText": { "ignore": ["Obituary"] } },
+  "aiInstruction": "Write one line in this form, omitting any part the document does not state: Died <date>; Born <date>; Attended Ricks College. Use ISO dates (YYYY-MM-DD). Include the last clause only if the document says the person attended Ricks College or BYU-Idaho.",
   "columns": [
     { "path": "attachment name", "sources": [{ "filename": true }], "locked": true },
     { "path": "MWDL/identifier", "sources": [{ "filename": true }] },
@@ -39,7 +40,10 @@
         }
       ]
     },
-    { "path": "MWDL/description", "sources": [{ "compose": "Died {death_date}; Born {birth_date}; {ricks}" }] },
+    {
+      "path": "MWDL/description",
+      "sources": [{ "compose": "Died {death_date}; Born {birth_date}; {ricks}" }, { "ai": true }]
+    },
     { "path": "MWDL/genres/genre", "sources": [], "default": "Alumni Obituary" },
     { "path": "MWDL/subjects/subject", "sources": [], "default": "History; Religion; MCK Special Collections" },
     { "path": "MWDL/contributors/contributor", "sources": [], "default": "BYUI Alumni Office" },
