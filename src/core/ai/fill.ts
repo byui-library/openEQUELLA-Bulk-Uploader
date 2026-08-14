@@ -6,6 +6,7 @@ import type { Column, DocumentData, ExtractedRow, Profile, Transform } from '../
 import { eligibleColumns } from './eligible.js';
 import { buildPrompt, cleanReply } from './prompt.js';
 import { assertUsableBudget, sliceForModel, type SliceShape } from './slice.js';
+import { unsupportedClaims, type UnsupportedClaim } from './verify.js';
 
 /**
  * Just enough of a provider to be substitutable in a test.
@@ -377,6 +378,42 @@ function quoted(discarded: string): string {
 }
 
 /**
+ * Why a reply was thrown away for stating what the document does not.
+ *
+ * ## A FOURTH EVENT, AND IT MUST NOT WEAR ANY OF THE OTHER THREE FACES
+ *
+ * This module already distinguishes a failed call, a reply the cleaner
+ * discarded, and a row nothing was sent for. A refusal is none of them: the call
+ * SUCCEEDED, the model ANSWERED, the answer was well formed, and this tool
+ * declined it. An operator told "the model gave no answer" would go and look at
+ * the model, which is the diagnosis-naming-the-one-place-the-problem-is-not
+ * failure this codebase has a name for. So the note says refused, says the model
+ * did answer, and says there is nothing to retry.
+ *
+ * ## IT NAMES EVERY FAILED CLAIM, WITH THE REASON BESIDE IT
+ *
+ * The operator's next action is to go to the document and look, and "some claim
+ * was unsupported" does not say what to look for. `claim` is the model's own
+ * wording so it can be found in the quoted reply, and `why` is the check's
+ * finding about that one claim -- a date the document never states reads
+ * differently from a date the document states less precisely, and the second is
+ * a hint about where to look.
+ *
+ * `flatten` on the claim for the same reason the reason string gets it: it is
+ * model output, and a control character is invisible in a spreadsheet cell and
+ * present in the file.
+ */
+function refusalNote(path: string, outcome: string, claims: UnsupportedClaim[]): string {
+  const listed = claims.map((claim) => `"${flatten(claim.claim)}": ${claim.why}.`).join(' ');
+  return (
+    `${path}: ${outcome} -- the model's answer was refused, because it stated things this ` +
+    `document does not support. ${listed} The model did answer and the call succeeded -- this ` +
+    `tool discarded the answer -- so there is nothing to retry; read the document and fill this ` +
+    `cell in by hand.`
+  );
+}
+
+/**
  * Fill eligible cells from a language model. Mutates the rows in place, the way
  * the rest of the extract pipeline already works.
  *
@@ -516,6 +553,36 @@ export async function fillWithModel(
         row.notes.push(
           `${path}: ${outcome} -- ${cleaned.reason}.` +
             `${quoted(cleaned.discarded)}${sentClause(slice.shape)}`,
+        );
+        continue;
+      }
+
+      // THE MODEL PROPOSES; THE TOOL VERIFIES. Between a usable reply and a
+      // written cell, and never anywhere else: a check that ran after the write
+      // would be a flag rather than a guard, and this tool writes to a permanent
+      // catalogue with no moderation queue.
+      //
+      // AGAINST `text`, THE WHOLE DOCUMENT, NOT `slice.text`. The model cannot
+      // have read more than the slice, so a claim the rest of the file supports
+      // is a coincidence rather than a fabrication -- and verifying the slice
+      // would make a supported value depend on the character budget, so lowering
+      // a setting would start refusing descriptions that had been fine.
+      //
+      // ALWAYS, WITH NO SETTING. This project has twice shipped a check that
+      // reported success without running, and a switch is how that happens a
+      // third time.
+      const unsupported = unsupportedClaims(cleaned.text, text, profile);
+      if (unsupported.length > 0) {
+        // THE WHOLE VALUE, never part of it. Stripping the offending clause
+        // would leave a half-removed sentence that reads as complete while
+        // meaning something different, and this tool does not edit generated
+        // prose. Nothing else on the row moves either: no cell, no `sources`
+        // entry, no `aiWritten` record -- which is what keeps the row counting
+        // as needing review -- and `flagged` is left standing, because the
+        // source's doubt has NOT been acted on.
+        row.notes.push(
+          `${refusalNote(path, outcome, unsupported)}` +
+            `${quoted(cleaned.text)}${sentClause(slice.shape)}`,
         );
         continue;
       }
