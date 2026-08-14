@@ -3,13 +3,28 @@ import { ValidationError } from '../errors.js';
 import { readSection } from '../extract/sections.js';
 import { readOpening } from '../extract/opening.js';
 
+/**
+ * How much of the document went.
+ *
+ * `empty` MEANS THREE DIFFERENT THINGS AND CANNOT TELL THEM APART: a document
+ * with no text at all, a document whose text yielded no opening and matched no
+ * named section, and a budget too small for any part to survive `MIN_USEFUL`.
+ * Only the first is knowable from outside, by asking the document -- which
+ * `fill.ts` does, and it says "no text to read" for that case alone. For the
+ * other two it names both possibilities rather than picking one, because a step
+ * that reports a cause it cannot know is this codebase's oldest defect and the
+ * fix is not to move it somewhere new. Splitting `empty` into two shapes was
+ * considered and refused: the operator's action is the same for both -- raise
+ * the budget, or look at the document -- so the distinction would cost a member
+ * of this union and buy a sentence nobody acts on differently.
+ */
 export type SliceShape = 'whole' | 'opening+sections' | 'empty';
 
 export interface Slice {
   text: string;
-  /** Intended to be recorded on the row by the fill pass -- Task 7. Nothing
-   *  records it yet, so a surprising output cannot yet be explained from the
-   *  spreadsheet. */
+  /** Recorded by `fill.ts` as a clause on the note for every cell it touched,
+   *  so a thin or surprising output can be explained from the spreadsheet
+   *  rather than blamed on the model. */
   shape: SliceShape;
 }
 
@@ -22,6 +37,31 @@ export interface SliceOptions {
 
 /** What separates one part from the next in the assembled text. */
 const SEPARATOR = '\n\n';
+
+/**
+ * Refuse a budget nothing can be sliced to.
+ *
+ * The budget reaches here from an operator's text box. Left to propagate, NaN
+ * makes every length comparison false and every slice empty, so the whole batch
+ * comes back `empty` and the fill pass reports "no text to read" on files that
+ * are full of text -- a false cause, pointing nowhere near the mistyped field.
+ * Refused at the door instead.
+ *
+ * EXPORTED SO THE FILL PASS CAN ASK BEFORE ITS LOOP, not because two callers
+ * wanted the same three lines. A mistyped budget is a CONFIGURATION fault
+ * affecting every row equally, and discovering it one row at a time produces
+ * four hundred identical notes after a run that spent nothing and looks like it
+ * tried. Sharing the guard rather than copying it is what stops the two answers
+ * drifting apart, which is the other half of the same argument.
+ */
+export function assertUsableBudget(budget: number): void {
+  if (!Number.isFinite(budget) || budget <= 0) {
+    throw new ValidationError(
+      `The model character budget must be a positive number, but it was '${String(budget)}'. ` +
+        `Set it to the most text to send from one document -- a few thousand characters for a local model.`,
+    );
+  }
+}
 
 /**
  * Shorter than this, a TRUNCATED part is a fragment rather than a passage.
@@ -127,17 +167,7 @@ function fitToBudget(part: string, limit: number): string {
  * though it had -- and would hand the model a prompt with no document under it.
  */
 export function sliceForModel(text: string, options: SliceOptions): Slice {
-  // The budget reaches here from an operator's text box. Left to propagate,
-  // NaN makes every length comparison false and every slice empty, so the whole
-  // batch comes back `empty` and the fill pass reports "no text to read" on
-  // files that are full of text -- a false cause, pointing nowhere near the
-  // mistyped field. Refused at the door instead.
-  if (!Number.isFinite(options.budget) || options.budget <= 0) {
-    throw new ValidationError(
-      `The model character budget must be a positive number, but it was '${String(options.budget)}'. ` +
-        `Set it to the most text to send from one document -- a few thousand characters for a local model.`,
-    );
-  }
+  assertUsableBudget(options.budget);
 
   const trimmed = text.trim();
   if (trimmed === '') return { text: '', shape: 'empty' };
