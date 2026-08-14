@@ -20,8 +20,34 @@
  * produced `09108/2019` and `07[221.193:8` makes a five-digit run routine
  * rather than hypothetical.
  */
-const MONTH =
-  '(?:January|February|March|April|May|June|July|August|September|October|November|December)';
+/**
+ * The month vocabulary, as a list so a second recogniser can be built from the
+ * SAME names rather than from a second copy of them.
+ *
+ * `core/ai/verify.ts` needs one -- it must find every date a document states,
+ * anywhere, rather than the one date following a phrase -- and the two have
+ * opposite cost asymmetries, so they are deliberately not the same pattern: a
+ * WRONG date here would be written into a catalogue as fact, while a MISSED
+ * date there refuses a description that was correct. What must never differ is
+ * the vocabulary, because a month one recogniser knows and the other does not
+ * is a disagreement about whether a document states a date at all.
+ */
+export const MONTH_NAMES: readonly string[] = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const MONTH = `(?:${MONTH_NAMES.join('|')})`;
 const DATE = `\\b${MONTH}\\s+\\d{1,2}\\s*,?\\s*\\d{4}(?!\\d)`;
 
 /** How far past a phrase a date may sit and still belong to it. */

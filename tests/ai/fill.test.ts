@@ -909,8 +909,17 @@ describe('what a write records about the column it wrote', () => {
     expect(rows[0]!.row.aiWritten['MWDL/description']?.factField).toBe(false);
   });
 
+  /**
+   * The document has to STATE the date the model returns, or `verify.ts` refuses
+   * the value and there is no write to record anything about. It states it in
+   * words while the model answers in ISO, which is the ordinary case and is
+   * incidentally a second demonstration that the two forms of one day are one
+   * date.
+   */
   it('marks a date column as a fact field', async () => {
-    const rows = [{ row: row({ cells: { 'MWDL/deathDate': '' } }), doc: doc(PROSE) }];
+    const rows = [
+      { row: row({ cells: { 'MWDL/deathDate': '' } }), doc: doc(`${PROSE} He died on April 2, 1998.`) },
+    ];
     await fillWithModel(rows, dateProfile, provider('1998-04-02'), options());
     expect(rows[0]!.row.aiWritten['MWDL/deathDate']?.factField).toBe(true);
   });
@@ -1027,5 +1036,200 @@ describe('what the provenance write records about itself', () => {
     await fillWithModel([{ row: built, doc: doc(PROSE) }], flagged, provider('A description.'), options());
     expect(built.notes.some((n) => n === expectedButEmptyNote('MWDL/conversionSpecifications'))).toBe(false);
     expect(built.cells['MWDL/conversionSpecifications']).toBe('Written by llama3');
+  });
+});
+
+/**
+ * ## A REPLY WHOSE FACTS THE DOCUMENT DOES NOT SUPPORT IS REFUSED WHOLE
+ *
+ * Run against a real batch with a small local model on 2026-08-14, two of ten
+ * generated descriptions contained fabricated facts -- a full ISO death date on
+ * a document stating no date of any kind (a DIFFERENT one each run, at
+ * temperature zero), and an affiliation asserted for documents mentioning none.
+ * The shipped prompt forbids exactly that in as many words, so the prompt cannot
+ * be the defence: the tool cannot know how capable the model behind an endpoint
+ * is. See `core/ai/verify.ts`.
+ *
+ * The whole value goes, never part of it. Stripping the offending clause would
+ * leave a half-removed sentence that reads as complete while meaning something
+ * different, and this tool does not edit generated prose.
+ *
+ * Every fixture here is invented, and modelled on the SHAPE of those failures.
+ */
+describe('a reply the document does not support', () => {
+  /** A document that states no date, no number and no affiliation -- exactly the
+   *  shape that drew an invented date out of a real model. */
+  const SILENT =
+    'Alder Hawthorn passed away peacefully in his sleep, in the early hours of Saturday ' +
+    'morning, at his home in Marrowfield. He is survived by his family and will be missed ' +
+    'by the many friends he made over a long working life in the town.';
+
+  const refused = async (reply: string, text = SILENT, p: Profile = profile) => {
+    const rows = [{ row: row(), doc: doc(text) }];
+    await fillWithModel(rows, p, provider(reply), options());
+    return rows[0]!.row;
+  };
+
+  it('leaves the cell exactly as it was', async () => {
+    const result = await refused('Alder Hawthorn died on 2024-01-06.');
+    expect(result.cells['MWDL/description']).toBe('');
+  });
+
+  it('does not replace a flagged value the extractor had put there', async () => {
+    const rows = [
+      {
+        row: row({
+          cells: { 'MWDL/description': 'Opening paragraph the extractor guessed.' },
+          flagged: { 'MWDL/description': 'taken from the start of the document' },
+        }),
+        doc: doc(SILENT),
+      },
+    ];
+    await fillWithModel(rows, profile, provider('Alder Hawthorn died on 2024-01-06.'), options());
+    expect(rows[0]!.row.cells['MWDL/description']).toBe('Opening paragraph the extractor guessed.');
+    // The source's doubt has NOT been acted on, so the flag must survive -- the
+    // cell is still a candidate for a better value.
+    expect(rows[0]!.row.flagged['MWDL/description']).toBe('taken from the start of the document');
+  });
+
+  it('records no source for a cell it did not write', async () => {
+    const result = await refused('Alder Hawthorn died on 2024-01-06.');
+    expect(result.sources['MWDL/description']).toBeUndefined();
+  });
+
+  /**
+   * NOT RECORDED IN `aiWritten`, and this is the counter's whole basis.
+   * `review.ts` subtracts that map from the notes to tell a routine model write
+   * from a real problem; a refusal recorded there would be subtracted out, and
+   * the row would report as needing no review while holding an empty cell.
+   */
+  it('records nothing in aiWritten, so the row still counts as needing review', async () => {
+    const rows = [{ row: row(), doc: doc(SILENT) }];
+    await fillWithModel(rows, profile, provider('Alder Hawthorn died on 2024-01-06.'), options());
+    expect(rows[0]!.row.aiWritten).toEqual({});
+    expect(needsReview(rows[0]!.row)).toBe(true);
+  });
+
+  it('names the claim that failed and why, and quotes what it threw away', async () => {
+    const result = await refused('Alder Hawthorn died on 2024-01-06.');
+    const note = result.notes.join(' ');
+    expect(note).toContain('MWDL/description:');
+    expect(note).toContain('2024-01-06');
+    expect(note).toMatch(/states no such date/i);
+    expect(note).toContain('What it said, which was not used:');
+  });
+
+  /**
+   * THREE DIFFERENT EVENTS, THREE DIFFERENT SENTENCES -- the rule this module
+   * already applies to a cleaner discard and a failed call. A refusal is neither:
+   * the model answered, the call succeeded, and this tool declined the answer.
+   * An operator told "the model gave no answer" would go and look at the model.
+   */
+  it('reads as a refusal, not as an empty answer and not as a failed call', async () => {
+    const note = (await refused('Alder Hawthorn died on 2024-01-06.')).notes.join(' ');
+    expect(note).toMatch(/refused/i);
+    expect(note).not.toMatch(/gave no answer|no text that could be used|declined to write/i);
+  });
+
+  it('names every failed claim, not just the first', async () => {
+    const note = (
+      await refused('Alder Hawthorn died on 2024-01-06 after 47 years in the trade.')
+    ).notes.join(' ');
+    expect(note).toContain('2024-01-06');
+    expect(note).toContain('47');
+  });
+
+  /** The row wrote nothing, so there is nothing to disclose. A provenance note
+   *  claiming a model contributed to a record it never touched is a false
+   *  statement in a permanent catalogue. */
+  it('discloses nothing in the item', async () => {
+    const withProvenance: Profile = {
+      ...profile,
+      columns: [
+        ...profile.columns,
+        { path: 'MWDL/conversionSpecifications', sources: [] },
+      ],
+      aiProvenance: { path: 'MWDL/conversionSpecifications', append: 'Written by {model}' },
+    };
+    const result = await refused('Alder Hawthorn died on 2024-01-06.', SILENT, withProvenance);
+    expect(result.cells['MWDL/conversionSpecifications']).toBeUndefined();
+  });
+
+  /**
+   * THE CHECK MUST BE INVISIBLE TO A GOOD ANSWER. Eight of those ten outputs
+   * were fine, and a verifier that also rejected them would be worse than none.
+   */
+  it('writes a value whose every checkable claim the document states', async () => {
+    const rows = [
+      {
+        row: row(),
+        doc: doc('Alder Hawthorn passed away on January 6, 2024, after 47 years in the trade.'),
+      },
+    ];
+    await fillWithModel(
+      rows,
+      profile,
+      provider('A bookbinder of Marrowfield. Died 2024-01-06, after 47 years in the trade.'),
+      options(),
+    );
+    expect(rows[0]!.row.cells['MWDL/description']).toBe(
+      'A bookbinder of Marrowfield. Died 2024-01-06, after 47 years in the trade.',
+    );
+    expect(rows[0]!.row.aiWritten['MWDL/description']).toBeDefined();
+  });
+
+  /**
+   * CHECKED AGAINST THE WHOLE DOCUMENT, NOT THE SLICE THAT WAS SENT. The model
+   * cannot have read more than the slice, so a claim the rest of the file
+   * supports is a coincidence rather than a fabrication -- and checking the
+   * slice would make a supported value depend on the character budget, so
+   * lowering a setting would start refusing descriptions that had been fine.
+   */
+  it('accepts a date stated in the part of the document the budget left out', async () => {
+    const rows = [
+      {
+        row: row(),
+        doc: doc(`${PROSE.repeat(8)}\nHe passed away on January 6, 2024, at home.`),
+      },
+    ];
+    await fillWithModel(rows, profile, provider('Died 2024-01-06.'), options({ budget: 200 }));
+    expect(rows[0]!.row.cells['MWDL/description']).toBe('Died 2024-01-06.');
+  });
+
+  /**
+   * THE ASSERTION CHECK'S VOCABULARY IS THE PROFILE'S OWN. A `presence` source
+   * declares a trigger list; where the reply names one and the document names
+   * none, the model has asserted something a check this tool already ran found
+   * no evidence for. Nothing in the code knows what the triggers mean, and a
+   * profile declaring none gets no check at all.
+   */
+  it('refuses an assertion a presence source in the profile found no evidence for', async () => {
+    const withPresence: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [
+        {
+          path: 'MWDL/relation',
+          composeOnly: true,
+          sources: [
+            { presence: { any: ['Larkspur Academy', 'Larkspur Institute'], then: 'Attended Larkspur Academy' } },
+          ],
+        },
+        { path: 'MWDL/description', sources: [{ ai: true }] },
+      ],
+    };
+    const asserted = 'A bookbinder of Marrowfield who attended Larkspur Academy.';
+
+    const refusedRow = await refused(asserted, SILENT, withPresence);
+    expect(refusedRow.cells['MWDL/description']).toBe('');
+    expect(refusedRow.notes.join(' ')).toContain('Larkspur Academy');
+
+    // The same reply, over a document that does evidence it, is written.
+    const evidenced = await refused(
+      asserted,
+      `${SILENT} He was a graduate of Larkspur Academy.`,
+      withPresence,
+    );
+    expect(evidenced.cells['MWDL/description']).toBe(asserted);
   });
 });
