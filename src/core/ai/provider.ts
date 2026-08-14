@@ -300,6 +300,34 @@ export class OpenAiCompatibleProvider {
       );
     }
 
+    // A REPLY THE MODEL WAS CUT OFF MID-WAY THROUGH IS NOT A VALUE. Checked
+    // BEFORE the content, because a truncated reply is a perfectly well-formed
+    // non-empty string and would otherwise sail through every check below,
+    // through `cleanReply` as `ok`, and into a permanent catalogue record --
+    // ending mid-sentence, with the ordinary "please check this" note and
+    // nothing anywhere saying it was cut.
+    //
+    // The design says "Never a partial value" and `slice.ts` already refuses to
+    // hand the model a mid-word fragment because "damaged text is where
+    // invention starts". The same argument runs in this direction: a
+    // half-sentence in a description field is text no reviewer can complete and
+    // no reader can identify as incomplete. `DEFAULT_MAX_TOKENS` is 500 against
+    // a house style of one line, so reaching it means something went wrong --
+    // a model that would not stop, or a limit set far too low.
+    //
+    // ONLY THE EXPLICIT VALUE COUNTS. Several backends omit `finish_reason`
+    // entirely, and treating absence as truncation would fail every call
+    // against them.
+    if (readFinishReason(parsed) === 'length') {
+      throw new ApiError(
+        `The model stopped in the middle of its answer because it hit its token limit. ` +
+          `Nothing was written, because half a sentence in a catalogue record cannot be ` +
+          `told from a whole one. Ask for a shorter answer, or raise the token limit.`,
+        res.status,
+        '',
+      );
+    }
+
     const content = readContent(parsed);
     if (content === null || content.trim() === '') {
       // Not an empty description. See the class comment: a caller that could
@@ -382,6 +410,22 @@ function readContent(parsed: unknown): string | null {
   const message = readProperty(choices[0], 'message');
   const content = readProperty(message, 'content');
   return typeof content === 'string' ? content : null;
+}
+
+/**
+ * Why the model stopped, or null where it did not say.
+ *
+ * `stop` is a finished answer, `length` is one cut off at the token limit, and
+ * anything else -- `content_filter`, `tool_calls`, a vendor's own word -- is
+ * returned as it arrived rather than mapped, so the caller decides. Every step
+ * is checked for the same reason `readContent` checks every step: this is a
+ * server's output, not this code's.
+ */
+function readFinishReason(parsed: unknown): string | null {
+  const choices = readProperty(parsed, 'choices');
+  if (!Array.isArray(choices)) return null;
+  const reason = readProperty(choices[0], 'finish_reason');
+  return typeof reason === 'string' ? reason : null;
 }
 
 function readProperty(value: unknown, key: string): unknown {

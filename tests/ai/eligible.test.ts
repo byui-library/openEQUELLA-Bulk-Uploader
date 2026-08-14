@@ -22,6 +22,7 @@ const row = (over: Partial<ExtractedRow> = {}): ExtractedRow => ({
   sources: {},
   notes: [],
   flagged: {},
+  aiWritten: {},
   ...over,
 });
 

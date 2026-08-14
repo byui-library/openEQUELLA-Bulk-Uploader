@@ -347,6 +347,30 @@ function fill(
 }
 
 /**
+ * The note a `flagIfEmpty` column leaves when nothing was found for it.
+ *
+ * A FUNCTION, AND EXPORTED, so the model pass can take it back off the row when
+ * it fills that cell -- otherwise the commonest case in the design ships a row
+ * telling the operator to hand-fill a cell that now has content. Removing it by
+ * matching a prefix would couple two modules through a sentence, and break
+ * silently the day the wording changes; removing the string this function
+ * returns cannot.
+ *
+ * Says what to DO, and that a blank may be the RIGHT answer. One obituary of
+ * ten states no date anywhere -- only "the early hours of Saturday morning" --
+ * so leaving that cell blank is correct, not a failure to fix. A note that only
+ * reported the absence invited someone to invent a value, which is the failure
+ * this whole tool is built to avoid. The xpath stays so it is obvious which
+ * column to edit.
+ */
+export function expectedButEmptyNote(path: string): string {
+  return (
+    `nothing could be found for '${path}', which this template expects. ` +
+    `Fill that cell in by hand, or leave it blank if the document genuinely does not say.`
+  );
+}
+
+/**
  * Build one output row. Never throws and never omits a column: a file that
  * yields nothing usable still produces a row, flagged in `notes`. A file
  * missing from the output must be indistinguishable from a file that was
@@ -418,16 +442,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   // correct the filename and the batch's single genuine failure looked clean.
   for (const column of profile.columns) {
     if (column.flagIfEmpty && (cells[column.path] ?? '') === '') {
-      // Says what to do, and that a blank may be the RIGHT answer. Alden
-      // Larkspar's obituary states no date anywhere -- only "the early hours of
-      // Saturday morning" -- so leaving his blank is correct, not a failure to
-      // fix. A note that only reported the absence invited someone to invent a
-      // value, which is the failure this whole tool is built to avoid. The
-      // xpath stays so it is obvious which column to edit.
-      notes.push(
-        `nothing could be found for '${column.path}', which this template expects. ` +
-          `Fill that cell in by hand, or leave it blank if the document genuinely does not say.`,
-      );
+      notes.push(expectedButEmptyNote(column.path));
     }
   }
 
@@ -451,5 +466,8 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
     }
   }
 
-  return { cells, sources, notes, flagged };
+  // `aiWritten` starts empty and stays empty unless the async model pass runs:
+  // `resolve` returns nothing for an `ai` source and this function never
+  // touches the network. See `core/ai/fill.ts`.
+  return { cells, sources, notes, flagged, aiWritten: {} };
 }

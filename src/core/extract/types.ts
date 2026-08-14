@@ -214,8 +214,38 @@ export interface ExtractedRow {
    * text layer, a filename that does not match the pattern -- with `flagged`
    * here still `{}`, because those notes belong to the row rather than to any
    * one cell.
+   *
+   * CLEARED FOR A COLUMN A MODEL HAS WRITTEN, and moved to `aiWritten` below.
+   * Read this as "a source doubted this value AND nothing better has been
+   * tried yet", which is precisely the question the fill rule asks. A cell the
+   * model has already had its turn at is not a candidate for another turn, so
+   * leaving it here would make a second pass re-send and re-charge for every
+   * cell the first pass wrote. `flagged` being empty is therefore NOT a claim
+   * that nothing on the row is a guess -- check `aiWritten` too.
    */
   flagged: Record<string, string>;
+  /**
+   * Column path -> the exact note saying a language model wrote that cell.
+   *
+   * EVERY MODEL WRITE APPEARS HERE, and the value is the same string that was
+   * pushed onto `notes`. Two things need that, and neither can be had by
+   * reading note prose:
+   *
+   * 1. **Telling routine flags from real problems.** Both surfaces count "rows
+   *    needing review" as `notes.length > 0`, and with a model enabled on one
+   *    column EVERY row carries a note -- so the count reads "400 of 400" and
+   *    the batch's one genuine failure becomes invisible. That is the exact
+   *    loss `flagIfEmpty`'s docblock exists to prevent. Storing the note itself
+   *    lets a counter subtract by identity -- `notes.filter(n => !written.has(n))`
+   *    -- with no string matching and no arithmetic that drifts if a write ever
+   *    pushes two notes.
+   * 2. **Not asking twice.** With `flagged` cleared and this set, a second fill
+   *    pass over the same rows finds nothing eligible and spends nothing.
+   *
+   * ONLY WRITTEN COLUMNS APPEAR. A cell the model was asked about and failed on
+   * is absent, exactly like `flagged`.
+   */
+  aiWritten: Record<string, string>;
 }
 
 export interface ExtractResult {
