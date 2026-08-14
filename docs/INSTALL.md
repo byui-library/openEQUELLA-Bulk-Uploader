@@ -350,11 +350,16 @@ It is a note, not a problem: those rows were already flagged, because a
 description only comes out empty when no death date could be found either, and
 that is flagged on its own. Nothing else about the spreadsheet is different.
 
-**Nobody has yet checked whether what a model writes here is any good.** The
-program has been tested thoroughly on *what it sends, when it is allowed to
-send, and how it flags what comes back* — but no test can say whether a
-description reads well or is accurate. That judgement is yours, made by reading
-the descriptions against the documents. This is why every cell a model writes is
+**The program checks the model's work before it writes anything.** A model
+sometimes states things the document does not say, so every answer is read back
+against the document, and one that makes a claim the document does not support is
+thrown away rather than written — see *When the program refuses an answer* below.
+
+**What nobody has checked is whether the answers it keeps are any good.** The
+program has been tested thoroughly on *what it sends, when it is allowed to send,
+what it refuses, and how it flags what comes back* — but no test can say whether a
+description reads well or is useful. That judgement is yours, made by reading the
+descriptions against the documents. This is why every cell a model writes is
 flagged.
 
 #### Two kinds of model, and the difference matters
@@ -415,6 +420,35 @@ wait for an answer.
   was unreachable, it declined, it ran out of time, it was cut off mid-answer.
   Nothing half-finished is ever written into a cell, and there is no silent
   retry.
+
+- **An answer thrown away when it says something your document does not.** See
+  below.
+
+#### When the program refuses an answer
+
+Before an answer is written into a cell, it is read back against the document it
+came from. **Any date, number, or claim your column setup already checks for**
+has to appear in the document. If one does not, the whole answer is discarded and
+the cell is left exactly as it was, and the `_notes` column says which claim was
+unsupported and quotes back what the model said:
+
+```text
+MWDL/description: left blank -- the model's answer was refused, because it
+stated things this document does not support. "2024-01-06": the document states
+no such date. The model did answer and the call succeeded -- this tool discarded
+the answer -- so there is nothing to retry; read the document and fill this cell
+in by hand.
+```
+
+Nothing went wrong at the model's end, so there is nothing to run again. Read the
+document and type the cell in yourself.
+
+**This is the program checking the model's work, and it is not a complete
+check.** Ordinary description wording is not checked at all — writing the same
+thing in different words is exactly what a model is for. And an answer that
+passes is not thereby correct: it means every date and number in it does appear
+in the document, not that the sentence around them says the right thing. That is
+why every cell a model wrote stays flagged for you to read.
 
 **What it will never do is overwrite something your document actually said.** A
 model may fill a cell that came out empty, or replace one the program had
