@@ -55,10 +55,26 @@ cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
 exists to remove. **1968 tests across 100 files.**
 
-That is spec 1 of two. Publishing the repository — a licence, a README written
-for outside readers, and the audit of ~196 commits of history — is spec 2 and
-**has not started**. It is the only step that cannot be undone, which is why it
-was kept separate.
+That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
+is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
+`"isPrivate": false, "visibility": "PUBLIC"` for `byui-library/openEQUELLA-Bulk-Uploader`,
+`LICENSE` is present, `package.json` declares `"license": "Apache-2.0"` (commit
+`ac16721`), and the README carries a section written for outside readers. The
+history is **298 commits**, not the ~196 this file used to estimate.
+
+**Everything committed from here is public the moment it is pushed.** No
+credential, no real name, no real spreadsheet, no institutional detail that was
+only safe behind a private repo. Read the "every person is invented" convention
+below as a hard rule now rather than a tidiness preference.
+
+**A known violation is already public.** `m.miles` — the operator's real
+surname, not a botanical pseudonym — appears **40 times across 4 test files**:
+`tests/desktop/secrets.test.ts` (24), `tests/desktop/ui/setup.test.ts` (9),
+`tests/desktop/session.test.ts` (6), `tests/desktop/handlers.test.ts` (1). The
+real surname also appears once more as `milesm` in a comment at
+`tests/passwordAuth.test.ts:351`, recording a live cookie measurement. **The
+scrub is deliberately NOT part of the language-model work** and is to be done
+and reviewed as a change of its own; do not fold it into an unrelated commit.
 
 **v1.1.1 is released and tagged**; `package.json` carries it. Two things staff
 must be told about that release: **they will
@@ -103,9 +119,13 @@ been done.
 
 **Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
 in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
-builds both Windows installers and creates the GitHub Release. The repo is
-private, so the Release is the version archive, not the delivery channel --
-staff get the executable from the network share.
+builds both Windows installers and creates the GitHub Release. **The repo is
+PUBLIC** -- this sentence used to say "private, so the Release is the version
+archive, not the delivery channel", and it is the worst sentence in this file to
+leave wrong, because it is what a next reader consults when deciding what may
+safely be committed. Staff still get the executable from the network share, so
+the Release remains the version archive in practice; it is now also world-
+readable, along with every artifact attached to it.
 
 The wire format is settled — the `{ type: 'file', filename, description, uuid }`
 attachment payload was confirmed by the production run, not just by
@@ -267,9 +287,17 @@ shape, never as a value the code may assume.
   that combination and says so; do not describe password mode as "the default"
   without saying which surface.
 - **The password travels in the query string.** `POST /api/auth/login?username=&password=`
-  is openEQUELLA's API and cannot be changed from here. So https is *refused*
-  rather than warned about (loopback exempted), and nothing may put a login URL
-  into a log, a message or the manifest. `tests/passwordAuth.test.ts` walks
+  is openEQUELLA's API and cannot be changed from here. So plain http is
+  *refused* rather than warned about, and nothing may put a login URL into a
+  log, a message or the manifest. **`normaliseInstanceUrl` rejects loopback over
+  http too** -- this file used to say "(loopback exempted)" here, and that is
+  wrong about the rule. The exemption is `preflight.ts#httpsCheck`'s alone: it
+  *reports* a loopback base URL as passing, and per its own docblock that verdict
+  is only ever reachable in the OAuth modes, because `OEQ_AUTH_MODE=password`
+  against `http://localhost` fails when `UsernamePasswordAuth` is constructed,
+  before any report is built. Note this is the OPPOSITE of the model endpoint
+  rule below, and deliberately: there the reason to refuse http is a bearer key,
+  which loopback genuinely removes. `tests/passwordAuth.test.ts` walks
   every string reachable from a thrown error for the password in literal and
   percent-encoded form; that guard exists because a debug line added later
   would leak passwords into a file the operator emails around asking for help.

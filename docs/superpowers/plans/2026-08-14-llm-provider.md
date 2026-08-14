@@ -1448,20 +1448,66 @@ git commit -m "docs: how to point the tool at a model, and what it does not prom
 
 **Not automatable. This is the task that finds what the tests cannot.**
 
+> ### Correction, 2026-08-14: Step 2's premise is wrong, twice over
+>
+> This task was written assuming the obituary batch would exercise the model on
+> every row. **It will exercise it on almost none**, and Step 3 as originally
+> written cannot be carried out.
+>
+> - **The obituary template's description has no `{ "opening": true }` source at
+>   all.** It is `{ "compose": "Died {death_date}; Born {birth_date}; {ricks}" }`.
+>   So "tier 3 flags every row there" is wrong about which tier fills the column,
+>   as well as about the outcome.
+> - **`compose` attaches no note**, so whatever it assembles is a stated value
+>   and `eligibleColumns` never offers it. `composeValue` returns empty only when
+>   *every* clause is empty — no death date, no birth date and no Ricks mention,
+>   all three missing from one document. On the measured folder 9 of 10 gave up a
+>   death date, so expect the model to fire on low single-digit percent of a real
+>   batch, possibly on none of ten files.
+>
+> **Do not "fix" this by loosening the rule.** Letting a model overwrite a
+> composed value would merge verified fact and machine assertion in one cell with
+> no way to separate them, and `_source` records one origin per cell, so the
+> composed half's provenance would be lost. An incomplete but traceable
+> description outranks a complete but unverifiable one. The behaviour is correct;
+> only this task's premise was not.
+>
+> **To get output to evaluate, do one of these instead:**
+>
+> 1. **A deliberately degraded batch** — documents from which no death date, no
+>    birth date and no Ricks mention can be recovered. This is the honest test of
+>    the shipped configuration, because it is exactly the case the model exists
+>    to serve.
+> 2. **A temporary profile** whose description column asks for the model alone
+>    (`"sources": [{ "ai": true }]`, no `compose`), run against a copy of the
+>    folder. **For evaluation only. It must not be shipped, must not go in
+>    `templates/`, and must not be committed as a change to the obituary
+>    template** — it exists to generate prose to read, not to become the
+>    configuration anybody uploads from.
+
 - [ ] **Step 1: `ollama pull llama3` and point the app at `http://localhost:11434/v1`.**
 
-- [ ] **Step 2: Run a real batch** — the obituary folder is the case that
-  prompted this work, and tier 3 flags every row there, so every row is
-  eligible.
+- [ ] **Step 2: Run a batch that will actually reach the model** — see the
+  correction above. Either a degraded folder or the temporary evaluation
+  profile; the ordinary obituary folder will send almost nothing.
 
 - [ ] **Step 3: Read every generated description.** Specifically:
 
   - Did it invent a date, a place or a relative? That is the failure the whole
     design guards against, and only a human reading the source document can
     see it.
-  - Does it match the house style, or does the prompt need the profile
-    instruction?
+  - Does it match the house style? The profile instruction now ships — see
+    `templates/alumni-obituary.profile.json` — so the question is whether it is
+    *sufficient*, not whether one is needed.
+  - **Does it append "Attended Ricks College" to a document that never mentions
+    it?** The instruction's final sentence exists to stop exactly that, and it
+    is the highest-risk assertion the shipped prompt can produce: a claim about
+    a real person's education, in a permanent record with no moderation queue.
   - Is the flag visible enough in the saved CSV that a reviewer would notice?
+
+  Note that on the evaluation profile (option 2 above) the model writes the
+  whole description unaided, which is a **harder** task than the shipped
+  configuration ever asks of it. Judge the shipped configuration on option 1.
 
 - [ ] **Step 4: Record what the prompt needed** in the spec's "What ships
   first" section. That is what the second field will need to know.

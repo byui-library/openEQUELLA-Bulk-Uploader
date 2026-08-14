@@ -763,8 +763,12 @@ Two things are always flagged in `_notes`:
 - **Anything from the opening paragraph**, every time, with no exception. On a
   published PDF the opening is as likely to be a masthead as a summary.
 
-`_source` names the tier that filled each cell — `table`, `section`, `opening`
-— so you can sort by it in Excel and read only the rows that were guessed at.
+`_source` names the tier that filled each cell — `table`, `section`, `opening`.
+It is **one cell per row** holding every column's origin at once
+(`attachment name=filename; MWDL/title=join; MWDL/description=opening`), so
+sorting on it sorts the whole concatenated string and groups nothing useful.
+Filter or search the column for `=opening` instead, and you have the rows that
+were guessed at.
 
 Tier 3 refuses to guess when there is nothing to guess from: a page of headings
 and table fragments yields a blank cell rather than a line of timeline labels
@@ -784,18 +788,34 @@ your own computer or at a hosted service.
 > made by reading the descriptions against the documents. Every cell a model
 > writes is flagged for exactly that reason.
 
-#### With nothing configured, the feature does not exist
+#### With nothing configured, nothing is contacted and nothing is sent
 
-No endpoint means no prompt, no error, no degraded mode, and nothing sent
-anywhere. Extraction behaves byte-for-byte as it did before this feature was
-built. That is deliberate: it is what lets an institution adopt the tool without
-a data review first.
+No endpoint means no network call, no prompt, no error and no degraded mode. An
+institution can adopt the tool without a data review, because there is no data
+leaving the machine to review.
 
-A column whose profile asks for a model that did not run does not silently come
-out blank — `_notes` says so per cell, naming the column and what would have to
-change: that `--ai` was not given, or that no endpoint is set up for this site.
-A cell that could not be filled must never look like a document that had nothing
-to say.
+**One thing does change, and only for a profile that asks for a model.** A
+column carrying `{ "ai": true }` that could not be filled records that in
+`_notes`, per cell, naming the column and what would have to change — that
+`--ai` was not given, or that no endpoint is set up for this site. A cell that
+could not be filled must never look like a document that had nothing to say.
+
+**The Alumni Obituary template that ships now asks for one**, so a run of it
+without `--ai` writes this on every row whose description came out empty:
+
+```text
+MWDL/description: this column asks for a language model, and --ai was not
+given, so nothing was written here. Re-run with --ai to fill it -- or fill
+this cell in by hand.
+```
+
+**The "needs review" count does not move.** An empty description on this
+template means `compose` found no death date, no birth date and no Ricks
+mention, and an empty death date already raises `flagIfEmpty` on its own
+column — so every row that gains this note was being counted anyway. What is
+new is the `_notes` text, not the triage number. If you do not want the line, remove
+`{ "ai": true }` from the description column; it is a profile edit like any
+other.
 
 #### A local model, from nothing (Ollama)
 
@@ -868,8 +888,10 @@ the one screen standing between an operator and a paid batch.
 
 **The cap counts requests, not documents.** One request is made per cell a model
 may fill, so a profile with two such columns costs two per document. With the
-shipped template — one enabled column — the two numbers are the same, which is
-why the confirmation can go on talking about documents.
+shipped template — one enabled column — the two numbers happen to be equal, but
+nothing relies on that: every figure in the confirmation is stated in requests,
+and it says what a request is in the same breath, because an operator has no
+reason to know.
 
 **The timeout is 2 minutes, not the usual 30 seconds.** A hosted model answers a
 prompt this size in single-digit seconds; a quantised 7B on a CPU can take
@@ -887,8 +909,9 @@ gave, or blocks for ever holding a nightly run open. Refusing behaves the same
 on a terminal and off one.
 
 `--yes` is not required when there is nothing to agree to: a **local** endpoint,
-an empty folder, a profile with no model column, or a cap of zero. In each case
-no confirmation is shown, exactly as the desktop shows no dialog.
+or a cap of zero. Neither shows a confirmation, exactly as the desktop shows no
+dialog. (An empty folder is not asked about either, but the run then stops with
+`No readable files found`, so it is not a case you can use.)
 
 **`--ai` on a profile where no column asks for a model is refused**, not
 ignored. So is `--ai` with no endpoint configured. Both are an explicit
@@ -908,8 +931,9 @@ explanation.
   confirmation at all, deliberately — nothing leaves the machine and nothing is
   charged, and a dialog that does not matter is what trains people to click past
   the one that does.
-- **A flag on every model-written cell**, without exception, in `_notes`;
-  `_source` reads `ai`.
+- **A flag on every model-written cell**, without exception, in `_notes`, and
+  `MWDL/description=ai` in that row's `_source`. Filter or search `_source` for
+  `=ai` — it is one cell per row, so sorting it will not group them.
 - **A louder flag on a fact field.** Where the column declares a date or a
   people transform, or reads a date from the document, the note says so: *an
   invented date cannot be told from a real one by anyone reading the catalogue
@@ -934,11 +958,35 @@ replaced.** That is the safety property of the whole feature.
 an opinion formed here. A tier that starts flagging itself becomes
 model-replaceable with nobody having to remember.
 
-One consequence worth knowing on the shipped obituary template: `compose` never
-flags, and it drops the clauses it could not fill. So a document that yielded
-only a birth date produces `Born 1938-07-22` — a real, unflagged value — and the
-model is **not** asked to improve on it. The model writes only where compose
-produced nothing at all.
+#### On the shipped template, the model will almost never fire
+
+This surprises people, so it is worth stating before you run it rather than
+after.
+
+The Alumni Obituary description comes from `compose`, and **`compose` attaches
+no note**. Whatever it assembles is a stated value, so the rule above leaves it
+alone. `composeValue` returns empty only when *every* clause is empty — no
+death date, no birth date and no Ricks College mention, all three missing from
+the same document. A document that yielded only a birth date produces
+`Born 1938-07-22`, which is real, unflagged, and never sent.
+
+So expect the model to write on a **low single-digit percentage** of a real
+batch, and quite possibly on none of ten files. On the measured obituary
+folder, 9 of 10 documents gave up a death date. That is not the feature failing.
+
+**It is deliberate, and it is the archival position.** A description assembled
+from extracted facts is evidence: every part of it can be traced back to
+something the document says. A model may fill a gap, and it may replace a guess
+the extractor already admitted to — but it may not overwrite evidence. Letting
+it do so would merge verified fact and machine assertion into one cell with no
+way to tell them apart afterwards, and `_source` records **one origin per
+cell**, so the composed half's provenance would simply be lost. An incomplete
+but traceable description outranks a complete but unverifiable one.
+
+To *evaluate* the model's output you need a scratch profile whose description
+column asks for the model alone, with no `compose` beside it, run against a
+copy of the folder. Keep it out of `templates/` and do not ship it — the way to
+see more model output is a throwaway profile, never a loosened rule.
 
 #### Widening it, without touching any code
 
@@ -953,15 +1001,26 @@ and on nothing else. Enabling another column is a profile edit:
   ] }
 ```
 
-`{ "ai": true }` goes **last**, after the sources that read the document, so
-every deterministic source has its turn first. Give the profile an
-`aiInstruction` and the model is asked for the house style rather than left to
-invent a format — the shipped one mirrors what `compose` produces, so a
-generated description and a composed one look alike in the catalogue:
+**Put `{ "ai": true }` last by convention, not because position does anything.**
+`resolve` returns empty for the marker wherever it sits, and the union takes the
+first source that yields a value, so the model pass behaves identically if you
+put it first. It goes last because a profile is read by people: a reader
+scanning the sources should see the deterministic ones tried before the
+fallback, in the order they actually happen.
+
+Give the profile an `aiInstruction` and the model is asked for the house style
+rather than left to invent a format, so a generated description and a composed
+one look alike in the catalogue. This is the shipped one, in full:
 
 ```json
-"aiInstruction": "Write one line in this form, omitting any part the document does not state: Died <date>; Born <date>; Attended Ricks College. Use ISO dates (YYYY-MM-DD)."
+"aiInstruction": "Write one line in this form, omitting any part the document does not state: Died <date>; Born <date>; Attended Ricks College. Use ISO dates (YYYY-MM-DD). Include the last clause only if the document says the person attended Ricks College or BYU-Idaho."
 ```
+
+**The last sentence is doing the most work in that string.** It is what stops a
+model appending *Attended Ricks College* to a record that never mentioned it —
+an assertion about a real person, in a permanent catalogue with no moderation
+queue. If you write an instruction of your own, give every claim it invites the
+same evidence requirement.
 
 **Think hard before enabling one on a fact field.** A death date, a name, an
 identifier or a term from a controlled vocabulary is not a quality problem when

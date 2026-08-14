@@ -133,12 +133,19 @@ describe('shipped templates', () => {
 
     /**
      * A MODEL-WRITTEN DESCRIPTION AND A COMPOSED ONE MUST LOOK ALIKE IN THE
-     * CATALOGUE. The compose source above produces `Died <iso>; Born <iso>;
-     * Attended Ricks College`, dropping any clause it could not fill, and the
-     * model is asked for the same shape rather than left to invent a format --
-     * otherwise one batch reads one way and the next reads another, in a
-     * permanent record nobody re-edits. Asserted against the compose string
-     * itself so the two cannot drift apart silently.
+     * CATALOGUE. The compose source produces `Died <iso>; Born <iso>; Attended
+     * Ricks College`, dropping any clause it could not fill, and the model is
+     * asked for the same shape rather than left to invent a format -- otherwise
+     * one batch reads one way and the next reads another, in a permanent record
+     * nobody re-edits.
+     *
+     * EVERY EXPECTATION IS DERIVED FROM THE PROFILE, none hardcoded. An earlier
+     * version of this test checked that the instruction contained the literals
+     * `Died` and `Born` plus a hardcoded /Attended Ricks College/, which caught
+     * a reworded compose verb and nothing else: not a reordered instruction, not
+     * a changed date format, and -- worst -- not a dropped evidence clause. Its
+     * commit message claimed the two "cannot drift apart silently", which was
+     * more than it did.
      */
     it('asks the model for the same shape the compose source produces', async () => {
       const profile = await loadTemplate('alumni-obituary');
@@ -147,12 +154,61 @@ describe('shipped templates', () => {
         ?.sources.find((s) => 'compose' in s);
       const template = compose && 'compose' in compose ? compose.compose : '';
       const instruction = profile.aiInstruction ?? '';
+      expect(template, 'the description column no longer composes').not.toBe('');
+      expect(instruction, 'the template carries no aiInstruction').not.toBe('');
 
-      for (const literal of template.split(/\{[^}]*\}/).map((part) => part.replace(/[;\s]+/g, ' ').trim())) {
+      // IN ORDER, not merely present. An instruction listing the clauses the
+      // other way round yields descriptions that do not match the composed ones
+      // sitting beside them in the same collection, which is the whole thing
+      // the house style exists to prevent.
+      let cursor = 0;
+      for (const literal of template
+        .split(/\{[^}]*\}/)
+        .map((part) => part.replace(/[;\s]+/g, ' ').trim())) {
         if (literal === '') continue;
-        expect(instruction).toContain(literal);
+        const at = instruction.indexOf(literal, cursor);
+        expect(at, `aiInstruction is missing '${literal}', or has it out of order`).toBeGreaterThanOrEqual(0);
+        cursor = at + literal.length;
       }
-      expect(instruction).toMatch(/Attended Ricks College/);
+
+      for (const name of [...template.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)].map((m) => m[1]!)) {
+        const column = profile.columns.find((c) => c.as === name);
+        expect(column, `compose reads {${name}} but no column is named that`).toBeDefined();
+
+        // A `date` transform emits ISO, so the instruction has to ask for ISO.
+        // Without this, changing the transform leaves the model writing one
+        // format beside composed cells written in another.
+        if (column!.transform === 'date') {
+          expect(instruction, 'a composed column emits ISO dates and aiInstruction does not ask for them')
+            .toContain('YYYY-MM-DD');
+        }
+
+        for (const source of column!.sources) {
+          if (!('presence' in source)) continue;
+
+          // The clause's own words, from the profile rather than from memory.
+          expect(instruction, `aiInstruction never mentions the '${source.presence.then}' clause`)
+            .toContain(source.presence.then);
+
+          // AND WHAT LICENSES IT. This is the assertion that matters most in
+          // the file. The shipped instruction ends "Include the last clause
+          // only if the document says the person attended Ricks College or
+          // BYU-Idaho"; drop that sentence and a model is invited to append a
+          // claim about a real person's education to a permanent catalogue
+          // record with no moderation queue, on no evidence at all.
+          //
+          // The clause text is removed before looking, because it CONTAINS one
+          // of the trigger phrases -- "Attended Ricks College" holds "Ricks
+          // College" -- so a naive search passes on an instruction that states
+          // the clause and gates it on nothing.
+          const beyondTheClause = instruction.split(source.presence.then).join(' ');
+          expect(
+            source.presence.any.some((term) => beyondTheClause.includes(term)),
+            `aiInstruction states the '${source.presence.then}' clause but never says what ` +
+              `evidence licenses it -- name one of ${source.presence.any.join(', ')}`,
+          ).toBe(true);
+        }
+      }
     });
   });
 
