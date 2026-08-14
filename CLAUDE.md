@@ -53,15 +53,15 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **1450 tests across 88 files.**
+exists to remove. **1968 tests across 100 files.**
 
 That is spec 1 of two. Publishing the repository — a licence, a README written
 for outside readers, and the audit of ~196 commits of history — is spec 2 and
 **has not started**. It is the only step that cannot be undone, which is why it
 was kept separate.
 
-**Not yet released.** `package.json` is still at 1.0.0; nothing has been tagged
-since. Two things staff must be told before v1.1.0 reaches them: **they will
+**v1.1.1 is released and tagged**; `package.json` carries it. Two things staff
+must be told about that release: **they will
 re-enter their credentials once** (deliberate — the store version changed and
 Setup explains it), and **they must choose their collection on Setup**, which is
 what fills the attachment field in from the schema. Skipping it leaves the field
@@ -86,10 +86,20 @@ Description extraction is tiered — a stated field, then a named section
 language model. **Tiers 1–3 are built.** Anything from tier 3, and any section
 that ran to the length cap, is always flagged in `_notes`.
 
-**Tier 4 is deferred by the operator** — "hold off on the ai piece for now",
-2026-08-10. Do not start it without being asked. It needs a provider decision
-and its own conversation; the open questions are listed at the end of
-[docs/superpowers/specs/2026-08-06-description-extraction-design.md](docs/superpowers/specs/2026-08-06-description-extraction-design.md).
+**Tier 4 — the language model — is BUILT, on `feature/llm-provider`.** It was
+deferred by the operator on 2026-08-10 ("hold off on the ai piece for now") and
+taken up again on 2026-08-14. `src/core/ai/` holds it; either front end can run
+it; the shipped obituary template enables it on `MWDL/description` and on
+nothing else. Design:
+[docs/superpowers/specs/2026-08-14-llm-provider-design.md](docs/superpowers/specs/2026-08-14-llm-provider-design.md).
+
+**Its output quality is UNVERIFIED and must not be described otherwise.** No
+assertion in the suite can say a description is good, and none tries; nothing has
+yet been run against a real model. What IS tested is the machinery: the rule
+about what may be overwritten, the cap, every failure path, and the guarantee
+that an institution which configures no endpoint sends nothing anywhere. Task 13
+of the plan — run it against a real Ollama and read every description — has not
+been done.
 
 **Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
 in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
@@ -119,6 +129,19 @@ src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by e
   instanceUrl.ts    Validate/normalise an operator-typed address. HTTPS enforcement lives here.
   redact.ts         One redactor for secrets on the wire. Used by every error path.
 src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
+src/core/ai/      The language-model pass. SEPARATE FROM extract/ because it is async and
+                  does I/O, which extract/ must never be. Runs AFTER extraction, over the
+                  finished rows.
+  eligible.ts       Pure. The rule: which cells a model may write. The safety property.
+  slice.ts          Pure. How much of a document to send, and how the budget is divided.
+  prompt.ts         Pure. Builds the request; cleans and judges the reply.
+  provider.ts       One OpenAI-compatible HTTP call. Injectable fetch. Every failure throws.
+  fill.ts           The pass itself. Mutates rows, flags every write, discloses in the item.
+  pass.ts           One construction of provider+options, so CLI and desktop cannot diverge.
+  confirm.ts        The consent text. ONE copy, shown by both surfaces. Renderer-safe.
+  defaults.ts       budget/cap. Imports NOTHING -- Setup reads it from the sandboxed renderer.
+  endpoint.ts       Is this address on this machine? Decides the dialog and the key rule.
+  review.ts         Two counts: what is wrong, and what a machine wrote. Renderer-safe.
 src/cli/          plan | run | status | retry | login | logout | check | extract
 src/mcp/          Nine MCP tools
 src/desktop/      Electron app. Renderer is sandboxed: NO Node access, no `node:` imports.
@@ -392,6 +415,77 @@ shape, never as a value the code may assume.
   harmlessly. Compare a sorted set of whole pairs — not `toContain`, which
   passes for `AWSALB=lb; Path=/` and would drop the guard against echoing
   cookie attributes back.
+- **`resolve()` is synchronous and `src/core/extract/` never touches the
+  network. The model pass is separate FOR THAT REASON and must stay so.** The
+  design framed the model as "one more source in the union", which is right for
+  configuration and wrong for execution: making `resolve` async ripples through
+  `buildRow`, `extract.ts` and `extractHandlers.ts` and drags network concerns
+  into the extractor whose offline-ness is what lets an operator build a
+  spreadsheet without signing in to anything. `{ ai: true }` is therefore a
+  MARKER — `resolve` returns empty for it — and `core/ai/fill.ts` reads the
+  finished rows afterwards. Two further things fall out of that order and are
+  only available there: the rule is evaluated on the COMPLETED row, and the
+  confirmation needs a count that does not exist until tiers 1–3 have run.
+- **A model may fill an empty cell or replace a FLAGGED one, never one a source
+  was sure of** — and "flagged" is structural, not a judgement. It means a
+  source attached a note to that cell (`row.flagged[path]`), so a tier that
+  starts flagging itself becomes model-replaceable with nobody having to
+  remember, and `eligible.ts` cannot drift out of step with the sources. A
+  re-derived opinion about which values "look uncertain" is a second judgement
+  free to disagree with the one the operator is reading in `_notes`. Note the
+  live consequence on the shipped obituary template: `compose` attaches no note,
+  so a partially composed description (`Born 1938-07-22` and nothing else) is a
+  stated value and is never sent.
+- **Consent must be CARRIED, not re-derived.** `extractRun` used to resolve the
+  model endpoint from its own read of the store and send, holding no evidence
+  anyone had agreed. The renderer's read and the main process's read agreed on
+  what an unreadable store MEANT and were making different OBSERVATIONS — a
+  throw meant "no model, carry on without asking" on one side and "no model,
+  send nothing" on the other — so a transient IPC failure on the renderer's
+  read, which is exactly when no dialog is shown, produced a full hosted send.
+  `modelApproved` is now a condition of resolving the endpoint at all, and
+  absent means no. Any decision a human makes on one side of a boundary must
+  cross it as data; the far side must never reconstruct it.
+- **Redact before truncating.** Cutting a message to length and then redacting
+  leaves the redactor a fragment to match, it matches nothing, and a prefix
+  walks out — up to 163 characters of a 164-character key. A leak-walker that
+  searches for the whole secret is blind to this, and one asserted
+  `provider.ts` was clean while it was leaking; `tests/ai/provider.test.ts` now
+  searches for every prefix. The same order applies to any cause chain: an error
+  object this code did not build cannot be redacted from the outside, which is
+  why `OpenAiCompatibleProvider` attaches no `cause` at all.
+- **A bearer key does not cross plain http unless the host is this machine.**
+  Exactly that one combination is refused — http, plus a key, plus a non-loopback
+  host. `normaliseInstanceUrl` is deliberately NOT reused for a model address:
+  it refuses all http because openEQUELLA's sign-in carries the password in the
+  QUERY STRING, and that is a fact about openEQUELLA's API which does not
+  transfer. Reusing it would ban `http://localhost:11434/v1`, which is what every
+  local runtime serves and what the local half of this design rests on.
+- **`_notes` never reaches openEQUELLA** — `plan.ts` skips every column
+  `schema.ts#isAnnotationHeader` recognises (any header starting with `_`)
+  while building the manifest. That is what makes it safe to quote
+  discarded model output there, and it is also why `aiProvenance` exists: the
+  spreadsheet flags are invisible to every future reader of the catalogue, so a
+  profile that wants the disclosure to survive must name an ordinary metadata
+  column to hold it.
+- **`ExtractedRow.aiWritten` exists so a counter can subtract expected model
+  writes BY IDENTITY.** Both surfaces counted "rows needing review" as
+  `notes.length > 0`, which was right while every note meant something had gone
+  wrong; every model write is flagged without exception, so one enabled column
+  turns that into "400 of 400 need review" and buries the row that genuinely
+  failed. `aiWritten[path].note` is the exact string that was pushed, so the
+  subtraction is set membership. Matching the prose instead is wrong in both
+  directions: a reworded note silently stops being subtracted, and a real
+  failure that happens to mention a model ("not sent to the model -- this file
+  has no text to read") starts being.
+- **A reply truncated at `max_tokens` is a FAILURE, not a value.** `finish_reason:
+  'length'` has to be checked before the content, because a cut-off reply is a
+  perfectly well-formed non-empty string: it sails through every emptiness check,
+  through `cleanReply` as `ok`, and into a permanent catalogue record ending
+  mid-sentence, carrying the ordinary "please check this" note and nothing
+  anywhere saying it was cut. Only the explicit value counts — several backends
+  omit the field, and treating absence as truncation fails every call against
+  them.
 
 ## Process
 

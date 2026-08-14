@@ -331,6 +331,85 @@ being turned into the 1st of January.
 If you will do this again with the same kind of files, click **Save profile…**
 so you don't have to set the columns up next time.
 
+### Optional: letting a language model fill the gaps
+
+Some documents simply do not state a description anywhere the program can find
+one. If you want, it can ask a language model to write that column instead.
+
+**You do not have to do anything.** On the Setup screen there is a collapsed
+section, *"Optional: let a language model fill gaps the documents do not
+answer"*. **Leave it empty and none of this applies to you**: no model is
+contacted, nothing leaves this computer, and your spreadsheets are built exactly
+as they are today. There is no prompt, no warning and no half-working version.
+Ignoring this section costs you nothing.
+
+**Nobody has yet checked whether what a model writes here is any good.** The
+program has been tested thoroughly on *what it sends, when it is allowed to
+send, and how it flags what comes back* — but no test can say whether a
+description reads well or is accurate. That judgement is yours, made by reading
+the descriptions against the documents. This is why every cell a model writes is
+flagged.
+
+#### Two kinds of model, and the difference matters
+
+- **On your own computer** (for example Ollama at
+  `http://localhost:11434/v1`). Free, and **nothing leaves the machine**. Slower
+  — ninety seconds for one answer is ordinary on an older PC, which is why the
+  program waits two minutes before giving up.
+- **A hosted service** (for example OpenAI at `https://api.openai.com/v1`).
+  Faster, needs an API key, and **sends the text of your documents to somebody
+  else's computer**. If your material is not allowed to leave site, use a model
+  on your own computer instead — and if you are not sure, ask before you fill
+  the address in.
+
+Fill in the address, the model's name, and (for a hosted service only) the API
+key. The key is stored encrypted for your Windows account, exactly like your
+password. Three more boxes have sensible defaults you can leave alone: how much
+of each document to send, how many requests one run may make, and how long to
+wait for an answer.
+
+#### What you will see when it runs
+
+- **You are asked first, before any file is opened.** A message says how many
+  requests are about to be made, to which service, using which model, and at
+  most how much of your text is going. Nothing is sent until you agree, and
+  nothing is uploaded to openEQUELLA by this step — it writes into your
+  spreadsheet only.
+
+  **A model on your own computer does not ask.** Nothing is leaving the machine
+  and nothing is being charged, so there is nothing to agree to. That is
+  deliberate: a box you have to click through when it does not matter is what
+  teaches people to click through the one that does.
+
+- **A ceiling on every run.** The run stops after the number of requests you set
+  — 500 unless you change it — and every column it did not reach is left blank
+  and says so. One request is made for each column a model may fill, so a
+  document with two such columns uses two.
+
+- **Everything a model wrote is flagged**, with no exceptions, in `_notes`. The
+  `_source` column reads `ai` for those cells, so you can sort by it in Excel
+  and read only what a machine wrote.
+
+- **A stronger warning on dates and names.** Those cells say that an invented
+  date cannot be told from a real one by anyone reading the catalogue
+  afterwards, and the row stays in the "needs review" count. The template that
+  ships with the program does not let a model near the death date for exactly
+  this reason.
+
+- **A separate count** on the summary, kept apart from the rows needing review:
+  *N had a value written by a language model — every one is flagged.* Every
+  model-written cell carries a note, so folding the two counts together would
+  report that all 400 rows need review and hide the one that genuinely failed.
+
+- **A blank cell and a plain reason whenever something goes wrong** — the model
+  was unreachable, it declined, it ran out of time, it was cut off mid-answer.
+  Nothing half-finished is ever written into a cell, and there is no silent
+  retry.
+
+**What it will never do is overwrite something your document actually said.** A
+model may fill a cell that came out empty, or replace one the program had
+already flagged as a guess. A value the document stated is left alone.
+
 ## What happens when you upload
 
 This guide covers installing and starting the program, not the full upload
