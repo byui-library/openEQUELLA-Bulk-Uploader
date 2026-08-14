@@ -204,8 +204,9 @@ Against the operator's ten obituaries:
 - **An independent cross-check exists.** Three files (Marcus, Gideon, Thaddeus)
   have a numeric `Approx Date of Death` that survived OCR. The extracted date
   must equal it: `06/07/2211`, `12/04/2211`, `09/05/2211`.
-- Five more whose header was mangled — `06107/2211`, `04113/`, `09/5`, `0:4`,
-  `0` — must still yield a date from the prose.
+- Five more whose numeric header was mangled beyond reading — into a longer
+  digit run, a truncated fragment, or one or two stray characters — must still
+  yield a date from the prose.
 - **Alden Larkspar must come out blank and flagged.** His obituary places the
   where the death fell by season and time of day, and states no date anywhere. A value
   here would mean the rules are guessing.

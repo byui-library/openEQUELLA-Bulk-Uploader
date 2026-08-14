@@ -345,7 +345,8 @@ Expected: FAIL, cannot resolve `../../src/core/extract/dates.js`.
  *
  * Spelled-out dates are used rather than the numeric ones these documents also
  * carry, because letters survive OCR far better than digits: the same batch
- * yielded `10[330.213:0` for 30 October 2130 and `0:4` for a death date, while
+ * mangled a numeric birth date into an unreadable run of digits and a numeric
+ * death date into two characters, while
  * every spelled date came through clean. Reading the prose took recovery from
  * 3 of 10 files to 9 of 10.
  */

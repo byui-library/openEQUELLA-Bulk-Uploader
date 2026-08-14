@@ -721,7 +721,8 @@ item's permanent title.
 
 **Read the prose, not the numbers.** These documents state the death date twice,
 once in a numeric header and once in a sentence. OCR destroyed the header on
-seven of ten — `06107/2211`, `0:4`, `0` — while every spelled-out date came
+seven of ten — one came back as a longer run of digits, another as two stray
+characters — while every spelled-out date came
 through clean, because letters carry far more redundancy than digits. Reading
 the prose took recovery from 3 of 10 to 9 of 10 without changing anything about
 the scanning.
