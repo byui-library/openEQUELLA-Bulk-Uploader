@@ -37,6 +37,7 @@ export function describeSource(source: Source): string {
   if ('compose' in source) return `Built from other columns: ${source.compose}`;
   if ('presence' in source)
     return `"${source.presence.then}" when the document mentions: ${source.presence.any.join(', ')}`;
+  if ('ai' in source) return 'A language model (a guess -- always flagged)';
   return `Document property: ${source.property}`;
 }
 
