@@ -729,3 +729,41 @@ describe('the presence source', () => {
     expect(buildRow(profile, 'a.pdf', doc('He went somewhere else entirely.')).cells['MWDL/description']).toBe('');
   });
 });
+
+describe('a finished row remembers which cells were only a guess', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+
+  /**
+   * `notes` is a flat list, so a finished row could not say WHICH column was
+   * uncertain -- and "may the model replace this?" is exactly that question.
+   * The information already existed inside buildRow and was being thrown away.
+   */
+  it('records the note against the column it belongs to', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [
+        { path: 'MWDL/title', sources: [{ filenameStem: true }] },
+        { path: 'MWDL/description', sources: [{ opening: true }] },
+      ],
+    };
+    const row = buildRow(
+      profile,
+      'a.pdf',
+      doc(
+        'A sentence long enough to be taken as an opening paragraph by the reader, with plenty of lowercase words in it.',
+      ),
+    );
+    expect(row.flagged['MWDL/description']).toMatch(/start of the document/);
+    expect(row.flagged['MWDL/title']).toBeUndefined();
+  });
+
+  it('leaves flagged empty when every value was stated', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/title', sources: [{ filenameStem: true }] }],
+    };
+    expect(buildRow(profile, 'a.pdf', EMPTY_DOC).flagged).toEqual({});
+  });
+});
