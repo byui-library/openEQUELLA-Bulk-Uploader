@@ -246,6 +246,27 @@ describe('profiles using the new sources', () => {
       }),
     ).toThrow();
   });
+
+  /**
+   * A source can be type-legal and loader-illegal at once: the `Source` union
+   * in types.ts and the zod union here are two separate lists, and only the
+   * `_sourcesAreExhaustive` guard ties them together. A profile the code
+   * accepts and `parseProfile` rejects is a template that fails at load with
+   * nothing pointing at the cause, so the loader is pinned directly.
+   */
+  it('accepts a column that asks for a model', () => {
+    const columns = [
+      GOOD.columns[0]!,
+      { path: 'MWDL/description', sources: [{ opening: true }, { ai: true }] },
+    ];
+    expect(() => parseProfile({ ...GOOD, columns })).not.toThrow();
+    // Parsed, not merely tolerated -- a union member that silently dropped the
+    // source would also "not throw".
+    expect(parseProfile({ ...GOOD, columns }).columns[1]?.sources).toStrictEqual([
+      { opening: true },
+      { ai: true },
+    ]);
+  });
 });
 
 describe('loadProfile / saveProfile', () => {

@@ -810,3 +810,45 @@ describe('a finished row remembers which cells were only a guess', () => {
     expect(row.flagged).toStrictEqual({});
   });
 });
+
+/**
+ * `{ ai: true }` declares intent; it does not fetch. resolve() is synchronous
+ * and `src/core/extract/` never touches the network -- the property that lets
+ * an operator build a spreadsheet without signing in to anything. The async
+ * pass in core/ai/fill.ts acts on the marker afterwards.
+ */
+describe('an ai source resolves to nothing', () => {
+  it('leaves the cell for the later pass rather than fetching anything', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/description', sources: [{ ai: true }] }],
+    };
+    const row = buildRow(profile, 'a.pdf', {
+      text: 'Some text.',
+      hasTextLayer: true,
+      properties: {},
+      tables: [],
+    });
+    expect(row.cells['MWDL/description']).toBe('');
+    // No `_source` either: nothing filled this cell, so claiming one would put
+    // a provenance the row does not have into the spreadsheet.
+    expect(row.sources['MWDL/description']).toBeUndefined();
+  });
+
+  /**
+   * The marker must not swallow the column. An earlier source still wins, and
+   * a source AFTER the marker still gets its turn -- `resolve` returning empty
+   * is what makes both true, and a `return` rather than a fallthrough would
+   * have made the second false.
+   */
+  it('does not stop a later source from filling the cell', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/title', sources: [{ ai: true }, { filenameStem: true }] }],
+    };
+    const row = buildRow(profile, 'a.pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/title']).toBe('a');
+  });
+});
