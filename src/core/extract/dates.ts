@@ -1,26 +1,6 @@
 // src/core/extract/dates.ts
 
 /**
- * A date written in words: "March 5, 2019".
- *
- * Deliberately tolerant of whitespace around the comma, and of the comma being
- * absent. OCR of a scanned newspaper clipping produced `February 11 , 2019`,
- * and the first version of this pattern missed it -- which made the tool
- * report that man's FUNERAL date as his date of death.
- *
- * Spelled-out dates are used rather than the numeric ones these documents also
- * carry, because letters survive OCR far better than digits: the same batch
- * yielded `07[221.193:8` for 22 July 1938 and `0:1` for a death date, while
- * every spelled date came through clean. Reading the prose took recovery from
- * 3 of 10 files to 9 of 10.
- *
- * Both ends are anchored. Without a digit boundary after the year,
- * `February 11 12345` yielded "February 11 1234" -- a year of 1234, which
- * normalises cleanly and so would never have been flagged. The same OCR that
- * produced `09108/2019` and `07[221.193:8` makes a five-digit run routine
- * rather than hypothetical.
- */
-/**
  * The month vocabulary, as a list so a second recogniser can be built from the
  * SAME names rather than from a second copy of them.
  *
@@ -48,6 +28,33 @@ export const MONTH_NAMES: readonly string[] = [
 ];
 
 const MONTH = `(?:${MONTH_NAMES.join('|')})`;
+
+/**
+ * A date written in words: "March 5, 2019".
+ *
+ * Deliberately tolerant of whitespace around the comma, and of the comma being
+ * absent. OCR of a scanned newspaper clipping put a space before the comma, and
+ * the first version of this pattern missed it -- which made the tool report a
+ * man's FUNERAL date as his date of death.
+ *
+ * Spelled-out dates are used rather than the numeric ones these documents also
+ * carry, because letters survive OCR far better than digits: in the same batch
+ * a numeric birth date came back as an unreadable run of digits and brackets
+ * and a numeric death date as two characters, while every spelled date came
+ * through clean. Reading the prose took recovery from 3 of 10 files to 9 of 10.
+ *
+ * Both ends are anchored. Without a digit boundary after the year,
+ * `February 11 12345` yielded "February 11 1234" -- a year of 1234, which
+ * normalises cleanly and so would never have been flagged. OCR that mangles a
+ * numeric date into a longer digit run makes that routine rather than
+ * hypothetical.
+ *
+ * NO EXAMPLE HERE IS QUOTED FROM A SOURCE DOCUMENT. The garbled strings this
+ * docblock used to reproduce were verbatim OCR of a real scanned obituary, and
+ * one of them was annotated with the real birth date it decoded to. A real date
+ * under an invented name still identifies someone, and this repository is
+ * public. See the convention in CLAUDE.md.
+ */
 const DATE = `\\b${MONTH}\\s+\\d{1,2}\\s*,?\\s*\\d{4}(?!\\d)`;
 
 /** How far past a phrase a date may sit and still belong to it. */

@@ -357,8 +357,9 @@ function fill(
  * returns cannot.
  *
  * Says what to DO, and that a blank may be the RIGHT answer. One obituary of
- * ten states no date anywhere -- only "the early hours of Saturday morning" --
- * so leaving that cell blank is correct, not a failure to fix. A note that only
+ * ten states no date anywhere -- it places the death by season and time of day
+ * and nothing else -- so leaving that cell blank is correct, not a failure to
+ * fix. A note that only
  * reported the absence invited someone to invent a value, which is the failure
  * this whole tool is built to avoid. The xpath stays so it is obvious which
  * column to edit.

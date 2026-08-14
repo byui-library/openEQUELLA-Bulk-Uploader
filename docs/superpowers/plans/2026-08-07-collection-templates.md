@@ -345,7 +345,8 @@ Expected: FAIL, cannot resolve `../../src/core/extract/dates.js`.
  *
  * Spelled-out dates are used rather than the numeric ones these documents also
  * carry, because letters survive OCR far better than digits: the same batch
- * yielded `07[221.193:8` for 22 July 1938 and `0:1` for a death date, while
+ * mangled a numeric birth date into an unreadable run of digits and a numeric
+ * death date into two characters, while
  * every spelled date came through clean. Reading the prose took recovery from
  * 3 of 10 files to 9 of 10.
  */
@@ -1080,7 +1081,7 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Marcus Fennel Obituary.pdf',
-      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born July 22, 1938.'),
+      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born November 13, 1907.'),
     );
     expect(
       row.cells['BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date'],
@@ -1095,7 +1096,7 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Alden Larkspar Obituary.pdf',
-      doc('Alden Larkspur passed away peacefully in the early hours of Saturday morning.'),
+      doc('Alden Larkspur died quietly at home on an afternoon at the end of the harvest.'),
     );
     expect(
       row.cells['BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date'],
@@ -1238,7 +1239,7 @@ Run: `npx tsx verify.tmp.mts` then read `verify.out.txt`.
 All of these must hold. If any does not, **fix the code, not the expectation**:
 
 1. **Death date found on 9 of 10.**
-2. **Alden Larkspar has none**, and is not guessed. His obituary states only "the early hours of Saturday morning".
+2. **Alden Larkspar has none**, and is not guessed. His obituary places the death by season and time of day and states no date.
 3. **The three files whose numeric header survived OCR agree with it** — this is an independent cross-check, not a restatement of the same extraction:
    - Marcus Fennel → `2019-03-05` (header said `03/05/2019`)
    - Gideon Alder → `2019-10-02` (header said `10/02/2019`)

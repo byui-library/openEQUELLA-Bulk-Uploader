@@ -470,7 +470,7 @@ shape, never as a value the code may assume.
   re-derived opinion about which values "look uncertain" is a second judgement
   free to disagree with the one the operator is reading in `_notes`. Note the
   live consequence on the shipped obituary template: `compose` attaches no note,
-  so a partially composed description (`Born 1938-07-22` and nothing else) is a
+  so a partially composed description (`Born 1907-11-13` and nothing else) is a
   stated value and is never sent. **Measured on a real batch of ten documents,
   2026-08-14: the model fired on 1 of 10 rows**, because `compose` produced a
   value for the other nine. That is the rule working as designed, not the feature

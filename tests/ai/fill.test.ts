@@ -1060,9 +1060,9 @@ describe('a reply the document does not support', () => {
   /** A document that states no date, no number and no affiliation -- exactly the
    *  shape that drew an invented date out of a real model. */
   const SILENT =
-    'Alder Hawthorn passed away peacefully in his sleep, in the early hours of Saturday ' +
-    'morning, at his home in Marrowfield. He is survived by his family and will be missed ' +
-    'by the many friends he made over a long working life in the town.';
+    'Alder Hawthorn died at his home in Marrowfield, quietly and with his family beside ' +
+    'him, on an afternoon at the end of the harvest. He will be missed by the many friends ' +
+    'he made over a long working life in the town.';
 
   const refused = async (reply: string, text = SILENT, p: Profile = profile) => {
     const rows = [{ row: row(), doc: doc(text) }];

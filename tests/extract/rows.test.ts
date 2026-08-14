@@ -590,9 +590,9 @@ describe('buildRow and flagIfEmpty', () => {
 
   /**
    * A note that only reports the absence invites someone to invent a value.
-   * One real obituary states no date anywhere -- "the early hours of Saturday
-   * morning" -- so a blank there is the CORRECT answer, and the note has to
-   * say so or it reads as a defect to be fixed.
+   * One real obituary states no date anywhere -- it places the death by season
+   * and time of day and nothing else -- so a blank there is the CORRECT answer,
+   * and the note has to say so or it reads as a defect to be fixed.
    */
   it('says a blank may be the right answer, not only that the cell is empty', () => {
     const note = buildRow(profile, 'a.pdf', doc('no date here')).notes.join(' ');

@@ -444,7 +444,8 @@ rows flagged       1            'Larkspar' in the filename, 'Larkspur' in the do
 **The finding that made this worth building:** the OCR was fine, the wrong part
 of the page was being read. These documents state the death date twice — a
 numeric header and a sentence. OCR destroyed the header on seven of ten
-(`09108/2019`, `0:1`, `0`) while every spelled-out date came through clean,
+(one became a longer run of digits, another two stray characters) while every
+spelled-out date came through clean,
 because letters carry more redundancy than digits. Reading the prose took
 recovery from 3 of 10 to 9 of 10 with no change to the scanning at all. Buying
 better OCR software would have solved the wrong problem.

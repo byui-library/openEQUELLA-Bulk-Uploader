@@ -92,7 +92,7 @@ describe('dateNear', () => {
   /**
    * `\d{4}` with nothing after it read a year out of a longer run of digits,
    * and 1234 normalises cleanly, so it would never have been flagged. This
-   * batch's OCR mangles digit runs -- `09108/2019`, `07[221.193:8`.
+   * batch's OCR routinely mangles a numeric date into a longer digit run.
    */
   it('does not read a year out of a longer run of digits', () => {
     expect(dateNear('died February 11 12345', ['died'])).toBe('');

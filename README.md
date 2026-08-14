@@ -721,7 +721,8 @@ item's permanent title.
 
 **Read the prose, not the numbers.** These documents state the death date twice,
 once in a numeric header and once in a sentence. OCR destroyed the header on
-seven of ten — `09108/2019`, `0:1`, `0` — while every spelled-out date came
+seven of ten — one came back as a longer run of digits, another as two stray
+characters — while every spelled-out date came
 through clean, because letters carry far more redundancy than digits. Reading
 the prose took recovery from 3 of 10 to 9 of 10 without changing anything about
 the scanning.
@@ -970,7 +971,7 @@ MWDL/description: left blank -- the model's answer was refused, because it
 stated things this document does not support. "2024-01-06": the document states
 no such date. The model did answer and the call succeeded -- this tool discarded
 the answer -- so there is nothing to retry; read the document and fill this cell
-in by hand. What it said, which was not used: "Died 2024-01-06; Born 1938-07-22"
+in by hand. What it said, which was not used: "Died 2024-01-06; Born 1907-11-13"
 ```
 
 There is nothing to retry, because nothing went wrong at the endpoint: the call
@@ -1004,7 +1005,7 @@ no note**. Whatever it assembles is a stated value, so the rule above leaves it
 alone. `composeValue` returns empty only when *every* clause is empty — no
 death date, no birth date and no Ricks College mention, all three missing from
 the same document. A document that yielded only a birth date produces
-`Born 1938-07-22`, which is real, unflagged, and never sent.
+`Born 1907-11-13`, which is real, unflagged, and never sent.
 
 So expect the model to write on a **small fraction** of a real batch. Measured on
 a real folder of ten scanned obituaries: **the model fired on 1 of them**,

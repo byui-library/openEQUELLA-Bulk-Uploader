@@ -28,9 +28,9 @@ export interface UnsupportedClaim {
  * batch on 2026-08-14 with a small local model, TWO OF TEN generated
  * descriptions contained fabricated facts anyway:
  *
- * - A document stating no date of any kind -- only that the person died "in the
- *   early hours of Saturday morning" -- drew a full ISO death date. Run twice at
- *   temperature zero it produced TWO DIFFERENT DATES, so nothing is being
+ * - A document stating no date of any kind -- it placed the death only by
+ *   season and time of day -- drew a full ISO death date. Run three times at
+ *   temperature zero it produced THREE DIFFERENT DATES, so nothing is being
  *   misread: a plausibly shaped value is being generated to fill a slot.
  * - Two documents mentioning no affiliated institution had one asserted, against
  *   a profile instruction saying to include that clause only where the document

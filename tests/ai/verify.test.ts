@@ -51,16 +51,16 @@ const kinds = (generated: string, document: string, profile: Profile = withoutPr
 
 describe('a date the document does not state', () => {
   /**
-   * THE FAILURE THIS MODULE EXISTS FOR. The document says only that the person
-   * died in the early hours of a Saturday morning; the model wrote a full ISO
-   * date, and produced a DIFFERENT one when the same call was repeated at
+   * THE FAILURE THIS MODULE EXISTS FOR. The document places the death only by
+   * season and time of day and states no date at all; the model wrote a full
+   * ISO date, and produced a DIFFERENT one each time the call was repeated at
    * temperature zero. Nothing is being misread -- a plausibly shaped value is
    * being generated to fill a slot.
    */
   it('is refused', () => {
     const claims = unsupportedClaims(
       'Alder Hawthorn died on 2024-01-06.',
-      'Alder Hawthorn passed away peacefully in his sleep, in the early hours of Saturday morning.',
+      'Alder Hawthorn died at home, quietly and with his family beside him, on an afternoon at the end of the harvest.',
       withoutPresence,
     );
     expect(claims).toHaveLength(1);
@@ -130,19 +130,19 @@ describe('a date the document does not state', () => {
   /** The claim no finer than the document is supported, in both directions of
    *  precision the document can offer. */
   it('is accepted at a precision the document actually reaches', () => {
-    expect(kinds('Born in 1938.', 'Alder Hawthorn was born in 1938 in Thistledown.')).toEqual([]);
-    expect(kinds('Born in 1938.', 'Alder Hawthorn was born on July 22, 1938.')).toEqual([]);
+    expect(kinds('Born in 1907.', 'Alder Hawthorn was born in 1907 in Thistledown.')).toEqual([]);
+    expect(kinds('Born in 1907.', 'Alder Hawthorn was born on November 13, 1907.')).toEqual([]);
     expect(kinds('Died 2024-01.', 'Alder Hawthorn died on January 6, 2024.')).toEqual([]);
   });
 
   it('is refused when the year alone is one the document never gives', () => {
-    expect(kinds('Born in 1938.', 'Alder Hawthorn was born in Thistledown.')).toEqual(['date']);
+    expect(kinds('Born in 1907.', 'Alder Hawthorn was born in Thistledown.')).toEqual(['date']);
   });
 
   /** Two invented dates are two claims, so the note can name both. */
   it('reports every unsupported date, not just the first', () => {
     expect(
-      kinds('Died 2024-01-06; born 1938-07-22.', 'Alder Hawthorn lived his whole life in Marrowfield.'),
+      kinds('Died 2024-01-06; born 1907-11-13.', 'Alder Hawthorn lived his whole life in Marrowfield.'),
     ).toEqual(['date', 'date']);
   });
 });

@@ -129,7 +129,7 @@ Two rules for the template itself:
   the output is never `Died March 5, 2019; ;`.
 
 `Died {death_date}[: {residence}]; Born {birth_date}` with no residence yields
-`Died March 5, 2019; Born July 22, 1938`.
+`Died March 5, 2019; Born November 13, 1907`.
 
 ### `"checks": { "filenameWordsInText": { "ignore": ["Obituary"] } }`
 
@@ -204,10 +204,11 @@ Against the operator's ten obituaries:
 - **An independent cross-check exists.** Three files (Marcus, Gideon, Thaddeus)
   have a numeric `Approx Date of Death` that survived OCR. The extracted date
   must equal it: `03/05/2019`, `10/02/2019`, `07/03/2019`.
-- Five more whose header was mangled — `09108/2019`, `02111/`, `06/2`, `0:1`,
-  `0` — must still yield a date from the prose.
+- Five more whose numeric header was mangled beyond reading — into a longer
+  digit run, a truncated fragment, or one or two stray characters — must still
+  yield a date from the prose.
 - **Alden Larkspar must come out blank and flagged.** His obituary says only
-  "the early hours of Saturday morning" and states no date anywhere. A value
+  where the death fell by season and time of day, and states no date anywhere. A value
   here would mean the rules are guessing.
 - The name check must flag exactly one row.
 

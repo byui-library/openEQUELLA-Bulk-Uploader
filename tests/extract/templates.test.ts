@@ -44,10 +44,10 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Marcus Fennel Obituary.pdf',
-      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born July 22, 1938.'),
+      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born November 13, 1907.'),
     );
     expect(row.cells[DEATH]).toBe('2019-03-05');
-    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05; Born 1938-07-22');
+    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05; Born 1907-11-13');
     expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Marcus Fennel');
     expect(row.cells['MWDL/genres/genre']).toBe('Alumni Obituary');
   });
@@ -73,9 +73,9 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Marcus Fennel Obituary.pdf',
-      doc('He died March 5, 2019, was born July 22, 1938, and attended Ricks College.'),
+      doc('He died March 5, 2019, was born November 13, 1907, and attended Ricks College.'),
     );
-    expect(row.cells['MWDL/description']).toContain('Born 1938-07-22');
+    expect(row.cells['MWDL/description']).toContain('Born 1907-11-13');
     expect(row.cells['MWDL/coverage']).toBeUndefined();
     expect(row.cells['MWDL/relation']).toBeUndefined();
   });
@@ -97,7 +97,7 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Alden Larkspar Obituary.pdf',
-      doc('Alden Larkspur passed away peacefully in the early hours of Saturday morning.'),
+      doc('Alden Larkspur died quietly at home on an afternoon at the end of the harvest.'),
     );
     expect(row.cells[DEATH]).toBe('');
     expect(row.notes.join(' ')).toContain('Larkspar');
