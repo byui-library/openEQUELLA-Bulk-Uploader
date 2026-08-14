@@ -7,6 +7,7 @@ const row = (fileName: string, notes: string[]): ExtractedRow => ({
   cells: { 'attachment name': fileName },
   sources: {},
   notes,
+  flagged: {},
 });
 
 /**
@@ -59,7 +60,7 @@ describe('previewNotes', () => {
   });
 
   it('copes with a row whose filename cell is missing', () => {
-    const orphan: ExtractedRow = { cells: {}, sources: {}, notes: ['x'] };
+    const orphan: ExtractedRow = { cells: {}, sources: {}, notes: ['x'], flagged: {} };
     expect(() => previewNotes([orphan])).not.toThrow();
     expect(previewNotes([orphan])).toContain('x');
   });

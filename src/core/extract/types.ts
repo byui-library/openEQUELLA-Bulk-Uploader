@@ -185,6 +185,15 @@ export interface ExtractedRow {
   sources: Record<string, string>;
   /** Human-readable problems with this row. */
   notes: string[];
+  /**
+   * Column path -> the note explaining why that cell is only a guess.
+   *
+   * `notes` above is a flat list for the operator to read. This is the same
+   * information keyed so code can ask about ONE column, which is what the
+   * model-fill rule needs: it may replace a guess and must never replace a
+   * value the document stated. Only flagged columns appear.
+   */
+  flagged: Record<string, string>;
 }
 
 export interface ExtractResult {

@@ -17,7 +17,7 @@ const profile: Profile = {
 };
 
 function row(cells: Record<string, string>, sources = {}, notes: string[] = []): ExtractedRow {
-  return { cells, sources, notes };
+  return { cells, sources, notes, flagged: {} };
 }
 
 async function writeAndRead(rows: ExtractedRow[]): Promise<string[][]> {

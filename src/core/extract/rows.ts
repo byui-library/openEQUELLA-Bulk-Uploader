@@ -275,12 +275,27 @@ function resolve(source: Source, context: Context): Resolved {
   return { value: context.doc.properties[source.property] ?? '' };
 }
 
-function fill(column: Column, context: Context, notes: string[]): { value: string; source?: string } {
+/**
+ * `flagged` records the SAME note against the column it came from, so a
+ * finished row can be asked about one cell rather than only read as prose.
+ * Only a `Resolved` note counts: it is the tier saying "this value is a guess".
+ * The transform notes below are about a value the document really did state --
+ * an unrecognised date, an ambiguous name list -- so they stay out of it.
+ */
+function fill(
+  column: Column,
+  context: Context,
+  notes: string[],
+  flagged: Record<string, string>,
+): { value: string; source?: string } {
   for (const source of column.sources) {
     const resolved = resolve(source, context);
     const raw = resolved.value.trim();
     if (raw === '') continue;
-    if (resolved.note !== undefined) notes.push(`${column.path}: ${resolved.note}`);
+    if (resolved.note !== undefined) {
+      notes.push(`${column.path}: ${resolved.note}`);
+      flagged[column.path] = resolved.note;
+    }
 
     if (column.transform === 'people') {
       const { value, ambiguous } = splitPeople(raw);
@@ -345,6 +360,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
 
   const cells: Record<string, string> = {};
   const sources: Record<string, string> = {};
+  const flagged: Record<string, string> = {};
 
   // Two passes, because a composed column reads other columns' FINISHED values
   // -- after their transforms, not the raw text they came from. Composed
@@ -353,7 +369,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   const isComposed = (c: Column) => c.sources.some((s) => 'compose' in s);
 
   for (const column of profile.columns.filter((c) => !isComposed(c))) {
-    const { value, source } = fill(column, context, notes);
+    const { value, source } = fill(column, context, notes, flagged);
     const finished = column.path === ATTACHMENT_COLUMN ? filename : value;
     if (column.as !== undefined) context.composed[column.as] = finished;
 
@@ -367,7 +383,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   }
 
   for (const column of profile.columns.filter(isComposed)) {
-    const { value, source } = fill(column, context, notes);
+    const { value, source } = fill(column, context, notes, flagged);
     // The same override as the first pass. profile.ts rejects a composed
     // attachment column, but the two passes applying different rules is how
     // that got through review at all -- a row naming something that is not a
@@ -415,5 +431,5 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
     }
   }
 
-  return { cells, sources, notes };
+  return { cells, sources, notes, flagged };
 }
