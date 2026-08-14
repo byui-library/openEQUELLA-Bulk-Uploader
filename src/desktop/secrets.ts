@@ -3,6 +3,10 @@ import { unlinkSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { StoredToken, TokenStore } from '../core/tokenStore.js';
 import { instanceKey, normaliseInstanceUrl } from '../core/instanceUrl.js';
+// The ONE copy of each rule about what these numbers may be. See `setModel`.
+import { assertUsableBudget } from '../core/ai/slice.js';
+import { assertUsableCap } from '../core/ai/fill.js';
+import { assertUsableTimeout, MODEL_TIMEOUT_MS } from '../core/ai/provider.js';
 
 /**
  * The subset of Electron's `safeStorage` this module needs, extracted as an
@@ -66,6 +70,49 @@ export interface PasswordSettings {
 }
 
 export type Settings = OAuthSettings | PasswordSettings;
+
+/**
+ * The language-model endpoint one site's extractions may use, as stored.
+ *
+ * ABSENT IS THE DEFAULT AND ABSENT MEANS THE FEATURE DOES NOT EXIST. There is
+ * no "disabled" flag and no partially-configured state: `getModel` answers null
+ * and every surface reads that as "no model", which is what lets this tool be
+ * adopted without a data review. Nothing ships configured.
+ *
+ * PER INSTANCE, and stored in the `models` map beside `passwords` rather than
+ * inside the instance entry, for exactly the reason the passwords are: "forget
+ * these model settings" has to remove the endpoint while leaving the site, its
+ * name, its address and its credentials alone.
+ *
+ * The three numbers are the operator's, and every one of them is validated
+ * against core's own rule rather than a copy -- see `setModel`.
+ */
+export interface ModelSettings {
+  /** Base URL up to and including /v1. Ollama, LM Studio, OpenAI, Azure. */
+  baseUrl: string;
+  /** The model's name AT THAT ENDPOINT (`llama3`, `gpt-4o-mini`). */
+  model: string;
+  /**
+   * Empty for a local runtime, which needs no key. Encrypted with everything
+   * else in this file, and never rendered back into a field -- see
+   * `ModelChoice` in ipc.ts, which is what the renderer is actually given.
+   */
+  apiKey: string;
+  /** Characters to send from ONE document. See core/ai/slice.ts. */
+  budget: number;
+  /** Most REQUESTS one run may make -- not rows. See core/ai/fill.ts. */
+  cap: number;
+  /**
+   * Milliseconds to wait for one completion.
+   *
+   * STORED RATHER THAN FIXED because the timeout message tells the operator to
+   * "allow more time, or use a smaller model", and without this field the first
+   * half of that sentence names an action the app does not offer. A quantised
+   * model on an old CPU is the configuration this whole feature exists to
+   * serve, and it is the one that legitimately exceeds any default.
+   */
+  timeoutMs: number;
+}
 
 /**
  * The key one instance's credentials are stored under: `instanceKey` of its
@@ -176,6 +223,18 @@ interface StoredShapeV3 {
   version: 3;
   instances: Record<InstanceId, StoredEntry>;
   passwords: Record<InstanceId, StoredPassword>;
+  /**
+   * PURELY ADDITIVE, AND THE VERSION DELIBERATELY DID NOT CHANGE FOR IT.
+   *
+   * A v3 file written before model settings existed simply has no `models`
+   * key, which `loadAll` reads as "no model configured" with no migration step
+   * -- exactly as `passwords` was added. Bumping the version, or requiring this
+   * key, would send every stored credential through the "unrecognised shape ->
+   * empty" path a SECOND time; the operator has not yet told staff about the
+   * first one, and the Setup notice explaining a blank form would be explaining
+   * the wrong event.
+   */
+  models: Record<InstanceId, ModelSettings>;
 }
 
 /**
@@ -270,6 +329,56 @@ function parseStoredPassword(v: unknown): StoredPassword | null {
   if (typeof p !== 'object' || p === null) return null;
   if (typeof p.username !== 'string' || typeof p.password !== 'string') return null;
   return { username: p.username, password: p.password };
+}
+
+/**
+ * One stored model endpoint, or null when it is not a usable one.
+ *
+ * AN ADDRESS AND A MODEL NAME OR NOTHING. Half an endpoint cannot be called,
+ * and reporting it as configured would put a confirmation dialog in front of
+ * the operator for a run that can only fail on every row. Same rule as a
+ * password with no username: both halves, or neither.
+ *
+ * The numbers are NOT defaulted when they are the wrong type -- an entry that
+ * has been hand-edited into nonsense is discarded rather than silently run with
+ * a budget nobody chose. `timeoutMs` is the one exception, and only for
+ * absence: it is defaulted to `MODEL_TIMEOUT_MS` so an entry written before the
+ * field existed keeps working, which is the same courtesy `live` gets above.
+ */
+function parseStoredModel(v: unknown): ModelSettings | null {
+  const m = v as Record<string, unknown> | null;
+  if (typeof m !== 'object' || m === null) return null;
+  if (typeof m.baseUrl !== 'string' || m.baseUrl.trim() === '') return null;
+  if (typeof m.model !== 'string' || m.model.trim() === '') return null;
+  if (typeof m.apiKey !== 'string') return null;
+  if (typeof m.budget !== 'number' || typeof m.cap !== 'number') return null;
+  if (m.timeoutMs !== undefined && typeof m.timeoutMs !== 'number') return null;
+  return {
+    baseUrl: m.baseUrl,
+    model: m.model,
+    apiKey: m.apiKey,
+    budget: m.budget,
+    cap: m.cap,
+    timeoutMs: typeof m.timeoutMs === 'number' ? m.timeoutMs : MODEL_TIMEOUT_MS,
+  };
+}
+
+/**
+ * Whether two model addresses are served by the same place, for deciding
+ * whether a key stored for one may be kept for the other.
+ *
+ * ORIGIN, NOT THE WHOLE URL: scheme, host and port are who the key is being
+ * handed to, and changing `/v1` to `/v1beta` on the same gateway is not a
+ * different service. FALSE FOR ANYTHING THAT WILL NOT PARSE, because every
+ * caller reads this as "is it safe to keep the key", and the unknown case has
+ * to be the one that drops it.
+ */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -429,6 +538,80 @@ export class SecretStore {
     await this.write(shape);
   }
 
+  /**
+   * Store one site's model endpoint.
+   *
+   * VALIDATED AGAINST CORE'S OWN RULES, NOT A COPY OF THEM. `assertUsableBudget`
+   * (slice.ts), `assertUsableCap` (fill.ts) and `assertUsableTimeout`
+   * (provider.ts) are the code that will actually run with these numbers, and
+   * they are exported precisely so this boundary can ask them. Restating the
+   * rules here would give the settings screen a second opinion free to drift
+   * from the first -- and the failure that produces is the worst-shaped one
+   * available: a value accepted on Setup and refused four hundred rows into a
+   * run, by a message about a text box the operator closed an hour ago.
+   *
+   * Checked BEFORE anything is read or written, so a refused setting leaves the
+   * store exactly as it was rather than half-updated.
+   *
+   * ## A blank key keeps the stored one -- but only for the same endpoint
+   *
+   * Setup never renders a stored key back into its box (see `ModelChoice` in
+   * ipc.ts), so the form submitted by an operator who only raised the character
+   * budget carries an empty key. Reading that as a deletion would throw away a
+   * credential they never touched, and they can only replace it by finding it
+   * again -- the identical trap `saveInstance` avoids for a blank password.
+   *
+   * BUT THE KEY BELONGS TO THE ENDPOINT, not to the site. Carrying it across a
+   * change of address would send a key issued by one service to a different
+   * one: repoint a site from `api.openai.com` to a model on this machine and
+   * the old rule would hand the operator's paid key to their own Ollama, in
+   * plain http, for nothing. So the stored key is kept only when the origin has
+   * not moved; anywhere else, a blank key means no key.
+   */
+  async setModel(instanceId: InstanceId, settings: ModelSettings): Promise<void> {
+    assertUsableBudget(settings.budget);
+    assertUsableCap(settings.cap);
+    assertUsableTimeout(settings.timeoutMs);
+    this.requireEncryption();
+    const { shape } = await this.loadAll();
+    const previous = shape.models[instanceId];
+    const apiKey =
+      settings.apiKey !== '' ||
+      previous === undefined ||
+      !sameOrigin(previous.baseUrl, settings.baseUrl)
+        ? settings.apiKey
+        : previous.apiKey;
+    shape.models[instanceId] = { ...settings, apiKey };
+    await this.write(shape);
+  }
+
+  /**
+   * This site's model endpoint, or null when nothing is configured.
+   *
+   * NULL IS WHAT MAKES THE FEATURE ABSENT. Every surface reads it that way, so
+   * a site that has never been given an endpoint gets exactly today's
+   * behaviour: no prompt, no error, no degraded mode, nothing sent anywhere.
+   * Never throws -- an unreadable store is "no model", same as every other read
+   * here.
+   */
+  async getModel(instanceId: InstanceId): Promise<ModelSettings | null> {
+    return (await this.loadAll()).shape.models[instanceId] ?? null;
+  }
+
+  /**
+   * Behind Setup's "Forget these model settings". Removes the endpoint and its
+   * key while leaving the site, its credentials and its per-site settings
+   * alone. Removing what is absent is not an error and costs no write, so it
+   * cannot fail on a machine whose encryption has stopped working -- where
+   * there is nothing to forget in the first place.
+   */
+  async forgetModel(instanceId: InstanceId): Promise<void> {
+    const { shape } = await this.loadAll();
+    if (!shape.models[instanceId]) return;
+    delete shape.models[instanceId];
+    await this.write(shape);
+  }
+
   /** The instance itself -- address, name and per-site settings -- without its credentials. */
   async loadInstance(instanceId: InstanceId): Promise<Instance | null> {
     const stored = (await this.loadAll()).shape.instances[instanceId];
@@ -495,7 +678,7 @@ export class SecretStore {
   /** Reads and validates the on-disk store. Never throws -- see class doc. */
   private async loadAll(): Promise<LoadResult> {
     const empty = (dropped = false): LoadResult => ({
-      shape: { version: 3, instances: {}, passwords: {} },
+      shape: { version: 3, instances: {}, passwords: {}, models: {} },
       dropped,
     });
     let blob: Buffer;
@@ -528,7 +711,19 @@ export class SecretStore {
           if (account) passwords[id] = account;
         }
       }
-      return { shape: { version: 3, instances, passwords }, dropped: false };
+      // Absent on any v3 file written before model settings existed, which is
+      // simply "no model configured" -- no migration, nothing dropped, every
+      // credential in the file untouched. See `StoredShapeV3.models`: this key
+      // was added exactly the way `passwords` was, and for the same reason.
+      const models: Record<InstanceId, ModelSettings> = {};
+      const rawModels = parsed.models;
+      if (typeof rawModels === 'object' && rawModels !== null) {
+        for (const [id, v] of Object.entries(rawModels as Record<string, unknown>)) {
+          const model = parseStoredModel(v);
+          if (model) models[id] = model;
+        }
+      }
+      return { shape: { version: 3, instances, passwords, models }, dropped: false };
     } catch {
       // Corrupt, hand-edited, or written by a different OS user. Treat as
       // absent: the resulting "set up your credentials" prompt is the right

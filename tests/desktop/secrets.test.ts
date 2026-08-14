@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SecretStore, EncryptedTokenStore, type Cipher } from '../../src/desktop/secrets.js';
+import {
+  SecretStore,
+  EncryptedTokenStore,
+  type Cipher,
+  type ModelSettings,
+} from '../../src/desktop/secrets.js';
 import { instanceKey } from '../../src/core/instanceUrl.js';
 import type { StoredToken } from '../../src/core/tokenStore.js';
 
@@ -722,6 +727,197 @@ describe('SecretStore — per-site settings', () => {
     expect(inst?.live).toBe(true);
     expect(inst?.attachmentUuidPath).toBe('');
     expect(inst?.schemaUuid).toBe('');
+  });
+});
+
+/**
+ * Model settings: one endpoint per site, in the same encrypted file, keyed the
+ * same way and removable on their own.
+ */
+describe('SecretStore — model settings', () => {
+  const model = (over: Partial<ModelSettings> = {}): ModelSettings => ({
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3',
+    apiKey: '',
+    budget: 8000,
+    cap: 200,
+    timeoutMs: 120_000,
+    ...over,
+  });
+
+  it('round-trips one instance’s settings, key included', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.setModel(instanceKey(LIVE), model({ apiKey: 'sk-secret', baseUrl: 'https://api.openai.com/v1' }));
+    expect(await s.getModel(instanceKey(LIVE))).toEqual(
+      model({ apiKey: 'sk-secret', baseUrl: 'https://api.openai.com/v1' }),
+    );
+  });
+
+  it('keeps two instances separate', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.setModel(instanceKey(LIVE), model());
+    expect(await s.getModel(instanceKey(SANDBOX))).toBeNull();
+  });
+
+  /** The zero-prerequisite promise: nothing configured, feature absent. */
+  it('returns null when nothing was ever configured', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('refuses to write when OS encryption is unavailable', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), { ...fakeCipher, isAvailable: () => false });
+    await expect(s.setModel(instanceKey(LIVE), model({ apiKey: 'sk-secret' }))).rejects.toThrow(/encryption/i);
+  });
+
+  it('never writes the key in plaintext', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await s.setModel(instanceKey(LIVE), model({ apiKey: 'sk-v3ryS3cret', baseUrl: 'https://api.openai.com/v1' }));
+    expect(await readFile(path, 'utf8')).not.toContain('sk-v3ryS3cret');
+  });
+
+  /** Removable without removing the site -- the same rule as forgetPassword. */
+  it('forgets the model without touching the site or its password', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    const inst = await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+    );
+    await s.setModel(inst.id, model());
+    await s.forgetModel(inst.id);
+
+    expect(await s.getModel(inst.id)).toBeNull();
+    expect(await s.loadInstance(inst.id)).not.toBeNull();
+    expect(await s.loadSettings(inst.id)).toMatchObject({ password: 'hunter2' });
+  });
+
+  it('forgetting what is absent is not an error', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await expect(s.forgetModel(instanceKey(LIVE))).resolves.toBeUndefined();
+  });
+
+  /**
+   * THE RULES ARE CORE'S, NOT A SECOND COPY. `assertUsableBudget` (slice.ts),
+   * `assertUsableCap` (fill.ts) and `assertUsableTimeout` (provider.ts) decide
+   * what these numbers may be, and the store calls them rather than restating
+   * them -- a second copy on the way in is free to drift from the one that
+   * runs, and the operator would then be refused mid-run by a rule the settings
+   * screen accepted.
+   */
+  it.each([
+    ['a budget of zero', { budget: 0 }, /budget/i],
+    ['a budget that is not a number', { budget: Number.NaN }, /budget/i],
+    ['a negative cap', { cap: -1 }, /limit/i],
+    ['a cap that is not a number', { cap: Number.NaN }, /limit/i],
+    ['a time limit of zero', { timeoutMs: 0 }, /time limit/i],
+    ['a time limit beyond what a timer can hold', { timeoutMs: 3_000_000_000 }, /time limit/i],
+  ])('refuses %s, and says which setting', async (_label, over, expected) => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await expect(s.setModel(instanceKey(LIVE), model(over))).rejects.toThrow(expected);
+  });
+
+  it('stores nothing at all when a setting is refused', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.setModel(instanceKey(LIVE), model()).catch(() => {});
+    await s.setModel(instanceKey(SANDBOX), model({ cap: -1 })).catch(() => {});
+    expect(await s.getModel(instanceKey(SANDBOX))).toBeNull();
+  });
+
+  /**
+   * ADDING THIS MAP MUST NOT BE A SECOND CLEAN BREAK.
+   *
+   * The v2 -> v3 change discarded every stored credential through `loadAll`'s
+   * "unrecognised shape -> empty" path, and Setup shows a notice explaining the
+   * blank form. That was a deliberate one-time cost and the operator has not yet
+   * told staff about it. A store written before `models` existed simply has no
+   * such key, which reads as "no model configured" with no migration at all --
+   * exactly as `passwords` did when IT was added. If this test fails, staff
+   * re-enter their credentials a SECOND time and the notice explaining it is
+   * already stale.
+   */
+  it('reads a store written before model settings existed, with every password intact', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {
+            [instanceKey(LIVE)]: {
+              label: 'Live',
+              baseUrl: LIVE,
+              authMode: 'password',
+              attachmentUuidPath: 'BYUI_extended/attachments/attachment',
+              live: true,
+              schemaUuid: 'schema-1',
+            },
+            [instanceKey(SANDBOX)]: {
+              label: 'Sandbox',
+              baseUrl: SANDBOX,
+              authMode: 'code',
+              clientId: 'cid',
+              clientSecret: 'shhh',
+              redirectUri: SANDBOX,
+              attachmentUuidPath: '',
+              live: false,
+              schemaUuid: '',
+            },
+          },
+          passwords: { [instanceKey(LIVE)]: { username: 'm.miles', password: 'hunter2' } },
+          // No `models` key. That is the whole point of this test.
+        }),
+      ),
+    );
+
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
+      authMode: 'password',
+      username: 'm.miles',
+      password: 'hunter2',
+    });
+    expect(await s.loadSettings(instanceKey(SANDBOX))).toMatchObject({ clientSecret: 'shhh' });
+    expect(await s.listInstances()).toHaveLength(2);
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+    // Nothing was discarded, so Setup must not claim anything was.
+    expect(await s.credentialsDropped()).toBe(false);
+  });
+
+  it('adding a model to that store leaves the passwords where they were', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: { [instanceKey(LIVE)]: { label: 'Live', baseUrl: LIVE, authMode: 'password' } },
+          passwords: { [instanceKey(LIVE)]: { username: 'm.miles', password: 'hunter2' } },
+        }),
+      ),
+    );
+    await s.setModel(instanceKey(LIVE), model());
+    expect(await s.loadSettings(instanceKey(LIVE))).toMatchObject({ password: 'hunter2' });
+    expect(await s.getModel(instanceKey(LIVE))).toEqual(model());
+  });
+
+  /** A half-written entry is not a usable endpoint. Same rule as a password
+   *  with no username: both halves or neither. */
+  it('discards an entry that is not a usable endpoint, rather than half-loading it', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {},
+          passwords: {},
+          models: { [instanceKey(LIVE)]: { baseUrl: 'http://localhost:11434/v1' } },
+        }),
+      ),
+    );
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
   });
 });
 

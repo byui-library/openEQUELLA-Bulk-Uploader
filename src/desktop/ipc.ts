@@ -8,7 +8,7 @@ import type { DuplicateFinding } from '../core/duplicates.js';
 // this module is reachable from the sandboxed renderer. A type-only import is
 // erased at compile time and never becomes a runtime require (see
 // tests/desktop/rendererPurity.test.ts).
-import type { Settings, SettingsAuthMode } from './secrets.js';
+import type { ModelSettings, Settings, SettingsAuthMode } from './secrets.js';
 // Also `import type`, and for the same reason: session.ts reaches the auth
 // providers and the filesystem through them. The type is declared where it is
 // produced (session.ts) and re-exported below, so the renderer can name what
@@ -40,6 +40,28 @@ export interface InstanceChoice {
   live: boolean;
   /** The chosen collection's schema, or ''. The key to the offline schema cache. */
   schemaUuid: string;
+}
+
+/**
+ * One site's stored model endpoint, as the renderer sees it.
+ *
+ * MIRRORS `ModelSettings` MINUS THE KEY, exactly as `InstanceChoice` mirrors
+ * `Instance` minus the client secret and `getPassword` answers without the
+ * password. The renderer needs three things from a stored endpoint -- enough to
+ * say what is configured, the numbers the confirmation dialog is built from,
+ * and the fact that there is a key to forget -- and none of those is the key
+ * itself. It is written field by field for the same reason `toInstance` is: a
+ * spread would carry a new secret into the renderer the day one was added to
+ * `ModelSettings`, silently.
+ */
+export interface ModelChoice {
+  baseUrl: string;
+  model: string;
+  budget: number;
+  cap: number;
+  timeoutMs: number;
+  /** Whether a key is stored. The key itself never crosses this boundary. */
+  hasApiKey: boolean;
 }
 
 /**
@@ -174,6 +196,25 @@ export interface OeqApi {
   getPassword(instanceId: string): Promise<{ username: string } | null>;
   /** Behind Setup's "Forget this password". Removing what is absent is not an error. */
   forgetPassword(instanceId: string): Promise<void>;
+
+  /**
+   * Store the language-model endpoint one site's extractions may use.
+   *
+   * REJECTS a budget, cap or time limit core's own guards refuse, with core's
+   * own message -- see secrets.ts#setModel. That is what puts a mistyped box in
+   * front of the operator on Setup instead of four hundred rows into a run.
+   */
+  setModel(args: { instanceId: string; settings: ModelSettings }): Promise<void>;
+  /**
+   * This site's model endpoint without its key, or null when none is stored.
+   *
+   * NULL IS WHAT MAKES THE FEATURE ABSENT, and every caller reads it that way:
+   * no confirmation, no request, no mention. A site that has never been given
+   * an endpoint behaves exactly as this tool did before the feature existed.
+   */
+  getModel(instanceId: string): Promise<ModelChoice | null>;
+  /** Behind Setup's "Forget these model settings". Leaves the site alone. */
+  forgetModel(instanceId: string): Promise<void>;
 
   /**
    * Sign in to one site and confirm who that made you.
@@ -370,6 +411,9 @@ export const CHANNELS = {
   setPassword: 'oeq:setPassword',
   getPassword: 'oeq:getPassword',
   forgetPassword: 'oeq:forgetPassword',
+  setModel: 'oeq:setModel',
+  getModel: 'oeq:getModel',
+  forgetModel: 'oeq:forgetModel',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',
   currentUser: 'oeq:currentUser',

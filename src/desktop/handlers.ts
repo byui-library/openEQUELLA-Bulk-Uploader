@@ -427,6 +427,44 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   );
 
   ipcMain.handle(
+    CHANNELS.setModel,
+    async (_e, args: Parameters<OeqApi['setModel']>[0]) =>
+      secrets().setModel(args.instanceId, args.settings),
+  );
+
+  // Returns everything EXCEPT the key, for the reason getPassword returns
+  // everything except the password -- see OeqApi.getModel and ModelChoice.
+  ipcMain.handle(
+    CHANNELS.getModel,
+    async (_e, instanceId: Parameters<OeqApi['getModel']>[0]) => {
+      const stored = await secrets().getModel(instanceId);
+      if (stored === null) return null;
+      return {
+        baseUrl: stored.baseUrl,
+        model: stored.model,
+        budget: stored.budget,
+        cap: stored.cap,
+        timeoutMs: stored.timeoutMs,
+        hasApiKey: stored.apiKey !== '',
+      };
+    },
+  );
+
+  /**
+   * "Forget these model settings".
+   *
+   * NO SESSION TO END, unlike `forgetPassword` above: nothing here holds a
+   * long-lived session with anybody. A model endpoint is called per request and
+   * the key is a bearer token sent on each one, so removing the stored settings
+   * is the whole of the removal.
+   */
+  ipcMain.handle(
+    CHANNELS.forgetModel,
+    async (_e, instanceId: Parameters<OeqApi['forgetModel']>[0]) =>
+      secrets().forgetModel(instanceId),
+  );
+
+  ipcMain.handle(
     CHANNELS.signIn,
     async (_e, instanceId: Parameters<OeqApi['signIn']>[0]) => {
       const { inst, settings } = await requireSettings(instanceId);
