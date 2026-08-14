@@ -85,9 +85,11 @@ export type Source =
    * Ask a language model, in the async pass that runs after extraction.
    *
    * A MARKER, NOT A FETCH. `resolve` returns empty for it -- extraction is
-   * synchronous, pure and offline, and stays that way. `core/ai/fill.ts` reads
-   * the finished rows and fills only what `eligibleColumns` permits. Placed
-   * last in a source list by convention; the rule does not depend on position.
+   * synchronous, pure and offline, and stays that way. A later async pass
+   * reads the finished rows and fills only what `eligibleColumns` permits;
+   * that pass does not exist yet, and arrives as `core/ai/fill.ts` in Task 7
+   * of docs/superpowers/plans/2026-08-14-llm-provider.md. Placed last in a
+   * source list by convention; the rule does not depend on position.
    */
   | { ai: true };
 
@@ -195,12 +197,23 @@ export interface ExtractedRow {
   /** Human-readable problems with this row. */
   notes: string[];
   /**
-   * Column path -> the note explaining why that cell is only a guess.
+   * Column path -> the note the source attached, i.e. the source saying it was
+   * not certain this is the right value for this column.
    *
    * `notes` above is a flat list for the operator to read. This is the same
    * information keyed so code can ask about ONE column, which is what the
-   * model-fill rule needs: it may replace a guess and must never replace a
-   * value the document stated. Only flagged columns appear.
+   * model-fill rule needs: it may replace a value a source doubted, and must
+   * never replace one no source questioned.
+   *
+   * ONLY FLAGGED COLUMNS APPEAR -- a column is absent, never present with an
+   * empty or undefined value. Callers count these keys.
+   *
+   * NOT THE SAME "flagged" as `previewNotes` in
+   * `desktop/ui/screens/extractColumns.ts`, whose local variable means "rows
+   * carrying any note at all". A row can be flagged in that UI sense -- no
+   * text layer, a filename that does not match the pattern -- with `flagged`
+   * here still `{}`, because those notes belong to the row rather than to any
+   * one cell.
    */
   flagged: Record<string, string>;
 }

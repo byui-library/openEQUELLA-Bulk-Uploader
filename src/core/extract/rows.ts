@@ -274,8 +274,10 @@ function resolve(source: Source, context: Context): Resolved {
 
   // A marker, not a fetch. `resolve` is synchronous and `src/core/extract/`
   // never touches the network -- the property that lets an operator build a
-  // spreadsheet without signing in to anything. The async pass in
-  // `core/ai/fill.ts` acts on the marker after the row is finished.
+  // spreadsheet without signing in to anything. An async pass acts on the
+  // marker after the row is finished; it does not exist yet, and arrives as
+  // `core/ai/fill.ts` in Task 7 of
+  // docs/superpowers/plans/2026-08-14-llm-provider.md.
   if ('ai' in source) return { value: '' };
 
   return { value: context.doc.properties[source.property] ?? '' };
@@ -284,9 +286,21 @@ function resolve(source: Source, context: Context): Resolved {
 /**
  * `flagged` records the SAME note against the column it came from, so a
  * finished row can be asked about one cell rather than only read as prose.
- * Only a `Resolved` note counts: it is the tier saying "this value is a guess".
- * The transform notes below are about a value the document really did state --
- * an unrecognised date, an ambiguous name list -- so they stay out of it.
+ *
+ * The rule is structural: a note the SOURCE attached, meaning the source was
+ * not certain this is the right value for this column. That is not the same as
+ * "the document did not state it", and deliberately so -- it INCLUDES a
+ * `dateNear` that found several dates and took the first, and a `section` that
+ * was cut short or matched a word mid-sentence, all of which are text the
+ * document really does print. Being stated is not the test; a source's own
+ * doubt is, and that keeps this in step with the sources without a per-source
+ * table anyone has to remember to update.
+ *
+ * The transform notes below are excluded because they are not the source
+ * speaking. The source was certain it had the right value -- an unrecognised
+ * date, an ambiguous name list -- and only rendering it is in doubt. Replacing
+ * one of those would overwrite a value the document supplied and no source
+ * questioned.
  */
 function fill(
   column: Column,
