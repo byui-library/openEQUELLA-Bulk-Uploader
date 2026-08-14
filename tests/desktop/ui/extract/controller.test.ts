@@ -400,8 +400,10 @@ describe('the model confirmation before a run', () => {
     const text = confirm.mock.calls[0]![0];
     expect(text).toContain('api.openai.com');
     expect(text).toContain('gpt-4o-mini');
-    // One supported file, one model column: one request.
-    expect(text).toMatch(/up to 1 model requests/);
+    // One supported file, one model column: one request, said in the singular.
+    // This asserted "1 model requests" when it was written, which is how the
+    // ungrammatical form survived review of the dialog itself.
+    expect(text).toMatch(/up to 1 model request\b/);
     expect(a.extractRun).toHaveBeenCalled();
   });
 
@@ -449,9 +451,16 @@ describe('the model confirmation before a run', () => {
     expect(c.state().error).toBeNull();
   });
 
-  /** The dialog is shown BEFORE the output path is chosen would be wrong the
-   *  other way -- but it must certainly come before anything is read or sent. */
-  it('asks before the extract runs, never after', async () => {
+  /**
+   * THE ORDERING THAT MATTERS IS CONFIRM-BEFORE-RUN: nothing may be read, cut
+   * or sent until the operator has agreed to it.
+   *
+   * It also comes AFTER the file picker, which is the smaller point but a real
+   * one -- approving a send and then cancelling the save dialog would leave an
+   * approval standing for a run that never happens, and a confirmation ought to
+   * be the last step before the thing it confirms.
+   */
+  it('asks after the file is chosen and before the extract runs', async () => {
     const order: string[] = [];
     const confirm = vi.fn(() => {
       order.push('confirm');
@@ -460,6 +469,10 @@ describe('the model confirmation before a run', () => {
     const a = api({
       loadTemplate: vi.fn(async () => withAi),
       getModel: vi.fn(async () => HOSTED),
+      chooseCsvPath: vi.fn(async () => {
+        order.push('choosePath');
+        return 'C:/files/out.csv';
+      }),
       extractRun: vi.fn(async () => {
         order.push('run');
         return { outPath: 'C:/files/out.csv', written: 1, flagged: 0 };
@@ -467,6 +480,20 @@ describe('the model confirmation before a run', () => {
     });
     const c = await ready(a, withAi, confirm);
     await c.save();
-    expect(order).toEqual(['confirm', 'run']);
+    expect(order).toEqual(['choosePath', 'confirm', 'run']);
+  });
+
+  /** Cancelling the file picker asks nothing: there is no run to approve. */
+  it('asks nothing when the save dialog is cancelled', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => HOSTED),
+      chooseCsvPath: vi.fn(async () => null),
+    });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(a.extractRun).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import { instanceKey, normaliseInstanceUrl } from '../core/instanceUrl.js';
 import { assertUsableBudget } from '../core/ai/slice.js';
 import { assertUsableCap } from '../core/ai/fill.js';
 import { assertUsableTimeout, MODEL_TIMEOUT_MS } from '../core/ai/provider.js';
+import { ValidationError } from '../core/errors.js';
 
 /**
  * The subset of Electron's `safeStorage` this module needs, extracted as an
@@ -332,28 +333,73 @@ function parseStoredPassword(v: unknown): StoredPassword | null {
 }
 
 /**
- * One stored model endpoint, or null when it is not a usable one.
+ * What a usable model endpoint IS. Throws, naming the setting, when it is not.
+ *
+ * ONE RULE, ASKED BY BOTH SIDES. `setModel` calls it to refuse a write; the
+ * loader below calls it to discard an entry. They used to disagree: the loader
+ * checked `typeof === 'number'` only, so a hand-edited `budget: 0`, `cap: -1`
+ * or `budget: 1e999` loaded perfectly happily -- every one of them a value the
+ * write side refuses, and `budget: 0` in particular a value that makes every
+ * row in a batch report "no text to read" about files that are full of text.
+ * That is the second opinion this codebase spends its comments arguing against,
+ * sitting inside the module that argues it.
  *
  * AN ADDRESS AND A MODEL NAME OR NOTHING. Half an endpoint cannot be called,
  * and reporting it as configured would put a confirmation dialog in front of
  * the operator for a run that can only fail on every row. Same rule as a
- * password with no username: both halves, or neither.
+ * password with no username: both halves, or neither. This is also why the
+ * write side asks -- `setModel` used to accept a blank address and resolve
+ * successfully, and the entry then read back as `null`: a write reported as
+ * done that did nothing, which is this codebase's oldest shape of defect.
  *
- * The numbers are NOT defaulted when they are the wrong type -- an entry that
- * has been hand-edited into nonsense is discarded rather than silently run with
- * a budget nobody chose. `timeoutMs` is the one exception, and only for
- * absence: it is defaulted to `MODEL_TIMEOUT_MS` so an entry written before the
- * field existed keeps working, which is the same courtesy `live` gets above.
+ * The three numbers are core's own rules, called rather than restated -- see
+ * `setModel`.
+ */
+function assertUsableModel(settings: ModelSettings): void {
+  if (settings.baseUrl.trim() === '') {
+    throw new ValidationError(
+      'A model endpoint needs an address, such as http://localhost:11434/v1 for a model ' +
+        'running on this computer. Leave both it and the model name empty to configure no model at all.',
+    );
+  }
+  if (settings.model.trim() === '') {
+    throw new ValidationError(
+      `A model endpoint needs the name of a model at that address, such as 'llama3'. ` +
+        'Leave both it and the address empty to configure no model at all.',
+    );
+  }
+  assertUsableBudget(settings.budget);
+  assertUsableCap(settings.cap);
+  assertUsableTimeout(settings.timeoutMs);
+}
+
+/**
+ * One stored model endpoint, or null when it is not a usable one.
+ *
+ * THE SAME RULE THE WRITE SIDE ENFORCES, asked here in the only way a loader
+ * can ask it: by catching. "Unusable" now means one thing in this module
+ * instead of two, so an entry that could never be run is discarded on the way
+ * out rather than being handed to a confirmation dialog and a fill pass that
+ * then refuse it.
+ *
+ * DISCARDING IS THE SAFE DIRECTION. A discarded endpoint is "no model
+ * configured", which is the shipped state and costs the operator nothing but
+ * re-entering it; a loaded-but-unusable one is a batch that looks configured
+ * and fails on every row.
+ *
+ * `timeoutMs` is defaulted when ABSENT -- an entry written before the field
+ * existed keeps working, the same courtesy `live` gets above. It is not
+ * defaulted when present and wrong; that is a value somebody chose.
  */
 function parseStoredModel(v: unknown): ModelSettings | null {
   const m = v as Record<string, unknown> | null;
   if (typeof m !== 'object' || m === null) return null;
-  if (typeof m.baseUrl !== 'string' || m.baseUrl.trim() === '') return null;
-  if (typeof m.model !== 'string' || m.model.trim() === '') return null;
+  if (typeof m.baseUrl !== 'string') return null;
+  if (typeof m.model !== 'string') return null;
   if (typeof m.apiKey !== 'string') return null;
   if (typeof m.budget !== 'number' || typeof m.cap !== 'number') return null;
   if (m.timeoutMs !== undefined && typeof m.timeoutMs !== 'number') return null;
-  return {
+  const settings: ModelSettings = {
     baseUrl: m.baseUrl,
     model: m.model,
     apiKey: m.apiKey,
@@ -361,6 +407,12 @@ function parseStoredModel(v: unknown): ModelSettings | null {
     cap: m.cap,
     timeoutMs: typeof m.timeoutMs === 'number' ? m.timeoutMs : MODEL_TIMEOUT_MS,
   };
+  try {
+    assertUsableModel(settings);
+  } catch {
+    return null;
+  }
+  return settings;
 }
 
 /**
@@ -569,9 +621,10 @@ export class SecretStore {
    * not moved; anywhere else, a blank key means no key.
    */
   async setModel(instanceId: InstanceId, settings: ModelSettings): Promise<void> {
-    assertUsableBudget(settings.budget);
-    assertUsableCap(settings.cap);
-    assertUsableTimeout(settings.timeoutMs);
+    // The SAME function `parseStoredModel` catches on, so a write that succeeds
+    // is a write that reads back. Accepting a blank address here used to
+    // resolve successfully and then read back as null.
+    assertUsableModel(settings);
     this.requireEncryption();
     const { shape } = await this.loadAll();
     const previous = shape.models[instanceId];

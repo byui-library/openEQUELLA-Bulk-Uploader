@@ -263,9 +263,14 @@ export function createExtractController(options: ExtractControllerOptions): Extr
 
     async save() {
       if (state.dir === null || state.profile === null) return;
-      if (!(await approveModelRun(state.profile))) return;
       const outPath = await options.api.chooseCsvPath();
       if (outPath === null) return;
+      // LAST THING BEFORE THE RUN, and after the file picker on purpose:
+      // approving a send and then cancelling the save dialog left an approval
+      // standing for a run that never happened. A confirmation should be the
+      // step immediately before the thing it confirms, with nothing that can
+      // still call the whole thing off in between.
+      if (!(await approveModelRun(state.profile))) return;
       await guard(async () => {
         const report = await options.api.extractRun({ dir: state.dir!, profile: state.profile!, outPath });
         return { savedPath: report.outPath, savedWritten: report.written, savedFlagged: report.flagged };

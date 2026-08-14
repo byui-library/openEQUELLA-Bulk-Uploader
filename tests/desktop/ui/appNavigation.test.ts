@@ -75,6 +75,17 @@ interface BootOptions {
   fresh?: boolean;
   /** What signOut reports back. Defaults to one session, cleanly ended. */
   signOutReport?: { sessions: number; unconfirmed: number };
+  /** The model endpoint stored for the site. Defaults to none, the shipped state. */
+  model?: {
+    baseUrl: string;
+    model: string;
+    budget: number;
+    cap: number;
+    timeoutMs: number;
+    hasApiKey: boolean;
+  } | null;
+  /** Make storing the model endpoint reject, as a mistyped cap does. */
+  setModelFails?: boolean;
   /** Leave run() unresolved, so the app stays on the Progress screen. */
   holdRun?: boolean;
   /**
@@ -118,6 +129,13 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
       return { uuid: 'schema-1', name: 'Schema', paths: options.schemaPaths ?? ['MWDL/title'] };
     },
     getPassword: async () => ({ username: 'a.operator' }),
+    getModel: async () => options.model ?? null,
+    setModel: async () => {
+      if (options.setModelFails === true) {
+        throw new Error('The model run limit must be zero or a positive number, but it was \'-1\'.');
+      }
+    },
+    forgetModel: async () => {},
     chooseSpreadsheet: async () => 'C:\\batch\\upload.csv',
     chooseFolder: async () => 'C:\\batch\\files',
     clearSettings: async () => {
@@ -694,5 +712,275 @@ describe('Progress carries none of it', () => {
 
     harness.finishRun();
     await flush();
+  });
+});
+
+/**
+ * The optional model endpoint, driven through app.ts rather than asserted as
+ * markup -- because both faults this covers are in the WIRING, and a markup
+ * assertion cannot see either. One is a container that forgets it was opened;
+ * the other is a screen reached by a route that never asked what was stored.
+ */
+describe('the model section on Setup', () => {
+  const STORED = {
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3',
+    budget: 4321,
+    cap: 77,
+    timeoutMs: 300_000,
+    hasApiKey: false,
+  };
+
+  /**
+   * THE `keepCaret` FAILURE CLASS, ARRIVING THROUGH THE CONTAINER.
+   *
+   * Setup re-renders by replacing `innerHTML` on every keystroke. With the
+   * disclosure's `open` derived from what is STORED, an operator who expands
+   * the section to configure their first endpoint loses it on the first
+   * character they type: the fresh `<details>` has no `open`, the section snaps
+   * shut, and `keepCaret`'s `focus()` lands on an element inside a closed
+   * `<details>`, which is not focusable -- so the caret goes too.
+   *
+   * That is the whole of the path that turns the feature on, and it is the one
+   * state in which nothing is stored. `#setup-advanced` does not have this
+   * because its `open` comes from `authMode`, which is app state and does not
+   * change while typing.
+   */
+  it('stays open once the operator opens it, through every keystroke', async () => {
+    const { app } = await boot({ fresh: true });
+    expect(app.innerHTML).toMatch(/<details id="setup-model"(?!\s+open)/);
+
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'h' } });
+    await flush();
+
+    expect(app.innerHTML).toMatch(/<details id="setup-model" open/);
+    expect(app.innerHTML).toContain('value="h"');
+  });
+
+  /** And closes when they close it -- state, not a one-way latch. Deriving
+   *  `open` from "something is stored" would spring it back open here. */
+  it('stays closed once the operator closes it', async () => {
+    const { app } = await boot({ model: STORED });
+    app.fire('#site-settings-btn');
+    await flush();
+    expect(app.innerHTML).toMatch(/<details id="setup-model" open/);
+
+    app.fire('#setup-model', 'toggle', { target: { open: false } });
+    app.fire('#setup-label', 'input', { target: { value: 'Renamed' } });
+    await flush();
+
+    expect(app.innerHTML).toMatch(/<details id="setup-model"(?!\s+open)/);
+  });
+
+  /**
+   * "Site settings for {site}…" exists precisely so a setting can be changed
+   * without destroying credentials (CLAUDE.md). Reached that way with an
+   * endpoint stored and nothing asking the store what it holds:
+   *
+   *  - the "Forget these model settings" button is not rendered at all, so the
+   *    only route to it is switching the dropdown to another site and back,
+   *    which nobody will find; and
+   *  - the boxes hold the DEFAULTS, so an operator who corrects the address
+   *    and saves silently resets their budget, cap and time limit. The raised
+   *    time limit is the setting a slow local model needs, which is the whole
+   *    reason that field is stored rather than fixed.
+   */
+  it.each([
+    ['Site settings, from Choose', async (app: FakeElement) => {
+      await reachChoose(app);
+      app.fire('#choose-site-settings');
+    }],
+    ['Site settings, from Sign-in', async (app: FakeElement) => {
+      app.fire('#site-settings-btn');
+    }],
+  ])('reads what is stored when Setup is reached by %s', async (_label, go) => {
+    const { app } = await boot({ model: STORED });
+    await go(app);
+    await flush();
+
+    expect(app.has('#setup-model-forget')).toBe(true);
+    expect(app.innerHTML).toContain('llama3');
+    // The stored numbers, not MODEL_FIELD_DEFAULTS. 300000ms shows as 300s.
+    expect(app.innerHTML).toContain('value="4321"');
+    expect(app.innerHTML).toContain('value="77"');
+    expect(app.innerHTML).toContain('value="300"');
+    expect(app.innerHTML).not.toContain('value="8000"');
+  });
+
+  /** First run lands straight on Setup without passing through the dropdown,
+   *  so `init` has to ask as well. A site with an endpoint that reaches Setup
+   *  this way is otherwise shown a blank, defaulted section. */
+  it('reads what is stored when Setup is the launch screen', async () => {
+    const { app } = await boot({ model: STORED, site: {}, fresh: false });
+    // Sign-in is the launch screen with a saved site, so go to Setup the way
+    // an operator with no credentials would.
+    app.fire('#site-settings-btn');
+    await flush();
+    expect(app.has('#setup-model-forget')).toBe(true);
+  });
+
+  /** Nothing stored is the shipped state: no card, nothing to forget, and the
+   *  section closed. */
+  it('offers nothing to forget when no endpoint is stored', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    expect(app.has('#setup-model-forget')).toBe(false);
+    expect(app.innerHTML).toMatch(/<details id="setup-model"(?!\s+open)/);
+  });
+});
+
+/**
+ * Saving the site and saving its model endpoint are two writes, and the second
+ * can fail on its own.
+ */
+describe('when the site saves but the model settings do not', () => {
+  /** Fill in enough of Setup to make `modelFrom` produce an endpoint. */
+  function typeAnEndpoint(app: FakeElement): void {
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'https://api.openai.com/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'gpt-4o-mini' } });
+  }
+
+  /**
+   * `saveInstance` COMMITS BEFORE `setModel` RUNS, so a rejection there is not
+   * a failed save -- it is half a save. Reported as a total failure, the
+   * operator read "nothing was saved" while a site that really did exist was
+   * missing from the dropdown, and the form was still pointed at nothing.
+   */
+  it('says which half was saved, rather than reporting a total failure', async () => {
+    const { app } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/were saved/i);
+    expect(app.innerHTML).toMatch(/model settings were not/i);
+    // Core's own words about the setting at fault, carried through.
+    expect(app.innerHTML).toMatch(/run limit/i);
+  });
+
+  /** Left on the screen the box is on, so the mistake can be corrected --
+   *  not carried off to Choose as a success. */
+  it('stays on Setup', async () => {
+    const { app } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.has('#setup-model-base-url')).toBe(true);
+    expect(app.has('#setup-form')).toBe(true);
+  });
+
+  /** The site half really did commit, so the app's own picture of what exists
+   *  has to catch up with the disk whatever happened to the second write. */
+  it('still refreshes the saved-site list', async () => {
+    const { app, calls } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.saveInstance).toBe(1);
+    expect(app.innerHTML).toContain('Library');
+  });
+
+  /** The typed key is the one thing the operator cannot get back by looking at
+   *  the screen. It is cleared only once it has actually reached the store. */
+  it('keeps the typed key so the retry does not need it typed again', async () => {
+    const { app } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-model-key', 'input', { target: { value: 'sk-typed' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toContain('value="sk-typed"');
+  });
+
+  /** And the ordinary path is unchanged: both writes succeed, Setup is left. */
+  it('leaves Setup as usual when both halves save', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.has('#setup-model-base-url')).toBe(false);
+  });
+});
+
+/**
+ * The one setting whose box and whose rule speak different units.
+ *
+ * Setup asks for SECONDS; `ProviderConfig.timeoutMs` and every guard behind it
+ * work in milliseconds, and `modelFrom` multiplies before anything is checked.
+ * Left to come back from the store, the refusal named a unit the operator was
+ * never shown and quoted a number they never typed.
+ */
+describe('a mistyped time limit', () => {
+  function typeAnEndpoint(app: FakeElement, seconds: string): void {
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'http://localhost:11434/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'llama3' } });
+    app.fire('#setup-model-timeout', 'input', { target: { value: seconds } });
+  }
+
+  it('is refused in seconds, on the screen the box is on', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '5000000');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/seconds/);
+    expect(app.innerHTML).not.toMatch(/millisecond/i);
+    // Never the converted number, which is what the old message quoted.
+    expect(app.innerHTML).not.toContain('5000000000');
+  });
+
+  it('is refused for a blank box without ever showing the word NaN', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '   ');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/seconds/);
+    expect(app.innerHTML).not.toContain('NaN');
+  });
+
+  /** Nothing is written, so the site is not half-saved on the way to a message
+   *  about a text box. */
+  it('saves nothing at all', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '0');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.saveInstance).toBe(0);
+  });
+
+  it('accepts an ordinary value and saves', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '300');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.saveInstance).toBe(1);
   });
 });

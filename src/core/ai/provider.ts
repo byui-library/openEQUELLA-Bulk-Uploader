@@ -72,6 +72,44 @@ export function assertUsableTimeout(timeoutMs: number): void {
   }
 }
 
+/** The same ceiling, in the unit a person types. Derived, never a second
+ *  literal. */
+export const MAX_TIMEOUT_SECONDS = Math.floor(MAX_TIMEOUT_MS / 1000);
+
+/**
+ * The time limit rule, asked in SECONDS and answered in the operator's own
+ * words -- or null when the value is fine.
+ *
+ * A TRANSLATION OF THE MESSAGE, NOT A SECOND RULE. What is acceptable is
+ * decided in exactly one place, by delegating to `assertUsableTimeout` above;
+ * this only re-states the refusal in the unit the value was entered in. Nothing
+ * here can accept something the provider then rejects, because it does not
+ * decide anything.
+ *
+ * IT EXISTS BECAUSE THE SEAM PRODUCED A NONSENSE MESSAGE. Setup's box is
+ * labelled "Seconds to wait for one answer" and `modelFrom` multiplies by 1000
+ * before anything is checked, so an operator who typed `5000000` was told the
+ * value "must be a number of milliseconds between 1 and 2147483647, but it was
+ * '5000000000'" -- a unit they were not shown and a number they did not type.
+ * A blank box read back as 'NaN'. Reusing one rule is right; making the
+ * operator read it in the code's units rather than their own is not.
+ *
+ * Returns a message rather than throwing so it fits the boundary it guards:
+ * `app.ts` collects these into `setupError` alongside its other field checks.
+ */
+export function timeoutSecondsProblem(seconds: number): string | null {
+  try {
+    assertUsableTimeout(seconds * 1000);
+    return null;
+  } catch {
+    return (
+      `The time to wait for one answer must be a number of seconds between 1 and ` +
+      `${MAX_TIMEOUT_SECONDS}. ${Math.round(MODEL_TIMEOUT_MS / 1000)} is the default, and suits a ` +
+      `local model on a slow machine.`
+    );
+  }
+}
+
 /**
  * Sampling temperature.
  *

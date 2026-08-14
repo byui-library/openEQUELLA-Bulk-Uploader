@@ -77,7 +77,9 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   schemaPaths: null,
   attachmentPathFilled: false,
   storedModel: null,
+  modelSectionOpen: false,
   onForgetModel: () => {},
+  onModelSectionToggle: () => {},
   error: null,
   saving: false,
   onInstanceChange: () => {},
@@ -991,9 +993,28 @@ describe('the Setup screen’s model section', () => {
    * the design rules out. Collapsed is not hidden: the same treatment the
    * Advanced OAuth disclosure already gets.
    */
-  it('stays collapsed when nothing is configured, and opens when something is', () => {
+  it('is collapsed by default', () => {
     expect(setupMarkup(props())).toMatch(/<details id="setup-model"(?!\s+open)/);
-    expect(setupMarkup(props({ storedModel: MODEL }))).toMatch(/<details id="setup-model" open/);
+  });
+
+  /**
+   * OPEN COMES FROM PROPS, NEVER FROM `storedModel`. This screen re-renders on
+   * every keystroke, so an operator who expanded the section to type their
+   * first endpoint -- the one case where nothing is stored -- had it close
+   * again on the first character, taking the caret with it. Derived the other
+   * way round it would also spring back open every time they closed it.
+   * `app.ts` opens it once, when it finds something stored, and after that the
+   * operator decides (appNavigation.test.ts drives both directions).
+   */
+  it('is open when the app says so, whatever is or is not stored', () => {
+    expect(setupMarkup(props({ modelSectionOpen: true }))).toMatch(/<details id="setup-model" open/);
+    expect(setupMarkup(props({ modelSectionOpen: true, storedModel: MODEL }))).toMatch(
+      /<details id="setup-model" open/,
+    );
+  });
+
+  it('is closed when the app says so, even with an endpoint stored', () => {
+    expect(setupMarkup(props({ storedModel: MODEL }))).toMatch(/<details id="setup-model"(?!\s+open)/);
   });
 
   it('offers nothing to forget when nothing is configured', () => {

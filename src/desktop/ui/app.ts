@@ -22,6 +22,10 @@ import {
 // `import type`: secrets.ts reaches `node:fs` and this module runs in the
 // sandboxed renderer, where a runtime import of it would blank the window.
 import type { ModelSettings, Settings, SettingsAuthMode } from '../secrets.js';
+// Pure, and reached from the sandboxed renderer on purpose -- see setup.ts's
+// note on the same import. It decides nothing; it re-states core's own time
+// limit rule in the unit Setup's box is labelled with.
+import { timeoutSecondsProblem } from '../../core/ai/provider.js';
 import { signOutNotice } from './signout.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
@@ -89,6 +93,11 @@ interface AppState extends BatchState {
   // none -- which is the shipped state and the common one. WITHOUT its key,
   // for the same reason the password never comes back (ipc.ts's ModelChoice).
   setupStoredModel: ModelChoice | null;
+  // Whether Setup's model disclosure is expanded. HELD HERE because the screen
+  // re-renders by replacing innerHTML on every keystroke, so the live
+  // element's own `open` is destroyed each time -- the same reason every field
+  // on that screen is controlled (screens/setup.ts's modelSectionOpen).
+  modelSectionOpen: boolean;
   // The collections `setupInstanceId` can contribute to, and why they could
   // not be read. Null is "not read"; an EMPTY ARRAY is "this account can
   // create nothing", which is a real state the screen states plainly rather
@@ -203,6 +212,7 @@ function initialState(): AppState {
     setupRedirectTouched: false,
     setupStoredUsername: null,
     setupStoredModel: null,
+    modelSectionOpen: false,
     setupCollections: null,
     setupCollectionsError: null,
     setupCollectionsWithheld: false,
@@ -296,6 +306,7 @@ function render(): void {
         fields: state.setupFields,
         storedUsername: state.setupStoredUsername,
         storedModel: state.setupStoredModel,
+        modelSectionOpen: state.modelSectionOpen,
         collections: state.setupCollections,
         collectionsError: state.setupCollectionsError,
         collectionsWithheld: state.setupCollectionsWithheld,
@@ -314,6 +325,7 @@ function render(): void {
         onLiveChange: handleSetupLiveChange,
         onForgetPassword: handleForgetPassword,
         onForgetModel: handleForgetModel,
+        onModelSectionToggle: handleModelSectionToggle,
         onSave: handleSaveSettings,
       });
       break;
@@ -513,6 +525,10 @@ function seedSetupForm(id: string): void {
   state.setupRedirectTouched = false;
   state.setupStoredUsername = null;
   state.setupStoredModel = null;
+  // Collapsed until `refreshStoredModel` finds an endpoint for the site now
+  // being edited. Carrying the previous site's expansion across would open the
+  // section on a site that has nothing in it.
+  state.modelSectionOpen = false;
 }
 
 function handleSetupInstanceChange(id: string): void {
@@ -723,6 +739,11 @@ async function refreshStoredModel(): Promise<void> {
   // answer for the previous site must never be attributed to the new one.
   if (state.setupInstanceId !== instanceId) return;
   state.setupStoredModel = stored;
+  // Opened ONCE, here, when there turns out to be something to look at. Not
+  // rendered from `stored` directly: that would spring the section back open
+  // every time the operator closed it, which is the same defect as it closing
+  // itself, wearing its other face.
+  if (stored !== null) state.modelSectionOpen = true;
   // The stored numbers go back into the boxes so the section describes what is
   // actually configured rather than the defaults. The KEY does not, and never
   // will -- getModel does not return it (ipc.ts).
@@ -748,6 +769,18 @@ async function refreshStoredModel(): Promise<void> {
  * separation is the reason the endpoint is stored in its own map rather than
  * inside the instance entry (secrets.ts).
  */
+/**
+ * The operator expanded or collapsed Setup's model disclosure.
+ *
+ * RECORDS IT AND DOES NOT RE-RENDER. The live element is already in the state
+ * the operator just put it in, so redrawing would replace it with an identical
+ * one for nothing -- and every later render now reads this instead of the DOM,
+ * which is the whole point.
+ */
+function handleModelSectionToggle(open: boolean): void {
+  state.modelSectionOpen = open;
+}
+
 async function handleForgetModel(): Promise<void> {
   try {
     await window.oeq.forgetModel(state.setupInstanceId);
@@ -807,6 +840,21 @@ async function handleSaveSettings(
     render();
     return;
   }
+  // THE ONE SETTING WHOSE BOX AND WHOSE RULE SPEAK DIFFERENT UNITS. Every other
+  // number on this form is stored in the unit it is typed in, so the store's
+  // refusal reads correctly as it comes back; the time limit is entered in
+  // seconds and checked in milliseconds, and the operator was being shown a
+  // unit they never saw and a number they never typed. Asked here in seconds --
+  // by a function that decides nothing and delegates to the same rule
+  // (core/ai/provider.ts) -- so the sentence matches the label above the box.
+  if (model !== null) {
+    const problem = timeoutSecondsProblem(model.timeoutMs / 1000);
+    if (problem !== null) {
+      state.setupError = problem;
+      render();
+      return;
+    }
+  }
   state.setupSaving = true;
   state.setupError = null;
   render();
@@ -819,10 +867,23 @@ async function handleSaveSettings(
     // AFTER the instance, because the endpoint is keyed by the id the main
     // process just derived from the address -- an operator adding a site and
     // its model in one pass has no id until this point. It REJECTS a budget,
-    // cap or time limit core's own guards refuse (secrets.ts#setModel), and the
-    // catch below puts that message on this screen, where the box is, rather
-    // than letting it surface hundreds of rows into a run.
-    if (model !== null) await window.oeq.setModel({ instanceId: saved.id, settings: model });
+    // cap or time limit core's own guards refuse (secrets.ts#setModel).
+    //
+    // CAUGHT SEPARATELY, because by now the site IS saved. Letting this throw
+    // to the outer catch reported the whole save as failed while a new site
+    // existed that the dropdown did not list, the form was still pointed at
+    // nothing, and the operator was told to fix a cap while looking at a screen
+    // that claimed nothing had been written. The site half is done; say which
+    // half was not and carry on to the success path, so the instance list
+    // catches up with what is actually on disk.
+    let modelError: string | null = null;
+    if (model !== null) {
+      try {
+        await window.oeq.setModel({ instanceId: saved.id, settings: model });
+      } catch (err) {
+        modelError = errorMessage(err);
+      }
+    }
     // Decided BEFORE state.instanceId is repointed below, because the question
     // is whether this save stayed on the site the waiting Choose selections
     // belong to. A save that landed somewhere else goes to Sign-in, where a
@@ -832,17 +893,25 @@ async function handleSaveSettings(
       savedInstanceId: saved.id,
       activeInstanceId: state.instanceId,
     });
-    state.setupEnteredFrom = null;
+    // EVERYTHING THE SITE HALF EARNED IS APPLIED WHETHER OR NOT THE MODEL HALF
+    // SUCCEEDED, because the site half is on disk either way and the app's
+    // picture of what exists must match it.
     state.instances = withSaved(await window.oeq.listInstances());
     state.setupSaving = false;
-    state.setupError = null;
     state.setupInstanceId = saved.id;
     // Neither secret stays in the renderer once it has been stored. Setup
     // shows a saved password as "Signed in as ..." (refreshed below), never
     // back in a field, and the client secret has never been rendered back.
-    // The model key joins them: it is the third secret this form collects, and
-    // it is stored by the time this line runs.
-    state.setupFields = { ...state.setupFields, password: '', clientSecret: '', modelKey: '' };
+    // The model key joins them -- but ONLY once it has actually reached the
+    // store. It is the one value on this form the operator cannot recover by
+    // looking at the screen, so a failed write must not clear it out from
+    // under a retry.
+    state.setupFields = {
+      ...state.setupFields,
+      password: '',
+      clientSecret: '',
+      ...(modelError === null ? { modelKey: '' } : {}),
+    };
     void refreshStoredUsername();
     void refreshStoredModel();
     // The credentials this site needed may only just have arrived, so the
@@ -854,6 +923,20 @@ async function handleSaveSettings(
     // landing back on Sign-in still pointed at a DIFFERENT (uncredentialed)
     // instance would look like nothing had happened.
     state.instanceId = saved.id;
+
+    if (modelError !== null) {
+      // HALF A SAVE, SAID AS HALF A SAVE. Leaving Setup here would carry the
+      // operator off as though everything worked; reporting it as a failure
+      // would claim the site was not saved when it was. `setupEnteredFrom` is
+      // deliberately left alone so Back still knows where they came from.
+      state.setupError =
+        `Your settings for this site were saved, but the model settings were not: ${modelError}`;
+      render();
+      return;
+    }
+
+    state.setupEnteredFrom = null;
+    state.setupError = null;
     state.screen = nextScreen('setup', { type: 'settingsSaved', returnTo });
     render();
     // Back on Choose, the collection list is re-read rather than trusted: the
@@ -919,6 +1002,7 @@ function handleAddCredentials(): void {
   state.screen = nextScreen('signin', { type: 'addCredentials' });
   render();
   void refreshStoredUsername();
+  void refreshStoredModel();
   void refreshSetupCollections();
 }
 
@@ -950,6 +1034,13 @@ function handleSiteSettings(from: Screen): void {
   state.screen = nextScreen(from, { type: 'siteSettings' });
   render();
   void refreshStoredUsername();
+  // EVERY ROUTE INTO SETUP HAS TO ASK, and this one most of all: it exists so a
+  // setting can be changed without destroying anything, and arriving here
+  // without reading the stored endpoint left the boxes holding defaults. An
+  // operator who corrected the address and saved then silently overwrote their
+  // own budget, cap and time limit -- and the Forget button was not rendered at
+  // all, so there was no way to remove an endpoint from the screen that owns it.
+  void refreshStoredModel();
   void refreshSetupCollections();
 }
 
@@ -1532,7 +1623,11 @@ async function init(): Promise<void> {
     state.screen = initialScreen(state.instances.length > 0);
     render();
     if (state.screen === 'signin') void checkInstanceState();
-    else void refreshStoredUsername();
+    else {
+      // Setup is the launch screen, so nothing else will ask on the way in.
+      void refreshStoredUsername();
+      void refreshStoredModel();
+    }
   } catch (err) {
     renderFatal(errorMessage(err));
   }

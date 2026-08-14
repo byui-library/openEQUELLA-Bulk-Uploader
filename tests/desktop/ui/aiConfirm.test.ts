@@ -159,6 +159,27 @@ describe('aiConfirmation', () => {
     expect(text).toMatch(/left blank and flagged/i);
   });
 
+  /**
+   * A ONE-DOCUMENT FOLDER IS THE ORDINARY FIRST THING AN OPERATOR TRIES, so
+   * "About to send up to 1 model requests" is on the path everybody takes, in a
+   * dialog whose whole job is to be read carefully.
+   */
+  it('says "1 model request" for a single request', () => {
+    const text = aiConfirmation(input({ documents: 1 }))!;
+    expect(text).toMatch(/up to 1 model request\b/);
+    expect(text).not.toMatch(/1 model requests/);
+  });
+
+  it('pluralises a cap of one too', () => {
+    const text = aiConfirmation(input({ documents: 9, cap: 1 }))!;
+    expect(text).toMatch(/limit of 1 model request\b/);
+    expect(text).not.toMatch(/1 model requests/);
+  });
+
+  it('still pluralises everything above one', () => {
+    expect(aiConfirmation(input({ documents: 2 }))).toMatch(/up to 2 model requests\b/);
+  });
+
   // --- the volume ----------------------------------------------------------
 
   /**

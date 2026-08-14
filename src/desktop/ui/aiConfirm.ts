@@ -3,7 +3,7 @@
 // RENDERER MODULE: nothing reachable from here may import `node:*` or
 // `electron`. Both of its core imports are pure and were written to be reached
 // from here -- see `endpoint.ts`'s docblock, which says so explicitly.
-import { isLoopbackEndpoint } from '../../core/ai/endpoint.js';
+import { describeHost, isLoopbackEndpoint } from '../../core/ai/endpoint.js';
 import { modelColumns } from '../../core/ai/eligible.js';
 import type { Profile } from '../../core/extract/types.js';
 
@@ -83,12 +83,12 @@ export function aiConfirmation(input: AiConfirmInput): string | null {
   const characters = requests * input.budget;
   const stopped =
     wanted > requests
-      ? `This batch would ask for ${count(wanted)}; the run stops at your limit of ` +
-        `${count(input.cap)}, and every column past it is left blank and flagged.`
-      : `Your limit is ${count(input.cap)}, so this run will not reach it.`;
+      ? `This batch would ask for ${requestCount(wanted)}; the run stops at your limit of ` +
+        `${requestCount(input.cap)}, and every column past it is left blank and flagged.`
+      : `Your limit is ${requestCount(input.cap)}, so this run will not reach it.`;
 
   return [
-    `About to send up to ${count(requests)} model requests to ${hostOf(input.baseUrl)}.`,
+    `About to send up to ${requestCount(requests)} to ${describeHost(input.baseUrl)}.`,
     '',
     `    model: ${input.model}`,
     `    at most ${count(characters)} characters of document text — up to ${count(input.budget)} from each request`,
@@ -107,12 +107,14 @@ function count(n: number): string {
   return n.toLocaleString('en-US');
 }
 
-/** The host, or the address itself when it will not parse -- an operator shown
- *  what they typed can see the mistake; one shown "invalid" cannot. */
-function hostOf(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).host;
-  } catch {
-    return baseUrl;
-  }
+/**
+ * A number of requests, in words that read.
+ *
+ * A one-document folder is the ordinary first thing anybody tries, so "1 model
+ * requests" appears on the path every operator takes -- inside the one dialog
+ * whose entire job is to be read carefully. Small, and exactly the kind of
+ * small that makes a reader trust the rest of it less.
+ */
+function requestCount(n: number): string {
+  return `${count(n)} model request${n === 1 ? '' : 's'}`;
 }
