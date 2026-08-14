@@ -127,6 +127,13 @@ What the probe of 2026-08-12 **did** confirm live, against `content.byui.edu`:
 | `GET /api/schema/{uuid}` | declares `namePath` and `descriptionPath`; `/MWDL/title` and `/MWDL/description` here |
 | `definition` is nested **JSON**, not XML | so the XML parser cannot be reused on the API path |
 
+**The language model pass has never been run against a real model.** Its
+machinery is tested against a stubbed provider — the rule about what may be
+overwritten, the cap, the failure paths, the guarantee that an unconfigured
+institution sends nothing anywhere — but **no test can assert that a generated
+description is good**, and none tries to. See *Letting a language model write a
+description*; it is off unless you configure an endpoint.
+
 What has **not** been confirmed anywhere: other openEQUELLA versions, other
 authentication configurations, and any schema that is not BYU-Idaho's MWDL. Apostrophe escaping in a `where` clause is still assumed
 (`Bach's Prelude` sends `Bach''s Prelude`; no live title has exercised it).
@@ -486,6 +493,11 @@ oeq-upload extract --dir ./files --profile music.profile.json --dry-run
 
 # 4. Write the spreadsheet
 oeq-upload extract --dir ./files --profile music.profile.json --out rows.csv
+
+# 5. Optional: let a language model fill the columns whose profile asks for one.
+#    Does nothing at all unless OEQ_MODEL_BASE_URL is set. See "Letting a
+#    language model write a description" below.
+oeq-upload extract --dir ./files --profile music.profile.json --out rows.csv --ai
 ```
 
 Then **open `rows.csv` and check it** before uploading. Two columns exist for
@@ -757,6 +769,233 @@ Two things are always flagged in `_notes`:
 Tier 3 refuses to guess when there is nothing to guess from: a page of headings
 and table fragments yields a blank cell rather than a line of timeline labels
 presented as a description.
+
+### Letting a language model write a description
+
+Tiers 1–3 above read what the document states. Where they find nothing, or find
+only a guess, a language model can be asked to write the cell instead. It is
+**off unless you configure an endpoint**, and it can point at a model running on
+your own computer or at a hosted service.
+
+> **Output quality is unverified.** Nothing in this repository can assert that a
+> generated description is good — no test can — and this feature has not yet been
+> run against a real model on a real batch. Everything below describes machinery
+> that works; whether what comes out of it is worth keeping is your judgement,
+> made by reading the descriptions against the documents. Every cell a model
+> writes is flagged for exactly that reason.
+
+#### With nothing configured, the feature does not exist
+
+No endpoint means no prompt, no error, no degraded mode, and nothing sent
+anywhere. Extraction behaves byte-for-byte as it did before this feature was
+built. That is deliberate: it is what lets an institution adopt the tool without
+a data review first.
+
+A column whose profile asks for a model that did not run does not silently come
+out blank — `_notes` says so per cell, naming the column and what would have to
+change: that `--ai` was not given, or that no endpoint is set up for this site.
+A cell that could not be filled must never look like a document that had nothing
+to say.
+
+#### A local model, from nothing (Ollama)
+
+```bash
+ollama pull llama3          # once
+ollama serve                # if it is not already running as a service
+```
+
+```bash
+export OEQ_MODEL_BASE_URL=http://localhost:11434/v1
+export OEQ_MODEL=llama3
+oeq-upload extract --dir ./obituaries --profile templates/alumni-obituary.profile.json \
+  --out rows.csv --ai
+```
+
+No API key, no account, no charge, and **nothing leaves the computer**. Plain
+`http` is fine here and only here — see the key rule below.
+
+#### A hosted model
+
+```bash
+export OEQ_MODEL_BASE_URL=https://api.openai.com/v1
+export OEQ_MODEL=gpt-4o-mini
+export OEQ_MODEL_KEY=sk-...
+oeq-upload extract --dir ./obituaries --profile templates/alumni-obituary.profile.json \
+  --out rows.csv --ai --yes
+```
+
+**A hosted endpoint sends your document text to somebody else's computer.** Up
+to `OEQ_MODEL_BUDGET` characters of each file, over the network, to a third
+party under their terms. If your material cannot leave site — student records,
+anything under a donor agreement, anything an institutional review would have an
+opinion about — **use a local runtime**. That choice is the point of supporting
+both, and it is not a detail to settle later.
+
+Any OpenAI-compatible endpoint works: Ollama, LM Studio, llama.cpp, OpenAI,
+Azure OpenAI, Groq, Together, OpenRouter. Anthropic's and Google's own APIs do
+not speak this wire format and are not supported.
+
+#### The six environment variables
+
+| Variable | Meaning |
+| --- | --- |
+| `OEQ_MODEL_BASE_URL` | The endpoint, up to and including `/v1`. **This is the switch: unset, the feature does not exist.** |
+| `OEQ_MODEL` | The model's name at that endpoint — `llama3`, `gpt-4o-mini`. **No default.** |
+| `OEQ_MODEL_KEY` | Bearer key. Leave empty for a local runtime, which needs none. |
+| `OEQ_MODEL_BUDGET` | Characters to send from **one** document. Default 8000. |
+| `OEQ_MODEL_CAP` | Most **requests** one run may make. Default 500. |
+| `OEQ_MODEL_TIMEOUT_SECONDS` | How long to wait for one answer. Default 120. |
+
+On the CLI none of them is read at all without `--ai`; in the desktop app the
+same settings are entered per site on Setup and stored encrypted, and the
+environment is not consulted.
+
+Every one of them is checked **before a single file is read**, and the message
+names the variable that was wrong. That matters more than it sounds: setting
+`OEQ_MODEL_BASE_URL` and forgetting `OEQ_MODEL` used to put every document on
+the wire with an empty model name — all failing, all charged for by whatever a
+gateway charges for accepting a request. `OEQ_MODEL_CAP=eight` used to render
+the confirmation itself as *"About to send up to NaN model requests"*, which is
+the one screen standing between an operator and a paid batch.
+
+- Malformed budget, cap or timeout: refused, naming the variable and the rule.
+  A cap of `0` is legal and means "make no requests"; every row then says the
+  limit stopped it.
+- `OEQ_MODEL_KEY` set against a plain `http` address that is not this machine:
+  **refused**, because a bearer key in clear text is a key disclosed. `https`,
+  and plain `http` to loopback, are both fine.
+- Empty or unset budget/cap/timeout: the default.
+
+**The cap counts requests, not documents.** One request is made per cell a model
+may fill, so a profile with two such columns costs two per document. With the
+shipped template — one enabled column — the two numbers are the same, which is
+why the confirmation can go on talking about documents.
+
+**The timeout is 2 minutes, not the usual 30 seconds.** A hosted model answers a
+prompt this size in single-digit seconds; a quantised 7B on a CPU can take
+ninety and be perfectly healthy. Abandoning a working model mid-generation
+spends the compute, leaves the cell blank, and tells the operator "this does not
+work" about a configuration that does.
+
+#### `--ai`, `--yes` and `--dry-run`
+
+**`--ai` never prompts.** Against a remote endpoint it prints exactly what it is
+about to send and **exits non-zero without sending anything** unless `--yes` is
+also given. It does not read stdin at all — a scheduled job's stdin is not a
+terminal, so a prompt there either reads EOF and treats it as consent nobody
+gave, or blocks for ever holding a nightly run open. Refusing behaves the same
+on a terminal and off one.
+
+`--yes` is not required when there is nothing to agree to: a **local** endpoint,
+an empty folder, a profile with no model column, or a cap of zero. In each case
+no confirmation is shown, exactly as the desktop shows no dialog.
+
+**`--ai` on a profile where no column asks for a model is refused**, not
+ignored. So is `--ai` with no endpoint configured. Both are an explicit
+instruction that cannot be carried out, and quietly proceeding is how a run
+"with the model on" turns out later not to have been.
+
+**`--dry-run` sends nothing, even with `--ai`.** It shows five rows; sending four
+hundred documents to a paid endpoint to print five answers is a bill nobody
+asked for. The run says so on screen rather than showing a blank column with no
+explanation.
+
+#### What you get back
+
+- **The confirmation**, before any file is opened: how many requests, to which
+  host, which model, the maximum characters, where the cap stops it, and that
+  nothing is uploaded to openEQUELLA by this step. A **local** endpoint gets no
+  confirmation at all, deliberately — nothing leaves the machine and nothing is
+  charged, and a dialog that does not matter is what trains people to click past
+  the one that does.
+- **A flag on every model-written cell**, without exception, in `_notes`;
+  `_source` reads `ai`.
+- **A louder flag on a fact field.** Where the column declares a date or a
+  people transform, or reads a date from the document, the note says so: *an
+  invented date cannot be told from a real one by anyone reading the catalogue
+  afterwards*. Such a row also stays in the "needs review" count.
+- **A separate count**: `N of M row(s) had a value written by a language model`,
+  reported beside the "needs review" number and deliberately **not** folded into
+  it. Every model write carries a note, so counting notes would report "400 of
+  400 need review" and bury the one row that genuinely failed.
+- **A blank and a reason on any failure.** A refused, empty, truncated or
+  unreachable answer leaves the cell as it found it and says what happened,
+  quoting back up to 80 characters of anything the model said that was thrown
+  away. There is no retry.
+
+#### The rule: what a model may and may not overwrite
+
+A model may write a cell only when the cell is **empty**, or when a source
+attached a note to it — the `{ "opening": true }` tier, which flags every time.
+**A value the document stated, that no source expressed doubt about, is never
+replaced.** That is the safety property of the whole feature.
+
+"Flagged" is structural, not a judgement: it is a note some source attached, not
+an opinion formed here. A tier that starts flagging itself becomes
+model-replaceable with nobody having to remember.
+
+One consequence worth knowing on the shipped obituary template: `compose` never
+flags, and it drops the clauses it could not fill. So a document that yielded
+only a birth date produces `Born 1938-07-22` — a real, unflagged value — and the
+model is **not** asked to improve on it. The model writes only where compose
+produced nothing at all.
+
+#### Widening it, without touching any code
+
+The shipped **Alumni Obituary** template enables a model on `MWDL/description`
+and on nothing else. Enabling another column is a profile edit:
+
+```json
+{ "path": "MWDL/description",
+  "sources": [
+    { "compose": "Died {death_date}; Born {birth_date}; {ricks}" },
+    { "ai": true }
+  ] }
+```
+
+`{ "ai": true }` goes **last**, after the sources that read the document, so
+every deterministic source has its turn first. Give the profile an
+`aiInstruction` and the model is asked for the house style rather than left to
+invent a format — the shipped one mirrors what `compose` produces, so a
+generated description and a composed one look alike in the catalogue:
+
+```json
+"aiInstruction": "Write one line in this form, omitting any part the document does not state: Died <date>; Born <date>; Attended Ricks College. Use ISO dates (YYYY-MM-DD)."
+```
+
+**Think hard before enabling one on a fact field.** A death date, a name, an
+identifier or a term from a controlled vocabulary is not a quality problem when
+a model gets it wrong — it is indistinguishable from a real value to everyone
+downstream, permanently, in a collection with no moderation queue. The shipped
+template keeps its death date deterministic for that reason.
+
+#### Recording it in the item itself
+
+Everything above lives in `_notes`, which the uploader drops before anything is
+contributed — so a cataloguer reviewing the spreadsheet sees the flags and a
+future reader of the catalogue sees none of them. To disclose it in the record,
+name a **metadata column** to receive the note:
+
+```json
+"aiProvenance": {
+  "path": "MWDL/conversionSpecifications",
+  "append": "Description generated by {model}"
+}
+```
+
+That column already carries `Scanned to PDF` in the Alumni Obituary template —
+a processing-provenance note about an earlier machine transformation of the same
+document, which is exactly the job. The note is appended after a semicolon,
+once per row, only where a model actually wrote something — whatever the field
+already holds is kept.
+
+**The tool never picks this field and ships with none set.** Choosing a metadata
+path on an institution's behalf is the assumption an entire release was spent
+removing. The path must be a real, writable column in the same profile — it is
+validated against your schema alongside every other column path, and a profile
+naming a column that does not exist is refused when it loads. `{model}` is the
+only placeholder; anything else in braces is refused, because a mistyped
+`{modle}` would be written verbatim into every item in the batch.
 
 ### Known limitation: extra separators
 
