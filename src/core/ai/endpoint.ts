@@ -57,3 +57,26 @@ export function isLoopbackEndpoint(baseUrl: string): boolean {
     return false;
   }
 }
+
+/**
+ * A model address as it should be shown to the operator: its host.
+ *
+ * ONE COPY, because there are two screens that name an endpoint -- Setup, where
+ * it is entered, and the confirmation dialog, where the operator agrees to send
+ * documents to it -- and the two must not describe the same address
+ * differently. That is the whole of the argument; it was written twice,
+ * verbatim, before this existed.
+ *
+ * THE ADDRESS ITSELF WHEN IT WILL NOT PARSE. An operator shown what they typed
+ * can see the mistake in it; one shown "invalid" has been told only that this
+ * program is unhappy. The host alone is deliberate for the parsing case too --
+ * a gateway's published URL can carry a key in its path or query, and neither
+ * belongs on a screen.
+ */
+export function describeHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
+}

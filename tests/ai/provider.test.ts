@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ApiError } from '../../src/core/errors.js';
 import {
+  MAX_TIMEOUT_SECONDS,
   MODEL_TIMEOUT_MS,
   OpenAiCompatibleProvider,
+  timeoutSecondsProblem,
 } from '../../src/core/ai/provider.js';
 
 const reply = (content: string) =>
@@ -833,5 +835,66 @@ describe('a reply the model was cut off in the middle of', () => {
     await expect(
       new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm' }, impl).complete('p'),
     ).resolves.toBe('A description.');
+  });
+});
+
+/**
+ * The same rule, asked in the unit an operator types.
+ *
+ * A TRANSLATION, NOT A SECOND RULE. Setup's box says "Seconds to wait for one
+ * answer" and the value is multiplied by 1000 before anything checks it, so the
+ * refusal came back naming milliseconds and quoting a number nobody had typed.
+ * These tests pin that the two answers cannot disagree -- which is the property
+ * a second copy of the rule would lose.
+ */
+describe('timeoutSecondsProblem', () => {
+  const ok = vi.fn(async () => reply('x')) as unknown as typeof fetch;
+
+  it.each([
+    ['a plain value', 120],
+    ['one second', 1],
+    ['the largest a timer can hold', MAX_TIMEOUT_SECONDS],
+  ])('accepts %s', (_label, seconds) => {
+    expect(timeoutSecondsProblem(seconds)).toBeNull();
+  });
+
+  it.each([
+    ['zero', 0],
+    ['a negative value', -5],
+    ['a blank box, which arrives as NaN', Number.NaN],
+    ['more than a timer can hold', MAX_TIMEOUT_SECONDS + 1],
+  ])('refuses %s', (_label, seconds) => {
+    expect(timeoutSecondsProblem(seconds)).not.toBeNull();
+  });
+
+  /** The whole point: the operator reads back the unit they were asked for. */
+  it('says seconds, and never milliseconds', () => {
+    const message = timeoutSecondsProblem(5_000_000)!;
+    expect(message).toMatch(/seconds/);
+    expect(message).not.toMatch(/millisecond/i);
+    expect(message).toContain(String(MAX_TIMEOUT_SECONDS));
+  });
+
+  /** It quotes no number back at all, so it cannot quote the converted one --
+   *  which is what produced "it was '5000000000'" from a box holding 5000000. */
+  it('never quotes a number the operator did not type', () => {
+    expect(timeoutSecondsProblem(5_000_000)).not.toContain('5000000000');
+    expect(timeoutSecondsProblem(Number.NaN)).not.toContain('NaN');
+  });
+
+  /**
+   * IT CANNOT DISAGREE WITH THE PROVIDER, because it delegates. Anything this
+   * accepts, the constructor accepts; anything it refuses, the constructor
+   * refuses. A second copy of the rule is exactly what would break here.
+   */
+  it.each([1, 120, 3600, MAX_TIMEOUT_SECONDS])('agrees with the provider for %s seconds', (seconds) => {
+    const acceptedHere = timeoutSecondsProblem(seconds) === null;
+    let acceptedThere = true;
+    try {
+      new OpenAiCompatibleProvider({ baseUrl: 'http://x/v1', model: 'm', timeoutMs: seconds * 1000 }, ok);
+    } catch {
+      acceptedThere = false;
+    }
+    expect(acceptedHere).toBe(acceptedThere);
   });
 });

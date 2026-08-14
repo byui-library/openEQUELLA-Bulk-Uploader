@@ -9,6 +9,7 @@ import {
   type ModelSettings,
 } from '../../src/desktop/secrets.js';
 import { instanceKey } from '../../src/core/instanceUrl.js';
+import { MODEL_TIMEOUT_MS } from '../../src/core/ai/provider.js';
 import type { StoredToken } from '../../src/core/tokenStore.js';
 
 // Stand-in for Electron's safeStorage. Reversible, not secure -- the point is
@@ -782,7 +783,7 @@ describe('SecretStore — model settings', () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
     const inst = await s.saveInstance(
       { label: 'Live', baseUrl: LIVE },
-      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+      { authMode: 'password', username: 'r.thornbury', password: 'hunter2' },
     );
     await s.setModel(inst.id, model());
     await s.forgetModel(inst.id);
@@ -817,11 +818,197 @@ describe('SecretStore — model settings', () => {
     await expect(s.setModel(instanceKey(LIVE), model(over))).rejects.toThrow(expected);
   });
 
+  /**
+   * HALF AN ENDPOINT IS NOT AN ENDPOINT, and the write side has to say so.
+   * Without this, `setModel` with a blank address resolved successfully and the
+   * entry then read back as null through `parseStoredModel` -- a write reported
+   * as done that did nothing, which is the shape of failure this codebase keeps
+   * being bitten by. Not reachable from Setup, where `modelFrom` answers null
+   * for a blank box, but this is the IPC surface.
+   */
+  it.each([
+    ['a blank address', { baseUrl: '   ' }, /address/i],
+    ['a blank model name', { model: '  ' }, /name of a model/i],
+  ])('refuses %s rather than storing something that reads back as nothing', async (_l, over, expected) => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await expect(s.setModel(instanceKey(LIVE), model(over))).rejects.toThrow(expected);
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+  });
+
+  /**
+   * THE LOAD SIDE AND THE WRITE SIDE AGREE, because they are one function. The
+   * loader used to check `typeof === 'number'` only, so every value below --
+   * each of them refused on the way in -- loaded cleanly on the way out. A
+   * `budget: 0` in particular makes `sliceForModel` return `empty` for every
+   * document, so a whole batch reports "no text to read" about files that are
+   * full of text, pointing nowhere near the setting at fault.
+   */
+  it.each([
+    ['a budget of zero', { budget: 0 }],
+    ['a negative cap', { cap: -1 }],
+    ['a budget too large to be finite', { budget: 1e999 }],
+    ['a time limit of zero', { timeoutMs: 0 }],
+    ['a time limit beyond what a timer can hold', { timeoutMs: 3_000_000_000 }],
+    ['a blank address', { baseUrl: '' }],
+    ['a blank model name', { model: '' }],
+  ])('discards a hand-edited entry with %s, exactly as it refuses to write one', async (_l, over) => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {},
+          passwords: { [instanceKey(LIVE)]: { username: 'r.thornbury', password: 'hunter2' } },
+          models: { [instanceKey(LIVE)]: model(over) },
+        }),
+      ),
+    );
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+    // Discarding one unusable endpoint must never cost a credential.
+    expect(await s.getPassword(instanceKey(LIVE))).toMatchObject({ username: 'r.thornbury' });
+  });
+
   it('stores nothing at all when a setting is refused', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
     await s.setModel(instanceKey(LIVE), model()).catch(() => {});
     await s.setModel(instanceKey(SANDBOX), model({ cap: -1 })).catch(() => {});
     expect(await s.getModel(instanceKey(SANDBOX))).toBeNull();
+  });
+
+  /**
+   * ## A blank key keeps the stored one -- but only for the same endpoint
+   *
+   * Setup never renders a stored key back into its box, so the form submitted
+   * by an operator who only raised the character budget carries an empty key.
+   * Reading that as a deletion would throw away a credential they never
+   * touched and can only replace by finding it again -- the trap `saveInstance`
+   * already avoids for a blank password.
+   *
+   * BUT THE KEY BELONGS TO THE ENDPOINT, NOT THE SITE. Both halves were
+   * shipped untested: deleting the retention entirely was green, and so was
+   * inverting the origin check -- which is the "hand your paid key to your own
+   * Ollama over plain http" failure the rule exists to prevent.
+   */
+  describe('the key and the endpoint it belongs to', () => {
+    const hosted = model({ baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-secret', model: 'gpt-4o-mini' });
+
+    it('keeps the stored key when a blank one is saved for the same endpoint', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '', budget: 12_000 });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: 'sk-secret', budget: 12_000 });
+    });
+
+    /** Same host, different path: `/v1` to `/v1beta` on one gateway is not a
+     *  different service, and the key is still that service's. */
+    it('keeps it when only the path changes', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '', baseUrl: 'https://api.openai.com/v1beta' });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: 'sk-secret' });
+    });
+
+    /** THE ONE THE RULE EXISTS FOR. Repointing a site at a model on this
+     *  machine must not send the operator's paid key to it in clear. */
+    it('drops it when the endpoint moves to another origin', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), {
+        ...hosted,
+        apiKey: '',
+        baseUrl: 'http://localhost:11434/v1',
+        model: 'llama3',
+      });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: '', model: 'llama3' });
+    });
+
+    it.each([
+      ['a different host', 'https://api.anthropic.com/v1'],
+      ['a different scheme', 'http://api.openai.com/v1'],
+      ['a different port', 'https://api.openai.com:8443/v1'],
+    ])('drops it when the endpoint moves to %s', async (_label, baseUrl) => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '', baseUrl });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: '' });
+    });
+
+    /** An address that will not parse is not "the same endpoint". Every caller
+     *  reads this as "is it safe to keep the key", so the unknown case has to
+     *  be the one that drops it. */
+    it('drops it when the previous address will not parse', async () => {
+      const path = join(dir, 'settings.enc');
+      const s = new SecretStore(path, fakeCipher);
+      await writeFile(
+        path,
+        fakeCipher.encrypt(
+          JSON.stringify({
+            version: 3,
+            instances: {},
+            passwords: {},
+            models: {
+              [instanceKey(LIVE)]: {
+                baseUrl: 'not a url',
+                model: 'm',
+                apiKey: 'sk-secret',
+                budget: 8000,
+                cap: 500,
+                timeoutMs: 120_000,
+              },
+            },
+          }),
+        ),
+      );
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '' });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: '' });
+    });
+
+    /** A typed key always wins -- it is the operator replacing it. */
+    it('takes a new key over the stored one', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: 'sk-replaced' });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: 'sk-replaced' });
+    });
+  });
+
+  /**
+   * The one field defaulted rather than required on the way in, so an entry
+   * written before it existed keeps working -- the same courtesy `live` gets.
+   * It must be the argued-for default, not any number: mutating it to 1 made
+   * every call in the batch fail with "did not answer within 1 millisecond".
+   */
+  it('defaults a missing time limit to the provider’s own default', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {},
+          passwords: {},
+          models: {
+            [instanceKey(LIVE)]: {
+              baseUrl: 'http://localhost:11434/v1',
+              model: 'llama3',
+              apiKey: '',
+              budget: 8000,
+              cap: 500,
+            },
+          },
+        }),
+      ),
+    );
+    expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ timeoutMs: MODEL_TIMEOUT_MS });
   });
 
   /**
@@ -865,7 +1052,7 @@ describe('SecretStore — model settings', () => {
               schemaUuid: '',
             },
           },
-          passwords: { [instanceKey(LIVE)]: { username: 'm.miles', password: 'hunter2' } },
+          passwords: { [instanceKey(LIVE)]: { username: 'r.thornbury', password: 'hunter2' } },
           // No `models` key. That is the whole point of this test.
         }),
       ),
@@ -873,7 +1060,7 @@ describe('SecretStore — model settings', () => {
 
     expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
       authMode: 'password',
-      username: 'm.miles',
+      username: 'r.thornbury',
       password: 'hunter2',
     });
     expect(await s.loadSettings(instanceKey(SANDBOX))).toMatchObject({ clientSecret: 'shhh' });
@@ -892,7 +1079,7 @@ describe('SecretStore — model settings', () => {
         JSON.stringify({
           version: 3,
           instances: { [instanceKey(LIVE)]: { label: 'Live', baseUrl: LIVE, authMode: 'password' } },
-          passwords: { [instanceKey(LIVE)]: { username: 'm.miles', password: 'hunter2' } },
+          passwords: { [instanceKey(LIVE)]: { username: 'r.thornbury', password: 'hunter2' } },
         }),
       ),
     );

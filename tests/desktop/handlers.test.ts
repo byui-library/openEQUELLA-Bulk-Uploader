@@ -706,3 +706,129 @@ describe('fetchAndCacheSchema', () => {
     await expect(fetchAndCacheSchema(failing, new SchemaCache(dir), SITE, 'nope')).rejects.toThrow(/404/);
   });
 });
+
+/**
+ * The three model channels, and above all the projection that strips the key.
+ *
+ * WHY THIS IS THE MOST SECURITY-RELEVANT LINE IN THE FEATURE. `getModel` is
+ * called on every route into Setup, and whatever it answers with is handed
+ * across `contextBridge` into the sandboxed renderer, where it is held in app
+ * state and rendered into markup. The store's own `getModel` returns the key,
+ * because the main process needs it to make the call. This handler is the only
+ * thing standing between those two facts, and it was shipped with no test at
+ * all: replacing its whole body with `return secrets().getModel(instanceId)`
+ * left every test in the repository green.
+ *
+ * Modelled on the `getPassword` tests, which exist for the identical reason.
+ */
+describe('the model channels', () => {
+  const SITE = 'https://oeq.example.edu';
+  const KEY = 'sk-v3ry-s3cret-key-value';
+
+  const MODEL = {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: KEY,
+    budget: 8000,
+    cap: 500,
+    timeoutMs: 120_000,
+  };
+
+  beforeEach(async () => {
+    hoisted.userData = await mkdtemp(join(tmpdir(), 'oeq-model-'));
+  });
+
+  const store = () => new SecretStore(join(hoisted.userData, 'settings.enc'), plainCipher);
+
+  it('stores what the renderer sends', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:setModel', { instanceId: SITE, settings: MODEL });
+
+    expect(await store().getModel(SITE)).toEqual(MODEL);
+  });
+
+  /** Core's guards decide, and the rejection has to cross IPC so Setup can put
+   *  it on the screen where the box is. */
+  it('rejects a setting core refuses, rather than storing it', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await expect(
+      ipc.call('oeq:setModel', { instanceId: SITE, settings: { ...MODEL, cap: -1 } }),
+    ).rejects.toThrow(/limit/i);
+    expect(await store().getModel(SITE)).toBeNull();
+  });
+
+  /**
+   * THE ONE THAT MATTERS. Every string reachable from the answer is searched,
+   * not just the property the projection happens to name -- a whole-object walk
+   * is what catches a spread that carried the key in under a different key, or
+   * a future field that quietly picked it up.
+   */
+  it('never lets the key reach the renderer', async () => {
+    await store().setModel(SITE, MODEL);
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    const answer = await ipc.call('oeq:getModel', SITE);
+
+    expect(JSON.stringify(answer)).not.toContain(KEY);
+    // And not a prefix of it either: a truncating projection would be worse
+    // than no projection, because it would look like it worked.
+    for (let n = 8; n < KEY.length; n += 1) {
+      expect(JSON.stringify(answer)).not.toContain(KEY.slice(0, n));
+    }
+  });
+
+  it('answers with everything the renderer legitimately needs', async () => {
+    await store().setModel(SITE, MODEL);
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    expect(await ipc.call('oeq:getModel', SITE)).toEqual({
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      budget: 8000,
+      cap: 500,
+      timeoutMs: 120_000,
+      hasApiKey: true,
+    });
+  });
+
+  /**
+   * `hasApiKey` REPORTS, it does not assume. Hardcoded true, Setup tells an
+   * operator with a local model that a key is stored and offers to keep it --
+   * which is a claim about a secret that does not exist.
+   */
+  it('says there is no key when there is none', async () => {
+    await store().setModel(SITE, { ...MODEL, apiKey: '', baseUrl: 'http://localhost:11434/v1' });
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    expect(await ipc.call('oeq:getModel', SITE)).toMatchObject({ hasApiKey: false });
+  });
+
+  it('answers null for a site with no endpoint, which is what makes the feature absent', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    expect(await ipc.call('oeq:getModel', SITE)).toBeNull();
+  });
+
+  it('forgets the endpoint and leaves the site and its password alone', async () => {
+    await store().saveInstance(
+      { label: 'Live', baseUrl: SITE },
+      { authMode: 'password', username: 'r.thornbury', password: 'hunter2' },
+    );
+    await store().setModel(SITE, MODEL);
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+
+    await ipc.call('oeq:forgetModel', SITE);
+
+    expect(await store().getModel(SITE)).toBeNull();
+    expect(await store().getPassword(SITE)).toMatchObject({ username: 'r.thornbury' });
+    expect(await store().loadInstance(SITE)).not.toBeNull();
+  });
+});

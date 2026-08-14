@@ -11,6 +11,9 @@ import { escapeHtml, keepCaret } from '../dom.js';
 // touches `node:` or `electron`. tests/desktop/rendererPurity.test.ts walks
 // this edge and fails the build if that ever stops being true.
 import { MODEL_TIMEOUT_MS } from '../../../core/ai/provider.js';
+// One rule for how a model address is shown, shared with the confirmation
+// dialog so the two screens cannot name the same endpoint differently.
+import { describeHost } from '../../../core/ai/endpoint.js';
 import { setupNotice } from '../setupNotice.js';
 // One wording for "the server withheld this list", shared with the Choose
 // screen so the two cannot drift into describing the same state differently.
@@ -153,6 +156,23 @@ export interface SetupProps {
    * bought for nothing.
    */
   storedModel: ModelChoice | null;
+  /**
+   * Whether the model disclosure is expanded.
+   *
+   * APP STATE, NOT THE DOM'S, and not derived from `storedModel` either. This
+   * screen re-renders by replacing `innerHTML` on every keystroke, so anything
+   * the operator did to a live element is destroyed and rebuilt from props --
+   * which is the same reason every field on this screen is controlled. Derived
+   * from what is stored, the section closed itself on the first character typed
+   * into it, on the one path that can ever configure an endpoint, and took the
+   * caret with it: `keepCaret`'s `focus()` cannot restore an input inside a
+   * closed `<details>`.
+   *
+   * It is genuine two-way state rather than a latch, so closing it sticks too.
+   * `app.ts` opens it once, when it finds an endpoint stored, and after that
+   * the operator decides.
+   */
+  modelSectionOpen: boolean;
   error: string | null;
   saving: boolean;
   /**
@@ -189,6 +209,10 @@ export interface SetupProps {
   /** Behind "Forget these model settings". Removes the endpoint and its key,
    *  and leaves the site and its credentials exactly where they are. */
   onForgetModel(): void;
+  /** The operator expanded or collapsed the model disclosure. See
+   *  `modelSectionOpen` -- without this the DOM is the only record of it, and
+   *  the next render throws it away. */
+  onModelSectionToggle(open: boolean): void;
   onSave(
     instance: {
       label: string;
@@ -852,10 +876,14 @@ function liveSection(props: SetupProps): string {
  * Setup is the one exception, and it has to be: this is the screen that creates
  * the configuration, and a settings screen which hides its own setting until
  * that setting exists can never be used to make one. So the compromise is
- * COLLAPSED, not hidden -- the same treatment the Advanced OAuth disclosure
- * gets, for the same reason. It opens by itself once something is stored,
- * because at that point it is describing a live setting the operator has a
- * reason to look at.
+ * COLLAPSED, not hidden -- the same markup the Advanced OAuth disclosure uses.
+ * `app.ts` opens it once, when it finds an endpoint stored, because at that
+ * point it is describing a live setting the operator has a reason to look at.
+ *
+ * WHETHER IT IS OPEN COMES FROM PROPS, NEVER FROM WHAT IS STORED. Reading it
+ * off `storedModel` is the same shape of mistake `keepCaret` exists for, one
+ * level up: the operator's expansion lives only on the live element, and this
+ * screen replaces `innerHTML` on every keystroke. See `modelSectionOpen`.
  *
  * ## The key box
  *
@@ -875,7 +903,7 @@ function modelSection(props: SetupProps): string {
           <div class="signed-in-card">
             <p>
               Using <strong>${escapeHtml(stored.model)}</strong> at
-              <strong>${escapeHtml(hostOf(stored.baseUrl))}</strong>${
+              <strong>${escapeHtml(describeHost(stored.baseUrl))}</strong>${
                 stored.hasApiKey ? ' — an API key is stored for it' : ''
               }.
             </p>
@@ -892,7 +920,7 @@ function modelSection(props: SetupProps): string {
           </div>`;
 
   return `
-      <details id="setup-model" ${stored === null ? '' : 'open'}>
+      <details id="setup-model" ${props.modelSectionOpen ? 'open' : ''}>
         <summary>Optional: let a language model fill gaps the documents do not answer</summary>
         <p class="hint">
           Leave this empty and nothing here applies: no model is contacted, nothing
@@ -993,16 +1021,6 @@ function modelSection(props: SetupProps): string {
           value="${escapeHtml(f.modelTimeout)}"
         />
       </details>`;
-}
-
-/** A base URL's host for display, or the address itself if it will not parse --
- *  what the operator typed is more use to them than the word "invalid". */
-function hostOf(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).host;
-  } catch {
-    return baseUrl;
-  }
 }
 
 /**
@@ -1289,6 +1307,13 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   root
     .querySelector<HTMLButtonElement>('#setup-model-forget')
     ?.addEventListener('click', () => props.onForgetModel());
+
+  // The ONLY record of the operator having opened this is the live element,
+  // and the next keystroke replaces it. Handing it back to app.ts is what
+  // survives the re-render -- see SetupProps.modelSectionOpen.
+  root.querySelector<HTMLDetailsElement>('#setup-model')?.addEventListener('toggle', (e) => {
+    props.onModelSectionToggle((e.target as HTMLDetailsElement).open);
+  });
 
   root.querySelector<HTMLButtonElement>('#setup-back')?.addEventListener('click', () => props.onBack());
 
