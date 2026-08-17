@@ -10,7 +10,7 @@ say almost nothing about.
 ## The problem
 
 Different collections need different knowledge. An alumni obituary keeps its
-death date in a sentence — *"passed away on September 8, 2019"* — or in a dash
+death date in a sentence — *"passed away on November 4, 2211"* — or in a dash
 pair after the name, and its genre, subjects and rights are the same on every
 record in the collection. None of that is expressible with the generic sources,
 and none of it should be hard-coded, because the next collection will be
@@ -58,9 +58,9 @@ produces a date wins, so the order in the profile is the order of preference.
 Real examples from the batch:
 
 ```text
-"graduated this world on   [March 5, 2019]"                Marcus
-"passed away on            [September 8, 2019]"            Orrin
-"returned home to his Heavenly Father on [June 27, 2019]"  Ivor
+"graduated this world on   [June 7, 2211]"                   Marcus
+"passed away on            [November 4, 2211]"               Orrin
+"returned home to his Heavenly Father on [August 19, 2211]"  Ivor
 ```
 
 ### `{ "datePair": "first" | "second" }`
@@ -69,9 +69,9 @@ Four of the ten state the dates with **no phrase at all** — just the name, the
 birth and death separated by a dash or a space:
 
 ```text
-Gideon olwyn Alder         April 5, 1954  -  October 2, 2019
-Thaddeus E>or1an Hawthorn  December 8, 1947 - July 3, 2019
-Corwin Ames Teasel         August 14, 1951   May 1, 2019
+Gideon olwyn Alder         March 9, 2146  -  December 4, 2211
+Thaddeus E>or1an Hawthorn  February 6, 2139 - September 5, 2211
+Corwin Ames Teasel         June 26, 2143     July 9, 2211
 ```
 
 `"second"` takes the death date, `"first"` the birth date.
@@ -95,7 +95,7 @@ line before any other prose.
 
 First non-empty wins, so neither form needs to know about the other. No new
 combining mechanism is invented. `transform: "date"` normalises
-`March 5, 2019` to `2019-03-05`, which `normaliseDate` already does.
+`June 7, 2211` to `2211-06-07`, which `normaliseDate` already does.
 
 ### `{ "compose": "Died {death_date}" }`
 
@@ -126,10 +126,10 @@ Two rules for the template itself:
 - **`[...]` marks an optional group**, dropped entirely including its
   punctuation if any placeholder inside it is empty.
 - **A `;`-separated clause whose placeholders are all empty is dropped**, so
-  the output is never `Died March 5, 2019; ;`.
+  the output is never `Died June 7, 2211; ;`.
 
 `Died {death_date}[: {residence}]; Born {birth_date}` with no residence yields
-`Died March 5, 2019; Born July 22, 1938`.
+`Died June 7, 2211; Born October 30, 2130`.
 
 ### `"checks": { "filenameWordsInText": { "ignore": ["Obituary"] } }`
 
@@ -170,12 +170,12 @@ Only one row of that table needs anything new. The rest is configuration.
 
 ## Deliberately not extracted
 
-- **Cause of death.** The sample record says *"pneumonia"*; these documents
-  say *"natural causes"* and *"after a four-year…"*. Too varied to read
+- **Cause of death.** The sample record says *"influenza"*; these documents
+  say *"natural causes"* and *"after a nine-year…"*. Too varied to read
   honestly.
-- **Birthplace.** Attempted, and the captures were `"Elmsgate, a son to
-  Wendell Vance R"` and `"Marchmont Hospital, in Pasadena Ca"`. Wrong, and
-  plausibly wrong, which is worse.
+- **Birthplace.** Attempted, and the captures were `"Cedar Hollow, a son to
+  Ambrose Linden R"` and `"Sagebrush Memorial Hospital, in Hazelmere Id"`.
+  Wrong, and plausibly wrong, which is worse.
 - **Residence and the Ricks College connection.** Both extract at 8/10 and
   would need two further source kinds (`textNear`, `presence`). Dropped on the
   operator's instruction: not worth the build, and a reader has the PDF.
@@ -203,12 +203,12 @@ Against the operator's ten obituaries:
 
 - **An independent cross-check exists.** Three files (Marcus, Gideon, Thaddeus)
   have a numeric `Approx Date of Death` that survived OCR. The extracted date
-  must equal it: `03/05/2019`, `10/02/2019`, `07/03/2019`.
-- Five more whose header was mangled — `09108/2019`, `02111/`, `06/2`, `0:1`,
+  must equal it: `06/07/2211`, `12/04/2211`, `09/05/2211`.
+- Five more whose header was mangled — `06107/2211`, `04113/`, `09/5`, `0:4`,
   `0` — must still yield a date from the prose.
-- **Alden Larkspar must come out blank and flagged.** His obituary says only
-  "the early hours of Saturday morning" and states no date anywhere. A value
-  here would mean the rules are guessing.
+- **Alden Larkspar must come out blank and flagged.** His obituary places the
+  death only in "the closing days of a long winter" and states no date
+  anywhere. A value here would mean the rules are guessing.
 - The name check must flag exactly one row.
 
 ## Why the numbers in this document are trustworthy
@@ -220,16 +220,16 @@ what made this feature worth building rather than buying better OCR software —
 the OCR was fine, the wrong part of the page was being read.
 
 One measurement error was made and corrected along the way: a first pass
-reported Hollis Bracken's death date as `February 19, 2019`, his funeral. His
-actual death date is written `February 11 , 2019`, with a space before the
+reported Hollis Bracken's death date as `April 21, 2211`, his funeral. His
+actual death date is written `April 13 , 2211`, with a space before the
 comma, and the pattern missed it. **The date pattern must tolerate whitespace
 around punctuation**, and that is a requirement, not a detail.
 
 ## Out of scope
 
 - A code-level plugin per collection. Rejected above.
-- The description synthesis of the existing records — *"Died March 2, 1991:
-  Willow Bend, Idaho, pneumonia; Born June 5, 1928; Attended Ricks College"* —
+- The description synthesis of the existing records — *"Died May 3, 2208:
+  Fernvale, Idaho, influenza; Born June 5, 2131; Attended Ricks College"* —
   which needs facts this design deliberately does not extract. That remains a
   tier 4 case; see the description-extraction design.
 - OCR. Done outside this tool, decided 2026-08-07.

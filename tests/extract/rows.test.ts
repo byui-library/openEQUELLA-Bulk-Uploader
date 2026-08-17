@@ -512,14 +512,14 @@ describe('buildRow with templated sources', () => {
   };
 
   it('reads a death date from prose and normalises it', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on September 8, 2019 at home.'));
-    expect(row.cells['MWDL/date']).toBe('2019-09-08');
+    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on November 4, 2211 at home.'));
+    expect(row.cells['MWDL/date']).toBe('2211-11-04');
     expect(row.sources['MWDL/date']).toBe('dateNear');
   });
 
   it('falls back to the dash pair when no phrase appears', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('Gideon Alder April 5, 1954 - October 2, 2019 Utah'));
-    expect(row.cells['MWDL/date']).toBe('2019-10-02');
+    const row = buildRow(obitProfile, 'a.pdf', doc('Gideon Alder March 9, 2146 - December 4, 2211 Utah'));
+    expect(row.cells['MWDL/date']).toBe('2211-12-04');
     expect(row.sources['MWDL/date']).toBe('datePair');
   });
 
@@ -528,8 +528,8 @@ describe('buildRow with templated sources', () => {
    * its transform -- not the raw text it was read from.
    */
   it('composes from the transformed value of another column', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('He died September 8, 2019.'));
-    expect(row.cells['MWDL/description']).toBe('Died 2019-09-08');
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died November 4, 2211.'));
+    expect(row.cells['MWDL/description']).toBe('Died 2211-11-04');
     expect(row.sources['MWDL/description']).toBe('compose');
   });
 
@@ -548,15 +548,15 @@ describe('buildRow with templated sources', () => {
     const row = buildRow(
       obitProfile,
       'a.pdf',
-      doc('Preceded in death by his wife Ivy, who passed away on November 8, 1994. He died September 8, 2019.'),
+      doc('Preceded in death by his wife Ivy, who passed away on January 17, 2186. He died November 4, 2211.'),
     );
-    expect(row.cells['MWDL/date']).toBe('1994-11-08');
+    expect(row.cells['MWDL/date']).toBe('2186-01-17');
     expect(row.notes.join(' ')).toMatch(/more than one date/);
-    expect(row.notes.join(' ')).toContain('September 8, 2019');
+    expect(row.notes.join(' ')).toContain('November 4, 2211');
   });
 
   it('does not flag a row where only one date was found', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('He died September 8, 2019.'));
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died November 4, 2211.'));
     expect(row.notes).toEqual([]);
   });
 
@@ -567,8 +567,8 @@ describe('buildRow with templated sources', () => {
       ...obitProfile,
       columns: [obitProfile.columns[2]!, obitProfile.columns[1]!, obitProfile.columns[0]!],
     };
-    expect(buildRow(reversed, 'a.pdf', doc('died September 8, 2019')).cells['MWDL/description']).toBe(
-      'Died 2019-09-08',
+    expect(buildRow(reversed, 'a.pdf', doc('died November 4, 2211')).cells['MWDL/description']).toBe(
+      'Died 2211-11-04',
     );
   });
 });
@@ -590,9 +590,9 @@ describe('buildRow and flagIfEmpty', () => {
 
   /**
    * A note that only reports the absence invites someone to invent a value.
-   * One real obituary states no date anywhere -- "the early hours of Saturday
-   * morning" -- so a blank there is the CORRECT answer, and the note has to
-   * say so or it reads as a defect to be fixed.
+   * One real obituary states no date anywhere -- it places the death only as
+   * "the closing days of a long winter" -- so a blank there is the CORRECT
+   * answer, and the note has to say so or it reads as a defect to be fixed.
    */
   it('says a blank may be the right answer, not only that the cell is empty', () => {
     const note = buildRow(profile, 'a.pdf', doc('no date here')).notes.join(' ');
@@ -601,7 +601,7 @@ describe('buildRow and flagIfEmpty', () => {
   });
 
   it('says nothing when the column was filled', () => {
-    expect(buildRow(profile, 'a.pdf', doc('He died September 8, 2019')).notes).toEqual([]);
+    expect(buildRow(profile, 'a.pdf', doc('He died November 4, 2211')).notes).toEqual([]);
   });
 
   it('does not flag a column that did not ask to be flagged', () => {
@@ -709,7 +709,7 @@ describe('the presence source', () => {
   };
 
   it('emits the fixed text when a phrase appears', () => {
-    expect(buildRow(profile, 'a.pdf', doc('He attended Ricks College in Elmsgate.')).cells['MWDL/description']).toBe(
+    expect(buildRow(profile, 'a.pdf', doc('He attended Ricks College in Fernvale.')).cells['MWDL/description']).toBe(
       'Attended Ricks College',
     );
   });

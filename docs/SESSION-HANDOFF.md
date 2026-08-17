@@ -344,14 +344,14 @@ nothing in the code knows what an obituary is.
 ```text
 death date found   9 of 10      (the tenth states no date anywhere)
 cross-checks       3 of 3       agrees with the numeric header where OCR spared it
-Hollis Bracken     2019-02-11   not the 19th, which is his funeral
+Hollis Bracken     2211-04-13   not the 21st, which is his funeral
 rows flagged       1            'Larkspar' in the filename, 'Larkspur' in the document
 ```
 
 **The finding that made this worth building:** the OCR was fine, the wrong part
 of the page was being read. These documents state the death date twice — a
 numeric header and a sentence. OCR destroyed the header on seven of ten
-(`09108/2019`, `0:1`, `0`) while every spelled-out date came through clean,
+(`06107/2211`, `0:4`, `0`) while every spelled-out date came through clean,
 because letters carry more redundancy than digits. Reading the prose took
 recovery from 3 of 10 to 9 of 10 with no change to the scanning at all. Buying
 better OCR software would have solved the wrong problem.
@@ -374,8 +374,8 @@ were dropped as not worth the build, because the PDF is attached and a reader
 can see them.
 
 **Still not built:** the house-style description synthesis of the existing
-records — *"Died March 2, 1991: Willow Bend, Idaho, pneumonia; Born June 5,
-1928"* — which needs facts this design does not extract. Tier 4 territory.
+records — *"Died May 3, 2208: Fernvale, Idaho, influenza; Born June 5,
+2131"* — which needs facts this design does not extract. Tier 4 territory.
 
 **OCR happens outside this tool**, decided the same day. See the
 description-extraction design for why.
@@ -390,7 +390,7 @@ before extending the date logic:
   "studied at Ricks College" is near-certain. A raw substring search read a
   man's MARRIAGE date as his date of death. Matches now need word boundaries.
 - **A relative's death won.** *"preceded in death by his wife Ivy, who passed
-  away on November 8, 1994"* appears in nearly every obituary. Nothing can
+  away on January 17, 2186"* appears in nearly every obituary. Nothing can
   reliably tell whose death a sentence describes, so `datesNear` returns every
   candidate and the row is flagged. **Caveat: none of the ten real files
   triggers this**, so it is verified by unit test only — do not read "no
@@ -398,7 +398,7 @@ before extending the date logic:
 - **A birth date paired with a funeral date** across a full stop and two
   newlines — the same failure the module already memorialises for Hollis Bracken,
   by another route. The pair gap now excludes sentence and line terminators.
-- **`February 11 12345` yielded the year 1234**, which normalises cleanly and
+- **`April 13 12345` yielded the year 1234**, which normalises cleanly and
   would never have been flagged.
 - **The attachment column could be composed**, producing a row naming something
   that is not a file — the one-file-one-item relationship the tool rests on.
