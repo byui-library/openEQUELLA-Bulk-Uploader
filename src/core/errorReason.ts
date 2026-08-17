@@ -71,3 +71,39 @@ export function describeReason(
   const reason = redact(parts.join(': '));
   return reason === '' ? UNSTATED_REASON : reason.slice(0, MAX_REASON);
 }
+
+/** How much of a server's error body is worth putting in a message a person
+ *  reads in a dialog. Enough for openEQUELLA's own one-line explanations,
+ *  short enough that an HTML page does not become the message. */
+const MAX_BODY_EXCERPT = 200;
+
+/**
+ * What a server actually answered, in one line.
+ *
+ * The response half of `describeReason`, and it exists for the same reason:
+ * every API request this tool makes passes through one place, and that place
+ * reported `GET /api/collection?... failed` -- no status, no reason -- for a
+ * 401, a 403, a 500 and a load balancer's 502 alike. The status and body were
+ * captured on the `ApiError` all along, but Electron's IPC serialises only a
+ * message across the boundary, so the desktop app could never show them.
+ *
+ * REDACT-THEN-TRUNCATE IS NOT NEEDED HERE AND THE ABSENCE IS DELIBERATE: this
+ * body is a RESPONSE, and no secret this tool holds is echoed into one. The
+ * two endpoints that carry a credential -- `/api/auth/login` and
+ * `/oauth/access_token` -- do their own redaction in `passwordAuth.ts` and
+ * `authCode.ts`, on both the message and the body, before anything reaches
+ * here. Do not add a redactor that has no secret to redact: it would search
+ * for the empty string.
+ */
+export function describeResponse(res: { status: number; statusText?: string }, body: string): string {
+  const status = res.statusText ? `${res.status} ${res.statusText}` : String(res.status);
+  // Tags stripped and whitespace collapsed: openEQUELLA answers with an HTML
+  // error page, and a wall of markup in a dialog is worse than none at all.
+  const text = body
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text === '') return status;
+  const excerpt = text.length > MAX_BODY_EXCERPT ? `${text.slice(0, MAX_BODY_EXCERPT)}…` : text;
+  return `${status} — ${excerpt}`;
+}

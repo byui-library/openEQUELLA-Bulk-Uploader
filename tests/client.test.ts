@@ -661,3 +661,92 @@ describe('OeqClient — an instance hosted under a path prefix', () => {
     expect(new URL(seen[0]!).pathname).toBe('/api/collection');
   });
 });
+
+/**
+ * ## A SERVER FAILURE SAYS WHAT THE SERVER ANSWERED
+ *
+ * The sibling of the network-failure block above, and found the same way -- by
+ * a person using the app. Setup saved, Choose loaded, and the collection box
+ * read:
+ *
+ *   GET /api/collection?privilege=CREATE_ITEM&length=100&full=true failed
+ *
+ * No status. No reason. Nothing to act on, and nothing to tell an
+ * administrator. The status and body WERE captured -- `ApiError` has carried
+ * both all along -- but they are custom fields on an Error, and Electron's IPC
+ * serialises only `message` across the boundary. So for the desktop app they
+ * may as well not exist: every non-2xx failure in the GUI reads "failed",
+ * permanently.
+ *
+ * 401 and 403 are the ones that matter here. openEQUELLA answers an
+ * unauthenticated request with 200 and an empty list rather than refusing it,
+ * so a 4xx on this endpoint means something quite different from "not signed
+ * in" -- and the operator cannot tell which they are looking at unless the
+ * number reaches the screen.
+ */
+describe('OeqClient — a server failure names the status', () => {
+  const stubAuth = {
+    getToken: async () => 'tok',
+    authHeader: async () => ({ 'X-Authorization': 'access_token=tok' }),
+    invalidate: () => {},
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const respondWith = (status: number, statusText: string, body = '') => {
+    vi.stubGlobal('fetch', async () => new Response(body, { status, statusText }));
+    return new OeqClient('https://oeq.example.edu', stubAuth);
+  };
+
+  it('puts the status in the message, where IPC can carry it', async () => {
+    const client = respondWith(403, 'Forbidden', 'no CREATE_ITEM here');
+    await expect(client.listCollections({ privilege: 'CREATE_ITEM' })).rejects.toThrow(/403/);
+  });
+
+  it('names the status text too, so the number is not alone', async () => {
+    const client = respondWith(403, 'Forbidden', '');
+    await expect(client.listCollections({})).rejects.toThrow(/Forbidden/);
+  });
+
+  it('still names the request that failed', async () => {
+    const client = respondWith(500, 'Internal Server Error');
+    await expect(client.listCollections({ privilege: 'CREATE_ITEM' })).rejects.toThrow(
+      /GET \/api\/collection\?privilege=CREATE_ITEM/,
+    );
+  });
+
+  it("quotes what the server said, so an administrator has something to read", async () => {
+    const client = respondWith(403, 'Forbidden', 'User does not have the required privilege.');
+    await expect(client.listCollections({})).rejects.toThrow(/required privilege/);
+  });
+
+  /** An openEQUELLA error page is HTML, and a wall of markup in a dialog is
+   *  worse than none: collapsed to one line and cut short. */
+  it('collapses an HTML error page instead of pasting it into the dialog', async () => {
+    const html = `<html>\n  <body>\n    <h1>Problem description:</h1>\n    <p>${'x'.repeat(500)}</p>\n  </body>\n</html>`;
+    const client = respondWith(500, 'Internal Server Error', html);
+    const err = (await client.listCollections({}).catch((e: unknown) => e)) as Error;
+    expect(err.message).not.toMatch(/\n/);
+    expect(err.message.length).toBeLessThan(400);
+    expect(err.message).toMatch(/500/);
+  });
+
+  it('says nothing extra when the body is empty', async () => {
+    const client = respondWith(502, 'Bad Gateway', '');
+    const err = (await client.listCollections({}).catch((e: unknown) => e)) as Error;
+    expect(err.message).toMatch(/502 Bad Gateway$/);
+  });
+
+  /** The status and body stay on the error as well, for callers that read
+   *  them in-process -- `retryable` depends on the number. */
+  it('keeps carrying the status and body as fields', async () => {
+    const client = respondWith(503, 'Service Unavailable', 'try later');
+    const err = (await client.listCollections({}).catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(503);
+    expect(err.body).toBe('try later');
+    expect(err.retryable).toBe(true);
+  });
+});
