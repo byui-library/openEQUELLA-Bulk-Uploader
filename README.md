@@ -725,8 +725,7 @@ item's permanent title.
 
 **Read the prose, not the numbers.** These documents state the death date twice,
 once in a numeric header and once in a sentence. OCR destroyed the header on
-seven of ten — one came back as a longer run of digits, another as two stray
-characters — while every spelled-out date came
+seven of ten — `06107/2211`, `0:4`, `0` — while every spelled-out date came
 through clean, because letters carry far more redundancy than digits. Reading
 the prose took recovery from 3 of 10 to 9 of 10 without changing anything about
 the scanning.
@@ -737,7 +736,7 @@ birthplace cannot be read honestly — a trial capture produced *"Sagebrush
 Memorial Hospital, in Hazelmere Id"* as a birthplace. Residence and the Ricks
 mention are both readable at 8 of 10 but were dropped as not worth the build:
 the PDF is attached, and a reader can see them. **A wrong fact in a permanent
-record is worse than an absent one.**
+catalogue record is worse than an absent one.**
 
 ### Where a description comes from
 

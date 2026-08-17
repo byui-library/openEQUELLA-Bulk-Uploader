@@ -58,13 +58,13 @@ Thumbs.db
 
 # Real files used for hands-on trials of the extractor. Never committed:
 # size, and they are whatever the operator happened to point the tool at.
+#
+# `tests/obits/` is the alumni-obituary batch and is named separately because
+# it did NOT match the rule above -- ten scanned obituaries of real, named,
+# deceased people sat untracked and unignored in a PUBLIC repository, one
+# `git add -A` away from being published. The rule below is the one that was
+# missing. Point the extractor wherever you like, but any real batch belongs
+# under a path this file already covers.
 tests/test files/
-
-# Real scanned obituaries, used for hands-on trials of the description work.
-# These name deceased people and state their birth and death dates, so they
-# are personal data about identifiable individuals in a PUBLIC repository --
-# the exact material that had to be scrubbed out of tests, docs and source
-# comments once already (see the pseudonym rule in CLAUDE.md). They arrived
-# untracked and NOT ignored, one `git add -A` away from being published.
 tests/obits/
 obits/
