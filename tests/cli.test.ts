@@ -630,6 +630,10 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
     const origLog = console.log;
     console.log = (...args: unknown[]) => logs.push(args.join(' '));
 
+    // The browser is handed the authorize URL and carries its `state` back on
+    // the redirect. Captured here so this test sends the value a real browser
+    // would, rather than one the login would now refuse.
+    let sentState: string | null = null;
     const loginPromise = loginAction(
       {
         OEQ_BASE_URL: mock.url,
@@ -638,7 +642,12 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
         OEQ_COLLECTION_UUID: 'c1',
         OEQ_REDIRECT_URI: redirectUri,
       },
-      { tokenStore: store, openBrowser: () => {} },
+      {
+        tokenStore: store,
+        openBrowser: (url) => {
+          sentState = new URL(url).searchParams.get('state');
+        },
+      },
     );
 
     try {
@@ -646,7 +655,7 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
       // operator signs in and authorizes -- loginAction should already be
       // listening for it by the time the server is up.
       await waitForPort(port);
-      const res = await fetch(`${redirectUri}?code=loop-code&state=xyz`);
+      const res = await fetch(`${redirectUri}?code=loop-code&state=${sentState ?? ''}`);
       expect(res.status).toBe(200);
       expect(await res.text()).toMatch(/close this tab/i);
 
@@ -688,6 +697,71 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
     await waitForPort(port);
     await fetch(`${redirectUri}?error=access_denied`);
     await assertion;
+  });
+
+  /**
+   * ## The loopback server answers anyone on this machine
+   *
+   * It is an ordinary HTTP server on a local port. Any other process, or any
+   * web page the operator happens to have open, can send it a request carrying
+   * a code of the attacker's choosing -- and a code accepted here is exchanged
+   * for a token that is then cached for every later command. The `state` sent
+   * on the authorize URL is what separates openEQUELLA's redirect from theirs.
+   *
+   * Driven through a real HTTP request rather than a stubbed capture, because
+   * the port being open to everything is the whole point.
+   */
+  it('refuses a redirect whose state is not the one it sent', async () => {
+    const port = await getFreePort();
+    const redirectUri = `http://127.0.0.1:${port}/callback`;
+    mock.state.expectedRedirectUri = redirectUri;
+    mock.state.validAuthCodes.add('loop-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const loginPromise = loginAction(
+      {
+        OEQ_BASE_URL: mock.url,
+        OEQ_CLIENT_ID: 'good-id',
+        OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
+        OEQ_REDIRECT_URI: redirectUri,
+      },
+      { tokenStore: store, openBrowser: () => {} },
+    );
+
+    const assertion = expect(loginPromise).rejects.toThrow(/did not come from the sign-in/i);
+    await waitForPort(port);
+    await fetch(`${redirectUri}?code=loop-code&state=attacker-chose-this`);
+    await assertion;
+
+    // Refused means refused: nothing was exchanged and nothing was cached.
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  it('refuses a redirect that carries no state at all', async () => {
+    const port = await getFreePort();
+    const redirectUri = `http://127.0.0.1:${port}/callback`;
+    mock.state.expectedRedirectUri = redirectUri;
+    mock.state.validAuthCodes.add('loop-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const loginPromise = loginAction(
+      {
+        OEQ_BASE_URL: mock.url,
+        OEQ_CLIENT_ID: 'good-id',
+        OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
+        OEQ_REDIRECT_URI: redirectUri,
+      },
+      { tokenStore: store, openBrowser: () => {} },
+    );
+
+    const assertion = expect(loginPromise).rejects.toThrow(/did not come from the sign-in/i);
+    await waitForPort(port);
+    await fetch(`${redirectUri}?code=loop-code`);
+    await assertion;
+
+    expect(await store.loadRaw()).toBeNull();
   });
 });
 

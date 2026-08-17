@@ -356,7 +356,7 @@ function loopbackTarget(redirectUri: string): { hostname: string; port: number; 
  * history entry at all -- it arrives as a normal HTTP request this process
  * is already listening for.
  */
-function defaultCaptureLoopbackCode(redirectUri: string): Promise<string> {
+function defaultCaptureLoopbackCode(redirectUri: string): Promise<{ code: string; state: string | null }> {
   const target = new URL(redirectUri);
   return new Promise((resolvePromise, reject) => {
     const server = createHttpServer((req, res) => {
@@ -383,7 +383,9 @@ function defaultCaptureLoopbackCode(redirectUri: string): Promise<string> {
       );
       server.close(() => {
         if (error) reject(new OeqError(`openEQUELLA returned an error during sign-in: ${error}`));
-        else resolvePromise(code!);
+        // The state travels back beside the code so `loginAction` can tell
+        // openEQUELLA's redirect from any other request to this open port.
+        else resolvePromise({ code: code!, state: reqUrl.searchParams.get('state') });
       });
     });
     server.on('error', reject);
@@ -411,8 +413,10 @@ export interface LoginDeps {
   tokenStore?: TokenStore;
   openBrowser?: (url: string) => void;
   promptForCode?: () => Promise<string>;
-  /** Overridable for tests; see `defaultCaptureLoopbackCode` for the real implementation. */
-  captureLoopbackCode?: (redirectUri: string) => Promise<string>;
+  /** Overridable for tests; see `defaultCaptureLoopbackCode` for the real implementation.
+   *  Returns the `state` beside the code so the caller can check the redirect
+   *  was the one it asked for -- see `loginAction`. */
+  captureLoopbackCode?: (redirectUri: string) => Promise<{ code: string; state: string | null }>;
 }
 
 /**
@@ -495,8 +499,9 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
   let code: string;
   if (loopback) {
     console.log('Waiting for openEQUELLA to redirect back to this machine...');
+    let captured: { code: string; state: string | null };
     try {
-      code = await (deps.captureLoopbackCode ?? defaultCaptureLoopbackCode)(cfg.redirectUri);
+      captured = await (deps.captureLoopbackCode ?? defaultCaptureLoopbackCode)(cfg.redirectUri);
     } catch (err) {
       throw new OeqError(
         `Could not capture the code automatically at ${cfg.redirectUri}: ${errorMessage(err)}. Check ` +
@@ -504,12 +509,35 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
           `to fall back to the manual-paste flow.`,
       );
     }
+    // The loopback server answers an ordinary HTTP request on a local port,
+    // which any other process on this machine -- or any web page the operator
+    // has open -- can also send. A code accepted here is exchanged for a token
+    // that every later command then uses, so the state is what has to
+    // distinguish openEQUELLA's redirect from somebody else's request.
+    if (!auth.checkState(captured.state)) {
+      throw new OeqError(
+        `That redirect did not come from the sign-in this command started: it did not carry back ` +
+          `the one-time value sent with the authorize URL. Nothing has been saved. Run ` +
+          `\`oeq-upload login\` again, and if it keeps happening, check whether something else on ` +
+          `this machine is answering ${cfg.redirectUri}.`,
+      );
+    }
+    code = captured.code;
     console.log('Code captured automatically from the local redirect.');
   } else {
     const raw = (await (deps.promptForCode ?? defaultPromptForCode)()).trim();
     if (!raw) {
       throw new OeqError('No code entered. Run `oeq-upload login` again when you have it.');
     }
+    // DELIBERATELY NOT STATE-CHECKED, AND SAID RATHER THAN HIDDEN.
+    //
+    // This flow exists for a redirect this machine cannot receive -- the
+    // operator reads a code off a page and pastes it, commonly without the
+    // state beside it, and `extractCode` accepts a bare code precisely because
+    // that is what people have. A check that passed whenever the pasted text
+    // happened to lack a state would report success without running, which is
+    // the defect this codebase has shipped twice. The loopback flow above is
+    // the one that can genuinely check, and it does.
     code = extractCode(raw);
   }
 
