@@ -53,7 +53,7 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **2092 tests across 102 files** on `feature/llm-provider`.
+exists to remove. **2132 tests across 103 files** on `feature/llm-provider`.
 
 That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
 is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
@@ -423,6 +423,20 @@ shape, never as a value the code may assume.
   is destroyed and recreated on every keystroke; without it the field loses
   focus after one character, or types backwards if it re-focuses without
   restoring the caret. Both shipped for months unnoticed.
+- **An escape applied on the way out must be removed on the way in, and the two
+  halves live in one module.** The extractor writes document text into a CSV the
+  operator opens in Excel, which executes a cell beginning `=`, `+`, `-` or `@`
+  — so those values are guarded with an apostrophe. But `plan` reads that same
+  spreadsheet back and uploads what it finds, so guarding without unguarding
+  would write a character that was never in the document into a permanent
+  catalogue record: a data-integrity bug bought with a security fix, in a tool
+  whose whole purpose is faithful records. `src/core/formulaGuard.ts` therefore
+  owns both directions and the trigger list they share, and
+  `unguardFormula(guardFormula(v)) === v` is pinned for every shape they
+  distinguish — including a value that already began with an apostrophe, which
+  has to be escaped too or the reader cannot tell the guard from the data. The
+  test that matters is the round trip through `writeCsv` → `readSheet`, because
+  it asserts what openEQUELLA would actually receive.
 - **An edit copies the record whole and changes what it names; a control that
   governs part of a value says which part.** Both halves were violated at once
   in the shipped profile editor, and neither was visible in 2069 tests.

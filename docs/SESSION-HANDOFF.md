@@ -4,10 +4,60 @@ Read this first.
 
 ## RESUME HERE — session of 2026-08-17 (language model)
 
-**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2092 across 102
+**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2132 across 103
 files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
 `main` carries the privacy scrub (PR #14) and has been merged in, so this branch
 is 0 behind.
+
+### Security hardening — done, and what it deliberately left
+
+A review of the whole tool on 2026-08-17, prompted by the operator asking what
+to tell other institutions. Design and findings:
+[SECURITY.md](../SECURITY.md), which is written for adopters rather than for us.
+Plan: [superpowers/plans/2026-08-17-security-hardening.md](superpowers/plans/2026-08-17-security-hardening.md).
+
+**Two exploitable findings, both closed:**
+
+- **A document could write a live formula into the spreadsheet.** Excel executes
+  a cell beginning `=`, `+`, `-` or `@`, and the extractor writes OCR'd text
+  from donated documents into a CSV the operator opens in Excel — the one input
+  to this tool an outsider supplies. `src/core/formulaGuard.ts` holds **both
+  halves in one module on purpose**: `plan` reads that same spreadsheet back and
+  uploads what it finds, so guarding on write without unguarding on read would
+  have traded an injection risk for an apostrophe written into a permanent
+  catalogue record. `unguardFormula(guardFormula(v)) === v` for every string,
+  and a round-trip test asserts what openEQUELLA would actually receive.
+- **The OAuth flow accepted any redirect that arrived.** `state` is now sent and
+  checked. This matters most for the CLI's loopback capture — an ordinary HTTP
+  server on a local port that any process or open web page on the machine can
+  reach. The existing end-to-end test fired `state=xyz` at that port and was
+  accepted; it now carries the real value, which is what proves the guard works.
+  **The CLI's manual-paste flow is deliberately NOT checked and says so**: people
+  paste a bare code, and a check that passed whenever the state was absent would
+  be the "reports success without running" defect this repo has shipped twice.
+
+Guarded by four mutations, each applied with the Edit tool and watched go red.
+
+**Deliberately not done, each for a stated reason:**
+
+- **The `m.miles` scrub** — 48 occurrences across 5 test files and 2 docs,
+  including this one. `CLAUDE.md` records that it is reviewed as a change of its
+  own and kept off this branch; doing it here would break that twice over. **Do
+  it on its own branch off `main`.** It is a disclosure in a public repository,
+  so it should not wait long.
+- **The three `npm audit` advisories.** Checked against the call sites and none
+  applies: the `fast-xml-parser` advisory is against `XMLBuilder` and only
+  `XMLParser` is used; the `uuid` one needs a `buf` argument nothing passes.
+  Both fixes are breaking majors, one to `exceljs`, which writes every
+  spreadsheet. The analysis is in `SECURITY.md` so nobody force-upgrades on a
+  red audit line before a release.
+- **The password in openEQUELLA's login query string.** Not fixable from here —
+  the API declares no body form. TLS covers it in transit; server and
+  load-balancer access logs may hold it at rest. Documented for adopters.
+
+**None of it has been driven through the desktop app.** The desktop sign-in
+window's state check in particular has no test — a `BrowserWindow` is not
+constructible in this suite — so it is verified by reading only.
 
 ### The two profile-editor defects are FIXED — stage 1 is built
 
@@ -226,7 +276,7 @@ loosened to make an evaluation easier.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **2092 passing across 102 files**.
+1. `npm install && npm test` — expect **2132 passing across 103 files**.
    `npm run typecheck`, `npm run build` and `npm run build:desktop` are all
    clean.
 2. **You are probably on `feature/llm-provider`.** It **is not merged**, and it
@@ -902,7 +952,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            2092 tests, 102 files
+npm test            2132 tests, 103 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
