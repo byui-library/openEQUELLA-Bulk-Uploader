@@ -234,7 +234,7 @@ function resolve(source: Source, context: Context): Resolved {
     return {
       value: found[0] ?? '',
       // An obituary almost always names someone else's death -- "preceded in
-      // death by his wife Ivy, who passed away on November 8, 1994" appears in
+      // death by his wife Ivy, who passed away on January 17, 2186" appears in
       // nearly every one. Nothing can reliably tell whose death a sentence
       // describes, so the first is taken and the row says what else was there.
       note:

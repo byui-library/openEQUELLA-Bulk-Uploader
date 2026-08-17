@@ -194,8 +194,8 @@ layer is an ordinary input and needs no special handling.
 One thing OCR alone will NOT solve. The target description in these records is
 a synthesis, not a quotation:
 
-> Died March 2, 1991: Willow Bend, Idaho, pneumonia; Born June 5, 1928;
-> Attended Ricks College; Obituary also appeared in the Post Register 03/04/1991
+> Died May 3, 2208: Fernvale, Idaho, influenza; Born June 5, 2131;
+> Attended Ricks College; Obituary also appeared in the Post Register 05/05/2208
 
 No section-finding produces that from a clipping, however clean the text. It is
 specific facts pulled out and rewritten in a house style — a tier 4 case, and a
