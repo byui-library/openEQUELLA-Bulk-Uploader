@@ -224,16 +224,18 @@ export interface SetupProps {
     },
     settings: Settings,
     /**
-     * The model endpoint to store, or null for "nothing was entered".
+     * What the model boxes amount to: nothing, something unusable, or an
+     * endpoint. See `ModelEntry` -- the three are distinct because two of them
+     * used to arrive here as the same `null`.
      *
-     * NULL IS NOT "REMOVE IT". An operator who came to Setup to rename a site
-     * submits this form with the model boxes as they found them -- and, because
-     * a stored endpoint is not rendered back into them, that is blank. Treating
-     * blank as a deletion would throw away configuration they never touched,
-     * which is the identical trap `saveInstance` avoids for a blank password.
-     * The only way to remove an endpoint is `onForgetModel`.
+     * `none` IS NOT "REMOVE IT". `refreshStoredModel` fails soft to null, so an
+     * operator whose store could not be read submits this form with the model
+     * boxes blank while an endpoint really is stored. Treating blank as a
+     * deletion would throw away configuration they never touched, which is the
+     * identical trap `saveInstance` avoids for a blank password. The only way to
+     * remove an endpoint is `onForgetModel`.
      */
-    model: ModelSettings | null,
+    model: ModelEntry,
   ): void;
 }
 
@@ -893,6 +895,22 @@ function liveSection(props: SetupProps): string {
  * asking for a key is an implicit claim that one is required, and the local
  * runtimes this feature exists to serve have no concept of one.
  */
+/**
+ * What the two boxes that turn the model on are CALLED on screen.
+ *
+ * Exported and interpolated into the labels rather than written twice, because
+ * `modelEntryProblem` names the empty one back to the operator and a message
+ * naming a box by a name the screen does not use sends them looking for a field
+ * that is not there. Renaming a label now renames what the refusal says.
+ *
+ * Each label goes on to say more than this -- an example address, an example
+ * model name -- and that trailing half is deliberately NOT part of the constant:
+ * an error sentence carrying `<code>http://localhost:11434/v1</code>` inside it
+ * would be escaped and read as markup.
+ */
+export const MODEL_ADDRESS_LABEL = 'Model address';
+export const MODEL_NAME_LABEL = 'Model name at that address';
+
 function modelSection(props: SetupProps): string {
   const f = props.fields;
   const stored = props.storedModel;
@@ -934,7 +952,7 @@ function modelSection(props: SetupProps): string {
         ${current}
 
         <label for="setup-model-base-url">
-          Model address — <code>http://localhost:11434/v1</code> for Ollama on this
+          ${MODEL_ADDRESS_LABEL} — <code>http://localhost:11434/v1</code> for Ollama on this
           computer, or <code>https://api.openai.com/v1</code> for a hosted one
         </label>
         <input
@@ -947,7 +965,7 @@ function modelSection(props: SetupProps): string {
           value="${escapeHtml(f.modelBaseUrl)}"
         />
 
-        <label for="setup-model-name">Model name at that address — for example <code>llama3</code></label>
+        <label for="setup-model-name">${MODEL_NAME_LABEL} — for example <code>llama3</code></label>
         <input
           id="setup-model-name"
           name="modelName"
@@ -1183,42 +1201,116 @@ function typedNumber(text: string): number {
 }
 
 /**
- * The model endpoint this screen would store, or null when none was entered.
+ * What the model boxes amount to. THREE ANSWERS, NOT TWO, and that is the whole
+ * of this defect's fix.
  *
- * NULL WHEN THE ADDRESS OR THE MODEL NAME IS BLANK, because half an endpoint
- * cannot be called and "partly configured" is not a state this feature has: it
- * is on or it does not exist. `app.ts` stores nothing at all for a null, so an
- * operator who never touches this section keeps exactly today's behaviour.
+ * This function used to return `ModelSettings | null`, and `null` meant both
+ * "the operator never touched this section" and "the operator typed into it but
+ * left one of the two required boxes empty". `app.ts` stores nothing for a null
+ * and then runs the ordinary success path -- so the second case reported a
+ * successful save, discarded the typed model name, and said nothing anywhere.
+ * The operator came back to Setup, found both boxes blank, and had no way to
+ * learn that their input had ever existed. A step that could not run, reported
+ * as though it had, is the failure this codebase has now had four times over
+ * (CLAUDE.md: the duplicate check, the identifier check, `guest`, the cookie
+ * jar); the fix each time is to make "could not" a value the caller must handle
+ * rather than a shape it shares with "did".
  *
- * NOTHING IS VALIDATED HERE, DELIBERATELY. The rules about what a budget, a cap
- * and a time limit may be belong to `assertUsableBudget` (core/ai/slice.ts),
- * `assertUsableCap` (core/ai/fill.ts) and `assertUsableTimeout`
- * (core/ai/provider.ts) -- the code that actually runs with these numbers --
- * and `secrets.ts#setModel` calls those three on the way in. A copy of them
- * here would be a second opinion free to drift from the first, and the shape of
- * failure that produces is the worst one available: a value this screen accepts
- * and the run then refuses, hundreds of rows later, by a message about a text
- * box the operator closed an hour ago. So a mistyped number passes through as
- * NaN and comes straight back as an error on this screen, in core's own words.
+ *  - `none`  -- nothing was typed. The zero-prerequisite promise: `app.ts` stores
+ *               nothing, removes nothing, says nothing, and no screen anywhere
+ *               mentions a model. THIS MUST STAY EXACTLY AS IT IS.
+ *  - `incomplete` -- something was typed and it cannot be called. Carries the
+ *               sentence the operator is shown, naming the box that is empty.
+ *  - `settings`   -- an endpoint, ready to store.
+ *
+ * `none` IS NOT "REMOVE THE STORED ONE" either -- see SetupProps.onSave.
+ */
+export type ModelEntry =
+  | { kind: 'none' }
+  | { kind: 'incomplete'; problem: string }
+  | { kind: 'settings'; settings: ModelSettings };
+
+/**
+ * Why the model boxes cannot be turned into an endpoint, or null when there is
+ * no problem to report -- which covers BOTH a complete endpoint and an
+ * untouched section.
+ *
+ * WHAT COUNTS AS "TOUCHED" IS THE ONLY DELICATE PART. The three numbers arrive
+ * pre-filled (`MODEL_FIELD_DEFAULTS`), so they cannot be evidence of anything:
+ * reading them as "the operator started configuring a model" would fire this
+ * refusal on every fresh form, which is precisely the "no change whatsoever"
+ * property this must not break. Only the two boxes that turn the feature on --
+ * and the key, which nobody types by accident and which is otherwise about to be
+ * thrown away in silence -- are treated as intent.
+ *
+ * PURE AND EXPORTED so the wording is asserted directly; this project has no
+ * jsdom and its screen tests read what a renderer returns.
+ */
+export function modelEntryProblem(fields: SetupFields): string | null {
+  const baseUrl = fields.modelBaseUrl.trim();
+  const model = fields.modelName.trim();
+  const key = fields.modelKey.trim();
+  // Untouched. Nothing to say, and saying anything here is the defect.
+  if (baseUrl === '' && model === '' && key === '') return null;
+  // Callable. The numbers are core's business, not this function's.
+  if (baseUrl !== '' && model !== '') return null;
+  const missing = [
+    baseUrl === '' ? `‘${MODEL_ADDRESS_LABEL}’` : null,
+    model === '' ? `‘${MODEL_NAME_LABEL}’` : null,
+  ].filter((label): label is string => label !== null);
+  const [one] = missing;
+  return (
+    'Nothing has been saved. The model settings need both an address and a model name, and ' +
+    (missing.length === 1
+      ? `${one} is still empty. Fill it in`
+      : `${missing.join(' and ')} are still empty. Fill them in`) +
+    ', or empty the model section entirely to leave the model settings switched off.'
+  );
+}
+
+/**
+ * The model endpoint this screen would store, or why it cannot be, or nothing.
+ *
+ * NOTHING IS VALIDATED HERE BEYOND "ARE BOTH BOXES FILLED IN", DELIBERATELY. The
+ * rules about what a budget, a cap and a time limit may be belong to
+ * `assertUsableBudget` (core/ai/slice.ts), `assertUsableCap` (core/ai/fill.ts)
+ * and `assertUsableTimeout` (core/ai/provider.ts) -- the code that actually runs
+ * with these numbers -- and `secrets.ts#setModel` calls those three on the way
+ * in. A copy of them here would be a second opinion free to drift from the
+ * first, and the shape of failure that produces is the worst one available: a
+ * value this screen accepts and the run then refuses, hundreds of rows later, by
+ * a message about a text box the operator closed an hour ago. So a mistyped
+ * number passes through as NaN and comes straight back as an error on this
+ * screen, in core's own words.
+ *
+ * The emptiness of the two required boxes is the one thing that CANNOT be
+ * delegated that way, because with either of them blank there is no call to
+ * make and so nothing downstream is ever asked. That is why it is checked here
+ * and nowhere else.
  *
  * The time limit is the one conversion: SECONDS on screen, milliseconds in
  * `ProviderConfig`. Nobody types 120000, and nothing downstream thinks in
  * seconds.
  */
-export function modelFrom(props: SetupProps): ModelSettings | null {
+export function modelFrom(props: SetupProps): ModelEntry {
   const f = props.fields;
   const baseUrl = f.modelBaseUrl.trim();
   const model = f.modelName.trim();
-  if (baseUrl === '' || model === '') return null;
+  const problem = modelEntryProblem(f);
+  if (problem !== null) return { kind: 'incomplete', problem };
+  if (baseUrl === '' || model === '') return { kind: 'none' };
   return {
-    baseUrl,
-    model,
-    // Blank means "keep whatever is stored for this endpoint" -- resolved in
-    // secrets.ts#setModel, which is the only place that can see the stored one.
-    apiKey: f.modelKey,
-    budget: typedNumber(f.modelBudget),
-    cap: typedNumber(f.modelCap),
-    timeoutMs: typedNumber(f.modelTimeout) * 1000,
+    kind: 'settings',
+    settings: {
+      baseUrl,
+      model,
+      // Blank means "keep whatever is stored for this endpoint" -- resolved in
+      // secrets.ts#setModel, which is the only place that can see the stored one.
+      apiKey: f.modelKey,
+      budget: typedNumber(f.modelBudget),
+      cap: typedNumber(f.modelCap),
+      timeoutMs: typedNumber(f.modelTimeout) * 1000,
+    },
   };
 }
 

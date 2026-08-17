@@ -16,12 +16,13 @@ import {
   attachmentPathToFill,
   renderSetup,
   MODEL_FIELD_DEFAULTS,
+  type ModelEntry,
   type SetupFields,
   type SetupTextField,
 } from './screens/setup.js';
 // `import type`: secrets.ts reaches `node:fs` and this module runs in the
 // sandboxed renderer, where a runtime import of it would blank the window.
-import type { ModelSettings, Settings, SettingsAuthMode } from '../secrets.js';
+import type { Settings, SettingsAuthMode } from '../secrets.js';
 // Pure, and reached from the sandboxed renderer on purpose -- see setup.ts's
 // note on the same import. It decides nothing; it re-states core's own time
 // limit rule in the unit Setup's box is labelled with.
@@ -813,13 +814,15 @@ async function handleSaveSettings(
   },
   settings: Settings,
   /**
-   * The model endpoint, or null for "nothing entered" -- which is the shipped
-   * state. Null STORES NOTHING and removes nothing: a stored endpoint is never
-   * rendered back into the key box, so an operator who came here to rename a
-   * site submits blank model fields, and treating that as a deletion would
-   * discard configuration they never touched. Removal is `handleForgetModel`.
+   * Nothing typed, something unusable, or an endpoint -- see `ModelEntry`.
+   *
+   * `none` STORES NOTHING and removes nothing, which is the shipped state.
+   * `refreshStoredModel` fails soft to null, so a store that could not be read
+   * leaves the boxes blank while an endpoint really is stored; treating that as
+   * a deletion would discard configuration the operator never touched. Removal
+   * is `handleForgetModel`.
    */
-  model: ModelSettings | null,
+  model: ModelEntry,
 ): Promise<void> {
   if (instance.baseUrl === '') {
     state.setupError = 'Enter the address of your openEQUELLA site.';
@@ -840,6 +843,26 @@ async function handleSaveSettings(
     render();
     return;
   }
+  // HALF A MODEL SECTION IS REFUSED BEFORE ANYTHING IS WRITTEN, and the refusal
+  // names the empty box (screens/setup.ts#modelEntryProblem).
+  //
+  // A REFUSAL RATHER THAN A HALF-SAVE, on the same argument as the time limit
+  // immediately below: nothing on this form has been committed yet, every field
+  // is controlled app state and so still holds exactly what the operator typed
+  // -- password included -- and the alternative is to write the site and then
+  // report a problem they could have fixed with one keystroke first. Both routes
+  // leave them standing on Setup; only this one leaves the disk untouched.
+  //
+  // AND IT OPENS THE SECTION. The message names a field, and `<details>` can be
+  // closed over the field it names -- a refusal pointing at a box the operator
+  // cannot see reads as the app refusing for no reason.
+  const modelProblem = model.kind === 'incomplete' ? model.problem : null;
+  if (modelProblem !== null) {
+    state.setupError = modelProblem;
+    state.modelSectionOpen = true;
+    render();
+    return;
+  }
   // THE ONE SETTING WHOSE BOX AND WHOSE RULE SPEAK DIFFERENT UNITS. Every other
   // number on this form is stored in the unit it is typed in, so the store's
   // refusal reads correctly as it comes back; the time limit is entered in
@@ -847,8 +870,8 @@ async function handleSaveSettings(
   // unit they never saw and a number they never typed. Asked here in seconds --
   // by a function that decides nothing and delegates to the same rule
   // (core/ai/provider.ts) -- so the sentence matches the label above the box.
-  if (model !== null) {
-    const problem = timeoutSecondsProblem(model.timeoutMs / 1000);
+  if (model.kind === 'settings') {
+    const problem = timeoutSecondsProblem(model.settings.timeoutMs / 1000);
     if (problem !== null) {
       state.setupError = problem;
       render();
@@ -877,9 +900,9 @@ async function handleSaveSettings(
     // half was not and carry on to the success path, so the instance list
     // catches up with what is actually on disk.
     let modelError: string | null = null;
-    if (model !== null) {
+    if (model.kind === 'settings') {
       try {
-        await window.oeq.setModel({ instanceId: saved.id, settings: model });
+        await window.oeq.setModel({ instanceId: saved.id, settings: model.settings });
       } catch (err) {
         modelError = errorMessage(err);
       }
@@ -913,7 +936,15 @@ async function handleSaveSettings(
       ...(modelError === null ? { modelKey: '' } : {}),
     };
     void refreshStoredUsername();
-    void refreshStoredModel();
+    // NOT ON THE FAILED-MODEL PATH, and this is the same defect as the
+    // half-filled section wearing another face. `refreshStoredModel` puts the
+    // STORED address and model name back into the boxes; when the write it
+    // follows has just failed, nothing on disk changed, so what it puts back is
+    // the OLD endpoint -- silently replacing the correction the operator is at
+    // that very moment being asked to make, in the boxes the error message is
+    // pointing at. Nothing was written, so `setupStoredModel` and the card above
+    // it are already accurate; there is nothing to re-read.
+    if (modelError === null) void refreshStoredModel();
     // The credentials this site needed may only just have arrived, so the
     // collections it can contribute to are askable for the first time.
     void refreshSetupCollections();

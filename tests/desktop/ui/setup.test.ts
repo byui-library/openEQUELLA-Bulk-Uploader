@@ -6,15 +6,20 @@ import {
   attachmentPathVerdict,
   backLabel,
   instanceFrom,
+  modelEntryProblem,
   modelFrom,
   renderSetup,
   setupMarkup,
   settingsFrom,
   suggestAttachmentPath,
+  MODEL_ADDRESS_LABEL,
+  MODEL_FIELD_DEFAULTS,
+  MODEL_NAME_LABEL,
   TEXT_INPUTS,
   type SetupFields,
   type SetupProps,
 } from '../../../src/desktop/ui/screens/setup.js';
+import type { ModelSettings } from '../../../src/desktop/secrets.js';
 import { parseSchema } from '../../../src/core/discovery.js';
 import { FakeElement } from '../../helpers/fakeDom.js';
 
@@ -1071,31 +1076,79 @@ describe('modelFrom', () => {
       }),
     });
 
+  /** The settings, for the assertions that are about the numbers rather than
+   *  about which of the three answers came back. */
+  const settingsOf = (entry: ReturnType<typeof modelFrom>) => {
+    expect(entry.kind).toBe('settings');
+    return (entry as { kind: 'settings'; settings: ModelSettings }).settings;
+  };
+
   /** Nothing typed, nothing configured. This is the zero-prerequisite promise
    *  arriving at the one screen that could break it. */
-  it('is null when no endpoint is entered', () => {
-    expect(modelFrom(props())).toBeNull();
+  it('is ‘none’ when no endpoint is entered', () => {
+    expect(modelFrom(props())).toEqual({ kind: 'none' });
   });
 
-  it('is null when an address is entered but no model is named', () => {
-    expect(modelFrom(withModel({ modelName: '  ' }))).toBeNull();
+  /**
+   * THE DEFECT. This used to be the SAME `null` as the case above, so `app.ts`
+   * stored nothing, ran the ordinary success path, and the operator's typed
+   * model name vanished with the save reporting success.
+   */
+  it('is ‘incomplete’, not ‘none’, when an address is entered but no model is named', () => {
+    const entry = modelFrom(withModel({ modelName: '  ' }));
+    expect(entry.kind).toBe('incomplete');
+  });
+
+  it('is ‘incomplete’ when a model is named but no address is entered', () => {
+    expect(modelFrom(withModel({ modelBaseUrl: '   ' })).kind).toBe('incomplete');
+  });
+
+  /** A key is not typed by accident, and it is the one box whose contents the
+   *  operator cannot recover by looking at the screen. */
+  it('is ‘incomplete’ when only a key was typed', () => {
+    const entry = modelFrom(
+      props({ fields: fields({ modelKey: 'sk-typed', modelBudget: '8000', modelCap: '200', modelTimeout: '120' }) }),
+    );
+    expect(entry.kind).toBe('incomplete');
+  });
+
+  /**
+   * THE ZERO-PREREQUISITE CASE, PINNED. The three numbers arrive pre-filled, so
+   * reading them as "the operator started configuring a model" would fire the
+   * refusal on every fresh form -- an operator who has never opened this section
+   * being told to fix a setting they have never seen.
+   */
+  it('is ‘none’, silently, when only the pre-filled numbers are present', () => {
+    const entry = modelFrom(
+      props({
+        fields: fields({
+          modelBudget: MODEL_FIELD_DEFAULTS.budget,
+          modelCap: MODEL_FIELD_DEFAULTS.cap,
+          modelTimeout: MODEL_FIELD_DEFAULTS.timeout,
+        }),
+      }),
+    );
+    expect(entry).toEqual({ kind: 'none' });
   });
 
   it('reads the whole endpoint back', () => {
     expect(modelFrom(withModel())).toEqual({
-      baseUrl: 'http://localhost:11434/v1',
-      model: 'llama3',
-      apiKey: '',
-      budget: 8000,
-      cap: 200,
-      timeoutMs: 120_000,
+      kind: 'settings',
+      settings: {
+        baseUrl: 'http://localhost:11434/v1',
+        model: 'llama3',
+        apiKey: '',
+        budget: 8000,
+        cap: 200,
+        timeoutMs: 120_000,
+      },
     });
   });
 
   /** Seconds on screen, milliseconds on the wire. An operator does not think
    *  in milliseconds, and `ProviderConfig.timeoutMs` does not think in seconds. */
   it('reads the time limit in seconds and stores it in milliseconds', () => {
-    expect(modelFrom(withModel({ modelTimeout: '300' }))?.timeoutMs).toBe(300_000);
+    expect(settingsOf(modelFrom(withModel({ modelTimeout: '300' }))).timeoutMs).toBe(300_000);
   });
 
   /**
@@ -1104,17 +1157,96 @@ describe('modelFrom', () => {
    * would configure a model that silently never runs, and every row would say
    * it was stopped by a limit the operator never set. NaN is refused by
    * core's own guard with a sentence naming the setting.
+   *
+   * NOT by this screen: a blank NUMBER is still a complete endpoint as far as
+   * `modelFrom` is concerned, and the rule about what the number may be belongs
+   * to the code that runs with it.
    */
   it.each(['modelBudget', 'modelCap', 'modelTimeout'] as const)(
     'refuses a blank %s rather than reading it as zero',
     (field) => {
-      const settings = modelFrom(withModel({ [field]: '   ' }));
-      expect(settings).not.toBeNull();
-      expect(Object.values(settings!).some((v) => typeof v === 'number' && Number.isNaN(v))).toBe(true);
+      const settings = settingsOf(modelFrom(withModel({ [field]: '   ' })));
+      expect(Object.values(settings).some((v) => typeof v === 'number' && Number.isNaN(v))).toBe(true);
     },
   );
 
   it('hands a mistyped number through as NaN, for the store’s own guard to refuse', () => {
-    expect(modelFrom(withModel({ modelCap: 'lots' }))?.cap).toBeNaN();
+    expect(settingsOf(modelFrom(withModel({ modelCap: 'lots' }))).cap).toBeNaN();
+  });
+});
+
+/**
+ * What the operator is told when the model section is half filled in.
+ *
+ * The sentence is asserted here, and that it REACHES A SCREEN is asserted in
+ * appNavigation.test.ts, which drives a real save through app.ts. Both are
+ * needed: a message no screen shows is the defect wearing a different face.
+ */
+describe('modelEntryProblem', () => {
+  const half = (over: Partial<SetupFields>): string | null => modelEntryProblem(fields(over));
+
+  /** THE PROPERTY THAT MUST NOT MOVE. An operator who never touched the section
+   *  sees no prompt, no error and no mention of a model, on any path. */
+  it('says nothing at all about an untouched section', () => {
+    expect(modelEntryProblem(fields())).toBeNull();
+    expect(
+      modelEntryProblem(
+        fields({
+          modelBudget: MODEL_FIELD_DEFAULTS.budget,
+          modelCap: MODEL_FIELD_DEFAULTS.cap,
+          modelTimeout: MODEL_FIELD_DEFAULTS.timeout,
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('says nothing about a complete endpoint', () => {
+    expect(half({ modelBaseUrl: 'http://localhost:11434/v1', modelName: 'llama3' })).toBeNull();
+  });
+
+  /**
+   * NAMES THE BOX, BY THE NAME ON THE BOX. A refusal that says "the model
+   * settings are incomplete" and stops sends the operator hunting through six
+   * fields; the label constants are shared with the markup so the two cannot
+   * drift into calling the same field different things.
+   */
+  it('names the model-name box when only the address was filled in', () => {
+    const message = half({ modelBaseUrl: 'http://localhost:11434/v1' });
+    expect(message).toContain(MODEL_NAME_LABEL);
+    expect(message).not.toContain(MODEL_ADDRESS_LABEL);
+  });
+
+  it('names the address box when only the model was named', () => {
+    const message = half({ modelName: 'llama3' });
+    expect(message).toContain(MODEL_ADDRESS_LABEL);
+    expect(message).not.toContain(MODEL_NAME_LABEL);
+  });
+
+  it('names both when only a key was typed', () => {
+    const message = half({ modelKey: 'sk-typed' });
+    expect(message).toContain(MODEL_ADDRESS_LABEL);
+    expect(message).toContain(MODEL_NAME_LABEL);
+  });
+
+  /**
+   * SAYS NOTHING WAS SAVED, in as many words. The whole defect was a save that
+   * reported success while discarding what was typed, so the correction is
+   * worthless if the operator can read it as "saved, with a note".
+   */
+  it('says nothing has been saved', () => {
+    expect(half({ modelName: 'llama3' })).toMatch(/nothing has been saved/i);
+  });
+
+  /** And offers the other way out, because "fill in the box" is not the only
+   *  thing an operator who half-typed something may want to do. */
+  it('offers emptying the section as the way to leave the feature off', () => {
+    expect(half({ modelName: 'llama3' })).toMatch(/empty the model section/i);
+  });
+
+  /** The names it uses are the names the screen renders, not a second copy. */
+  it('uses labels the screen actually shows', () => {
+    const html = setupMarkup(props());
+    expect(html).toContain(MODEL_ADDRESS_LABEL);
+    expect(html).toContain(MODEL_NAME_LABEL);
   });
 });
