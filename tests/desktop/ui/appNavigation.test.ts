@@ -45,6 +45,14 @@ interface Harness {
     saveInstance: number;
     /** Every instance id `window.oeq.signOut` was called with, in order. */
     signOut: string[];
+    /**
+     * Every endpoint `window.oeq.setModel` was actually handed, in order.
+     *
+     * A COUNT WOULD NOT DO. The question these tests ask is what reached the
+     * store, and the defect they pin is a save that reported success while
+     * storing something other than what the operator typed -- or nothing at all.
+     */
+    modelSaves: { baseUrl: string; model: string; budget: number }[];
   };
   /** Lets run() resolve, when the harness was booted holding it open. */
   finishRun(): void;
@@ -104,7 +112,13 @@ interface BootOptions {
  */
 async function boot(options: BootOptions = {}): Promise<Harness> {
   const dom = fakeDom();
-  const calls = { clearSettings: 0, confirm: 0, saveInstance: 0, signOut: [] as string[] };
+  const calls = {
+    clearSettings: 0,
+    confirm: 0,
+    saveInstance: 0,
+    signOut: [] as string[],
+    modelSaves: [] as Harness['calls']['modelSaves'],
+  };
   let stored: InstanceChoice = { ...SITE, ...options.site };
   let releaseRun: () => void = () => {};
 
@@ -130,10 +144,11 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     },
     getPassword: async () => ({ username: 'a.operator' }),
     getModel: async () => options.model ?? null,
-    setModel: async () => {
+    setModel: async (args: { settings: { baseUrl: string; model: string; budget: number } }) => {
       if (options.setModelFails === true) {
         throw new Error('The model run limit must be zero or a positive number, but it was \'-1\'.');
       }
+      calls.modelSaves.push(args.settings);
     },
     forgetModel: async () => {},
     chooseSpreadsheet: async () => 'C:\\batch\\upload.csv',
@@ -832,6 +847,228 @@ describe('the model section on Setup', () => {
 });
 
 /**
+ * ## Typed input must never be discarded in silence
+ *
+ * REPORTED BY HAND-TESTING. The operator expanded the model section, typed a
+ * model name, left the address blank, and clicked Save credentials. The save
+ * reported success. They navigated away, came back, and both boxes were empty.
+ *
+ * The mechanism was `modelFrom` answering `null` for a half-filled section --
+ * the SAME `null` it answers for an untouched one -- so `app.ts` stored nothing
+ * and ran the ordinary success path. A step that could not run, reported as
+ * though it had, is this codebase's own recurring defect (CLAUDE.md: the
+ * duplicate check, the identifier check, `guest: true`, the cookie jar).
+ *
+ * Asserted here rather than only against `modelEntryProblem`'s string, because
+ * the failure was never the wording: it was that no wording reached a screen.
+ */
+describe('a half-filled model section', () => {
+  /** Type into the model section without completing it. */
+  async function typeHalf(app: FakeElement, over: Record<string, string>): Promise<void> {
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    for (const [selector, value] of Object.entries(over)) {
+      app.fire(selector, 'input', { target: { value } });
+    }
+    app.fire('#setup-form', 'submit');
+    await flush();
+  }
+
+  it('refuses the save and names the box that is empty', async () => {
+    const { app } = await boot();
+    await typeHalf(app, { '#setup-model-name': 'llama3' });
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).toContain('Model address');
+  });
+
+  it('names the model-name box when only the address was typed', async () => {
+    const { app } = await boot();
+    await typeHalf(app, { '#setup-model-base-url': 'http://localhost:11434/v1' });
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).toContain('Model name at that address');
+  });
+
+  /** NOTHING IS WRITTEN. The old path stored the site and reported success;
+   *  the correction is worthless if it only adds a sentence to that. */
+  it('writes neither the site nor the model settings', async () => {
+    const { app, calls } = await boot();
+    await typeHalf(app, { '#setup-model-name': 'llama3' });
+
+    expect(calls.saveInstance).toBe(0);
+    expect(calls.modelSaves).toEqual([]);
+  });
+
+  /** And the typed value is still on screen, so the refusal costs a keystroke
+   *  rather than the work. This is what "discarded in silence" cost. */
+  it('leaves the operator on Setup with what they typed still in the box', async () => {
+    const { app } = await boot();
+    await typeHalf(app, { '#setup-model-name': 'llama3' });
+
+    expect(app.has('#setup-form')).toBe(true);
+    expect(app.innerHTML).toContain('value="llama3"');
+  });
+
+  /** The message names a field, and `<details>` can be closed over the field it
+   *  names -- a refusal pointing at a box the operator cannot see reads as the
+   *  app refusing for no reason. */
+  it('opens the model section, so the box it names is visible', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'llama3' } });
+    // Closed again, as an operator who tidied up before saving would leave it.
+    app.fire('#setup-model', 'toggle', { target: { open: false } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/<details id="setup-model" open/);
+  });
+
+  /** A key with no endpoint is the same silent discard, and the key is the one
+   *  box whose contents cannot be recovered by looking at the screen. */
+  it('refuses a key typed with no address and no model name', async () => {
+    const { app, calls } = await boot();
+    await typeHalf(app, { '#setup-model-key': 'sk-typed' });
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(calls.saveInstance).toBe(0);
+    expect(app.innerHTML).toContain('value="sk-typed"');
+  });
+
+  /**
+   * THE ZERO-PREREQUISITE CASE, AND THE ONE THIS CHANGE MOST EASILY BREAKS.
+   * An operator who never touched the section must see no change whatsoever --
+   * no prompt, no error, no mention of a model. The three numbers arrive
+   * pre-filled, so a check that read them as intent would fire here.
+   */
+  it('says nothing, and saves normally, when the section was never touched', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-form', 'submit');
+    // SYNCHRONOUSLY, BEFORE THE SAVE CAN RESOLVE. A refusal renders and returns
+    // with no await in front of it, so this is the one moment at which a message
+    // that should not exist would be on screen -- after the flush below the
+    // screen has moved on and its absence proves nothing.
+    expect(app.innerHTML).not.toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).not.toMatch(/class="error"/);
+    await flush();
+
+    expect(calls.saveInstance).toBe(1);
+    expect(calls.modelSaves).toEqual([]);
+    // Left Setup, as an ordinary save does.
+    expect(app.has('#setup-form')).toBe(false);
+  });
+
+  /** Both boxes filled in stores normally, which is the case the refusal must
+   *  not have swallowed. */
+  it('stores the endpoint when both boxes are filled in', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'http://localhost:11434/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'llama3' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.modelSaves).toHaveLength(1);
+    expect(calls.modelSaves[0]).toMatchObject({ baseUrl: 'http://localhost:11434/v1', model: 'llama3' });
+    expect(app.has('#setup-form')).toBe(false);
+  });
+});
+
+/**
+ * The variant that would have been worse than the reported one: an endpoint is
+ * already stored and the operator returns to Setup to change ONE number.
+ *
+ * If the address and model-name boxes came back BLANK, saving after changing
+ * only the budget would hand `modelFrom` a half-filled section -- so with the
+ * old code the endpoint was silently left stale, and with a naive fix it would
+ * be refused with a message about boxes the operator was never shown filled.
+ *
+ * They do not come back blank: `refreshStoredModel` (app.ts) puts the stored
+ * address, model name and all three numbers back into the form on every route
+ * into Setup, and withholds only the key. These tests pin that, because the
+ * refusal added above depends on it -- repopulation is what makes "the address
+ * box is empty" mean the operator emptied it.
+ */
+describe('changing one number on a stored endpoint', () => {
+  const STORED_ENDPOINT = {
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3',
+    budget: 4321,
+    cap: 77,
+    timeoutMs: 300_000,
+    hasApiKey: true,
+  };
+
+  it('shows the stored address and model name in the boxes, not blank ones', async () => {
+    const { app } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+
+    expect(app.innerHTML).toContain('value="http://localhost:11434/v1"');
+    expect(app.innerHTML).toContain('value="llama3"');
+  });
+
+  /** The key is the exception, and stays the exception: a stored secret is
+   *  never rendered back where it can be read off the screen. */
+  it('still withholds the stored key', async () => {
+    const { app } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+
+    expect(app.innerHTML).not.toContain('sk-');
+    expect(app.innerHTML).toMatch(/key is stored/i);
+  });
+
+  it('saves the changed number without disturbing the address or the model name', async () => {
+    const { app, calls } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model-budget', 'input', { target: { value: '2000' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.modelSaves).toEqual([
+      expect.objectContaining({
+        baseUrl: 'http://localhost:11434/v1',
+        model: 'llama3',
+        budget: 2000,
+        cap: 77,
+        timeoutMs: 300_000,
+      }),
+    ]);
+    // Nothing was refused, so Setup was left as an ordinary save leaves it.
+    expect(app.has('#setup-form')).toBe(false);
+  });
+
+  /** Clearing the address on a stored endpoint is a deliberate act, and it is
+   *  now answered rather than silently ignored -- the endpoint is neither
+   *  updated nor removed, and the operator is told which box to fix. */
+  it('refuses a save that empties the address of a stored endpoint', async () => {
+    const { app, calls } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model-base-url', 'input', { target: { value: '' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).toContain('Model address');
+    expect(calls.modelSaves).toEqual([]);
+    expect(calls.saveInstance).toBe(0);
+    // And Forget is still the only way to remove one.
+    expect(app.has('#setup-model-forget')).toBe(true);
+  });
+});
+
+/**
  * Saving the site and saving its model endpoint are two writes, and the second
  * can fail on its own.
  */
@@ -982,5 +1219,69 @@ describe('a mistyped time limit', () => {
     await flush();
 
     expect(calls.saveInstance).toBe(1);
+  });
+});
+
+/**
+ * THE SAME DEFECT, WEARING ANOTHER FACE, found while fixing the first one.
+ *
+ * The reported bug was typed input discarded on save. This one discards it a
+ * beat later, on the one path that most needs it kept: `setModel` fails, the
+ * screen says so and asks the operator to correct a setting -- and
+ * `refreshStoredModel`, fired unconditionally after every save, then puts the
+ * STORED address and model name back into the boxes. Nothing was written, so
+ * what it restores is the OLD endpoint, replacing the correction in the very
+ * fields the error message is pointing at.
+ *
+ * Reachable only with an endpoint already stored AND the write failing, which is
+ * why the existing "keeps the typed key" test never saw it: that one boots with
+ * nothing stored, so `refreshStoredModel` finds null and touches no field.
+ */
+describe('a failed model write with an endpoint already stored', () => {
+  const OLD = {
+    baseUrl: 'http://old.example.test/v1',
+    model: 'old-model',
+    budget: 4321,
+    cap: 77,
+    timeoutMs: 300_000,
+    hasApiKey: false,
+  };
+
+  async function correctAndSave(): Promise<FakeElement> {
+    const { app } = await boot({ setModelFails: true, model: OLD });
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'http://new.example.test/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'new-model' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+    return app;
+  }
+
+  it('leaves the operator’s correction in the boxes', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).toContain('value="http://new.example.test/v1"');
+    expect(app.innerHTML).toContain('value="new-model"');
+  });
+
+  it('does not restore the endpoint that is still on disk over it', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).not.toContain('value="http://old.example.test/v1"');
+    expect(app.innerHTML).not.toContain('value="old-model"');
+  });
+
+  /** The card still describes what is actually stored, because that is what is
+   *  actually stored -- the failed write changed nothing. */
+  it('still describes the stored endpoint, and still offers to forget it', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).toContain('old-model');
+    expect(app.has('#setup-model-forget')).toBe(true);
+  });
+
+  /** And the half-a-save message is unchanged: the site really did commit. */
+  it('still says which half was saved', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).toMatch(/were saved/i);
+    expect(app.innerHTML).toMatch(/model settings were not/i);
   });
 });
