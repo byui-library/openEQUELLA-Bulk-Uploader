@@ -355,12 +355,13 @@ sometimes states things the document does not say, so every answer is read back
 against the document, and one that makes a claim the document does not support is
 thrown away rather than written — see *When the program refuses an answer* below.
 
-**What nobody has checked is whether the answers it keeps are any good.** The
-program has been tested thoroughly on *what it sends, when it is allowed to send,
-what it refuses, and how it flags what comes back* — but no test can say whether a
+**Whether the answers it keeps are any good is your judgement.** The program has
+been tested thoroughly on *what it sends, when it is allowed to send, what it
+refuses, and how it flags what comes back* — but no test can say whether a
 description reads well or is useful. That judgement is yours, made by reading the
 descriptions against the documents. This is why every cell a model writes is
-flagged.
+flagged. **And it depends heavily on which model you point it at** — see *Which
+model, and why it matters more than you would expect* below.
 
 #### Two kinds of model, and the difference matters
 
@@ -379,6 +380,39 @@ key. The key is stored encrypted for your Windows account, exactly like your
 password. Three more boxes have sensible defaults you can leave alone: how much
 of each document to send, how many requests one run may make, and how long to
 wait for an answer.
+
+#### Which model, and why it matters more than you would expect
+
+**A small model will give you descriptions that need heavy editing. That is the
+model, not this program.** It is worth knowing before you decide the feature is
+not working.
+
+The same ten scanned documents were run twice, with the same instructions and the
+same settings, changing only which model answered:
+
+| | a small model (3B) | a larger model (8B) |
+| --- | --- | --- |
+| descriptions written in the form asked for | about 3 of 8 | **8 of 8** |
+| invented answers thrown away | 2 of 2 | 2 of 2 |
+| good answers wrongly thrown away | none | none |
+| time for ten documents | slower | about 140 seconds |
+
+The small model's mistakes were obvious ones: a person's name put where a date
+should start the line, an age given instead of a date of death, a rambling
+sentence naming a hospital. **Nothing about the instructions caused that** — the
+same instructions produced eight correct lines from the larger model. So if what
+comes back is the wrong shape, ask whoever set up your model whether a larger one
+will run on that machine. Do not rewrite the column instructions first.
+
+**Two of the ten documents defeated both models** — one states no date anywhere,
+the other never mentions the school the model claimed for it — and both times the
+program threw the answer away. A better model does not remove the need for that
+check, which is why it cannot be switched off.
+
+Model names look like `llama3.2:3b` and `llama3.1:8b`; the number before the `b`
+is roughly the size. Bigger is generally better and slower, and needs more of the
+machine. Treat the table as one small trial on ten documents in English, not as a
+promise.
 
 #### What you will see when it runs
 
@@ -434,14 +468,35 @@ unsupported and quotes back what the model said:
 
 ```text
 MWDL/description: left blank -- the model's answer was refused, because it
-stated things this document does not support. "2024-01-06": the document states
-no such date. The model did answer and the call succeeded -- this tool discarded
-the answer -- so there is nothing to retry; read the document and fill this cell
-in by hand.
+stated things this document does not support. "2024-01-06": no date this tool
+can read in the document supports it -- it recognises English month names and
+numeric date forms only. The model did answer and the call succeeded -- this
+tool discarded the answer -- so there is nothing to retry; read the document and
+fill this cell in by hand.
 ```
 
 Nothing went wrong at the model's end, so there is nothing to run again. Read the
 document and type the cell in yourself.
+
+**Note what that message does and does not say.** It says no date *the program
+can read* supports the answer — never "the document states no such date", which
+would be a claim about your document. The difference matters if you catalogue in
+a language other than English; see the next section.
+
+#### It reads dates in English only
+
+The check that catches invented dates knows **English month names** and the
+numeric forms (`2024-01-06`, `6.1.2024`, `4/2/98`, `the 6th of January 2024`).
+A document written in another language — `Falleció el 6 de enero de 2024`,
+`Er starb am 6. Januar 2024` — states a day, and the program sees only the year
+in it.
+
+**What that means in practice:** if your documents are not in English, a
+*correct* answer giving a day-precision date will be refused and the cell left
+blank for you to fill in by hand. That is deliberate. The program refuses rather
+than guessing, because the whole reason this check exists is a document that
+genuinely stated no date at all and had one invented for it. Everything else
+about the model still works; you will simply type more dates in yourself.
 
 **This is the program checking the model's work, and it is not a complete
 check.** Ordinary description wording is not checked at all — writing the same
@@ -509,6 +564,24 @@ publish, choose Draft.
 - **A row failed during upload.** The Results screen at the end lists exactly
   which rows failed and why, and has a **Retry failed** button. This does not
   retry the whole batch — only the rows that failed.
+- **Every document fails when the language model runs, and the model program
+  keeps crashing.** *Every* request failing — not one or two — points at the
+  model software on that computer, **not at this program**. Check it on its own,
+  with this program closed: at a command prompt, `ollama run llama3 "Say OK."`.
+  If that fails too, nothing you change on the Setup screen will help, and it is
+  a question for whoever installed the model. Two things to tell them, because
+  they are the usual causes and both were hit here:
+  - **A leftover `HSA_OVERRIDE_GFX_VERSION` setting on the computer.** People
+    copy these from forum posts to make a graphics card work. If it names the
+    wrong kind of card, every request fails with a message about an *invalid
+    device function*, and the model program dies. Unsetting it was the fix.
+  - **A built-in (integrated) graphics chip being skipped on purpose.** Ollama
+    ignores those by default; `OLLAMA_IGPU_ENABLE=1` turns them back on. Its own
+    log says which graphics chip it found and what it decided to use, and that
+    log is where to look first.
+
+  Falling back to the computer's main processor instead of its graphics chip is
+  always an option. It is slower, not broken.
 - **Nothing above covers it, or you're not sure what happened.** Contact your
   administrator with a screenshot of whatever error message you see. Don't
   guess and don't retry an upload you're unsure about — ask first, especially

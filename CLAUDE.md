@@ -53,7 +53,7 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **2004 tests across 101 files.**
+exists to remove. **2042 tests across 101 files.**
 
 That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
 is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
@@ -109,20 +109,20 @@ it; the shipped obituary template enables it on `MWDL/description` and on
 nothing else. Design:
 [docs/superpowers/specs/2026-08-14-llm-provider-design.md](docs/superpowers/specs/2026-08-14-llm-provider-design.md).
 
-**It has now been run against a real model, and that split the question in two.**
-On 2026-08-14, ten scanned obituaries through `llama3.2:3b` served locally by
-Ollama: **fabrication is measured and guarded, and output quality is still
-UNVERIFIED.** Two of the ten generated descriptions asserted facts the documents
-do not contain, so `src/core/ai/verify.ts` was built and every generated value is
-now checked against the document before it is written — see the verification fact
-below for the evidence and the measurement. **Nobody has yet judged whether the
-eight descriptions it kept are any GOOD.** That is a separate question:
-groundedness is not quality, no assertion in the suite can say a description
-reads well or serves a cataloguer, and none tries. Task 13 of the plan — a person
-reading every generated description against its source and forming that
-judgement — is what remains. What was already tested is the machinery: the rule
-about what may be overwritten, the cap, every failure path, and the guarantee
-that an institution which configures no endpoint sends nothing anywhere.
+**It has now been run against two real models, and that split the question in
+two.** Ten scanned obituaries, `llama3.2:3b` on CPU (2026-08-14) and then
+`llama3.1:8b` on a GPU (2026-08-16), both served locally by Ollama:
+**fabrication is measured and guarded, and whether the kept descriptions are
+GOOD is still a human judgement.** Two of the ten generated descriptions
+asserted facts the documents do not contain, so `src/core/ai/verify.ts` was
+built and every generated value is now checked against the document before it is
+written — see the verification fact below for the evidence and the measurement.
+The 8B run is strong evidence the kept descriptions now follow house style,
+which is not the same thing as being worth cataloguing: no assertion in the
+suite can say a description reads well or serves a cataloguer, and none tries.
+What was already tested is the machinery — the rule about what may be
+overwritten, the cap, every failure path, and the guarantee that an institution
+which configures no endpoint sends nothing anywhere.
 
 **Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
 in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
@@ -515,6 +515,35 @@ shape, never as a value the code may assume.
   because paraphrase is legitimate description and checking it would have
   rejected the eight good ones. Every model-written cell stays flagged for that
   reason.
+- **The prompt is not the lever; model capability is, and verification covers
+  the residue.** The same ten documents were re-run on 2026-08-16 with
+  `llama3.1:8b` on a GPU. **8 of 8 written outputs followed the house style**,
+  where `llama3.2:3b` managed about three of eight — the rest prepended names,
+  gave an age where a death date belongs, or wrote prose sentences naming a
+  hospital. Nothing about the instruction changed between the runs, **so do not
+  elaborate the prompt against a weak model** — the house-style failures were
+  never the wording's fault, and rewriting it would have been work aimed at a
+  problem that was not there. And capability is not the guard either: **the same
+  two documents defeated both models** —
+  one states no date of any kind, the other never mentions the institution it
+  claimed — and both were refused both times, which is the argument for
+  verification rather than better prompting. Nothing ungrounded reached the
+  spreadsheet, confirmed by an independent audit against the sources. **State
+  the caveat wherever the result is stated:** that run passed the date checks
+  partly because `llama3.1:8b` answers in ISO format. Ten documents, one
+  collection, one language, is evidence, not coverage.
+- **The verifier reads English month names and numeric date forms ONLY, and
+  says so rather than blaming the document.** `Falleció el 6 de enero de 2024`
+  states a day and `verify.ts` sees only the year, so a correct day-precision
+  description of it is refused. Refusing is the safe direction and stays; the
+  wording is what had to change, because *"the document states no such date"* is
+  a claim about the document when all that is known is that no date **this tool
+  can read** supports the value. Stated, never silent — in `verify.ts`, in
+  `MONTH_NAMES` in `src/core/extract/dates.ts` (the one array both recognisers
+  are built from), in the README and in `docs/INSTALL.md`. Adding a language is
+  adding its month names there and its numeral words to `verify.ts`'s `SMALL`;
+  note the three-letter stem must stay distinct, since both patterns abbreviate
+  on it.
 - **Consent must be CARRIED, not re-derived.** `extractRun` used to resolve the
   model endpoint from its own read of the store and send, holding no evidence
   anyone had agreed. The renderer's read and the main process's read agreed on

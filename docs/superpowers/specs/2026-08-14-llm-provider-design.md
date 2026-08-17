@@ -214,6 +214,58 @@ documents it had never seen: **2 of 2 fabrications refused, 8 of 8 supported
 descriptions kept, zero false rejections.** End to end, the refused row yields an
 empty cell, no `ai` in `_source`, and a note naming each unsupported claim.
 
+### What the hardening established — 2026-08-17
+
+The design above is unchanged. What follows is what a review of the
+implementation found, and it matters to the design because one finding was the
+design's own founding failure surviving inside the layer built to stop it.
+
+**A date with no year was never checked at all.** `He died on January 6.` over a
+document stating no date was written into the catalogue. `FORMS` recognised a
+date only where a four-digit year sat beside it, and "no form matched" was read
+as "no claim was made" — so the layer's effectiveness turned on a model's
+formatting habit rather than on anything the design asserts. **The rule is now
+that a month name, or a day-and-month pair, is a claim whether or not a year
+sits beside it.** `Jan. 6`, `the 6th of January`, `1/6`, `in January`,
+`2024-01-06T00:00:00Z`, `in January of 2024` and `6.1.2024` are all claims.
+
+**Precision ranking was replaced by a `Reading`** — a date decomposed into the
+parts the text actually stated — under one rule, `entails`: every part the claim
+states must be stated, and equal, in the document's. A part the claim omits is
+not checked, so `2024` is supported by `2024-01-06`; the reverse is not, which
+is fabricated precision refused at a finer grain than the design anticipated.
+`new Date` is gone from the path, month names resolve through a stem table, and
+every reading is calendar-validated.
+
+**Twelve classes of false rejection were fixed**, which is the cost side of the
+design's "a false rejection is expensive" and turned out to be mostly format
+provincialism: `.`-separated dates, two-digit years, thousands separators,
+spelled numbers above ninety-nine, ordinal words, `a dozen`, `three and a half`.
+The old ninety-nine ceiling came from obituary prose — a domain judgement inside
+a module whose premise is that it knows nothing about any collection.
+
+**And the assertion check could be silently disabled by a blank string.** One
+empty entry in a profile's trigger list makes `includes('')` true of every
+document, so the check reports success without having run — the failure this
+project has now shipped twice elsewhere, sitting inside the module that exists
+to prevent it. The filter is load-bearing and is pinned by mutation.
+
+### It reads English dates only, and says so
+
+`MONTH_NAMES` is English. A document writing `Falleció el 6 de enero de 2024`
+states a day, and this layer sees only the year in it, so a **correct**
+day-precision description of that document is refused and discarded.
+
+Refusing stays: the fabrication this layer was built for came from a genuinely
+dateless document, and a check that gave up quietly on text it could not read
+would be the shape this codebase has shipped before. **What the design now
+requires is the wording.** *"The document states no such date"* is a claim about
+the document, and this layer is entitled only to a claim about itself: no date
+**it can read** supports the value. Every refusal reason is written to that
+standard, and the limitation is documented for operators rather than left to be
+discovered. Adding a language means adding its month names to `MONTH_NAMES` and
+its numeral words to `SMALL`.
+
 ### Three decisions, taken by the operator
 
 **1. Reject the whole value, never repair it.** The tool does not edit generated
@@ -382,8 +434,9 @@ Widening is editing a profile. If it requires code, the architecture is wrong.
   the zero-prerequisite promise.
 - **Against a real local model:** the one end-to-end path that costs nothing to
   run repeatedly, and the only way to see what the prompt actually produces.
-  **Done, 2026-08-14** — and it found the fabrication the verification section
-  above records. It is the only thing that could have.
+  **Done twice, with different models, and the difference between them is
+  itself the finding** — see below. The first run found the fabrication the
+  verification section above records; it is the only thing that could have.
 - **Groundedness, which CAN be tested and now is.** `tests/ai/verify.test.ts`
   asserts, against invented fixtures, that a date the document does not state is
   refused, that a claim finer than anything the document states is refused as
@@ -394,12 +447,46 @@ Widening is editing a profile. If it requires code, the architecture is wrong.
   grounded description can still be a poor one.
 - **What cannot be tested:** output quality, at all. No assertion can say a
   description is good. That judgement is the operator's, on a real batch, and
-  the plan must say so rather than implying coverage it does not have. **Still
-  true after the run of 2026-08-14**: eight descriptions survived verification
-  and nobody has yet judged whether they are worth keeping. Verification answers
-  "does the document support this?", which is a different question from "is this
-  any good?" — and answering the first must not be read as having answered the
-  second.
+  the plan must say so rather than implying coverage it does not have.
+  **Narrowed, not removed, by the second run**: the 8B model's output follows
+  the house style, which is evidence and not proof. Verification answers "does
+  the document support this?" and house style answers "is it shaped right?";
+  neither answers "is this worth cataloguing?", and answering either must not be
+  read as having answered that.
+
+### Two runs, two models — and why the difference is recorded
+
+**Whoever enables a model on a second field should read this before choosing
+one.** The same ten documents, the same prompt, the same profile instruction:
+
+| | `llama3.2:3b`, CPU, 2026-08-14 | `llama3.1:8b`, GPU, 2026-08-16 |
+| --- | --- | --- |
+| written outputs in house style | about 3 of 8 | **8 of 8** |
+| fabrications, refused | 2 of 2 | 2 of 2 |
+| false rejections | 0 | 0 |
+| wall clock, ten documents | — | 140 seconds |
+
+**The house-style failures were model capability, not prompt wording.** The 3B
+model prepended names, gave an age where a death date belongs, and wrote prose
+sentences naming a hospital; the instruction that produced those is the same one
+that produced eight correct lines from the 8B model. So the design's refusal to
+make the prompt the defence extends to quality: **elaborating the instruction
+against a weak model is work aimed at a problem the wording does not have.**
+
+**Capability is not the guard, though.** The same two documents defeated both
+models — one states no date of any kind, the other never mentions the
+institution it claimed — and both were refused both times. That is the argument
+for verification rather than for better prompting, made by a model good enough
+that "get a better model" was the obvious alternative. An independent audit
+against the sources confirmed nothing ungrounded reached the spreadsheet, and
+the hardened verifier re-checked against both models' stored output still caught
+2 of 2 and kept 8 of 8.
+
+**One caveat travels with the result wherever it is quoted:** the 8B run passed
+the date checks partly because that model answers in ISO format. That is exactly
+the habit the hardening removed the layer's dependence on, and it is why the
+gap was found by reading `FORMS` rather than by the run passing. Ten documents,
+one collection, one language is evidence within a sample — not coverage.
 
 ## Rejected alternatives
 

@@ -127,14 +127,18 @@ What the probe of 2026-08-12 **did** confirm live, against `content.byui.edu`:
 | `GET /api/schema/{uuid}` | declares `namePath` and `descriptionPath`; `/MWDL/title` and `/MWDL/description` here |
 | `definition` is nested **JSON**, not XML | so the XML parser cannot be reused on the API path |
 
-**The language model pass has been run against a real model once** — ten scanned
-documents through a small local model, 2026-08-14. It fabricated on 2 of them, so
-the tool now checks every generated value against the document before writing it
-and discards one that states something the document does not support. **No test
-can assert that a generated description is good**, though, and none tries to:
-whether the ones that survive the check are worth keeping is still your
-judgement. See *Letting a language model write a description*; it is off unless
-you configure an endpoint.
+**The language model pass has been run against real models twice** — the same
+ten scanned documents through a small local model (2026-08-14) and then a larger
+one (2026-08-16). Both fabricated on the same 2 of them, so the tool checks every
+generated value against the document before writing it and discards one that
+states something the document does not support; both times it caught both, and
+refused nothing good. What changed between the runs was the **quality** of the
+eight it kept: about three followed the requested form with the small model,
+eight of eight with the larger one. **No test can assert that a generated
+description is good**, and none tries to: whether the ones that survive the check
+are worth keeping is still your judgement. Note also that the check reads
+**English month names and numeric date forms only**. See *Letting a language
+model write a description*; it is off unless you configure an endpoint.
 
 What has **not** been confirmed anywhere: other openEQUELLA versions, other
 authentication configurations, and any schema that is not BYU-Idaho's MWDL. Apostrophe escaping in a `where` clause is still assumed
@@ -784,14 +788,16 @@ only a guess, a language model can be asked to write the cell instead. It is
 **off unless you configure an endpoint**, and it can point at a model running on
 your own computer or at a hosted service.
 
-> **The tool checks the model's work, and output quality is still unverified.**
-> A model answer that states something the document does not support is
-> discarded — see *When the tool refuses the model's answer* below. What no test
-> can assert is that a description which passes that check is any *good*, and
-> nobody has yet judged a real batch. Everything below describes machinery that
-> works; whether what comes out of it is worth keeping is your judgement, made by
-> reading the descriptions against the documents. Every cell a model writes is
-> flagged for exactly that reason.
+> **The tool checks the model's work, and the model you pick decides how much
+> editing you do.** An answer that states something the document does not
+> support is discarded — see *When the tool refuses the model's answer* below.
+> What no test can assert is that a description which passes that check is any
+> *good*. On a real batch of ten, a capable model wrote eight usable
+> descriptions and a small one wrote about three; see *The model you choose
+> changes what you get* below before you judge the tool by its output. Whether
+> what comes out is worth keeping is your judgement, made by reading the
+> descriptions against the documents. Every cell a model writes is flagged for
+> exactly that reason.
 
 #### With nothing configured, nothing is contacted and nothing is sent
 
@@ -822,6 +828,40 @@ new is the `_notes` text, not the triage number. If you do not want the line, re
 `{ "ai": true }` from the description column; it is a profile edit like any
 other.
 
+#### The model you choose changes what you get
+
+**Point this at a small local model and the descriptions will need heavy
+editing. That is the model, not the tool.** It is worth knowing before you
+conclude the feature does not work.
+
+The same ten scanned obituaries, the same prompt, the same profile — twice:
+
+| | a 3B model, on CPU | an 8B model, on a GPU |
+| --- | --- | --- |
+| descriptions written in the house style the profile asked for | about 3 of 8 | **8 of 8** |
+| answers refused as unsupported | 2 of 2 | 2 of 2 |
+| good answers wrongly refused | 0 | 0 |
+| time for ten documents | slower | about 140 seconds |
+
+The 3B model's failures were not subtle: names prepended to a line that should
+start with a date, an age given where a death date belongs, prose sentences
+naming a hospital. **Rewriting the instruction does not fix that** — the wording
+that produced those results is the same wording that produced eight correct
+lines from the larger model. If the output is not in the shape you asked for,
+try a bigger model before you edit the prompt.
+
+**Two documents defeated both models**, and both times the tool refused the
+answer: one states no date of any kind, and the model invented one; the other
+never mentions the institution the model claimed for it. **A better model does
+not remove the need for the check.** That is why the check is always on.
+
+Treat the table as a sample of ten documents from one collection in one
+language, not as a benchmark. The 8B figures were measured on `llama3.1:8b`
+running on an integrated GPU — not on specialist hardware — and the 3B figures
+on the same machine before that GPU worked at all. One more thing to know if you
+compare your own results: the larger model happened to answer with `2024-01-06`
+style dates, which is the easiest shape for the tool's own check to read.
+
 #### A local model, from nothing (Ollama)
 
 ```bash
@@ -838,6 +878,39 @@ oeq-upload extract --dir ./obituaries --profile templates/alumni-obituary.profil
 
 No API key, no account, no charge, and **nothing leaves the computer**. Plain
 `http` is fine here and only here — see the key rule below.
+
+#### When a local runtime misbehaves — it is the runtime, not this tool
+
+**Symptoms:** every request comes back `500`, on every model, and the runtime's
+own worker process dies (on Windows, exit code `0xc0000409`). The giveaway is
+that it fails the same way with this tool uninvolved:
+
+```bash
+ollama run llama3 "Say OK."
+```
+
+If that fails too, nothing here is going to help — and no amount of changing
+`OEQ_MODEL_*` settings will, either. **Read the Ollama server log**, which names
+the GPU it detected and the library it chose to load. That one line is usually
+the whole diagnosis.
+
+Two traps are worth naming because they cost a session here:
+
+- **A `HSA_OVERRIDE_GFX_VERSION` environment variable naming the wrong
+  architecture.** These are commonly copied from forum posts to make ROCm accept
+  an unsupported card. Set to a discrete card's architecture on a machine with an
+  integrated one, it makes the runtime load kernels the hardware cannot execute:
+  `ROCm error: invalid device function`, on every model. Check whether it is set
+  before assuming it is needed, and unset it if it names hardware you do not
+  have.
+- **An integrated GPU being skipped on purpose.** Ollama drops integrated GPUs
+  from its Vulkan path by default and says so in the log. `OLLAMA_IGPU_ENABLE=1`
+  opts back in. On the machine these figures were measured on, that plus removing
+  the override above was the difference between "nothing works" and every layer
+  offloaded to the GPU.
+
+You can always fall back to CPU — it is slower, not broken, and the tool's
+two-minute timeout is set for exactly that case.
 
 #### A hosted model
 
