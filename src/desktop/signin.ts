@@ -215,12 +215,34 @@ export async function signInInteractive(
     if (parsed.origin !== origin) return;
     if (parsed.pathname.startsWith('/oauth/authorise')) return;
     const found = parsed.searchParams.get('code');
-    if (found) resolveCode(found);
+    if (!found) return;
+    // A code is only ours if the one-time value we put on the authorize URL
+    // came back beside it. Rejecting loudly rather than ignoring it: a code
+    // silently skipped here leaves the operator watching a window that never
+    // closes until the ten-minute timeout, with nothing said.
+    if (!auth.checkState(parsed.searchParams.get('state'))) {
+      rejectStateMismatch(
+        new OeqError(
+          'Sign-in was refused: the response did not carry back the one-time value this app sent, ' +
+            'so it did not come from the sign-in that was started here. Nothing has been saved. ' +
+            'Close this and try signing in again.',
+        ),
+      );
+      return;
+    }
+    resolveCode(found);
   };
 
   win.webContents.on('will-redirect', (_e, url) => inspect(url));
   win.webContents.on('did-navigate', (_e, url) => inspect(url));
   win.webContents.on('will-navigate', (_e, url) => inspect(url));
+
+  /** A redirect carrying a code we did not ask for. Its own failure mode, so
+   *  the operator is told rather than left waiting out the timeout. */
+  let rejectStateMismatch!: (err: Error) => void;
+  const stateMismatchPromise = new Promise<never>((_resolve, reject) => {
+    rejectStateMismatch = reject;
+  });
 
   const closedPromise = new Promise<never>((_resolve, reject) => {
     win.on('closed', () => {
@@ -282,6 +304,7 @@ export async function signInInteractive(
       }),
       closedPromise,
       timeoutPromise,
+      stateMismatchPromise,
     ]);
   } finally {
     stopped = true;

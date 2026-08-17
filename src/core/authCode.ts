@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { OeqError, ApiError } from './errors.js';
 import type { AuthProvider } from './auth.js';
 import { FileTokenStore, type TokenStore } from './tokenStore.js';
@@ -64,6 +65,8 @@ export class AuthorizationCodeAuth implements AuthProvider {
   private readonly baseUrl: string;
   private readonly redirectUri: string;
   private readonly tokenStore: TokenStore;
+  /** The `state` most recently sent. Null until an authorize URL is built. */
+  private sentState: string | null = null;
 
   constructor(
     baseUrl: string,
@@ -88,7 +91,27 @@ export class AuthorizationCodeAuth implements AuthProvider {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', this.clientId);
     url.searchParams.set('redirect_uri', this.redirectUri);
+    // An unguessable value echoed back beside the code, so a redirect this app
+    // asked for can be told from one it did not. Fresh per authorize URL: a
+    // fixed value would be replayable by anyone who ever saw one, and a stale
+    // one would let an abandoned sign-in attempt authorise a later capture.
+    this.sentState = randomBytes(16).toString('hex');
+    url.searchParams.set('state', this.sentState);
     return url.toString();
+  }
+
+  /**
+   * Does this redirect carry back the `state` we sent?
+   *
+   * FALSE UNTIL AN AUTHORIZE URL HAS BEEN BUILT, and false for an absent or
+   * empty value. Nothing was sent, so nothing can match -- answering true for
+   * the un-started case would turn this into a check that reports success
+   * without having run, which is the defect this codebase has shipped twice
+   * (the duplicate check against a column that never existed, and the
+   * identifier pre-flight that resolved nothing and said nothing).
+   */
+  checkState(received: string | null | undefined): boolean {
+    return this.sentState !== null && received === this.sentState;
   }
 
   /**
