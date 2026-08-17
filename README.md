@@ -686,7 +686,7 @@ blind to exactly the duplicates it exists to catch.
 ### Collection templates
 
 Different collections are written differently. An alumni obituary keeps its
-death date in a sentence — *"passed away on September 8, 2019"* — and its genre,
+death date in a sentence — *"passed away on November 4, 2211"* — and its genre,
 subjects and rights are identical on every record. A **template** carries that
 knowledge.
 
@@ -702,7 +702,7 @@ the code knows what an obituary is:
 | In a profile | Reads |
 | --- | --- |
 | `{ "dateNear": ["passed away", "died"] }` | the first date in words after any phrase, within 80 characters |
-| `{ "datePair": "second" }` | one half of `April 5, 1954 - October 2, 2019` |
+| `{ "datePair": "second" }` | one half of `March 9, 2146 - December 4, 2211` |
 | `{ "compose": "Died {death_date}" }` | other columns' finished values |
 | `"checks": { "filenameWordsInText": { "ignore": ["Obituary"] } }` | flags a row whose filename the document contradicts |
 
@@ -725,19 +725,18 @@ item's permanent title.
 
 **Read the prose, not the numbers.** These documents state the death date twice,
 once in a numeric header and once in a sentence. OCR destroyed the header on
-seven of ten — one came back as a longer run of digits, another as two stray
-characters — while every spelled-out date came
+seven of ten — `06107/2211`, `0:4`, `0` — while every spelled-out date came
 through clean, because letters carry far more redundancy than digits. Reading
 the prose took recovery from 3 of 10 to 9 of 10 without changing anything about
 the scanning.
 
 **What the Alumni Obituary template deliberately does not extract:** cause of
 death, birthplace, residence, and the Ricks College connection. Cause and
-birthplace cannot be read honestly — a trial capture produced *"Marchmont
-Hospital, in Pasadena Ca"* as a birthplace. Residence and the Ricks mention
-are both readable at 8 of 10 but were dropped as not worth the build: the PDF
-is attached, and a reader can see them. **A wrong fact in a permanent catalogue
-record is worse than an absent one.**
+birthplace cannot be read honestly — a trial capture produced *"Sagebrush
+Memorial Hospital, in Hazelmere Id"* as a birthplace. Residence and the Ricks
+mention are both readable at 8 of 10 but were dropped as not worth the build:
+the PDF is attached, and a reader can see them. **A wrong fact in a permanent
+catalogue record is worse than an absent one.**
 
 ### Where a description comes from
 

@@ -4,14 +4,14 @@ import { dateNear, datePair, datesNear } from '../../src/core/extract/dates.js';
 
 describe('dateNear', () => {
   it('finds a date after the phrase', () => {
-    expect(dateNear('He passed away on September 8, 2019, at home.', ['passed away'])).toBe(
-      'September 8, 2019',
+    expect(dateNear('He passed away on November 4, 2211, at home.', ['passed away'])).toBe(
+      'November 4, 2211',
     );
   });
 
   it('tries each phrase in turn', () => {
-    const t = 'Marcus graduated this world on March 5, 2019.';
-    expect(dateNear(t, ['passed away', 'graduated this world'])).toBe('March 5, 2019');
+    const t = 'Marcus graduated this world on June 7, 2211.';
+    expect(dateNear(t, ['passed away', 'graduated this world'])).toBe('June 7, 2211');
   });
 
   /**
@@ -20,13 +20,13 @@ describe('dateNear', () => {
    * date of death.
    */
   it('tolerates a space before the comma', () => {
-    expect(dateNear('died Thursday, February 11 , 2019 at home', ['died'])).toBe(
-      'February 11 , 2019',
+    expect(dateNear('died Thursday, April 13 , 2211 at home', ['died'])).toBe(
+      'April 13 , 2211',
     );
   });
 
   it('tolerates a missing comma', () => {
-    expect(dateNear('died February 11 2019', ['died'])).toBe('February 11 2019');
+    expect(dateNear('died April 13 2211', ['died'])).toBe('April 13 2211');
   });
 
   it('ignores case in the phrase', () => {
@@ -39,13 +39,13 @@ describe('dateNear', () => {
    * "returned home to his Heavenly Father on", at 39 characters.
    */
   it('does not reach a date far beyond the phrase', () => {
-    const far = 'died' + ' '.repeat(120) + 'September 8, 2019';
+    const far = 'died' + ' '.repeat(120) + 'November 4, 2211';
     expect(dateNear(far, ['died'])).toBe('');
   });
 
   it('reaches a date within the window', () => {
-    const near = 'died' + ' '.repeat(40) + 'September 8, 2019';
-    expect(dateNear(near, ['died'])).toBe('September 8, 2019');
+    const near = 'died' + ' '.repeat(40) + 'November 4, 2211';
+    expect(dateNear(near, ['died'])).toBe('November 4, 2211');
   });
 
   it('returns nothing when no phrase appears', () => {
@@ -57,7 +57,7 @@ describe('dateNear', () => {
   });
 
   it('looks only forwards, never behind the phrase', () => {
-    expect(dateNear('September 8, 2019 was the year he died', ['died'])).toBe('');
+    expect(dateNear('November 4, 2211 was the year he died', ['died'])).toBe('');
   });
 
   /**
@@ -66,8 +66,8 @@ describe('dateNear', () => {
    * the answer sits further down.
    */
   it('keeps looking past an occurrence with no date after it', () => {
-    const t = 'Obituary and Death Notice. He died at home. He died on September 8, 2019.';
-    expect(dateNear(t, ['died'])).toBe('September 8, 2019');
+    const t = 'Obituary and Death Notice. He died at home. He died on November 4, 2211.';
+    expect(dateNear(t, ['died'])).toBe('November 4, 2211');
   });
 
   /**
@@ -86,16 +86,16 @@ describe('dateNear', () => {
   });
 
   it('still matches a phrase against surrounding punctuation', () => {
-    expect(dateNear('(died) September 8, 2019', ['died'])).toBe('September 8, 2019');
+    expect(dateNear('(died) November 4, 2211', ['died'])).toBe('November 4, 2211');
   });
 
   /**
    * `\d{4}` with nothing after it read a year out of a longer run of digits,
    * and 1234 normalises cleanly, so it would never have been flagged. This
-   * batch's OCR routinely mangles a numeric date into a longer digit run.
+   * batch's OCR mangles digit runs -- `06107/2211`, `10[330.213:0`.
    */
   it('does not read a year out of a longer run of digits', () => {
-    expect(dateNear('died February 11 12345', ['died'])).toBe('');
+    expect(dateNear('died April 13 12345', ['died'])).toBe('');
   });
 
   it('does not match a month inside a longer word', () => {
@@ -105,7 +105,7 @@ describe('dateNear', () => {
 
 describe('datesNear', () => {
   it('reports one date once', () => {
-    expect(datesNear('He died September 8, 2019.', ['died'])).toEqual(['September 8, 2019']);
+    expect(datesNear('He died November 4, 2211.', ['died'])).toEqual(['November 4, 2211']);
   });
 
   /**
@@ -115,13 +115,13 @@ describe('datesNear', () => {
    */
   it('reports both when a relative death is also stated', () => {
     const t =
-      'He was preceded in death by his wife Ivy, who passed away on November 8, 1994. He died September 8, 2019.';
-    expect(datesNear(t, ['passed away', 'died'])).toEqual(['November 8, 1994', 'September 8, 2019']);
+      'He was preceded in death by his wife Ivy, who passed away on January 17, 2186. He died November 4, 2211.';
+    expect(datesNear(t, ['passed away', 'died'])).toEqual(['January 17, 2186', 'November 4, 2211']);
   });
 
   it('does not report the same date twice when two phrases reach it', () => {
-    expect(datesNear('he died and passed away on September 8, 2019', ['died', 'passed away'])).toEqual(
-      ['September 8, 2019'],
+    expect(datesNear('he died and passed away on November 4, 2211', ['died', 'passed away'])).toEqual(
+      ['November 4, 2211'],
     );
   });
 
@@ -131,25 +131,25 @@ describe('datesNear', () => {
 });
 
 describe('datePair', () => {
-  const line = 'Gideon olwyn Alder April 5, 1954 - October 2, 2019 Wheatfield, Utah';
+  const line = 'Gideon olwyn Alder March 9, 2146 - December 4, 2211 Fernvale, Idaho';
 
   it('takes the second date of a dash pair', () => {
-    expect(datePair(line, 'second')).toBe('October 2, 2019');
+    expect(datePair(line, 'second')).toBe('December 4, 2211');
   });
 
   it('takes the first date of a dash pair', () => {
-    expect(datePair(line, 'first')).toBe('April 5, 1954');
+    expect(datePair(line, 'first')).toBe('March 9, 2146');
   });
 
   // One real file separates them with nothing but a space.
   it('accepts a pair separated by only a space', () => {
-    expect(datePair('Corwin Ames Teasel August 14, 1951 May 1, 2019 Corwin', 'second')).toBe(
-      'May 1, 2019',
+    expect(datePair('Corwin Ames Teasel June 26, 2143 July 9, 2211 Corwin', 'second')).toBe(
+      'July 9, 2211',
     );
   });
 
   it('accepts the punctuation OCR leaves behind', () => {
-    expect(datePair('Name December 8, 1947 ~ - July 3, 2019', 'second')).toBe('July 3, 2019');
+    expect(datePair('Name February 6, 2139 ~ - September 5, 2211', 'second')).toBe('September 5, 2211');
   });
 
   /**
@@ -180,7 +180,7 @@ describe('datePair', () => {
    */
   it('does not pair across a sentence end and a paragraph break', () => {
     expect(
-      datePair('He was born on April 5, 1954.\n\nOctober 2, 2019 funeral services', 'second'),
+      datePair('He was born on March 9, 2146.\n\nDecember 4, 2211 funeral services', 'second'),
     ).toBe('');
   });
 
@@ -191,11 +191,11 @@ describe('datePair', () => {
    * case above closes -- a birth date paired with an unrelated later one.
    */
   it('does not pair across an exclamation mark', () => {
-    expect(datePair('What a life he led from April 5, 1954! October 2, 2019', 'second')).toBe('');
+    expect(datePair('What a life he led from March 9, 2146! December 4, 2211', 'second')).toBe('');
   });
 
   it('does not pair across a question mark', () => {
-    expect(datePair('Was he born April 5, 1954? October 2, 2019 was the funeral', 'second')).toBe(
+    expect(datePair('Was he born March 9, 2146? December 4, 2211 was the funeral', 'second')).toBe(
       '',
     );
   });
@@ -214,7 +214,7 @@ describe('datePair', () => {
   });
 
   it('takes the FIRST pair when a document holds several', () => {
-    const two = 'A April 5, 1954 - October 2, 2019 then B October 12, 1946 - April 9, 2018';
-    expect(datePair(two, 'second')).toBe('October 2, 2019');
+    const two = 'A March 9, 2146 - December 4, 2211 then B October 12, 1946 - April 9, 2018';
+    expect(datePair(two, 'second')).toBe('December 4, 2211');
   });
 });

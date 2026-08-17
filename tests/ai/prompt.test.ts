@@ -114,7 +114,7 @@ describe('cleanReply', () => {
    * replacing the preamble pattern with `/^[^\n]*\n/` leaves it green.
    */
   it('leaves a multi-line reply alone, every line of it', () => {
-    const text = 'Died March 5, 2019; born June 5, 1928.\nAttended Ricks College.';
+    const text = 'Died June 7, 2211; born October 30, 2130.\nAttended Ricks College.';
     expect(cleaned(text)).toBe(text);
   });
 

@@ -48,24 +48,24 @@ export const MONTH_NAMES: readonly string[] = [
 const MONTH = `(?:${MONTH_NAMES.join('|')})`;
 
 /**
- * A date written in words: "March 5, 2019".
+ * A date written in words: "June 7, 2211".
  *
  * Deliberately tolerant of whitespace around the comma, and of the comma being
- * absent. OCR of a scanned newspaper clipping put a space before the comma, and
- * the first version of this pattern missed it -- which made the tool report a
- * man's FUNERAL date as his date of death.
+ * absent. OCR of a scanned newspaper clipping produced `April 13 , 2211`,
+ * and the first version of this pattern missed it -- which made the tool
+ * report that man's FUNERAL date as his date of death.
  *
  * Spelled-out dates are used rather than the numeric ones these documents also
- * carry, because letters survive OCR far better than digits: in the same batch
- * a numeric birth date came back as an unreadable run of digits and brackets
- * and a numeric death date as two characters, while every spelled date came
- * through clean. Reading the prose took recovery from 3 of 10 files to 9 of 10.
+ * carry, because letters survive OCR far better than digits: the same batch
+ * yielded `10[330.213:0` for 30 October 2130 and `0:4` for a death date, while
+ * every spelled date came through clean. Reading the prose took recovery from
+ * 3 of 10 files to 9 of 10.
  *
  * Both ends are anchored. Without a digit boundary after the year,
- * `February 11 12345` yielded "February 11 1234" -- a year of 1234, which
- * normalises cleanly and so would never have been flagged. OCR that mangles a
- * numeric date into a longer digit run makes that routine rather than
- * hypothetical.
+ * `April 13 12345` yielded "April 13 1234" -- a year of 1234, which
+ * normalises cleanly and so would never have been flagged. The same OCR that
+ * produced `06107/2211` and `10[330.213:0` makes a five-digit run routine
+ * rather than hypothetical.
  *
  * NO EXAMPLE HERE IS QUOTED FROM A SOURCE DOCUMENT. The garbled strings this
  * docblock used to reproduce were verbatim OCR of a real scanned obituary, and
@@ -87,7 +87,7 @@ const WINDOW = 80;
  *
  * Excluding only letters and digits was not enough: a full stop and two
  * newlines are three characters, well inside the gap, so
- * `He was born on April 5, 1954.\n\nOctober 2, 2019 funeral services` paired a
+ * `He was born on March 9, 2146.\n\nDecember 4, 2211 funeral services` paired a
  * BIRTH date with a FUNERAL date -- the same failure the pattern above
  * memorialises, Hollis Bracken's funeral reported as his death, arriving by
  * another route.
@@ -99,7 +99,7 @@ const PAIR_GAP = 12;
  *
  * The rule was always stated as "no sentence terminator", but the class named
  * only the full stop, so a sentence ending in `!` or `?` reopened the very hole
- * the paragraph-break case closes: `...from April 5, 1954! October 2, 2019`
+ * the paragraph-break case closes: `...from March 9, 2146! December 4, 2211`
  * paired a BIRTH date with an unrelated later one. Widened to match what the
  * rule has always claimed, rather than narrowing the claim to match the code --
  * these documents are eulogies, and an exclamation mark is at home in one.
@@ -111,12 +111,12 @@ const SENTENCE_END = '.!?';
  *
  * More than one means the document states several dates near these phrases,
  * and an obituary very often does -- "preceded in death by his wife Ivy, who
- * passed away on November 8, 1994" sits in almost every one of them. There is no
+ * passed away on January 17, 2186" sits in almost every one of them. There is no
  * reliable way to tell whose death a sentence describes, so this reports what
  * it found rather than choosing, and the caller flags the row.
  *
  * Phrases are tried in order, so the profile's ordering is its preference.
- * Looks only forwards: "September 8, 2019 was the year he died" must not yield a
+ * Looks only forwards: "November 4, 2211 was the year he died" must not yield a
  * date for the phrase "died".
  */
 export function datesNear(text: string, phrases: readonly string[]): string[] {
@@ -156,7 +156,7 @@ export function dateNear(text: string, phrases: readonly string[]): string {
 }
 
 /**
- * One half of a name-and-dates line: `April 5, 1954 - October 2, 2019`.
+ * One half of a name-and-dates line: `March 9, 2146 - December 4, 2211`.
  *
  * Four of ten real obituaries state the dates this way, with no phrase at all
  * to anchor on, so `dateNear` cannot see them. The two are combined by the

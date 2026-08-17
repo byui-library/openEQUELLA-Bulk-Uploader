@@ -63,7 +63,7 @@ import { composeValue } from '../../src/core/extract/compose.js';
  */
 describe('composeValue', () => {
   it('substitutes a value', () => {
-    expect(composeValue('Died {death}', { death: 'March 5, 2019' })).toBe('Died March 5, 2019');
+    expect(composeValue('Died {death}', { death: 'June 7, 2211' })).toBe('Died June 7, 2211');
   });
 
   it('substitutes several', () => {
@@ -140,9 +140,9 @@ Expected: FAIL, cannot resolve `../../src/core/extract/compose.js`. You MUST see
  *
  * - `[...]` is an OPTIONAL GROUP. If any placeholder inside it is empty, the
  *   whole group goes, punctuation included -- so a missing residence cannot
- *   leave `Died March 5, 2019: `.
+ *   leave `Died June 7, 2211: `.
  * - A `;`-separated CLAUSE whose placeholders are all empty is dropped
- *   entirely, so the output is never `Died March 5, 2019; ;`.
+ *   entirely, so the output is never `Died June 7, 2211; ;`.
  *
  * An unknown name is treated as empty rather than printed. A template naming a
  * column that does not exist is rejected when the profile loads (profile.ts),
@@ -201,9 +201,9 @@ git commit -m "feat(extract): compose one field from others"
 - Create: `src/core/extract/dates.ts`
 - Create: `tests/extract/dates.test.ts`
 
-Context you need: the obituaries state dates two ways. In prose — *"passed away on September 8, 2019"* — and as a bare pair after the name — *"Gideon olwyn Alder April 5, 1954 - October 2, 2019"*. Four of ten use the second form with no phrase at all.
+Context you need: the obituaries state dates two ways. In prose — *"passed away on November 4, 2211"* — and as a bare pair after the name — *"Gideon olwyn Alder March 9, 2146 - December 4, 2211"*. Four of ten use the second form with no phrase at all.
 
-**The pattern must tolerate whitespace around punctuation.** Hollis Bracken's death date reads `February 11 , 2019`, with a space before the comma. A first pass missed it and reported his *funeral* date instead. That is a requirement, not a detail.
+**The pattern must tolerate whitespace around punctuation.** Hollis Bracken's death date reads `April 13 , 2211`, with a space before the comma. A first pass missed it and reported his *funeral* date instead. That is a requirement, not a detail.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -214,14 +214,14 @@ import { dateNear, datePair } from '../../src/core/extract/dates.js';
 
 describe('dateNear', () => {
   it('finds a date after the phrase', () => {
-    expect(dateNear('He passed away on September 8, 2019, at home.', ['passed away'])).toBe(
-      'September 8, 2019',
+    expect(dateNear('He passed away on November 4, 2211, at home.', ['passed away'])).toBe(
+      'November 4, 2211',
     );
   });
 
   it('tries each phrase in turn', () => {
-    const t = 'Marcus graduated this world on March 5, 2019.';
-    expect(dateNear(t, ['passed away', 'graduated this world'])).toBe('March 5, 2019');
+    const t = 'Marcus graduated this world on June 7, 2211.';
+    expect(dateNear(t, ['passed away', 'graduated this world'])).toBe('June 7, 2211');
   });
 
   /**
@@ -230,11 +230,11 @@ describe('dateNear', () => {
    * date of death.
    */
   it('tolerates a space before the comma', () => {
-    expect(dateNear('died Thursday, February 11 , 2019 at home', ['died'])).toBe('February 11 , 2019');
+    expect(dateNear('died Thursday, April 13 , 2211 at home', ['died'])).toBe('April 13 , 2211');
   });
 
   it('tolerates a missing comma', () => {
-    expect(dateNear('died February 11 2019', ['died'])).toBe('February 11 2019');
+    expect(dateNear('died April 13 2211', ['died'])).toBe('April 13 2211');
   });
 
   it('ignores case in the phrase', () => {
@@ -247,13 +247,13 @@ describe('dateNear', () => {
    * "returned home to his Heavenly Father on", at 39 characters.
    */
   it('does not reach a date far beyond the phrase', () => {
-    const far = 'died' + ' '.repeat(120) + 'September 8, 2019';
+    const far = 'died' + ' '.repeat(120) + 'November 4, 2211';
     expect(dateNear(far, ['died'])).toBe('');
   });
 
   it('reaches a date within the window', () => {
-    const near = 'died' + ' '.repeat(40) + 'September 8, 2019';
-    expect(dateNear(near, ['died'])).toBe('September 8, 2019');
+    const near = 'died' + ' '.repeat(40) + 'November 4, 2211';
+    expect(dateNear(near, ['died'])).toBe('November 4, 2211');
   });
 
   it('returns nothing when no phrase appears', () => {
@@ -265,7 +265,7 @@ describe('dateNear', () => {
   });
 
   it('looks only forwards, never behind the phrase', () => {
-    expect(dateNear('September 8, 2019 was the year he died', ['died'])).toBe('');
+    expect(dateNear('November 4, 2211 was the year he died', ['died'])).toBe('');
   });
 
   /**
@@ -274,31 +274,31 @@ describe('dateNear', () => {
    * the answer sits further down.
    */
   it('keeps looking past an occurrence with no date after it', () => {
-    const t = 'Obituary and Death Notice. He died at home. He died on September 8, 2019.';
-    expect(dateNear(t, ['died'])).toBe('September 8, 2019');
+    const t = 'Obituary and Death Notice. He died at home. He died on November 4, 2211.';
+    expect(dateNear(t, ['died'])).toBe('November 4, 2211');
   });
 });
 
 describe('datePair', () => {
-  const line = 'Gideon olwyn Alder April 5, 1954 - October 2, 2019 Wheatfield, Utah';
+  const line = 'Gideon olwyn Alder March 9, 2146 - December 4, 2211 Fernvale, Idaho';
 
   it('takes the second date of a dash pair', () => {
-    expect(datePair(line, 'second')).toBe('October 2, 2019');
+    expect(datePair(line, 'second')).toBe('December 4, 2211');
   });
 
   it('takes the first date of a dash pair', () => {
-    expect(datePair(line, 'first')).toBe('April 5, 1954');
+    expect(datePair(line, 'first')).toBe('March 9, 2146');
   });
 
   // One real file separates them with nothing but a space.
   it('accepts a pair separated by only a space', () => {
-    expect(datePair('Corwin Ames Teasel August 14, 1951 May 1, 2019 Corwin', 'second')).toBe(
-      'May 1, 2019',
+    expect(datePair('Corwin Ames Teasel June 26, 2143 July 9, 2211 Corwin', 'second')).toBe(
+      'July 9, 2211',
     );
   });
 
   it('accepts the punctuation OCR leaves behind', () => {
-    expect(datePair('Name December 8, 1947 ~ - July 3, 2019', 'second')).toBe('July 3, 2019');
+    expect(datePair('Name February 6, 2139 ~ - September 5, 2211', 'second')).toBe('September 5, 2211');
   });
 
   /**
@@ -319,8 +319,8 @@ describe('datePair', () => {
   });
 
   it('takes the FIRST pair when a document holds several', () => {
-    const two = 'A April 5, 1954 - October 2, 2019 then B October 12, 1946 - April 9, 2018';
-    expect(datePair(two, 'second')).toBe('October 2, 2019');
+    const two = 'A March 9, 2146 - December 4, 2211 then B October 12, 1946 - April 9, 2018';
+    expect(datePair(two, 'second')).toBe('December 4, 2211');
   });
 });
 ```
@@ -336,17 +336,16 @@ Expected: FAIL, cannot resolve `../../src/core/extract/dates.js`.
 // src/core/extract/dates.ts
 
 /**
- * A date written in words: "March 5, 2019".
+ * A date written in words: "June 7, 2211".
  *
  * Deliberately tolerant of whitespace around the comma, and of the comma being
- * absent. OCR of a scanned newspaper clipping produced `February 11 , 2019`,
+ * absent. OCR of a scanned newspaper clipping produced `April 13 , 2211`,
  * and the first version of this pattern missed it -- which made the tool
  * report that man's FUNERAL date as his date of death.
  *
  * Spelled-out dates are used rather than the numeric ones these documents also
  * carry, because letters survive OCR far better than digits: the same batch
- * mangled a numeric birth date into an unreadable run of digits and a numeric
- * death date into two characters, while
+ * yielded `10[330.213:0` for 30 October 2130 and `0:4` for a death date, while
  * every spelled date came through clean. Reading the prose took recovery from
  * 3 of 10 files to 9 of 10.
  */
@@ -369,7 +368,7 @@ const PAIR_GAP = 12;
  * The first date following any of `phrases`, within `WINDOW` characters.
  *
  * Phrases are tried in order, so the profile's ordering is its preference.
- * Looks only forwards: "September 8, 2019 was the year he died" must not yield a
+ * Looks only forwards: "November 4, 2211 was the year he died" must not yield a
  * date for the phrase "died".
  */
 export function dateNear(text: string, phrases: readonly string[]): string {
@@ -389,7 +388,7 @@ export function dateNear(text: string, phrases: readonly string[]): string {
 }
 
 /**
- * One half of a name-and-dates line: `April 5, 1954 - October 2, 2019`.
+ * One half of a name-and-dates line: `March 9, 2146 - December 4, 2211`.
  *
  * Four of ten real obituaries state the dates this way, with no phrase at all
  * to anchor on, so `dateNear` cannot see them. The two are combined by the
@@ -673,11 +672,11 @@ In `src/core/extract/types.ts`, add to the `Source` union, before `{ filename: t
 ```typescript
   /**
    * The first date written in words following any of these phrases.
-   * "passed away on September 8, 2019".
+   * "passed away on November 4, 2211".
    */
   | { dateNear: string[] }
   /**
-   * One half of a name-and-dates line: `April 5, 1954 - October 2, 2019`.
+   * One half of a name-and-dates line: `March 9, 2146 - December 4, 2211`.
    * Four of ten real obituaries state the dates this way, with no phrase to
    * anchor on.
    */
@@ -825,14 +824,14 @@ describe('buildRow with templated sources', () => {
   };
 
   it('reads a death date from prose and normalises it', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on September 8, 2019 at home.'));
-    expect(row.cells['MWDL/date']).toBe('2019-09-08');
+    const row = buildRow(obitProfile, 'a.pdf', doc('He passed away on November 4, 2211 at home.'));
+    expect(row.cells['MWDL/date']).toBe('2211-11-04');
     expect(row.sources['MWDL/date']).toBe('dateNear');
   });
 
   it('falls back to the dash pair when no phrase appears', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('Gideon Alder April 5, 1954 - October 2, 2019 Utah'));
-    expect(row.cells['MWDL/date']).toBe('2019-10-02');
+    const row = buildRow(obitProfile, 'a.pdf', doc('Gideon Alder March 9, 2146 - December 4, 2211 Utah'));
+    expect(row.cells['MWDL/date']).toBe('2211-12-04');
     expect(row.sources['MWDL/date']).toBe('datePair');
   });
 
@@ -841,8 +840,8 @@ describe('buildRow with templated sources', () => {
    * its transform -- not the raw text it was read from.
    */
   it('composes from the transformed value of another column', () => {
-    const row = buildRow(obitProfile, 'a.pdf', doc('He died September 8, 2019.'));
-    expect(row.cells['MWDL/description']).toBe('Died 2019-09-08');
+    const row = buildRow(obitProfile, 'a.pdf', doc('He died November 4, 2211.'));
+    expect(row.cells['MWDL/description']).toBe('Died 2211-11-04');
     expect(row.sources['MWDL/description']).toBe('compose');
   });
 
@@ -857,8 +856,8 @@ describe('buildRow with templated sources', () => {
       ...obitProfile,
       columns: [obitProfile.columns[2]!, obitProfile.columns[1]!, obitProfile.columns[0]!],
     };
-    expect(buildRow(reversed, 'a.pdf', doc('died September 8, 2019')).cells['MWDL/description']).toBe(
-      'Died 2019-09-08',
+    expect(buildRow(reversed, 'a.pdf', doc('died November 4, 2211')).cells['MWDL/description']).toBe(
+      'Died 2211-11-04',
     );
   });
 });
@@ -1081,12 +1080,12 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Marcus Fennel Obituary.pdf',
-      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born November 13, 1907.'),
+      doc('Marcus T Fennel graduated this world on June 7, 2211. He was born October 30, 2130.'),
     );
     expect(
       row.cells['BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date'],
-    ).toBe('2019-03-05');
-    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05');
+    ).toBe('2211-06-07');
+    expect(row.cells['MWDL/description']).toBe('Died 2211-06-07');
     expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Marcus Fennel');
     expect(row.cells['MWDL/genres/genre']).toBe('Alumni Obituary');
   });
@@ -1096,7 +1095,7 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Alden Larkspar Obituary.pdf',
-      doc('Alden Larkspur died quietly at home on an afternoon at the end of the harvest.'),
+      doc('Alden Larkspur passed away peacefully in the closing days of a long winter.'),
     );
     expect(
       row.cells['BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date'],
@@ -1239,12 +1238,12 @@ Run: `npx tsx verify.tmp.mts` then read `verify.out.txt`.
 All of these must hold. If any does not, **fix the code, not the expectation**:
 
 1. **Death date found on 9 of 10.**
-2. **Alden Larkspar has none**, and is not guessed. His obituary places the death by season and time of day and states no date.
+2. **Alden Larkspar has none**, and is not guessed. His obituary places the death only in "the closing days of a long winter".
 3. **The three files whose numeric header survived OCR agree with it** — this is an independent cross-check, not a restatement of the same extraction:
-   - Marcus Fennel → `2019-03-05` (header said `03/05/2019`)
-   - Gideon Alder → `2019-10-02` (header said `10/02/2019`)
-   - Thaddeus Hawthorn → `2019-07-03` (header said `07/03/2019`)
-4. **Hollis Bracken → `2019-02-11`, not `2019-02-19`.** The 19th is his funeral. His death date is written `February 11 , 2019` with a space before the comma, and an earlier pattern missed it and reported the funeral instead.
+   - Marcus Fennel → `2211-06-07` (header said `06/07/2211`)
+   - Gideon Alder → `2211-12-04` (header said `12/04/2211`)
+   - Thaddeus Hawthorn → `2211-09-05` (header said `09/05/2211`)
+4. **Hollis Bracken → `2211-04-13`, not `2211-04-21`.** The 21st is his funeral. His death date is written `April 13 , 2211` with a space before the comma, and an earlier pattern missed it and reported the funeral instead.
 5. **Exactly one row carries a filename note**, Alden's, naming `Larkspar`.
 6. `_source` reads `dateNear` for the prose files and `datePair` for Gideon, Delphine, Thaddeus and Corwin.
 

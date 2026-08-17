@@ -44,10 +44,10 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Marcus Fennel Obituary.pdf',
-      doc('Marcus T Fennel graduated this world on March 5, 2019. He was born November 13, 1907.'),
+      doc('Marcus T Fennel graduated this world on June 7, 2211. He was born October 30, 2130.'),
     );
-    expect(row.cells[DEATH]).toBe('2019-03-05');
-    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05; Born 1907-11-13');
+    expect(row.cells[DEATH]).toBe('2211-06-07');
+    expect(row.cells['MWDL/description']).toBe('Died 2211-06-07; Born 2130-10-30');
     expect(row.cells['MWDL/title']).toBe('Alumni Obituary: Marcus Fennel');
     expect(row.cells['MWDL/genres/genre']).toBe('Alumni Obituary');
   });
@@ -57,9 +57,9 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Marcus Fennel Obituary.pdf',
-      doc('Marcus T Fennel died March 5, 2019. He continued his education at Ricks College.'),
+      doc('Marcus T Fennel died June 7, 2211. He continued his education at Ricks College.'),
     );
-    expect(row.cells['MWDL/description']).toBe('Died 2019-03-05; Attended Ricks College');
+    expect(row.cells['MWDL/description']).toBe('Died 2211-06-07; Attended Ricks College');
   });
 
   /**
@@ -73,23 +73,23 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Marcus Fennel Obituary.pdf',
-      doc('He died March 5, 2019, was born November 13, 1907, and attended Ricks College.'),
+      doc('He died June 7, 2211, was born October 30, 2130, and attended Ricks College.'),
     );
-    expect(row.cells['MWDL/description']).toContain('Born 1907-11-13');
+    expect(row.cells['MWDL/description']).toContain('Born 2130-10-30');
     expect(row.cells['MWDL/coverage']).toBeUndefined();
     expect(row.cells['MWDL/relation']).toBeUndefined();
   });
 
   // Each clause disappears on its own, so a partial document never yields
-  // "Died 2019-03-05; ; Attended Ricks College".
+  // "Died 2211-06-07; ; Attended Ricks College".
   it('drops only the parts it could not find', async () => {
     const profile = await loadTemplate('alumni-obituary');
     const row = buildRow(
       profile,
       'Corwin Teasel Obituary.pdf',
-      doc('Corwin Ames Teasel August 14, 1951 May 1, 2019. He lived in Elmsgate.'),
+      doc('Corwin Ames Teasel June 26, 2143 July 9, 2211. He lived in Fernvale.'),
     );
-    expect(row.cells['MWDL/description']).toBe('Died 2019-05-01; Born 1951-08-14');
+    expect(row.cells['MWDL/description']).toBe('Died 2211-07-09; Born 2143-06-26');
   });
 
   it('leaves the date blank rather than guessing when none is stated', async () => {
@@ -97,7 +97,7 @@ describe('shipped templates', () => {
     const row = buildRow(
       profile,
       'Alden Larkspar Obituary.pdf',
-      doc('Alden Larkspur died quietly at home on an afternoon at the end of the harvest.'),
+      doc('Alden Larkspur passed away peacefully in the closing days of a long winter.'),
     );
     expect(row.cells[DEATH]).toBe('');
     expect(row.notes.join(' ')).toContain('Larkspar');
