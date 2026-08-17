@@ -205,9 +205,25 @@ shape, never as a value the code may assume.
   differs from the export's, and the probe of 2026-08-12 is the only reason we
   know. Where a schema declares no name path the answer is **null**, and every
   consumer must report "could not check" rather than substitute a guess.
-- **A collection LIST entry already carries `schema: { uuid }`.** So a chosen
-  collection resolves to its schema in one hop, with no per-collection
-  follow-up request. Confirmed live 2026-08-12.
+- *(BYU-Idaho production's configuration — NOT universal)* **A collection LIST
+  entry MAY carry `schema: { uuid }`**, and where it does, a chosen collection
+  resolves to its schema in one hop with no follow-up request. Confirmed live
+  on `content.byui.edu`, 2026-08-12.
+
+  **It is absent on `content-test.byui.edu`**, measured 2026-08-17 by pasting
+  the URL into a signed-in browser: all 29 entries carry only `uuid`, `name`,
+  `nameStrings`, `readonly` and `links`, **with and without `full=true`**,
+  while the recorded production fixture carries `description`, `owner`,
+  `schema`, `filestoreId` and the rest. Two instances of the same product
+  answer the same request with different entity shapes.
+
+  This bullet used to state the one-hop resolution as a property of
+  openEQUELLA. It is not, and reading it that way is the mistake this file
+  warns about at the top of this section. **Where the list carries no schema,
+  `parseCollections` yields `schema: ''`**, and everything downstream of it —
+  the attachment-field autofill on Setup, the schema-derived title path in the
+  duplicate check — has nothing to read. Not yet handled in code; see the
+  handoff.
 - **A schema's `definition` comes back over REST as nested JSON, not XML**, so
   `parseSchemaPaths` (which parses the export) cannot be reused on that path —
   `discovery.ts` walks the tree instead. The two must agree: parse

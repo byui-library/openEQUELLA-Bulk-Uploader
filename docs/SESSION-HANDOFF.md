@@ -1,10 +1,140 @@
-# Session handoff — updated 2026-08-17
+# Session handoff — updated 2026-08-17 (evening)
 
 Read this first.
 
-## RESUME HERE — session of 2026-08-17 (language model)
+## RESUME HERE — the desktop app is BLOCKED, and the cause is known
 
-**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2149 across 104
+**Start here, not with the language-model work.** The operator ran the desktop
+app against `content-test.byui.edu` and could not get past the Choose screen.
+The diagnosis is finished; the fix is not written.
+
+### The symptom, and the whole chain
+
+The collection box read:
+
+```text
+GET /api/collection?privilege=CREATE_ITEM&length=100&full=true failed: 403
+```
+
+**403 with an empty body and no reason phrase.** Measured against the live
+instance, unauthenticated, while diagnosing — that signature has exactly one
+cause:
+
+```text
+no auth header        -> 200 (guest, available:29, results:[])
+malformed header      -> 200
+session cookie        -> 200
+Bearer token          -> 200
+invalid access_token= -> 403, zero-length body   <-- the signature
+empty   access_token= -> 403, zero-length body   <-- also matches
+```
+
+Only `OAuthClientCredentials` and `AuthorizationCodeAuth` emit
+`X-Authorization: access_token=`. `UsernamePasswordAuth` sends cookies and never
+touches it. So **the app was signing in with OAuth while the operator believed
+they were using a username and password**, and openEQUELLA refused the token.
+
+**Why it was in OAuth mode — the actual defect, and it shipped in v1.1.1.**
+`Instance` carries `authMode` (`secrets.ts`, documented there as "how this site
+signs in; carries no secret") and it reaches the renderer. But
+`ui/app.ts`'s site-change handler rebuilds the form as
+`blankSetupFields()` plus `baseUrl, label, attachmentUuidPath, live,
+redirectUri` — **and drops `authMode`**, which `blankSetupFields` hardcodes to
+`'password'`. So:
+
+- the sign-in radio always comes back on "Username and password", whatever the
+  site is really set to;
+- `clientId` and `redirectUri` are worse — they live in the encrypted settings
+  and **no IPC exposes them at all** (`getPassword` returns `{ username }` and
+  nothing else), so the OAuth boxes cannot be repopulated even in principle.
+  The operator reported exactly this: entered a client ID and secret, saved,
+  reopened, and both were blank with the radio unchecked;
+- an operator therefore cannot see how a site signs in, and re-saving from a
+  form showing defaults can silently change it.
+
+**This is the same defect class as the `setDefault` bug fixed this morning: a
+form that rebuilds a record from defaults and silently discards the fields it
+does not display.** Here the discarded field is *how you sign in*.
+
+### What to do next, in order
+
+1. **Seed `authMode` from the selected instance** in `ui/app.ts`'s site-change
+   handler. Small, no IPC change, and it stops a save silently flipping a
+   site's sign-in method. Do this first.
+2. **Expose a non-secret view of stored credentials over IPC** — `clientId` and
+   `redirectUri` returned, the client secret NEVER, mirroring how the password
+   is handled today ("Signed in as …" plus a Forget button rather than the
+   value). The OAuth section then shows "client secret stored" instead of a
+   blank box that reads as unconfigured. **The operator had not agreed the
+   shape of this when the session ended — ask before building it.**
+3. **Unverified and important:** the operator was asked to select "Username and
+   password", save, and report whether the collection list then works. **That
+   answer never arrived.** If it still fails, the save itself is not taking
+   effect and there is a third bug in play. Get that answer before trusting
+   either fix above.
+
+### Two facts established live, both worth keeping
+
+- **A 403 with an empty body from openEQUELLA means a REJECTED ACCESS TOKEN.**
+  Nothing else in the request produces it — not a bad cookie, not a malformed
+  header, not the absence of credentials, all of which are answered 200 as the
+  guest. Diagnostic gold, and it is how this was found.
+- **A collection LIST entry does NOT always carry `schema: { uuid }`.**
+  `CLAUDE.md` records that it does, "confirmed live 2026-08-12" — but that was
+  **production**. On `content-test`, with and without `full=true`, all 29
+  entries carry only `uuid, name, nameStrings, readonly, links`. The recorded
+  production fixture carries `owner, schema, filestoreId` and the rest.
+  **Consequence, waiting behind the auth bug:** once sign-in works here,
+  `parseCollections` yields `schema: ''`, so the attachment-field autofill on
+  Setup and the schema-derived title path in the duplicate check have nothing
+  to read. Corrected in `CLAUDE.md`; not yet handled in code.
+
+### A wrong turn worth not repeating
+
+`schema/swagger.json` documents `full` as "Return full entity (needs VIEW or
+EDIT privilege)", which made `full=true` look like the cause. **It is not** —
+the operator pasted both URLs into a signed-in browser and both returned 200
+with 29 collections. Confirm against the live instance before building on the
+spec; this file has now disagreed with the server five times.
+
+### Incidental confirmation
+
+The operator's sign-in completed, which means **the OAuth `state` check added
+this session works against the live server** — openEQUELLA echoes `state` back
+and the new code accepted it. That path had never been exercised outside tests.
+
+## Branches open at the end of this session
+
+Three, none merged, all pushed:
+
+| Branch | Head | What it holds |
+| --- | --- | --- |
+| `feature/llm-provider` | profile-editor stage 1, security hardening, the error-message fix | the main line of work |
+| `fix/scrub-operator-identity` | off `main` | the privacy scrub |
+| `chore/dependency-advisories` | off `main` | fast-xml-parser 5 |
+
+**Merge the scrub first.** The other two branch off pre-scrub `main` and still
+carry the operator's surname (56 and 47 hits); nothing regresses, but merging
+the scrub last means re-doing it.
+
+### Two process failures this session, both caught, both worth reading
+
+- **`git add -A` staged the ten real obituary PDFs.** `tests/obits/` was
+  gitignored on `feature/llm-provider` but NOT on `main`, and the scrub branch
+  was cut from `main`. Caught in the commit output, reset, the ignore rule
+  ported over, recommitted, and the abandoned commit purged with
+  `git reflog expire --expire-unreachable=now` + `git gc --prune=now`. Never
+  pushed. **Do not use `git add -A` in this repository** — name the paths.
+- **Backticks in a `git commit -m "…"` message were expanded by bash and
+  actually ran `npm audit fix --force`** — the exact command the message was
+  documenting as harmful. It downgraded `exceljs` to 3.4.0 and moved `electron`
+  and `vitest` across majors in the working tree. The commit itself was
+  unaffected (staging precedes expansion); restored with `npm ci`. **Write
+  commit messages to a file and use `git commit -F`.**
+
+## The language-model work — where it stood before tonight
+
+**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2156 across 104
 files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
 `main` carries the privacy scrub (PR #14) and has been merged in, so this branch
 is 0 behind.
