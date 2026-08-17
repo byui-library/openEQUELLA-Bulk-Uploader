@@ -4,7 +4,7 @@ Read this first.
 
 ## RESUME HERE — session of 2026-08-17 (language model)
 
-**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2132 across 103
+**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2149 across 104
 files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
 `main` carries the privacy scrub (PR #14) and has been merged in, so this branch
 is 0 behind.
@@ -276,7 +276,7 @@ loosened to make an evaluation easier.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **2132 passing across 103 files**.
+1. `npm install && npm test` — expect **2149 passing across 104 files**.
    `npm run typecheck`, `npm run build` and `npm run build:desktop` are all
    clean.
 2. **You are probably on `feature/llm-provider`.** It **is not merged**, and it
@@ -952,7 +952,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            2132 tests, 103 files
+npm test            2149 tests, 104 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/

@@ -53,7 +53,7 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **2132 tests across 103 files** on `feature/llm-provider`.
+exists to remove. **2149 tests across 104 files** on `feature/llm-provider`.
 
 That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
 is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
