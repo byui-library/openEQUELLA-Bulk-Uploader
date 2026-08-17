@@ -1,134 +1,133 @@
-# Session handoff — updated 2026-08-14
+# Session handoff — updated 2026-08-17
 
 Read this first.
 
-## RESUME HERE — session of 2026-08-14 (language model)
+## RESUME HERE — session of 2026-08-17 (language model)
 
-**Branch `feature/llm-provider`, 32 commits, NOT merged and NOT yet reviewed to
-completion.** `npm test` → **2004 across 101 files**, typecheck, `build` and
-`build:desktop` all clean, working tree clean. The branch was pushed at the end
-of the session; nothing is on `main`.
+**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2042 across 101
+files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
+Nothing is on `main`.
 
-> ### UPDATE, 2026-08-17 — the nine findings below are closed
->
-> `npm test` → **2042 across 101 files** (+38), typecheck, `build` and
-> `build:desktop` all clean. Every finding listed under *What to fix first* has
-> a test, and eight mutations — including all four the review found surviving —
-> were run and confirmed red. The list below is kept as the record of what was
-> wrong and why; read it as history, not as a queue.
->
-> Three things a reader should carry forward:
->
-> - **Dates with no year are now claims.** `FORMS` was rebuilt: month+day,
->   `1/6`, `2024-01-06T00:00:00Z`, `January of 2024`, `6.1.2024`, `4/2/98`,
->   `the 6th of January`, and a bare month behind a date preposition. Nothing
->   goes through `new Date` any more.
-> - **The tool no longer says "the document states no such date."** It says no
->   date *it can read* supports the value, and the English-only limitation is
->   recorded in the README, in `MONTH_NAMES` and in `verify.ts`.
-> - **The year/number equivalence is symmetric and is NOT guarded** — pinned by
->   test and stated in the docblock, because guarding it means reading prose.
->
-> Still true: the branch is not merged, and *Then, and only then* below is
-> untouched — nobody has judged whether the kept descriptions are any good, and
-> nothing here has been driven through the desktop app.
-
-**Do not open a PR yet.** A code review of the verification layer returned
-`CHANGES REQUESTED` and **9 of its 11 findings are unfixed**. They are listed
-below with the inputs that reproduce them. The two that are done are the
-real-data scrub (`a238858`) and the NUL byte (`b30921b`).
+**The nine review findings this block used to list as a queue are CLOSED**
+(`29061f9`). Every one has a test, and eight mutations — including all four the
+review found surviving — were run and confirmed red. Do not go looking for them;
+the record of what was wrong is under *What the hardening established* below,
+kept as history rather than as work.
 
 ### The one-paragraph version
 
 A language model was wired in as a last-resort source for cells extraction could
-not fill. It was run against a real batch and **it fabricated**: 2 of 10
-generated descriptions asserted facts the documents do not contain, including a
-full death date for a document stating no date at all — three runs at
-temperature 0, three different dates. A verification layer
-(`src/core/ai/verify.ts`) now refuses a generated value carrying a claim the
-document does not support. Measured against that batch it refused 2 of 2 and
-kept 8 of 8, zero false rejections — **but that sample is n=10, one model, one
-collection, one language, and every gap below is absent from it by
-construction.**
+not fill. Run against a real batch it **fabricated**: 2 of 10 generated
+descriptions asserted facts the documents do not contain, including a full death
+date for a document stating no date at all — three runs at temperature 0, three
+different dates. `src/core/ai/verify.ts` now refuses a generated value carrying
+a claim the document does not support, and the layer has since been hardened
+against the defect that made it depend on a model's formatting habits. It has
+been re-run against the same batch with a capable model: **8 of 8 written
+outputs follow the house style, the same 2 were refused, and nothing ungrounded
+reached the spreadsheet.** The sample is still ten documents, one collection,
+one language.
 
-### What to fix first, in order
+### What the hardening established — closed, `29061f9`
 
-1. **A date with no year is never checked.** `He died on January 6.` over a
-   document stating no date is **written into the catalogue today**. `FORMS` in
-   `verify.ts` has no month+day form and no separator form without a four-digit
-   year, and "no form matched" is treated as "no claim made". Same hole passes
-   fabricated *precision* whenever only the year is recognised —
-   `Died 2024-01-06T00:00:00Z.` (the `T` breaks the ISO form),
-   `Died in January of 2024.`, `Died January the 6th, 2024.` — each over a
-   document saying merely "in 2024". **This is the founding failure, still
-   open**, and `2024-01-06T00:00:00Z` is a routine model output shape.
-2. **`blank()` mixes UTF-16 offsets with code-point indices** (`verify.ts`,
-   around the span-masking helper). `span.start`/`end` come from
-   `RegExpExecArray.index`; `[...text]` is a code-point array. Ten emoji earlier
-   in a reply shift the mask and swallow a fabricated number; two expose `20` of
-   `2024` and refuse a good description. Fix: `text.split('')`. Note `quoted()`
-   in `fill.ts` is *correctly* code-point-based — do not conflate them.
-3. **Twelve classes of false rejection**, each a correct description refused
-   whole. Cheap format wins: `6.1.2024`, `4/2/98` (two-digit year),
-   `the 6th of January 2024`, thousands separators (`1.200`, `1 200`), spelled
-   numbers above ninety-nine, ordinal words, `3.5` vs "three and a half".
-4. **Non-English collections are unusable.** `MONTH_NAMES` is English-only, so
-   every day-precision date claim is refused at, say, a Spanish- or
-   German-language institution. **Not asking for multilingual parsing** — asking
-   that the note stop overstating: *"the document states no such date"* is a
-   claim about the document when all that is known is that no date **this tool
-   can recognise** supports it. Refusing remains the safe direction; the wording
-   and the documented limitation are what must change.
-5. **Five failures are reported under the wrong kind** — a congregation size
-   reported as a missing *date*, a phone number as a date, `06.01` as a number.
-   A note sending the operator to look for the one thing that is not the problem
-   is this codebase's named failure shape, inside the sentence they act on.
-6. **The year↔number equivalence runs both ways.** `Enrolment reached 2019.`
-   over `He died in 2019.` passes; `Born in 1938.` over `He owned 1938 books.`
-   passes. The docblock justifies only one direction and does not say it is
-   symmetric.
-7. **Four surviving mutations.** `SMALLEST_CHECKED` 10→30 is green across the
-   whole suite. Deleting `Number.isInteger(value) &&` is green. Deleting the
-   empty-span `continue` is green. **Deleting the empty-trigger filter is green
-   and is the dangerous one** — one blank string in a profile's `any` list makes
-   `includes('')` true and silently disables the assertion check for that source.
-8. **Two docblocks state the opposite of the code.** The `UNITS`/`TENS` comment
-   claims a gap in the list "can only ever make the check more permissive"; it
-   feeds the *supporting* set, so a gap causes a false **rejection**.
-   `SMALLEST_CHECKED`'s comment says numbers below it are unchecked; `3.5` is
-   checked, because the exemption is gated on `Number.isInteger`.
-9. **No test demonstrates the constraint the module exists to satisfy.** Every
-   fixture is a death notice. Add one built on a wholly different collection — a
-   journal article whose `presence` trigger is a funding body and whose document
-   states a page count — so the agnosticism is shown, not just asserted.
+Read this as the record, not as a queue.
 
-Smaller, same review: `unsupportedClaims` re-derives the document's dates and
-numbers for **every cell of every row** and scans every span taken so far per
-match (quadratic in four-digit runs) — hoist it per row, the way `fill.ts`
-already hoists the slice. `fill.ts`'s "running it twice sends nothing the second
-time" is now true only of *written* cells; a refused cell stays eligible and
-re-charges. `verify.ts` refers to a `SEPARATED` identifier that does not exist,
-and says "run twice" where it was three runs.
+- **A date with no year was never checked at all**, so `He died on January 6.`
+  over a document stating no date was written into the catalogue. That was the
+  founding failure surviving inside the layer built to stop it. `FORMS` was
+  rebuilt around the rule that **a month name, or a day-and-month pair, is a
+  claim whether or not a year sits beside it.** Now refused where it was written
+  before: `He died on January 6.`, `Jan. 6`, `the 6th of January`, `1/6`,
+  `January 6, aged 87` over a year-only document, `in January`,
+  `2024-01-06T00:00:00Z`, `2024-01-06 12:30`, `in January of 2024`,
+  `January the 6th, 2024`, `6.1.2024`.
+- **Precision ranking was replaced by a `Reading`** — a date decomposed into the
+  parts the text actually stated — with one rule, `entails`: every part the
+  claim states must be stated, and equal, in the document's. `new Date` is gone
+  from the path; month names resolve through a stem table, so every reading is
+  calendar-validated and `2024-02-30` is not a date.
+- **Twelve classes of false rejection fixed**: `.`-separated dates, two-digit
+  years, `the 6th of January`, thousands separators, spelled numbers above
+  ninety-nine, ordinal words, `a dozen`, `three and a half`.
+- **A UTF-16/code-point desync in `blank()`** let an emoji in the reply shift
+  the mask — enough of them and a fabricated number went unmasked and was
+  written. Note `quoted()` in `fill.ts` is *correctly* code-point-based; they
+  are not the same problem.
+- **The year↔number equivalence is symmetric and is NOT guarded** — pinned by
+  test and stated in the docblock, because guarding it means reading prose.
+- **Four surviving mutations killed**, of which one was dangerous: **a single
+  blank string in a profile's trigger list silently disabled the assertion
+  check** for that source, because `includes('')` is true of every string. A
+  check reporting success without running, inside the module that exists to
+  prevent exactly that.
+- **The tool no longer says "the document states no such date."** It says no
+  date *it can read* supports the value. **It reads English month names and
+  numeric forms only**, and that is stated rather than silent — in `verify.ts`,
+  in `MONTH_NAMES` in `src/core/extract/dates.ts`, in the README and in
+  `docs/INSTALL.md`.
 
-### Then, and only then
+### The second run — a capable model, 2026-08-16
 
-- **Judge whether the kept descriptions are any good.** Groundedness is not
-  quality and no test can answer it. Reading the eight that were kept, most do
-  not follow the house style — names prepended, an age where a death date
-  belongs, `Attended Rick's College`, and one substituting a different
-  institution entirely (which passes verification, because it is not a trigger
-  the profile declares). **My read: that is a 3B-model problem, not a prompt
-  problem.** Do not elaborate the prompt against a weak model — get a capable
-  one and re-judge.
-- **Ollama's GPU backend on this machine is broken**, independently of anything
-  here: every model 500s with `ROCm error: invalid device function`, including
-  on a bare "Say OK." with this tool uninvolved. The session worked around it by
-  running `ollama serve` on port 11435 with `HIP_VISIBLE_DEVICES=-1`,
-  `ROCR_VISIBLE_DEVICES=-1`, `OLLAMA_LLM_LIBRARY=cpu`. That instance was stopped.
-- **Hand-test the desktop app.** Nothing on this branch has been driven through
-  the GUI. This project's record is that one screenshot of an empty dropdown
-  produced six defects with 1236 tests green throughout.
-- **Then** open the PR.
+Same ten scanned obituaries, `llama3.1:8b` on a GPU, where the first run was
+`llama3.2:3b` on CPU. 140 seconds for ten documents.
+
+- **8 of 8 written outputs follow the house style**
+  (`Died 2024-01-09; Born 1935-04-03; Attended Ricks College.`). With the 3B
+  model about three of eight did — the rest prepended names, gave an age where a
+  death date belongs, or wrote prose sentences naming a hospital. **The house-style
+  failures were model capability, not prompt wording. Do not elaborate the
+  instruction.** That was the open question this block used to carry as a guess;
+  it now has an answer.
+- **The same two documents defeated both models.** One states no date of any
+  kind; the other never mentions the institution it claimed. Both were refused
+  by both runs. Capability did not help there, which is the argument for
+  verification rather than better prompting.
+- **Nothing ungrounded reached the spreadsheet**, confirmed by an independent
+  audit against the source documents.
+- **The hardened verifier was re-checked against both models' stored output:**
+  2 of 2 fabrications still caught, 8 of 8 good descriptions still kept, zero
+  false rejections.
+- **Caveat, and it must be stated wherever the result is:** that run passed the
+  date checks partly because `llama3.1:8b` answers in ISO format. Evidence
+  within a sample of ten, one collection, one language — not coverage.
+
+### What is genuinely outstanding
+
+- **Nobody has driven this through the desktop app.** Nothing on this branch has
+  been exercised in the GUI. This project's record is that one screenshot of an
+  empty dropdown produced six defects with 1236 tests green throughout, and every
+  serious fault here has lived at a boundary the tests do not cross.
+- **Whether the eight kept descriptions are *good* is still a human judgement.**
+  The 8B result is strong evidence they now follow house style, which is not the
+  same as being worth cataloguing. Groundedness is not quality and no test can
+  answer it.
+- **This branch predates the privacy scrub.** `feature/llm-provider` branched
+  off `main` before PR #14, so it still carries real dates in `dates.test.ts`
+  and elsewhere. **Merge `main` in once #14 lands**, or the LLM PR will read as
+  re-introducing them.
+- **`m.miles` in 40 fixtures, and the phrase in published history** — both
+  unchanged, both below under *Two privacy items*.
+
+### The local model runtime, and why the diagnosis is kept
+
+Recorded because an adopting institution pointing this tool at a local runtime
+will hit runtime problems that look like tool problems.
+
+Every model returned HTTP 500 with `ROCm error: invalid device function`, and
+llama-server died with `0xc0000409`. **It was not the tool and not the model.** A
+user environment variable `HSA_OVERRIDE_GFX_VERSION=11.0.0` forced ROCm to load
+kernels built for a discrete gfx1100 card onto an *integrated* Radeon 860M
+(gfx1150). Removing it, plus setting `OLLAMA_IGPU_ENABLE=1` — Ollama
+deliberately drops integrated GPUs from the Vulkan path, and says so in its own
+log — gave a working Vulkan backend with all layers offloaded.
+
+**The diagnostic route generalises: read the Ollama server log and see which
+library and which GPU it chose.** The earlier CPU-only workaround
+(`HIP_VISIBLE_DEVICES=-1`, `ROCR_VISIBLE_DEVICES=-1`, `OLLAMA_LLM_LIBRARY=cpu`
+on port 11435) is superseded and no longer needed. Operator-facing versions of
+this are in the README and `docs/INSTALL.md`.
+
+**Then** open the PR.
 
 ### Two privacy items, both outstanding
 
@@ -150,11 +149,14 @@ and says "run twice" where it was three runs.
 
 ```bash
 npm run build
-OEQ_MODEL_BASE_URL=http://127.0.0.1:11435/v1 OEQ_MODEL=llama3.2:3b \
+OEQ_MODEL_BASE_URL=http://127.0.0.1:11434/v1 OEQ_MODEL=llama3.1:8b \
 OEQ_MODEL_TIMEOUT_SECONDS=600 \
   node dist/cli/index.js extract --dir "tests/obits" \
     --profile templates/alumni-obituary.profile.json --out out.csv --ai
 ```
+
+The first run used `llama3.2:3b` on port 11435, which was the CPU-only
+workaround for the GPU fault described above. Neither is needed now.
 
 Fires on **1 of 10** rows with the shipped template — that is the eligibility
 rule working, not a fault. To get ten outputs to read, copy the template and
@@ -164,18 +166,18 @@ loosened to make an evaluation easier.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **2004 passing across 101 files**.
+1. `npm install && npm test` — expect **2042 passing across 101 files**.
    `npm run typecheck`, `npm run build` and `npm run build:desktop` are all
    clean.
-2. **You are probably on `feature/llm-provider`.** It carries 25 commits and
-   **is not merged**. `main` carries **v1.1.1**. The repository is **public**
+2. **You are probably on `feature/llm-provider`.** It **is not merged**, and it
+   branched off `main` before the privacy scrub. `main` carries **v1.1.1**. The repository is **public**
    (`byui-library/openEQUELLA-Bulk-Uploader`, Apache-2.0) — spec 2 happened;
    anything committed here is world-readable.
-3. **The language-model feature has now been run against a real model, and it
-   fabricated.** A verification layer was built in response and refuses a value
-   the document does not support; what nobody has judged yet is whether the
-   descriptions it keeps are any good. See "The language model: run against a
-   real model, and guarded" below before touching any of it.
+3. **The language-model feature has been run against two real models, and both
+   fabricated on the same two documents.** A verification layer refuses a value
+   the document does not support, and has since been hardened so that it no
+   longer depends on a model answering in ISO. See "The language model: run
+   against a real model, and guarded" below before touching any of it.
 4. **Three things you must not assume.** All are below in full; each would be
    an expensive mistake:
    - **A session behind a load balancer needs EVERY cookie, not just
@@ -236,14 +238,18 @@ false rejections.** The refused row ends with an empty cell, no `ai` in
 decisions and their reasoning under "Verification: what may be written into a
 cell".
 
-**What is still unjudged: whether the eight kept descriptions are any good.**
-Groundedness is not quality. Verification answers "does the document support
-this?"; nobody has yet answered "is this worth cataloguing?", and no test can.
-That is Task 13 and it is still open — a person reading every generated
-description against its source. Note also what verification cannot do: it catches
-a claim the document does not support, and it cannot tell whether a supported
-date is attached to the right person. A model can still say something false using
-only true tokens.
+**What the second run settled, and what it did not.** Re-run on 2026-08-16 with
+`llama3.1:8b` on a GPU, the same ten documents produced **8 of 8 written outputs
+in house style** where the 3B model managed about three of eight — so the
+house-style failures were **model capability, not prompt wording**, and the
+instruction should not be changed. The same two documents were refused by both
+models, and an independent audit against the sources confirmed nothing
+ungrounded reached the spreadsheet. What that does **not** settle is whether the
+kept descriptions are worth cataloguing: groundedness is not quality, following
+a house style is not quality either, and no test can answer it. Note also what
+verification cannot do — it catches a claim the document does not support, and
+it cannot tell whether a supported date is attached to the right person. A model
+can still say something false using only true tokens.
 
 **A normal batch fires on almost nothing, and that is now measured rather than
 predicted: 1 of 10 rows** on the shipped template. The plan's original premise
@@ -837,7 +843,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            2004 tests, 101 files
+npm test            2042 tests, 101 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
