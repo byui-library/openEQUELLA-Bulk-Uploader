@@ -181,7 +181,7 @@ describe('caret preservation', () => {
     const rendered = [
       setupMarkup(props()),
       setupMarkup(props({ fields: fields({ authMode: 'code' }) })),
-      setupMarkup(props({ storedUsername: 'm.miles' })),
+      setupMarkup(props({ storedUsername: 'm.rowan' })),
       // The collection section only renders with a saved site and a list, and
       // it carries a typed field of its own.
       setupMarkup(props({ collections: COLLECTIONS, schemaPaths: ['MWDL/title'] })),
@@ -202,20 +202,20 @@ describe('caret preservation', () => {
 
 describe('a stored password', () => {
   it('is shown as who is signed in, with nothing to retype', () => {
-    const html = setupMarkup(props({ storedUsername: 'm.miles' }));
+    const html = setupMarkup(props({ storedUsername: 'm.rowan' }));
     expect(html).toContain('Signed in as');
-    expect(html).toContain('m.miles');
+    expect(html).toContain('m.rowan');
     expect(html).not.toContain('id="setup-password"');
     expect(html).not.toContain('id="setup-username"');
   });
 
   it('offers the Forget control only when something is actually stored', () => {
-    expect(setupMarkup(props({ storedUsername: 'm.miles' }))).toContain('id="setup-forget-password"');
+    expect(setupMarkup(props({ storedUsername: 'm.rowan' }))).toContain('id="setup-forget-password"');
     expect(setupMarkup(props())).not.toContain('id="setup-forget-password"');
   });
 
   it('says where the password is kept and who can read it', () => {
-    const html = setupMarkup(props({ storedUsername: 'm.miles' }));
+    const html = setupMarkup(props({ storedUsername: 'm.rowan' }));
     expect(html).toContain('encrypted for your Windows account only');
     expect(html).toContain('Another user on this PC cannot read it');
   });
@@ -763,8 +763,8 @@ describe('instanceFrom', () => {
 
 describe('settingsFrom', () => {
   it('builds password settings from what was typed', () => {
-    const settings = settingsFrom(props({ fields: fields({ username: ' m.miles ', password: 'hunter2' }) }));
-    expect(settings).toEqual({ authMode: 'password', username: 'm.miles', password: 'hunter2' });
+    const settings = settingsFrom(props({ fields: fields({ username: ' m.rowan ', password: 'hunter2' }) }));
+    expect(settings).toEqual({ authMode: 'password', username: 'm.rowan', password: 'hunter2' });
   });
 
   /**
@@ -774,8 +774,8 @@ describe('settingsFrom', () => {
    * lets an operator rename a site without typing their password again.
    */
   it('submits an empty password when one is already stored, keeping the stored username', () => {
-    const settings = settingsFrom(props({ storedUsername: 'm.miles' }));
-    expect(settings).toEqual({ authMode: 'password', username: 'm.miles', password: '' });
+    const settings = settingsFrom(props({ storedUsername: 'm.rowan' }));
+    expect(settings).toEqual({ authMode: 'password', username: 'm.rowan', password: '' });
   });
 
   it('builds OAuth settings in OAuth mode, trimming what was pasted', () => {

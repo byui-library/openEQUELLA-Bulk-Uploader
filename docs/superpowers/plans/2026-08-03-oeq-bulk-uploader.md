@@ -2285,7 +2285,7 @@ Expected: no import errors. (The server blocks on stdio; Ctrl-C to exit.)
 - [ ] **Step 3: Register with Claude Code**
 
 ```bash
-claude mcp add oeq-uploader -- node "c:/Users/milesm/Documents/repos/openEQUELLA Bulk Uploader/dist/mcp/index.js"
+claude mcp add oeq-uploader -- node "C:/path/to/openEQUELLA Bulk Uploader/dist/mcp/index.js"
 ```
 
 - [ ] **Step 4: Commit**

@@ -347,8 +347,12 @@ describe('UsernamePasswordAuth', () => {
    * JSESSIONID and ROUTEID -- and the identity the instance then reported
    * depended entirely on which of them were sent back:
    *
-   *   JSESSIONID alone -> username=guest,  guest=true
-   *   all four         -> username=milesm, guest=false
+   *   JSESSIONID alone -> username=guest,      guest=true
+   *   all four         -> username=<operator>, guest=false
+   *
+   * (The real account name is not recorded here. What was measured is that one
+   * request was answered as the guest and the other as the signed-in operator,
+   * and the name adds nothing to that.)
    *
    * The instance is behind an AWS load balancer; AWSALB and ROUTEID carry the
    * routing state that lands a request on the backend holding the session.
