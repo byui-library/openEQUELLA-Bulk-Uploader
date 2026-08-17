@@ -73,6 +73,21 @@ export class FakeElement {
     this.ownerDocument.activeElement = this;
   }
 
+  /**
+   * ALWAYS NULL. There is no tree here -- `querySelectorAll` hands out
+   * unparented stubs -- so an element has no ancestors to walk to.
+   *
+   * Present so that a listener which reads its row (`el.closest('tr')`, as the
+   * columns screen does to recover a column's path) can be fired at all;
+   * without it the listener throws and the behaviour behind it is untestable.
+   * A test driven this way can assert WHAT a control reported, never WHICH row
+   * reported it, and should say so rather than asserting the empty string that
+   * falls out of here.
+   */
+  closest(_selector: string): FakeElement | null {
+    return null;
+  }
+
   setSelectionRange(start: number, _end: number): void {
     this.selectionStart = start;
   }

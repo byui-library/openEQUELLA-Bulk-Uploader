@@ -4,33 +4,69 @@ Read this first.
 
 ## RESUME HERE — session of 2026-08-17 (language model)
 
-**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2069 across 101
+**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2092 across 102
 files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
 `main` carries the privacy scrub (PR #14) and has been merged in, so this branch
 is 0 behind.
 
-### TWO LIVE DEFECTS IN THE SHIPPED PROFILE EDITOR — not yet fixed
+### The two profile-editor defects are FIXED — stage 1 is built
 
-Found while exploring for the profile-editor design, both reachable from the
-Extract flow's columns screen today, neither caught by 2069 tests. They damage
-the one template that ships:
+Read this as the record, not as a queue. Both were reachable from the Extract
+flow's columns screen, both damaged the one template that ships, and neither
+was caught by the 2069 tests passing at the time.
 
-- **`setDefault` (`src/core/extract/columns.ts`) drops half the column.**
-  `Column` carries eight fields; it rebuilds one preserving `path`, `sources`,
-  `transform`, `locked` and `default`, silently discarding **`as`,
-  `flagIfEmpty` and `composeOnly`**. Type a default into the Alumni Obituary
-  template's `MWDL/coverage` column and its `as: birth_date` alias and
-  `composeOnly` flag are destroyed, after which the description's `compose`
-  template refers to a name that no longer exists.
-- **The columns screen collapses the source chain.** It reads
-  `column.sources[0]` and sets a single source, so choosing anything from the
-  dropdown replaces the whole ordered list with one entry. Touching the
-  description column's dropdown on that same template **silently switches the
-  language model off**.
+- **`setDefault` (`src/core/extract/columns.ts`) dropped half the column.** It
+  rebuilt one from a list of fields — `path`, `sources`, `transform`, `locked`,
+  `default` — and so discarded **`as`, `flagIfEmpty` and `composeOnly`**.
+  Typing a default into the Alumni Obituary template's `MWDL/coverage` column
+  destroyed its `as: birth_date` alias, after which the description's `compose`
+  template named a column that no longer existed and `parseProfile` would
+  refuse the saved profile. It now **copies the column whole**, so a ninth
+  field added to `Column` is preserved on the day it is added rather than the
+  day someone remembers the list. (The rebuild carried a comment blaming
+  `noUnusedLocals` for it. That option is not enabled in this project and never
+  has been — `CLAUDE.md` already says so.)
+- **The columns screen collapsed the source chain.** It read
+  `column.sources[0]` and wrote back a one-element list, so choosing anything
+  from the dropdown replaced the whole ordered chain. Touching the description
+  column's dropdown on that same template **silently switched the language
+  model off**. It is now `setFirstSource` — element 0 is replaced, or removed
+  by the blank option, and the rest is left alone. Put in
+  `core/extract/columns.ts` beside `setSources` rather than in the controller,
+  because the rule is about editing a profile and not about a screen.
 
-Both are stage 1 of
-[the profile-editor design](superpowers/specs/2026-08-17-profile-editor-design.md),
-and stage 1 is worth shipping on its own.
+Two things came with the fix:
+
+- **The dropdown now offers "A language model."** That was the operator's
+  actual complaint — turning the model on for a column otherwise means
+  hand-editing JSON. Its label is `describeSource`'s, because the screen marks
+  the current option by comparing label strings and a hand-written one renders
+  a dropdown that never shows what a column is already set to. **When** a model
+  may write is untouched and stays unconfigurable: an empty cell or a flagged
+  one, never a stated value.
+- **A column whose chain is longer than one says so beside the dropdown**, and
+  names the later sources rather than counting them. The design proposed *"and
+  1 more, shown when this column is expanded"*; stage 1 ships no expansion, and
+  a hint pointing at a control that does not exist is exactly the kind of claim
+  this project keeps retracting.
+
+**Guarded by four mutations, each applied with the Edit tool and watched go
+red** (never a `sed` pattern with `\n` in it — the working copy is CRLF and
+this project has twice had a mutation silently not apply). The strongest test
+is in `tests/extract/templates.test.ts`: both editing operations applied to
+every column of every *shipped* template, comparing the whole profile. It
+passed the moment it was written, which proves nothing, so both defects were
+reintroduced and it was watched to fail on each.
+
+**Stages 2–4 of
+[the profile-editor design](superpowers/specs/2026-08-17-profile-editor-design.md)
+are not built** — the ordered source-chain editor, the profile-wide
+`aiInstruction` field, and showing the settings the GUI does not edit. Stage 1
+stands on its own; nothing below depends on it.
+
+**Nobody has driven this through the app.** It is a GUI change on a branch of
+which that is already true, and this project's record on GUI changes verified
+only by tests is unambiguous — see *What is genuinely outstanding* below.
 
 **The nine review findings this block used to list as a queue are CLOSED**
 (`29061f9`). Every one has a test, and eight mutations — including all four the
@@ -190,7 +226,7 @@ loosened to make an evaluation easier.
 
 ## START HERE
 
-1. `npm install && npm test` — expect **2042 passing across 101 files**.
+1. `npm install && npm test` — expect **2092 passing across 102 files**.
    `npm run typecheck`, `npm run build` and `npm run build:desktop` are all
    clean.
 2. **You are probably on `feature/llm-provider`.** It **is not merged**, and it
@@ -866,7 +902,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            2042 tests, 101 files
+npm test            2092 tests, 102 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/

@@ -1,7 +1,7 @@
 # Editing a profile without a text editor — Design
 
 **Date:** 2026-08-17
-**Status:** Approved. Not yet planned or built.
+**Status:** Approved. **Stage 1 is built** (2026-08-17); stages 2–4 are not.
 **Occasion:** The operator, part-way through hand-testing the language-model
 feature: *"can we put together a GUI for creating and configuring the json
 file? Some people will struggle with creating and editing a json file."*
@@ -72,17 +72,31 @@ That leaves inline expansion, which works only if three things hold:
 
 ## Staged, because stage 1 is worth shipping alone
 
-### Stage 1 — stop the loss, and put the model in the dropdown
+### Stage 1 — stop the loss, and put the model in the dropdown — BUILT 2026-08-17
 
-`setDefault` preserves every field of a `Column`.
+`setDefault` preserves every field of a `Column`. It copies the column whole
+rather than listing what to keep, so a ninth field added to `Column` is
+preserved on the day it is added.
 
 `setSource` stops replacing the list. Until stage 2 the dropdown still shows
 one source, so the rule is explicit: **choosing from the dropdown replaces
 element 0 and leaves the rest of the chain alone**; choosing the blank entry
-removes element 0 and leaves the rest. A column whose chain is longer than one
-says so beside the dropdown — *"and 1 more, shown when this column is
-expanded"* — because a control that silently governs only part of a value is
-the same defect wearing a smaller hat.
+removes element 0 and leaves the rest. It is
+`setFirstSource` in `core/extract/columns.ts`, beside `setSources` rather than
+in the controller, because the rule is about editing a profile and not about a
+screen.
+
+A column whose chain is longer than one says so beside the dropdown.
+
+**The wording changed while building it.** This section proposed *"and 1 more,
+shown when this column is expanded"*, and stage 1 ships no expansion — a hint
+pointing at a control that does not exist is the kind of claim this project
+keeps having to retract. The row NAMES the later sources instead
+(`restOfChain`): *"This sets the first source; then: A language model… The rest
+is kept as it is — edit the profile file to change it."* Naming beats counting
+anyway: the collapsed row is supposed to carry the information, and "1 more"
+carries none of it. Stage 2 replaces the closing sentence when the expansion
+exists.
 
 `sourceOptions` gains **"A language model"**. This is the change that answers
 the operator's actual complaint: turning the model on for a column currently
@@ -153,13 +167,25 @@ The editor's job is to never produce a profile that will not load. Two rules:
 
 ## Testing
 
+Everything under stage 1 is done and is marked; the rest waits on its stage.
+
 - **Round-trip:** every shipped template, and a profile carrying every field
   the format allows, survives open → edit → save unchanged except for the edit.
+  **Done** — `tests/extract/templates.test.ts` applies both editing operations
+  to every column of every *shipped* template and compares the whole profile,
+  so a template added later is covered on the day it is added. It passed the
+  moment it was written, which proves nothing, so both defects were
+  reintroduced and it was watched to fail on each.
 - **The two defects, pinned:** setting a default preserves `as`,
   `flagIfEmpty`, `composeOnly`; choosing a source preserves the rest of the
-  chain.
+  chain. **Done**, and asserted as whole-object comparisons rather than field
+  by field — a list of fields to check is wrong again the day a field is added,
+  which is the same mistake that caused the defect.
 - **The dropdown offers the model**, and choosing it produces `{ ai: true }`
-  in the right position.
+  in the right position. **Done.** The option's label must be
+  `describeSource`'s: the screen marks the current option by comparing label
+  strings, so a hand-written one renders a dropdown that never shows what a
+  column is already set to.
 - **Ordering is meaning:** reordering sources changes which one wins, asserted
   through the preview rather than through the profile object alone.
 - **The read-only settings are rendered**, so a maintainer removing them from
@@ -167,6 +193,11 @@ The editor's job is to never produce a profile that will not load. Two rules:
   template.
 - Driven through `fakeDom` where the existing extract screen tests are, so the
   assertions are about what the screen does rather than what a string contains.
+  **Note its limit, found doing this:** `fakeDom` hands out unparented stubs,
+  so `closest('tr')` — how the screen recovers which column a control belongs
+  to — has no answer and now returns null. A test driven this way can assert
+  WHAT a control reported and never WHICH row reported it. Asserting the empty
+  string that falls out would be asserting the fake.
 
 ## Rejected alternatives
 

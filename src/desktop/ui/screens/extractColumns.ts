@@ -1,7 +1,7 @@
 // src/desktop/ui/screens/extractColumns.ts
 import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
-import { describeSource, sourceOptions, type SourceEvidence } from '../extract/sources.js';
+import { describeSource, restOfChain, sourceOptions, type SourceEvidence } from '../extract/sources.js';
 import { plainLabel } from '../extract/picker.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
 import { countNeedingReview } from '../../../core/ai/review.js';
@@ -37,6 +37,7 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
   const options = sourceOptions(props.profile.pattern, props.scan);
   const current = column.sources[0];
   const currentLabel = current === undefined ? '' : describeSource(current);
+  const rest = restOfChain(column.sources);
 
   const optionHtml = [
     `<option value="">(nothing &mdash; fill in Excel)</option>`,
@@ -65,7 +66,12 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
           locked
             ? '<span class="fixed">the file itself</span>'
             : `<label class="sr-only" for="src-${index}">Source for ${escapeHtml(plainLabel(path))}</label>
-               <select id="src-${index}" class="source-select">${optionHtml}</select>`
+               <select id="src-${index}" class="source-select">${optionHtml}</select>
+               ${
+                 rest === null
+                   ? ''
+                   : `<p class="hint chain-rest">This sets the first source; ${escapeHtml(rest)}. The rest is kept as it is &mdash; edit the profile file to change it.</p>`
+               }`
         }
       </td>
       <td class="default">
