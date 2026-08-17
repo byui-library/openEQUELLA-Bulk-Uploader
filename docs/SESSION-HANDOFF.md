@@ -4,9 +4,33 @@ Read this first.
 
 ## RESUME HERE — session of 2026-08-17 (language model)
 
-**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2042 across 101
+**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2069 across 101
 files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
-Nothing is on `main`.
+`main` carries the privacy scrub (PR #14) and has been merged in, so this branch
+is 0 behind.
+
+### TWO LIVE DEFECTS IN THE SHIPPED PROFILE EDITOR — not yet fixed
+
+Found while exploring for the profile-editor design, both reachable from the
+Extract flow's columns screen today, neither caught by 2069 tests. They damage
+the one template that ships:
+
+- **`setDefault` (`src/core/extract/columns.ts`) drops half the column.**
+  `Column` carries eight fields; it rebuilds one preserving `path`, `sources`,
+  `transform`, `locked` and `default`, silently discarding **`as`,
+  `flagIfEmpty` and `composeOnly`**. Type a default into the Alumni Obituary
+  template's `MWDL/coverage` column and its `as: birth_date` alias and
+  `composeOnly` flag are destroyed, after which the description's `compose`
+  template refers to a name that no longer exists.
+- **The columns screen collapses the source chain.** It reads
+  `column.sources[0]` and sets a single source, so choosing anything from the
+  dropdown replaces the whole ordered list with one entry. Touching the
+  description column's dropdown on that same template **silently switches the
+  language model off**.
+
+Both are stage 1 of
+[the profile-editor design](superpowers/specs/2026-08-17-profile-editor-design.md),
+and stage 1 is worth shipping on its own.
 
 **The nine review findings this block used to list as a queue are CLOSED**
 (`29061f9`). Every one has a test, and eight mutations — including all four the
