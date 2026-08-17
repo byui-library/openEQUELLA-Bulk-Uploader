@@ -1114,7 +1114,7 @@ no note**. Whatever it assembles is a stated value, so the rule above leaves it
 alone. `composeValue` returns empty only when *every* clause is empty — no
 death date, no birth date and no Ricks College mention, all three missing from
 the same document. A document that yielded only a birth date produces
-`Born 1907-11-13`, which is real, unflagged, and never sent.
+`Born 1907-11-13`, which is a stated value, unflagged, and never sent.
 
 So expect the model to write on a **small fraction** of a real batch. Measured on
 a real folder of ten scanned obituaries: **the model fired on 1 of them**,
