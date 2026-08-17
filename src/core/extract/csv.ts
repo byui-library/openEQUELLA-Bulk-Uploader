@@ -1,6 +1,7 @@
 // src/core/extract/csv.ts
 import { writeFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
+import { guardFormula } from '../formulaGuard.js';
 import type { ExtractedRow, Profile } from './types.js';
 
 /** Where each value came from. Underscore-prefixed, so the uploader ignores it. */
@@ -33,7 +34,21 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
     const sources = Object.entries(row.sources)
       .map(([path, kind]) => `${path}=${kind}`)
       .join('; ');
-    sheet.addRow([...columns.map((c) => row.cells[c.path] ?? ''), sources, row.notes.join('; ')]);
+    // Guarded because this file is opened in Excel, which executes a cell that
+    // begins `=`, `+`, `-` or `@` -- and these values came out of documents
+    // nobody vetted. The annotation columns get it too: `_notes` quotes
+    // discarded model output, which is exactly as attacker-influenced as a
+    // description. `src/core/sheet.ts` removes the guard when the spreadsheet
+    // is read back, so what reaches openEQUELLA is what the document said.
+    //
+    // HEADERS ARE DELIBERATELY NOT GUARDED. They are schema xpaths and the two
+    // `_`-prefixed annotation names, none of which can begin with a trigger --
+    // and guarding one would stop `plan` matching the column at all.
+    sheet.addRow([
+      ...columns.map((c) => guardFormula(row.cells[c.path] ?? '')),
+      guardFormula(sources),
+      guardFormula(row.notes.join('; ')),
+    ]);
   }
 
   // Written through a buffer so a UTF-8 byte-order mark can go in front.

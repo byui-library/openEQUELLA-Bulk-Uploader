@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { parse } from 'csv-parse/sync';
 import { writeCsv, NOTES_COLUMN, SOURCE_COLUMN } from '../../src/core/extract/csv.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile } from '../../src/core/extract/types.js';
+import { readSheet } from '../../src/core/sheet.js';
 
 const profile: Profile = {
   version: 1,
@@ -147,5 +148,60 @@ describe('writeCsv', () => {
     }) as string[][];
     expect(records[0]).toEqual([ATTACHMENT_COLUMN, 'MWDL/title', SOURCE_COLUMN, NOTES_COLUMN]);
     expect(records[0]).not.toContain('MWDL/coverage');
+  });
+});
+
+/**
+ * ## The spreadsheet is opened in Excel, and Excel runs what looks like a formula
+ *
+ * A description OCR'd out of a donated document is the one value in this tool
+ * that an outsider controls. `=`, `+`, `-` and `@` make Excel execute a cell
+ * rather than show it.
+ *
+ * The round-trip case is the one that matters most: `plan` reads this same file
+ * back and uploads what it finds, so a guard added here and not removed there
+ * would put an apostrophe that was never in the document into a permanent
+ * catalogue record.
+ */
+describe('formula injection', () => {
+  const dangerous = '=HYPERLINK("http://elsewhere.example","click me")';
+
+  it('guards a value a document made look like a formula', async () => {
+    const records = await writeAndRead([row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': dangerous })]);
+    expect(records[1]?.[1]).toBe(`'${dangerous}`);
+  });
+
+  it('guards every trigger Excel acts on, not just the equals sign', async () => {
+    for (const value of ['=1', '+1', '-1', '@x', '\tx', '\rx']) {
+      const records = await writeAndRead([row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': value })]);
+      expect(records[1]?.[1], `${JSON.stringify(value)} was written unguarded`).toBe(`'${value}`);
+    }
+  });
+
+  it('leaves ordinary text exactly as it was', async () => {
+    const records = await writeAndRead([
+      row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': 'Died 2024-01-09; Born 1935-04-03' }),
+    ]);
+    expect(records[1]?.[1]).toBe('Died 2024-01-09; Born 1935-04-03');
+  });
+
+  /**
+   * `_notes` quotes discarded model output and `_source` is built from column
+   * paths; both carry text this tool did not choose, into the same spreadsheet.
+   */
+  it('guards the annotation columns as well as the metadata ones', async () => {
+    const records = await writeAndRead([
+      row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': 'A' }, {}, [dangerous]),
+    ]);
+    expect(records[1]?.[3]).toBe(`'${dangerous}`);
+  });
+
+  it('comes back out of readSheet as the document wrote it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-csv-round-'));
+    const path = join(dir, 'out.csv');
+    await writeCsv(path, profile, [row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': dangerous })]);
+
+    const sheet = await readSheet(path);
+    expect(sheet.rows[0]?.cells['MWDL/title']).toBe(dangerous);
   });
 });
