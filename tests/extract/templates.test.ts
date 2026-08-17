@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listTemplates, loadTemplate } from '../../src/core/extract/templates.js';
+import { setDefault, setFirstSource } from '../../src/core/extract/columns.js';
 import { parseProfile } from '../../src/core/extract/profile.js';
 import { buildRow } from '../../src/core/extract/rows.js';
 import { extractDefinition, parseSchemaPaths } from '../../src/core/schema.js';
@@ -218,6 +219,58 @@ describe('shipped templates', () => {
    */
   it('refuses an id that is not a template name', async () => {
     await expect(loadTemplate('../../package')).rejects.toThrow(/Not a template name/);
+  });
+
+  /**
+   * ## An editing operation changes what it names, and nothing else
+   *
+   * Asserted over EVERY column of EVERY shipped template, rather than over a
+   * fixture, because both defects this pins were found in the shipped one and
+   * neither was visible in the fixtures the editor's own tests use. A template
+   * added later is covered on the day it is added.
+   *
+   * What went wrong: `setDefault` rebuilt the column from a list of fields and
+   * dropped `as`, `flagIfEmpty` and `composeOnly`; the columns screen wrote a
+   * one-element source list and deleted every later tier. Both are silent, both
+   * damage a profile the operator did not ask to change, and one of them leaves
+   * a profile `parseProfile` will refuse to load next time.
+   */
+  it('survives an edit to one column with every other setting intact', async () => {
+    for (const { id } of await listTemplates()) {
+      const original = await loadTemplate(id);
+      for (const column of original.columns) {
+        if (column.path === ATTACHMENT_COLUMN) continue;
+
+        for (const edited of [
+          setDefault(original, column.path, 'a default'),
+          setFirstSource(original, column.path, { label: 'Something else' }),
+        ]) {
+          // Everything except the edited column, byte for byte.
+          expect({ ...edited, columns: edited.columns.filter((c) => c.path !== column.path) })
+            .toEqual({ ...original, columns: original.columns.filter((c) => c.path !== column.path) });
+
+          // And the edited column, except for what was edited.
+          const after = edited.columns.find((c) => c.path === column.path)!;
+          expect(
+            { ...after, default: undefined, sources: undefined },
+            `${id}: editing ${column.path} changed more than it named`,
+          ).toEqual({ ...column, default: undefined, sources: undefined });
+        }
+      }
+    }
+  });
+
+  /** The order is the meaning, so an edit to the first source must not disturb it. */
+  it('keeps the rest of a source chain when the first source is replaced', async () => {
+    const original = await loadTemplate('alumni-obituary');
+    const chained = original.columns.filter((c) => c.sources.length > 1);
+    expect(chained.length, 'no shipped column has a chain, so this proves nothing').toBeGreaterThan(0);
+
+    for (const column of chained) {
+      const after = setFirstSource(original, column.path, { label: 'Something else' })
+        .columns.find((c) => c.path === column.path)!;
+      expect(after.sources).toEqual([{ label: 'Something else' }, ...column.sources.slice(1)]);
+    }
   });
 });
 

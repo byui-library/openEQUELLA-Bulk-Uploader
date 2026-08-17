@@ -100,6 +100,52 @@ describe('createExtractController', () => {
     expect(c.state().profile?.columns.map((x) => x.path)).toEqual([ATTACHMENT_COLUMN, 'MWDL/title']);
   });
 
+  /**
+   * ## Choosing a source must not switch the model off
+   *
+   * The screen shows one dropdown per column and the controller used to write
+   * back `[source]`, discarding whatever else the chain held. On the shipped
+   * Alumni Obituary template that meant touching the description's dropdown
+   * silently removed `{ ai: true }`. Driven through the controller rather than
+   * only through `setFirstSource`, because the call site is where the collapse
+   * lived and a pure function nobody calls correctly fixes nothing.
+   */
+  it('replaces the first source without discarding the rest of the chain', async () => {
+    const chained: Profile = {
+      version: 1,
+      pattern: '{part1}.pdf',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/description', sources: [{ compose: '{birth_date}' }, { ai: true }] },
+      ],
+    };
+    const a = api({ loadTemplate: vi.fn(async () => chained) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.setTemplate('alumni-obituary');
+    await c.setSource('MWDL/description', { section: 'Abstract' });
+    expect(c.state().profile?.columns[1]?.sources).toEqual([{ section: 'Abstract' }, { ai: true }]);
+  });
+
+  it('removes only the first source when the dropdown is cleared', async () => {
+    const chained: Profile = {
+      version: 1,
+      pattern: '{part1}.pdf',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/description', sources: [{ compose: '{birth_date}' }, { ai: true }] },
+      ],
+    };
+    const a = api({ loadTemplate: vi.fn(async () => chained) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.setTemplate('alumni-obituary');
+    await c.setSource('MWDL/description', null);
+    expect(c.state().profile?.columns[1]?.sources).toEqual([{ ai: true }]);
+  });
+
   it('refuses to remove the locked attachment column and surfaces why', async () => {
     const c = createExtractController({ api: api() as never, onExit: vi.fn(), render: vi.fn() });
     await c.chooseFolder();

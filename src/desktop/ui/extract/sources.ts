@@ -42,6 +42,26 @@ export function describeSource(source: Source): string {
 }
 
 /**
+ * What runs after the source the single dropdown shows, in order, or null when
+ * there is nothing after it.
+ *
+ * The columns screen shows one source per column and sets element 0. That is
+ * only honest if the row says what element 0 is not: an operator reading
+ * "Built from other columns" has no way to tell that a language model runs
+ * after it, nor that choosing something else leaves it running.
+ *
+ * Deliberately names the later sources rather than counting them. "and 1 more"
+ * would point at an expansion this screen does not have yet -- stage 2 of the
+ * profile-editor design builds it -- and a hint promising a control that does
+ * not exist is worse than no hint.
+ */
+export function restOfChain(sources: Source[]): string | null {
+  const rest = sources.slice(1);
+  if (rest.length === 0) return null;
+  return rest.map((source) => `then: ${describeSource(source)}`).join(', ');
+}
+
+/**
  * The sources worth offering for THESE files. Only placeholders the pattern
  * defines, labels actually found while scanning, and properties actually
  * present. Offering everything conceivable would invite mapping a column to
@@ -76,6 +96,15 @@ export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOpti
   // documented last resort, and it says so in its own label.
   options.push({ label: describeSource({ filenameStem: true }), source: { filenameStem: true } });
   options.push({ label: describeSource({ opening: true }), source: { opening: true } });
+  // Offered without evidence-gating for the same reason: nothing in a document
+  // makes a model more or less available. It was left out when the model was
+  // built, on the grounds that a profile declares one rather than a dropdown
+  // offering it -- true of shipping a template, false of an operator
+  // configuring their own collection, who otherwise has to hand-edit JSON.
+  //
+  // WHEN a model may write is untouched by this and stays unconfigurable:
+  // an empty cell or a flagged one, never a stated value (`core/ai/eligible.ts`).
+  options.push({ label: describeSource({ ai: true }), source: { ai: true } });
   for (const property of scan.properties) {
     options.push({
       label: `Document property: ${property}`,

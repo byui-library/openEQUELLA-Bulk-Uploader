@@ -53,7 +53,7 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **2042 tests across 101 files.**
+exists to remove. **2092 tests across 102 files** on `feature/llm-provider`.
 
 That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
 is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
@@ -423,6 +423,19 @@ shape, never as a value the code may assume.
   is destroyed and recreated on every keystroke; without it the field loses
   focus after one character, or types backwards if it re-focuses without
   restoring the caret. Both shipped for months unnoticed.
+- **An edit copies the record whole and changes what it names; a control that
+  governs part of a value says which part.** Both halves were violated at once
+  in the shipped profile editor, and neither was visible in 2069 tests.
+  `setDefault` rebuilt a `Column` from a list of fields it meant to keep, so it
+  dropped the three it had never been told about — destroying the shipped
+  obituary template's `as: birth_date` alias and leaving a profile
+  `parseProfile` would refuse to load. The columns screen showed one source per
+  column and wrote back a one-element list, so choosing from the dropdown
+  deleted every later tier and **silently switched the language model off**.
+  A list of fields to preserve is wrong again the day a field is added; a copy
+  is not. And where a control genuinely cannot govern the whole value yet, the
+  screen must NAME what it is leaving alone rather than count it — a hint
+  pointing at an expansion that does not exist is a claim to retract later.
 - **Never put a `style` attribute in rendered markup. The CSP blocks it
   silently.** `index.html` sets `default-src 'self'` with no `style-src`, so
   Chromium refuses inline styles — *"Refused to apply inline style because it

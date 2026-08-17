@@ -545,6 +545,12 @@ table.columns .name code { display: block; font-size: 0.78em; color: var(--muted
 table.columns .handle button { padding: 0 0.35rem; line-height: 1.4; }
 table.columns .remove button { color: var(--error-border); font-size: 1.1em; background: none; border: 0; }
 table.columns .fixed { color: var(--muted); font-size: 0.85em; }
+/* What the one dropdown does not govern. A row, not a paragraph: the default
+   margins push the whole row apart and the source cell is already the widest. */
+table.columns .chain-rest { margin: 0.2rem 0 0; font-size: 0.8em; line-height: 1.35; }
+/* A cell with a chain is taller than one without, so the controls beside it
+   read better aligned to the top than floating in the middle of it. */
+table.columns td.source { vertical-align: top; }
 
 .preview-scroll { overflow-x: auto; }
 table.preview { border-collapse: collapse; font-size: 0.85em; }

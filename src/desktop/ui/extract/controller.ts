@@ -1,6 +1,6 @@
 // src/desktop/ui/extract/controller.ts
 import type { OeqApi } from '../../ipc.js';
-import { addColumn, removeColumn, moveColumn, setSources, setDefault } from '../../../core/extract/columns.js';
+import { addColumn, removeColumn, moveColumn, setFirstSource, setDefault } from '../../../core/extract/columns.js';
 import type { Profile, Source } from '../../../core/extract/types.js';
 import { errorMessage } from '../errors.js';
 import { aiConfirmation } from '../../../core/ai/confirm.js';
@@ -266,7 +266,10 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       await edit((p) => moveColumn(p, path, delta))();
     },
     async setSource(path, source) {
-      await edit((p) => setSources(p, path, source === null ? [] : [source]))();
+      // The screen shows ONE source per column, so this governs position 0 and
+      // leaves the rest of the chain alone. It used to write `[source]`, which
+      // deleted every later tier -- see `setFirstSource`.
+      await edit((p) => setFirstSource(p, path, source))();
     },
     async setDefault(path, value) {
       await edit((p) => setDefault(p, path, value))();
