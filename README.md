@@ -718,7 +718,7 @@ birthplace cannot be read honestly — a trial capture produced *"Sagebrush
 Memorial Hospital, in Hazelmere Id"* as a birthplace. Residence and the Ricks
 mention are both readable at 8 of 10 but were dropped as not worth the build:
 the PDF is attached, and a reader can see them. **A wrong fact in a permanent
-record is worse than an absent one.**
+catalogue record is worse than an absent one.**
 
 ### Where a description comes from
 
