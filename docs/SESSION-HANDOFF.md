@@ -9,6 +9,30 @@ completion.** `npm test` → **2004 across 101 files**, typecheck, `build` and
 `build:desktop` all clean, working tree clean. The branch was pushed at the end
 of the session; nothing is on `main`.
 
+> ### UPDATE, 2026-08-17 — the nine findings below are closed
+>
+> `npm test` → **2042 across 101 files** (+38), typecheck, `build` and
+> `build:desktop` all clean. Every finding listed under *What to fix first* has
+> a test, and eight mutations — including all four the review found surviving —
+> were run and confirmed red. The list below is kept as the record of what was
+> wrong and why; read it as history, not as a queue.
+>
+> Three things a reader should carry forward:
+>
+> - **Dates with no year are now claims.** `FORMS` was rebuilt: month+day,
+>   `1/6`, `2024-01-06T00:00:00Z`, `January of 2024`, `6.1.2024`, `4/2/98`,
+>   `the 6th of January`, and a bare month behind a date preposition. Nothing
+>   goes through `new Date` any more.
+> - **The tool no longer says "the document states no such date."** It says no
+>   date *it can read* supports the value, and the English-only limitation is
+>   recorded in the README, in `MONTH_NAMES` and in `verify.ts`.
+> - **The year/number equivalence is symmetric and is NOT guarded** — pinned by
+>   test and stated in the docblock, because guarding it means reading prose.
+>
+> Still true: the branch is not merged, and *Then, and only then* below is
+> untouched — nobody has judged whether the kept descriptions are any good, and
+> nothing here has been driven through the desktop app.
+
 **Do not open a PR yet.** A code review of the verification layer returned
 `CHANGES REQUESTED` and **9 of its 11 findings are unfixed**. They are listed
 below with the inputs that reproduce them. The two that are done are the
