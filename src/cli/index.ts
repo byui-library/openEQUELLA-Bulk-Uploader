@@ -315,6 +315,28 @@ export function extractCode(input: string): string {
   return trimmed;
 }
 
+/**
+ * The `state` from pasted text, or null when there is none.
+ *
+ * Null is the ordinary case, not a failure: a bare code is what openEQUELLA's
+ * page shows and what most operators paste, and it carries no state. The
+ * caller checks when this returns a value and says out loud when it does not --
+ * see `loginAction`. Silence there would read as "checked, fine", which is the
+ * failure mode this project keeps meeting.
+ */
+export function extractState(input: string): string | null {
+  const trimmed = input.trim();
+  try {
+    const fromUrl = new URL(trimmed).searchParams.get('state');
+    if (fromUrl) return fromUrl;
+  } catch {
+    // Not an absolute URL -- fall through, the same way `extractCode` does, so
+    // a pasted bare query fragment still works.
+  }
+  const match = /(?:^|[?&])state=([^&\s]+)/.exec(trimmed);
+  return match ? decodeURIComponent(match[1]!) : null;
+}
+
 /** Minimal escaping for the one place `defaultCaptureLoopbackCode` reflects
  *  server-controlled text (the OAuth `error` param) into a locally-served
  *  HTML page. */
@@ -529,15 +551,32 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
     if (!raw) {
       throw new OeqError('No code entered. Run `oeq-upload login` again when you have it.');
     }
-    // DELIBERATELY NOT STATE-CHECKED, AND SAID RATHER THAN HIDDEN.
+    // CHECKED WHEN IT CAN BE, AND SAID OUT LOUD WHEN IT CANNOT.
     //
-    // This flow exists for a redirect this machine cannot receive -- the
-    // operator reads a code off a page and pastes it, commonly without the
-    // state beside it, and `extractCode` accepts a bare code precisely because
-    // that is what people have. A check that passed whenever the pasted text
-    // happened to lack a state would report success without running, which is
-    // the defect this codebase has shipped twice. The loopback flow above is
-    // the one that can genuinely check, and it does.
+    // This flow exists for a redirect this machine cannot receive: the operator
+    // reads the code off openEQUELLA's page and pastes it. A bare code carries
+    // no state, so the check cannot run for everyone -- but pasting the whole
+    // redirected URL is common, and that URL does carry it. Skipping the check
+    // for the people it can serve, because it cannot serve everyone, would be
+    // giving up a real guard for a tidier rule.
+    //
+    // What must never happen is silence: saying nothing here would read as
+    // "checked, fine", which is the shape of defect this codebase has shipped
+    // twice.
+    const pastedState = extractState(raw);
+    if (pastedState !== null && !auth.checkState(pastedState)) {
+      throw new OeqError(
+        `That code did not come from the sign-in this command started: the pasted URL carried a ` +
+          `state value, and it is not the one sent with the authorize URL. Nothing has been saved. ` +
+          `Run \`oeq-upload login\` again.`,
+      );
+    }
+    if (pastedState === null) {
+      console.log(
+        'Note: what you pasted carried no state value, so this could not be confirmed as the ' +
+          'sign-in started here. Paste the whole redirected URL next time and it will be checked.',
+      );
+    }
     code = extractCode(raw);
   }
 

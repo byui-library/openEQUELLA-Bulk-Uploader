@@ -83,26 +83,32 @@ redirect that does not carry it back. This matters most for the CLI's loopback
 capture, which listens on a local port that any other process on the machine
 can reach.
 
-**The CLI's manual-paste flow cannot check it** — you paste a code read off a
-page, usually without the state beside it — and it does not pretend to. Prefer
+**The CLI's manual-paste flow checks it when it can.** Paste the whole
+redirected URL and the state is verified like any other. Paste a bare code —
+which is what openEQUELLA's page shows, and what most people paste — and there
+is no state to check; the command says so rather than passing silently. Prefer
 the loopback flow (`OEQ_REDIRECT_URI` pointing at `127.0.0.1`) where your OAuth
-client's registration allows it.
+client's registration allows it, and paste whole URLs where it does not.
 
 ## Dependency advisories
 
 `npm audit` currently reports three moderate advisories. Both underlying issues
 were checked against how this code actually calls the libraries:
 
-| Package | Advisory | Applies here? |
+| Package | Advisory | Status |
 | --- | --- | --- |
-| `fast-xml-parser` | Comment/CDATA injection in `XMLBuilder` | **No.** Only `XMLParser` is used. Item XML is built by hand with its own escaper in `src/core/metadata.ts`. |
-| `uuid` (via `exceljs`) | Missing bounds check when a `buf` argument is passed | **No.** Nothing here passes one. |
+| `fast-xml-parser` | Comment/CDATA injection in `XMLBuilder` | **Upgraded to 5.x.** The advisory never applied — only `XMLParser` is used, and item XML is built by hand with its own escaper in `src/core/metadata.ts` — but the upgrade was available and verified. |
+| `uuid` (via `exceljs`) | Missing bounds check when a `buf` argument is passed | **Not reachable, and not fixable by upgrading.** `exceljs` calls `uuidv4()` with no arguments, and `exceljs@4.4.0` is already the latest release. |
 
-Both fixes are breaking major upgrades, one of them to `exceljs`, which writes
-every spreadsheet this tool produces. **Do not run `npm audit fix --force`
-before a release.** Re-check when non-breaking fixes ship, and treat any future
-advisory that touches `XMLParser` as urgent — it parses `.docx` files and
-schema XML, both of which come from outside.
+**Do not run `npm audit fix --force`.** Its remedy for the `uuid` line is
+`exceljs@3.4.0` — a downgrade across a major version, to older code, in the
+library that writes every spreadsheet this tool produces; it also drags
+`electron` and `vitest` across majors. That is a worse outcome than an advisory
+whose vulnerable path is never called.
+
+Re-check when `exceljs` ships a release that moves off `uuid` 8, and treat any
+future advisory that touches `XMLParser` as urgent — it parses `.docx` files
+and schema XML, both of which come from outside.
 
 ## What has not been reviewed
 
