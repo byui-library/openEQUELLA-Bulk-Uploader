@@ -6,7 +6,12 @@ import type { Column, DocumentData, ExtractedRow, Profile, Transform } from '../
 import { eligibleColumns } from './eligible.js';
 import { buildPrompt, cleanReply } from './prompt.js';
 import { assertUsableBudget, sliceForModel, type SliceShape } from './slice.js';
-import { unsupportedClaims, type UnsupportedClaim } from './verify.js';
+import {
+  documentEvidence,
+  unsupportedClaims,
+  type DocumentEvidence,
+  type UnsupportedClaim,
+} from './verify.js';
 
 /**
  * Just enough of a provider to be substitutable in a test.
@@ -365,6 +370,13 @@ function sentClause(shape: SliceShape): string {
  * would. Cut BY CODE POINT: cutting a UTF-16 string at 80 units can split a
  * surrogate pair and leave a lone half, which is not a character and does not
  * survive a round trip through a spreadsheet.
+ *
+ * NOT THE SAME THING AS `verify.ts#blank`, WHICH IS DELIBERATELY THE OTHER WAY
+ * ROUND, and the two must not be made to match. This counts CHARACTERS FOR A
+ * HUMAN, so code points are the unit. That one addresses OFFSETS A REGEX
+ * PRODUCED, which are UTF-16 code units, and using code points there put the
+ * mask in the wrong place for every reply containing an emoji. A change to
+ * either should be read against the other before it is made.
  */
 function quoted(discarded: string): string {
   const flat = flatten(discarded);
@@ -430,11 +442,18 @@ function refusalNote(path: string, outcome: string, claims: UnsupportedClaim[]):
  * exactly as they found it and say what happened. `cleanReply` carries no
  * `text` on a failure precisely so this cannot be got wrong by accident.
  *
- * RUNNING IT TWICE OVER THE SAME ROWS SENDS NOTHING THE SECOND TIME. A written
- * cell is no longer eligible, because the write clears the flag that made it
- * eligible and records itself in `aiWritten` instead. Without that, a second
- * pass re-sends and re-charges for every cell the first one wrote, and
+ * RUNNING IT TWICE OVER THE SAME ROWS SENDS NOTHING FOR ANY CELL IT WROTE. A
+ * written cell is no longer eligible, because the write clears the flag that
+ * made it eligible and records itself in `aiWritten` instead. Without that, a
+ * second pass re-sends and re-charges for every cell the first one wrote, and
  * overwrites the model's own earlier answer with a different one.
+ *
+ * A REFUSED CELL IS THE EXCEPTION, AND IT IS DELIBERATE. Nothing is written and
+ * `flagged` is left standing, so the cell stays eligible and a second pass sends
+ * it again and pays again. That is correct -- the source's doubt has not been
+ * acted on, and a re-run against a different model is the remedy the note points
+ * at -- but it means this paragraph is a statement about WRITTEN cells only. See
+ * the refusal site below.
  */
 export async function fillWithModel(
   targets: FillTarget[],
@@ -491,6 +510,14 @@ export async function fillWithModel(
 
     // ONE PER ROW, NOT ONE PER CELL. See `discloseInItem`.
     let wroteSomething = false;
+
+    // READ ONCE PER ROW, for the same reason the slice is. Every date and every
+    // number in the whole file was being re-derived for every enabled column,
+    // and the verifier reads the WHOLE document rather than the slice, so on a
+    // long file it was the most expensive thing on the row and it produced the
+    // identical answer each time. Built lazily: a row the cap stops sends
+    // nothing and must not pay to read a document nobody will check.
+    let evidence: DocumentEvidence | null = null;
 
     // Over the COLUMNS rather than the paths, so the column each path belongs
     // to needs no lookup. The lookup it replaces could not fail -- every path
@@ -571,7 +598,8 @@ export async function fillWithModel(
       // ALWAYS, WITH NO SETTING. This project has twice shipped a check that
       // reported success without running, and a switch is how that happens a
       // third time.
-      const unsupported = unsupportedClaims(cleaned.text, text, profile);
+      evidence ??= documentEvidence(text);
+      const unsupported = unsupportedClaims(cleaned.text, evidence, profile);
       if (unsupported.length > 0) {
         // THE WHOLE VALUE, never part of it. Stripping the offending clause
         // would leave a half-removed sentence that reads as complete while
@@ -580,6 +608,14 @@ export async function fillWithModel(
         // entry, no `aiWritten` record -- which is what keeps the row counting
         // as needing review -- and `flagged` is left standing, because the
         // source's doubt has NOT been acted on.
+        //
+        // WHICH MEANS THE CELL IS STILL ELIGIBLE, and a second run over the same
+        // rows will send it again and be charged for it again. That is the one
+        // exception to the docblock above, and it is the right behaviour: the
+        // cell holds no model output to protect, and re-running against a better
+        // model is the only remedy there is. Clearing `flagged` to stop the
+        // re-send would mark the source's doubt as settled by an answer this
+        // tool threw away.
         row.notes.push(
           `${refusalNote(path, outcome, unsupported)}` +
             `${quoted(cleaned.text)}${sentClause(slice.shape)}`,

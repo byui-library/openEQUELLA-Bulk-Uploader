@@ -1110,12 +1110,24 @@ describe('a reply the document does not support', () => {
     expect(needsReview(rows[0]!.row)).toBe(true);
   });
 
+  /**
+   * THE REASON IS A CLAIM ABOUT THE TOOL, NOT ABOUT THE DOCUMENT, and this
+   * assertion changed with the wording rather than being written around it.
+   * "The document states no such date" is a statement this check is not
+   * entitled to: `verify.ts` reads English date forms, so at a Spanish- or
+   * German-language institution a document stating the day plainly is a
+   * document it cannot read, and every day-precision claim is refused. Refusing
+   * stays -- it is the safe direction -- but the sentence the operator acts on
+   * must say which of the two it means. Asserted here as well as in
+   * `verify.test.ts` because this is the surface the wording is READ on.
+   */
   it('names the claim that failed and why, and quotes what it threw away', async () => {
     const result = await refused('Alder Hawthorn died on 2024-01-06.');
     const note = result.notes.join(' ');
     expect(note).toContain('MWDL/description:');
     expect(note).toContain('2024-01-06');
-    expect(note).toMatch(/states no such date/i);
+    expect(note).toMatch(/no date this tool can read/i);
+    expect(note).not.toMatch(/the document states no such date/i);
     expect(note).toContain('What it said, which was not used:');
   });
 

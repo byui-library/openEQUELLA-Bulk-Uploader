@@ -968,14 +968,51 @@ The note names the claim in the model's own words and says why it failed:
 
 ```text
 MWDL/description: left blank -- the model's answer was refused, because it
-stated things this document does not support. "2024-01-06": the document states
-no such date. The model did answer and the call succeeded -- this tool discarded
-the answer -- so there is nothing to retry; read the document and fill this cell
-in by hand. What it said, which was not used: "Died 2024-01-06; Born 1907-11-13"
+stated things this document does not support. "2024-01-06": no date this tool
+can read in the document supports it -- it recognises English month names and
+numeric date forms only. The model did answer and the call succeeded -- this
+tool discarded the answer -- so there is nothing to retry; read the document
+and fill this cell in by hand. What it said, which was not used: "Died
+2024-01-06; Born 1907-11-13"
 ```
 
 There is nothing to retry, because nothing went wrong at the endpoint: the call
 succeeded and the model answered. Read the document and fill the cell in by hand.
+
+**A date is a claim whether or not a year sits beside it.** `He died on January
+6.`, `He died 1/6.` and `Died 2024-01-06T00:00:00Z.` are all checked against the
+document, and all three used to be written out unchecked because no pattern
+matched them and "no form matched" was read as "no claim was made". That gap was
+the difference between this layer working and not working: the first model it was
+measured against happened to answer in ISO, and one that writes `He died on
+January 6` would have walked straight past it.
+
+#### It reads English dates, and says so rather than blaming the document
+
+> **If your collection is catalogued in another language, read this before
+> turning the model on.** The date recogniser knows English month names and the
+> numeric forms (`2024-01-06`, `6.1.2024`, `4/2/98`, `the 6th of January 2024`).
+> `Falleció el 6 de enero de 2024` states a day; this tool sees only the year in
+> it. So a **correct** description of that document, giving the day, is refused
+> and discarded.
+
+Refusing is deliberate and stays: the fabrication this check was built for came
+from a document that genuinely stated no date, and a check that gave up quietly
+on text it could not read would be worse than no check. What the note will never
+say is *"the document states no such date"* — that is a claim about the document,
+and all that is known is that no date **this tool can read** supports the value.
+The sentence in `_notes` says which of the two it means, so an operator is not
+sent to re-read a document that says exactly what they thought it said.
+
+Adding a language means adding its month names to `MONTH_NAMES` in
+`src/core/extract/dates.ts` — both recognisers in the tool are built from that
+one array — and its numeral words to `SMALL` in `src/core/ai/verify.ts`. Nothing
+else in the check is language-specific.
+
+Numbers are compared by value, so the document and the description need not agree
+on convention: `1,200`, `1.200`, `1 200` and `1200` are one number, and a
+document writing `two hundred`, `a dozen`, `the twenty-first` or `three and a
+half` supports `200`, `12`, `21st` and `3.5`.
 
 **Free prose is not checked**, because paraphrase is a legitimate way to describe
 a document and checking it would throw away good descriptions. **And a check that
