@@ -124,7 +124,7 @@ Recorded here the same way `?file=` and `showall=false` were:
   | --- | --- |
   | first `JSESSIONID` only | `username=guest`, `guest=true` |
   | last `JSESSIONID` only | `username=guest`, `guest=true` |
-  | all four | `username=milesm`, `guest=false` |
+  | all four | `username=<operator>`, `guest=false` |
 
 - **The instance is behind an AWS load balancer**, and `AWSALB`/`ROUTEID` carry
   the routing state that lands a request on the backend actually holding the
