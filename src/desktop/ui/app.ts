@@ -96,6 +96,13 @@ interface AppState extends BatchState {
   setupStoredOAuth: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
   /** Where this build keeps its settings. Read once; it cannot change. */
   storage: { path: string; appName: string; packaged: boolean } | null;
+  /**
+   * True when this site needs signing in before its collections can be read.
+   *
+   * Only ever true for an OAuth site with no token: password mode signs in on
+   * every call and needs nothing first.
+   */
+  setupNeedsSignIn: boolean;
   /** The last answer from asking the model endpoint what it offers. */
   modelList: { models: string[] } | { error: string } | null;
   // The model endpoint stored for `setupInstanceId`, or null when there is
@@ -222,6 +229,7 @@ function initialState(): AppState {
     setupStoredUsername: null,
     setupStoredOAuth: null,
     storage: null,
+    setupNeedsSignIn: false,
     modelList: null,
     setupStoredModel: null,
     modelSectionOpen: false,
@@ -319,6 +327,7 @@ function render(): void {
         storedUsername: state.setupStoredUsername,
         storedOAuth: state.setupStoredOAuth,
         storage: state.storage,
+        needsSignIn: state.setupNeedsSignIn,
         modelList: state.modelList,
         onListModels: handleListModels,
         storedModel: state.setupStoredModel,
@@ -603,6 +612,31 @@ async function refreshSetupCollections(): Promise<void> {
   state.setupCollections = null;
   state.setupCollectionsError = null;
   state.setupCollectionsWithheld = false;
+
+  // ASKED BEFORE TRYING. The list needs a signed-in session, and under OAuth
+  // that cannot exist until the operator has been to the Sign-in screen. This
+  // used to be discovered by attempting the call and reporting the refusal as
+  // a problem with collections -- which is not what it is, and is not
+  // something they can act on from here.
+  //
+  // Password mode needs nothing: every call signs in. A failure to ASK is
+  // read as "carry on and try", because a store that will not answer must not
+  // stop a site that would have worked.
+  const instance = instanceById(instanceId);
+  let needsSignIn = false;
+  if (instance?.authMode === 'code') {
+    try {
+      needsSignIn = !(await window.oeq.hasToken(instanceId));
+    } catch {
+      needsSignIn = false;
+    }
+  }
+  if (state.setupInstanceId !== instanceId) return;
+  state.setupNeedsSignIn = needsSignIn;
+  if (needsSignIn) {
+    render();
+    return;
+  }
   render();
   let collections: CollectionSummary[] | null = null;
   let withheld = false;
