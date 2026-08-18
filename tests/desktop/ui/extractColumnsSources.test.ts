@@ -122,3 +122,46 @@ describe('choosing a source from the dropdown', () => {
     expect(chosen).toEqual([null]);
   });
 });
+
+/**
+ * ## A configured column shows what it is configured with
+ *
+ * REPORTED BY THE OPERATOR from the shipped obituary template: every dropdown
+ * read "(nothing -- fill in Excel)" while the hint beside it plainly described
+ * a chain. `sourceOptions` offers what the FILES supply, none of that template's
+ * first sources are among them, no label matched, and each select fell back to
+ * its first entry.
+ */
+describe('a column configured with something the files do not supply', () => {
+  const selected = (html: string): string => {
+    const select = /<select[^>]*class="source-select"[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? '';
+    const marked = /<option value="[^"]*"[^>]*selected[^>]*>([^<]*)</.exec(select);
+    return marked === null ? '(nothing selected)' : marked[1]!.trim();
+  };
+
+  it('shows a dateNear source rather than reporting the column empty', () => {
+    const html = render(chained([{ dateNear: ['passed away', 'died'] }])).innerHTML;
+    expect(selected(html)).toBe('A date after: passed away, died');
+  });
+
+  it('shows a compose source', () => {
+    const html = render(chained([{ compose: 'Died {death_date}' }])).innerHTML;
+    expect(selected(html)).toBe('Built from other columns: Died {death_date}');
+  });
+
+  it('still shows nothing selected for a column with no sources', () => {
+    expect(selected(render(chained([])).innerHTML)).toBe('(nothing selected)');
+  });
+
+  /**
+   * NOT TESTED HERE, AND THE REASON IS THE POINT: choosing the appended entry
+   * back again needs the handler to know WHICH column it belongs to, and it
+   * learns that from `closest('tr')`. `fakeDom` hands out unparented stubs and
+   * always answers null, so a test written here would exercise the stand-in
+   * rather than the screen -- and would pass whatever the screen did.
+   *
+   * What holds the two sides together is that both call `optionsForColumn`,
+   * which is tested directly in tests/desktop/ui/extract/sources.test.ts. The
+   * round trip itself was checked against the running app.
+   */
+});

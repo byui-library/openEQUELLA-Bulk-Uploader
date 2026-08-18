@@ -42,6 +42,41 @@ export function describeSource(source: Source): string {
 }
 
 /**
+ * The options ONE column's dropdown should offer.
+ *
+ * `sourceOptions` offers what the FILES supply -- placeholders in the pattern,
+ * labels and sections actually found -- plus the three that need no evidence.
+ * A column can perfectly well be configured with something else: the shipped
+ * obituary template uses `join`, `dateNear`, `presence` and `compose`, and not
+ * one of them is on that list.
+ *
+ * REPORTED BY THE OPERATOR, who saw every configured column reading
+ * "(nothing -- fill in Excel)". The `<select>` marks an option selected by
+ * comparing labels, nothing matched, and so each one fell back to its first
+ * entry and described a configured column as empty. That is worse than untidy:
+ * a column that reads as unconfigured invites somebody to configure it, and a
+ * shipped template's real sources are then one click from being replaced.
+ *
+ * APPENDED, NEVER INSERTED. The dropdown's value is an index into this list,
+ * so anything but appending would change what an index already on screen
+ * means. THE RENDERER AND THE CHANGE HANDLER MUST BOTH CALL THIS: two lists
+ * built differently would disagree about that index, which is how a click on
+ * one source would store another.
+ */
+export function optionsForColumn(
+  pattern: string,
+  scan: SourceEvidence,
+  sources: Source[],
+): SourceOption[] {
+  const offered = sourceOptions(pattern, scan);
+  const current = sources[0];
+  if (current === undefined) return offered;
+  const label = describeSource(current);
+  if (offered.some((option) => option.label === label)) return offered;
+  return [...offered, { label, source: current }];
+}
+
+/**
  * What runs after the source the single dropdown shows, in order, or null when
  * there is nothing after it.
  *
