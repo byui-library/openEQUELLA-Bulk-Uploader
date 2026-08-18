@@ -53,19 +53,27 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **2149 tests across 104 files** on `feature/llm-provider`.
+exists to remove. **2221 tests across 106 files** on `main`, which now carries everything.
 
-That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
-is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
-`"isPrivate": false, "visibility": "PUBLIC"` for `byui-library/openEQUELLA-Bulk-Uploader`,
-`LICENSE` is present, `package.json` declares `"license": "Apache-2.0"` (commit
-`ac16721`), and the README carries a section written for outside readers. The
-history is **298 commits**, not the ~196 this file used to estimate.
+That was spec 1 of two. **Spec 2 — publishing the repository — happened, and
+has since been REVERSED.** It was public from 2026-08-03 to 2026-08-18 and is
+private again as of 2026-08-18, verified: `gh repo view` reports
+`"isPrivate": true`, and an anonymous request returns 404. `LICENSE` is still
+present and `package.json` still declares `"license": "Apache-2.0"`; a
+public-facing version is a later decision, to be discussed with Edalex.
 
-**Everything committed from here is public the moment it is pushed.** No
-credential, no real name, no real spreadsheet, no institutional detail that was
-only safe behind a private repo. Read the "every person is invented" convention
-below as a hard rule now rather than a tidiness preference.
+**Do not read "private" as "nothing got out."** In those fifteen days GitHub
+recorded **240 clones from 56 unique sources against 1 unique human viewer** —
+the signature of automated clients, not people. The repository was copied
+off-platform, so going private stops future access and retracts nothing. The
+operator’s real name and institutional email are in the published history.
+**A public-facing version therefore needs clean history or a fresh
+repository** — the scrub covers the current tree and not the past.
+
+**Treat everything committed here as though it may become public.** No
+credential, no real name, no real spreadsheet, no institutional detail. The
+"every person is invented" convention below is a hard rule, not a tidiness
+preference, and being private again does not soften it.
 
 **That violation happened once, and is now fixed.** The operator’s real
 surname reached 48 places — test fixtures, two docs, a comment recording a
