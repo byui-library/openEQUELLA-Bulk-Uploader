@@ -1,8 +1,76 @@
-# Session handoff — updated 2026-08-17 (evening)
+# Session handoff — updated 2026-08-18
 
 Read this first.
 
-## RESUME HERE — the desktop app is BLOCKED, and the cause is known
+## RESUME HERE — Task 2 of the sign-in plan
+
+**The desktop app is no longer blocked.** Yesterday's entry (kept below) said
+it was; that is superseded. The operator drove it by hand today and everything
+listed under *What was fixed today* was confirmed on screen by them, not just
+by tests.
+
+**Next:** Task 2 of
+[the sign-in plan](superpowers/plans/2026-08-18-sign-in-states.md) — a
+**Sign in to this site** button on Setup, so an OAuth site can be signed in to
+from where the operator is standing rather than a screen away. Tasks 3, 4 and 5
+follow it; each ends in a marked STOP where the operator tests before the next
+one starts. **Task 1 is done and confirmed** (row 5 of the state table).
+
+### What was fixed today, all confirmed by the operator in the app
+
+Every one of these was reported by them using it, and none was visible to the
+2200-odd tests passing throughout.
+
+- **Setup showed the wrong sign-in method.** `Instance` carries `authMode` and
+  the form dropped it, so the radio always read "Username and password". Worse,
+  saving from that form wrote the wrong mode back, so changing an attachment
+  path could silently change how a site authenticates. Two places had to be
+  fixed: the seed, and an async refresh that landed afterwards and put it back.
+- **A configured OAuth site looked unconfigured.** The client ID and redirect
+  URL were stored correctly and no IPC could read them back. `getOAuth` now
+  answers with both plus `hasSecret`; the secret itself never crosses, and gets
+  the treatment the password already had — a "stored" card with a Forget
+  button. A blank secret on save now means *keep the stored one*.
+- **Every configured column read "(nothing — fill in Excel)".** The dropdown
+  marks an option selected by matching labels against what the FILES supply,
+  and the shipped obituary template's sources — `join`, `dateNear`, `presence`,
+  `compose` — are none of them. `optionsForColumn` appends the column's own
+  source. **Both the renderer and the change handler must call it**: the value
+  is an index into that list.
+- **The columns table was unreadable.** `.screen.wide` had never worked — a
+  child cannot exceed its parent's max-width, and `#app` capped everything at
+  760px. Plus no column sizing, so one 74-character schema path took the width
+  the source column needed.
+- **The model pass ran silently.** Measured on the operator's own machine: the
+  first call takes **48 seconds** while Ollama loads `llama3.1:8b`, warm calls
+  about **4**. One call per eligible cell, in sequence. It now reports per cell
+  as it goes, and `asking` is emitted BEFORE the call.
+- **The model name was typed blind.** `listModels` asks the endpoint what it
+  offers — `/v1/models`, part of the OpenAI-compatible contract, so it is not an
+  Ollama feature. Advisory only: an endpoint without it leaves the box usable.
+- **A windowed operator was told to run a CLI command.** `DEFAULT_LOGIN_HINT`
+  moved to its own module so the sandboxed renderer can import it, and
+  `errorMessage` substitutes a desktop instruction — at the one place every
+  `window.oeq.*` rejection already funnels.
+- **An OAuth site failed to list collections instead of saying it needed
+  signing in.** Task 1: `hasToken` is asked BEFORE the attempt.
+
+### Two facts worth keeping
+
+- **A 403 with an empty body from openEQUELLA means a REJECTED ACCESS TOKEN.**
+  Measured against the live instance: no header, a malformed header, a session
+  cookie and a Bearer token are all answered 200 as the guest; only
+  `X-Authorization: access_token=<invalid|empty>` gives 403 with zero bytes.
+  That is how the whole auth-mode defect was found.
+- **The dev build and the installed app do NOT share a settings store.**
+  Electron derives `userData` from the app name, and `electron dist-desktop/...`
+  has no package.json at its root, so it falls back to `Electron` and writes to
+  `%APPDATA%/Electron`. The isolation is right — a dev run must not overwrite
+  the credentials staff use, and one did during this investigation — but it was
+  invisible, and it cost hours: saves looked lost because the file being watched
+  was the other one. **Setup now says which store is in use.** Anyone preparing
+  a packaged build for a demo must configure it separately.
+
 
 **Start here, not with the language-model work.** The operator ran the desktop
 app against `content-test.byui.edu` and could not get past the Choose screen.

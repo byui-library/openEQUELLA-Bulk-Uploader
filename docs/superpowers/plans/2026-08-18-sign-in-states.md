@@ -48,7 +48,7 @@ were not.
 
 ---
 
-## Task 1: Setup says what a site needs before trying to use it
+## Task 1: Setup says what a site needs before trying to use it — DONE, confirmed by the operator 2026-08-18
 
 **Files:**
 - Modify: `src/desktop/ui/app.ts` — the Setup collection refresh
@@ -62,7 +62,7 @@ cannot work until `exchangeCode` has run once and written `token.enc` — and th
 operator meets that as a failure AFTER choosing to look, phrased as a problem
 with the collection list.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 describe('a site that cannot list collections yet', () => {
@@ -92,11 +92,11 @@ describe('a site that cannot list collections yet', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 `npx vitest run tests/desktop/ui/appNavigation.test.ts -t "cannot list collections"`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add `hasToken(instanceId)` to the IPC surface, answered in the main process from
 the token store. Ask it before refreshing collections: password mode always
@@ -106,9 +106,9 @@ ASKED, NOT INFERRED FROM A FAILURE. Reading the state is how the screen can say
 something before the operator acts; catching an error only lets it explain
 afterwards, and this app already does that badly enough.
 
-- [ ] **Step 4: Verify** — the new tests, then `npm test`, `npm run typecheck`,
+- [x] **Step 4: Verify** — the new tests, then `npm test`, `npm run typecheck`,
       `npm run build:desktop`.
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ### STOP — TEST 1 (operator)
 
