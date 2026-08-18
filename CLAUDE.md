@@ -67,14 +67,15 @@ credential, no real name, no real spreadsheet, no institutional detail that was
 only safe behind a private repo. Read the "every person is invented" convention
 below as a hard rule now rather than a tidiness preference.
 
-**A known violation is already public.** `m.miles` — the operator's real
-surname, not a botanical pseudonym — appears **40 times across 4 test files**:
-`tests/desktop/secrets.test.ts` (24), `tests/desktop/ui/setup.test.ts` (9),
-`tests/desktop/session.test.ts` (6), `tests/desktop/handlers.test.ts` (1). The
-real surname also appears once more as `milesm` in a comment at
-`tests/passwordAuth.test.ts:351`, recording a live cookie measurement. **The
-scrub is deliberately NOT part of the language-model work** and is to be done
-and reviewed as a change of its own; do not fold it into an unrelated commit.
+**That violation happened once, and is now fixed.** The operator’s real
+surname reached 48 places — test fixtures, two docs, a comment recording a
+live cookie measurement — and `schema/sample.xml` carried a whole identity
+block: username, given name, surname and institutional email, from a real
+contributed item kept as the golden output target. All of it is scrubbed, on
+its own branch, reviewed as a change of its own. **It is still in published
+history**; removing it from there is a separate decision nobody has taken.
+Do not re-introduce a real name to describe the incident — this paragraph
+used to quote the surname it was warning about.
 
 **v1.1.1 is released and tagged**; `package.json` carries it. Two things staff
 must be told about that release: **they will
