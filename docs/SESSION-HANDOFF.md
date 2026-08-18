@@ -1,20 +1,106 @@
-# Session handoff — updated 2026-08-18
+# Session handoff — updated 2026-08-18 (end of session)
 
 Read this first.
 
+## Where things stand
+
+**v1.2.0 is released, and the repository is now PRIVATE.**
+
+- **Released:** tag `v1.2.0` on `main`, built by CI, both Windows installers
+  attached to the GitHub Release. The first release since 13 August; it carries
+  58 commits — the whole language-model feature, the security hardening, the
+  privacy scrub, and a day of defects found by using the app.
+- **Private:** the operator made it private after the release completed.
+  Anonymous access returns 404. There were **0 forks, 0 stars, 0 watchers**, so
+  nothing was split off and left public. A public-facing version is a later
+  decision, to be discussed with Edalex.
+- **The operator tested the packaged build and reported everything working.**
+
+### The one number that matters for the public-facing decision
+
+Traffic for the fifteen days the repository was public:
+
+```text
+clones : 240 total, 56 unique
+views  :  76 total,  1 unique
+```
+
+**56 unique cloners against a single unique human viewer is the signature of
+automated clients** — mirroring services, scanners, crawlers. Who they were is
+not knowable; GitHub does not say. The practical reading is that the repository
+was copied off-platform while it was public, so **going private stops future
+access without retracting what was already taken.** The operator's real name and
+institutional email are in that published history.
+
+**Consequence for the public-facing version:** "we scrubbed it before
+publishing" will be true of the current tree and NOT of the history. The honest
+routes are a fresh repository with clean history, or rewriting history before
+republishing. Do not let a future reader assume the scrub covered both.
+
 ## RESUME HERE — Task 2 of the sign-in plan
 
-**The desktop app is no longer blocked.** Yesterday's entry (kept below) said
-it was; that is superseded. The operator drove it by hand today and everything
-listed under *What was fixed today* was confirmed on screen by them, not just
-by tests.
+[The sign-in plan](superpowers/plans/2026-08-18-sign-in-states.md) has fifteen
+credential states, five tasks, and a marked STOP after each where the operator
+tests before the next begins.
 
-**Next:** Task 2 of
-[the sign-in plan](superpowers/plans/2026-08-18-sign-in-states.md) — a
-**Sign in to this site** button on Setup, so an OAuth site can be signed in to
-from where the operator is standing rather than a screen away. Tasks 3, 4 and 5
-follow it; each ends in a marked STOP where the operator tests before the next
-one starts. **Task 1 is done and confirmed** (row 5 of the state table).
+**Task 1 is done and confirmed on screen by the operator.** Next is **Task 2**:
+a **Sign in to this site** button on Setup, so an OAuth site can be signed in to
+from where the operator is standing rather than a screen away. Then Tasks 3
+(an unusable token says which kind of unusable), 4 (switching a site between
+password and OAuth), and 5 (the three Forgets).
+
+## The one branch still open
+
+`chore/dependency-advisories` — **one commit, not in `main`**: fast-xml-parser
+4.5.7 → 5.11.0. Verified when it was written (full suite green, and the schema
+export still parsed to exactly 158 paths, 98 under `BYUI_extended`, with the
+`@attr` case `item/oai/id` present). It was deliberately not merged before the
+release, so `main` still carries 4.5.7.
+
+**The uuid advisory beside it is NOT fixable and that is settled**: it arrives
+through `exceljs`, `exceljs@4.4.0` is already the latest release, and
+`npm audit fix --force` "resolves" it by installing `exceljs@3.4.0` — a
+downgrade in the library that writes every spreadsheet this tool produces. The
+advisory needs a `buf` argument; exceljs calls `uuidv4()` with none, so the
+path is not reachable. `SECURITY.md` records this so nobody force-upgrades on a
+red audit line.
+
+Every other branch has been deleted: `feature/llm-provider`,
+`fix/scrub-operator-identity` and `fix/scrub-real-dates` were each confirmed to
+have **zero commits not in `main`** before removal — this repository has lost
+work twice by trusting `git branch --merged`, which reports ancestry rather than
+whether the work arrived.
+
+## Two things the next session must not assume
+
+- **The dev build and the installed app do NOT share a settings store.**
+  Electron derives `userData` from the app name, and `electron dist-desktop/...`
+  has no package.json at its root, so it falls back to `Electron` and writes to
+  `%APPDATA%/Electron`. The isolation is right and stays — a dev run must not
+  overwrite the credentials staff use, and one did during this investigation —
+  but it was invisible and it cost hours: saves looked lost because the file
+  being watched belonged to the other copy. Setup now says which store is in
+  use. **A packaged build for a demo must be configured separately.**
+- **A 403 with an empty body from openEQUELLA means a REJECTED ACCESS TOKEN.**
+  Measured live: no header, a malformed header, a session cookie and a Bearer
+  token are all answered 200 as the guest; only
+  `X-Authorization: access_token=<invalid|empty>` returns 403 with zero bytes.
+  That measurement is what found the auth-mode defect, and it is the fastest
+  way to tell "not signed in" from "signed in and refused".
+
+## OAuth on content-test has never worked end to end
+
+Worth stating plainly, because two sessions have now been spent near it.
+Password mode is the configuration that has listed collections and uploaded a
+real batch to `content-test.byui.edu` (2026-08-13). OAuth there has produced a
+rejected token (403, empty body) and a sign-in that was never completed. The
+stored redirect URL is `https://content-test.byui.edu` with **no trailing
+slash**, and this project has recorded from a live probe that the no-slash form
+is refused against a client registered with one — unverified for this client,
+and the first thing to try if OAuth is picked up again.
+
+
+## Today, in detail (kept as the record)
 
 ### What was fixed today, all confirmed by the operator in the app
 
