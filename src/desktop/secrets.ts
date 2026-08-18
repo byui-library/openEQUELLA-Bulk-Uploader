@@ -433,7 +433,7 @@ function parseStoredModel(v: unknown): ModelSettings | null {
  * caller reads this as "is it safe to keep the key", and the unknown case has
  * to be the one that drops it.
  */
-function sameOrigin(a: string, b: string): boolean {
+export function sameOrigin(a: string, b: string): boolean {
   try {
     return new URL(a).origin === new URL(b).origin;
   } catch {

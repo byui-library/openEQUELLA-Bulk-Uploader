@@ -25,6 +25,8 @@ export interface ExtractState {
   templateId: string;
   /** True while an IPC call is in flight. Disables the controls rather than stacking calls. */
   busy: boolean;
+  /** What the model pass is doing right now, or null when it is not running. */
+  modelStatus: string | null;
   error: string | null;
   /** Set once the spreadsheet has been written. */
   savedPath: string | null;
@@ -56,6 +58,7 @@ export function initialExtractState(): ExtractState {
     templates: [],
     templateId: '',
     busy: false,
+    modelStatus: null,
     error: null,
     savedPath: null,
     savedWritten: 0,

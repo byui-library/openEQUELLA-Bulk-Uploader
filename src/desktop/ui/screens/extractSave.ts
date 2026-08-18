@@ -10,6 +10,16 @@ export interface ExtractSaveProps {
   aiWritten: number;
   savedPath: string | null;
   busy: boolean;
+  /**
+   * What the model pass is doing right now, or null when it is not running.
+   *
+   * REPORTED BY THE OPERATOR as the app simply taking longer. It is: one call
+   * per eligible cell, in sequence, and the first pays for the runtime to
+   * load the model -- measured at 48 seconds on a real machine, against about
+   * 4 for a warm one. A minute of silence with a disabled button reads as a
+   * hang.
+   */
+  modelStatus: string | null;
   error: string | null;
   onSave(): void;
   onBack(): void;
@@ -71,7 +81,8 @@ export function renderExtractSave(root: HTMLElement, props: ExtractSaveProps): v
           done
             ? `<button id="extract-open-folder" type="button">Open containing folder</button>
                <button id="extract-done" type="button">Done</button>`
-            : `<button id="extract-save" type="button" ${props.busy ? 'disabled' : ''}>
+            : `${props.modelStatus === null ? '' : `<p class="hint" id="extract-model-status">${escapeHtml(props.modelStatus)}</p>`}
+               <button id="extract-save" type="button" ${props.busy ? 'disabled' : ''}>
                  ${props.busy ? 'Writing&hellip;' : 'Save spreadsheet&hellip;'}
                </button>`
         }

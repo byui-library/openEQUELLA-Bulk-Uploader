@@ -1,3 +1,4 @@
+import type { ModelProgress } from '../core/ai/fill.js';
 import type { ItemState, Manifest } from '../core/types.js';
 import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
@@ -247,6 +248,21 @@ export interface OeqApi {
   forgetModel(instanceId: string): Promise<void>;
 
   /**
+   * What the model endpoint at `baseUrl` says it can run.
+   *
+   * ADVISORY, NEVER A GATE. The operator reported not being able to tell
+   * which model they had; the name is typed, and a tag that is nearly right
+   * fails mid-batch rather than in the settings. Plenty of endpoints serve
+   * completions and no list at all -- a failure here must leave the typed
+   * name usable, or a convenience has become an obstacle.
+   *
+   * `apiKey` is what the operator has typed, which may be blank because the
+   * stored one is never rendered back. Blank means "use the key stored for
+   * this site", the same rule the save follows.
+   */
+  listModels(args: { instanceId: string; baseUrl: string; apiKey: string }): Promise<string[]>;
+
+  /**
    * Sign in to one site and confirm who that made you.
    *
    * REJECTS on a guest session rather than resolving one. openEQUELLA answers
@@ -427,6 +443,19 @@ export interface OeqApi {
   openPath(path: string): Promise<void>;
 
   onProgress(cb: (p: RunProgress) => void): void;
+
+  /**
+   * Told what the model pass is doing, cell by cell, while it runs.
+   *
+   * A SEPARATE CHANNEL FROM `onProgress`, which belongs to the upload runner.
+   * They report different work at different times and nothing watches both.
+   *
+   * It exists because the pass can sit silent for a long time: measured on a
+   * real machine, the first call took 48 seconds while the runtime loaded the
+   * model, and warm calls about 4. One HTTP call per eligible cell, in
+   * sequence -- so a batch is minutes, and the app said nothing for all of it.
+   */
+  onModelProgress(cb: (p: ModelProgress) => void): void;
 }
 
 /** What a folder actually contains, and what evidence is available to map from. */
@@ -492,6 +521,7 @@ export const CHANNELS = {
   setModel: 'oeq:setModel',
   getModel: 'oeq:getModel',
   forgetModel: 'oeq:forgetModel',
+  listModels: 'oeq:listModels',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',
   currentUser: 'oeq:currentUser',
@@ -507,6 +537,7 @@ export const CHANNELS = {
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
+  modelProgress: 'oeq:modelProgress',
   extractScan: 'oeq:extractScan',
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',

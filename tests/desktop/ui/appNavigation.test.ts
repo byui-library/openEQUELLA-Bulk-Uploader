@@ -45,6 +45,8 @@ interface Harness {
     saveInstance: number;
     /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
     forgetOAuth: string[];
+    /** Every endpoint `window.oeq.listModels` was asked about, in order. */
+    listModels: { baseUrl: string; apiKey: string }[];
     /** Every instance id `window.oeq.signOut` was called with, in order. */
     signOut: string[];
     /**
@@ -110,6 +112,10 @@ interface BootOptions {
   storedOAuth?: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
   /** Where this build keeps its settings. Defaults to a packaged install. */
   storage?: { path: string; appName: string; packaged: boolean };
+  /** What the model endpoint reports it can run. */
+  models?: string[];
+  /** Make the ask fail, as an endpoint without a model list does. */
+  modelsError?: string;
   /** Make the schema read fail, which leaves the path unchecked. */
   schemaUnreadable?: boolean;
 }
@@ -127,6 +133,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     saveInstance: 0,
     signOut: [] as string[],
     forgetOAuth: [] as string[],
+    listModels: [] as { baseUrl: string; apiKey: string }[],
     modelSaves: [] as Harness['calls']['modelSaves'],
   };
   let stored: InstanceChoice = { ...SITE, ...options.site };
@@ -154,6 +161,11 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     },
     getPassword: async () =>
       options.storedPassword === undefined ? { username: 'a.operator' } : options.storedPassword,
+    listModels: async (args: { baseUrl: string; apiKey: string }) => {
+      calls.listModels.push({ baseUrl: args.baseUrl, apiKey: args.apiKey });
+      if (options.modelsError !== undefined) throw new Error(options.modelsError);
+      return options.models ?? [];
+    },
     getOAuth: async () => (options.storedOAuth === undefined ? null : options.storedOAuth),
     forgetOAuth: async (instanceId: string) => {
       calls.forgetOAuth.push(instanceId);
@@ -1528,5 +1540,69 @@ describe('Setup says which settings store is in use', () => {
     await flush();
 
     expect(harness.app.innerHTML).not.toMatch(/development build/i);
+  });
+});
+/**
+ * ## Which model is on the other end
+ *
+ * REPORTED BY THE OPERATOR: "in the ollama settings I can't tell which ollama
+ * model I have". The name is typed, and a tag that is nearly right --
+ * `llama3.1` where the machine holds `llama3.1:8b` -- does not fail as a
+ * settings mistake. It fails later, in the middle of a batch.
+ *
+ * ADVISORY, NOT A GATE. Endpoints that serve completions without a model list
+ * are common; when the ask fails, the message says so and the typed name is
+ * still usable. A convenience that becomes an obstacle is worse than none.
+ */
+describe('asking the model endpoint what it can run', () => {
+  const setup = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+  };
+
+  it('lists what the endpoint offers', async () => {
+    harness = await boot({ models: ['llama3.1:8b', 'deepseek-r1:14b'] });
+    await setup();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    expect(harness.app.innerHTML).toContain('llama3.1:8b');
+    expect(harness.app.innerHTML).toContain('deepseek-r1:14b');
+  });
+
+  it('asks about the address in the box, not a remembered one', async () => {
+    harness = await boot({ models: ['m'] });
+    await setup();
+    harness.app.fire('#setup-model-base-url', 'input', { target: { value: 'http://127.0.0.1:9999/v1' } });
+    await flush();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    expect(harness.calls.listModels.at(-1)?.baseUrl).toBe('http://127.0.0.1:9999/v1');
+  });
+
+  /** Reachable and holding nothing is a real answer, and a different one from
+   *  "could not ask". */
+  it('says so when the endpoint offers none', async () => {
+    harness = await boot({ models: [] });
+    await setup();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    expect(harness.app.innerHTML).toMatch(/no models/i);
+  });
+
+  it('reports a refusal without losing the typed name', async () => {
+    harness = await boot({ modelsError: 'does not offer a list of models' });
+    await setup();
+    harness.app.fire('#setup-model-name', 'input', { target: { value: 'typed-by-hand' } });
+    await flush();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(html).toMatch(/does not offer a list of models/i);
+    expect(new RegExp('<input[^>]*id="setup-model-name"[^>]*>').exec(html)?.[0]).toContain('typed-by-hand');
   });
 });

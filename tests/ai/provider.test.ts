@@ -898,3 +898,93 @@ describe('timeoutSecondsProblem', () => {
     expect(acceptedHere).toBe(acceptedThere);
   });
 });
+
+/**
+ * ## Asking an endpoint what it can run
+ *
+ * REPORTED BY THE OPERATOR: "in the ollama settings I can't tell which ollama
+ * model I have". The model name was a free-text box, and a mistyped tag --
+ * `llama3.1` where the machine holds `llama3.1:8b` -- fails later, during a
+ * batch, as a completion error rather than as a settings mistake.
+ *
+ * `/models` is part of the OpenAI-compatible contract this provider already
+ * targets, so this stays generic: it is not an Ollama feature and must not
+ * become one. An endpoint that does not implement it says so and the operator
+ * types the name, exactly as before.
+ */
+describe('OpenAiCompatibleProvider.listModels', () => {
+  const list = (ids: string[]) =>
+    new Response(JSON.stringify({ object: 'list', data: ids.map((id) => ({ id })) }), { status: 200 });
+
+  it('asks the endpoint for its model list, beside the completions path', async () => {
+    const { seen, impl } = urlSpy(() => list(['b', 'a']));
+    await new OpenAiCompatibleProvider({ baseUrl: 'https://host/gateway/v1', model: 'm' }, impl).listModels();
+    expect(seen).toEqual(['https://host/gateway/v1/models']);
+  });
+
+  /** Sorted, so the same endpoint offers the same order every time it is asked
+   *  -- a list that reshuffles between clicks reads as a different answer. */
+  it('returns the ids, sorted', async () => {
+    const { impl } = urlSpy(() => list(['llama3.2:3b', 'deepseek-r1:14b', 'llama3.1:8b']));
+    const models = await new OpenAiCompatibleProvider({ baseUrl: 'http://127.0.0.1:11434/v1', model: 'm' }, impl).listModels();
+    expect(models).toEqual(['deepseek-r1:14b', 'llama3.1:8b', 'llama3.2:3b']);
+  });
+
+  /** Reachable, and holding nothing. Not an error: the operator needs to know
+   *  the difference between "cannot ask" and "nothing installed". */
+  it('returns an empty list for an endpoint with no models', async () => {
+    const { impl } = urlSpy(() => list([]));
+    const models = await new OpenAiCompatibleProvider({ baseUrl: 'http://127.0.0.1:11434/v1', model: 'm' }, impl).listModels();
+    expect(models).toEqual([]);
+  });
+
+  it('sends the API key when there is one', async () => {
+    const spy = headerSpy(() => list(['gpt-4o']));
+    await new OpenAiCompatibleProvider(
+      { baseUrl: 'https://api.example.com/v1', model: 'm', apiKey: 'sk-secret' },
+      spy.impl,
+    ).listModels();
+    expect(spy.headers['authorization']).toBe('Bearer sk-secret');
+  });
+
+  /** Many endpoints implement completions and not listing. That is a fact
+   *  about them, not a failure of the settings, and the message says so. */
+  it('says the endpoint does not offer a list when it answers 404', async () => {
+    const impl = (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
+    await expect(
+      new OpenAiCompatibleProvider({ baseUrl: 'https://host/v1', model: 'm' }, impl).listModels(),
+    ).rejects.toThrow(/does not offer a list of models/i);
+  });
+
+  it('reports any other refusal with its status', async () => {
+    const impl = (async () => new Response('denied', { status: 401 })) as unknown as typeof fetch;
+    await expect(
+      new OpenAiCompatibleProvider({ baseUrl: 'https://host/v1', model: 'm' }, impl).listModels(),
+    ).rejects.toThrow(/401/);
+  });
+
+  it('refuses a reply that is not a model list rather than inventing one', async () => {
+    const impl = (async () => new Response('<html>hello</html>', { status: 200 })) as unknown as typeof fetch;
+    await expect(
+      new OpenAiCompatibleProvider({ baseUrl: 'https://host/v1', model: 'm' }, impl).listModels(),
+    ).rejects.toThrow(/did not answer with a list of models/i);
+  });
+
+  /** The same rule the completions path follows: the key is what makes plain
+   *  http unacceptable, and only off this machine. */
+  it('never sends a key over plain http to another host', async () => {
+    const impl = (async () => list(['m'])) as unknown as typeof fetch;
+    expect(
+      () => new OpenAiCompatibleProvider({ baseUrl: 'http://models.example.com/v1', model: 'm', apiKey: 'sk-x' }, impl),
+    ).toThrow(/clear text/i);
+  });
+
+  it('does not put the key in the error when the endpoint refuses', async () => {
+    const impl = (async () => new Response('denied sk-secret', { status: 401 })) as unknown as typeof fetch;
+    const err = (await new OpenAiCompatibleProvider(
+      { baseUrl: 'https://host/v1', model: 'm', apiKey: 'sk-secret' },
+      impl,
+    ).listModels().catch((e: unknown) => e)) as Error;
+    expect(JSON.stringify({ m: err.message, s: (err as ApiError).body })).not.toContain('sk-secret');
+  });
+});
