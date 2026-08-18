@@ -360,6 +360,20 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     ) => secrets().saveInstance(instance, s),
   );
 
+  ipcMain.handle(CHANNELS.getOAuth, async (_e, instanceId: string) => secrets().getOAuth(instanceId));
+
+  ipcMain.handle(CHANNELS.forgetOAuth, async (_e, instanceId: string) => {
+    await secrets().forgetOAuth(instanceId);
+  });
+
+  // Read from Electron itself rather than recomputed here: app.getPath is the
+  // one authority on where this build actually writes.
+  ipcMain.handle(CHANNELS.getStorageInfo, async () => ({
+    path: userData(),
+    appName: app.getName(),
+    packaged: app.isPackaged,
+  }));
+
   ipcMain.handle(CHANNELS.clearSettings, async () => {
     await secrets().clear();
     await tokens().clear();

@@ -1172,3 +1172,132 @@ describe('EncryptedTokenStore', () => {
     expect(raw).not.toContain('sup3rs3cretToken');
   });
 });
+
+/**
+ * ## The OAuth half of what Setup is allowed to see
+ *
+ * REPORTED BY THE OPERATOR, and it blocked the app: they entered a client ID
+ * and secret, saved, reopened Site settings and found both boxes empty. The
+ * values were stored correctly the whole time -- nothing could read them back,
+ * because the only window the renderer had into a stored credential was
+ * `getPassword`, which answers with a username and nothing else.
+ *
+ * THE SECRET IS STILL NEVER RETURNED. It gets exactly what the password gets:
+ * the fact that one is stored, so Setup can say so and offer to forget it. A
+ * renderer that has no use for the value has no business holding it.
+ */
+describe('SecretStore — the OAuth settings Setup may read back', () => {
+  const CODE = { authMode: 'code', clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE } as const;
+
+  it('returns the client id and redirect url, and says a secret is stored', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    expect(await s.getOAuth(instanceKey(LIVE))).toEqual({
+      clientId: 'cid',
+      redirectUri: LIVE,
+      hasSecret: true,
+    });
+  });
+
+  /** The whole point: the value must not cross the boundary. */
+  it('never returns the secret itself', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    expect(JSON.stringify(await s.getOAuth(instanceKey(LIVE)))).not.toContain('shhh');
+  });
+
+  it('answers null for a site that signs in with a password', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, {
+      authMode: 'password',
+      username: 'a.operator',
+      password: 'hunter2',
+    });
+    expect(await s.getOAuth(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('answers null for a site that is not stored at all', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    expect(await s.getOAuth(instanceKey(LIVE))).toBeNull();
+  });
+
+  /**
+   * The same rule the password already has, and for the same reason: Setup
+   * never renders a stored secret back into a field, so the form submitted by
+   * an operator who only renamed the site carries an empty one. Treating that
+   * as a deletion would destroy a credential they can only replace by typing
+   * it again -- which is exactly the complaint that started this.
+   */
+  it('keeps the stored secret when a save carries a blank one', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.saveInstance({ label: 'Renamed', baseUrl: LIVE }, { ...CODE, clientSecret: '' });
+
+    expect(await s.getOAuth(instanceKey(LIVE))).toEqual({
+      clientId: 'cid',
+      redirectUri: LIVE,
+      hasSecret: true,
+    });
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
+      authMode: 'code',
+      clientId: 'cid',
+      clientSecret: 'shhh',
+      redirectUri: LIVE,
+    });
+    expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Renamed');
+  });
+
+  it('replaces the secret when a save carries a new one', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, { ...CODE, clientSecret: 'new-one' });
+    expect((await s.loadSettings(instanceKey(LIVE)) as { clientSecret: string }).clientSecret).toBe('new-one');
+  });
+});
+
+/**
+ * Forgetting an OAuth credential, mirroring `forgetPassword`.
+ *
+ * A site left with `authMode: 'code'` and no secret is a site with no usable
+ * credential, and `loadSettings` reports it as such -- the same answer it
+ * already gives for a password-mode site whose password has been forgotten.
+ * Reporting it as configured would put a Sign in button in front of the
+ * operator that can only fail.
+ */
+describe('SecretStore — forgetting an OAuth credential', () => {
+  const CODE = { authMode: 'code', clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE } as const;
+
+  it('removes the client id and secret', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.forgetOAuth(instanceKey(LIVE));
+    expect(await s.getOAuth(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('leaves the site itself in the list', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, attachmentUuidPath: 'a/b' }, CODE);
+    await s.forgetOAuth(instanceKey(LIVE));
+    const inst = await s.loadInstance(instanceKey(LIVE));
+    expect(inst?.label).toBe('Live');
+    expect(inst?.attachmentUuidPath).toBe('a/b');
+  });
+
+  it('reports the site as having no usable credential', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.forgetOAuth(instanceKey(LIVE));
+    expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('does nothing for a site that has no OAuth credential', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, {
+      authMode: 'password',
+      username: 'a.operator',
+      password: 'hunter2',
+    });
+    await s.forgetOAuth(instanceKey(LIVE));
+    expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Live');
+  });
+});

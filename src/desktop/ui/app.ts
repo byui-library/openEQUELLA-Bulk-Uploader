@@ -90,6 +90,12 @@ interface AppState extends BatchState {
   // The username of the account stored for `setupInstanceId`, or null. The
   // password itself never comes back from the main process (ipc.ts).
   setupStoredUsername: string | null;
+  /** The OAuth credential stored for `setupInstanceId`, minus the secret, or
+   *  null when there is none. What lets Setup show a configured site as
+   *  configured. */
+  setupStoredOAuth: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
+  /** Where this build keeps its settings. Read once; it cannot change. */
+  storage: { path: string; appName: string; packaged: boolean } | null;
   // The model endpoint stored for `setupInstanceId`, or null when there is
   // none -- which is the shipped state and the common one. WITHOUT its key,
   // for the same reason the password never comes back (ipc.ts's ModelChoice).
@@ -212,6 +218,8 @@ function initialState(): AppState {
     setupFields: blankSetupFields(),
     setupRedirectTouched: false,
     setupStoredUsername: null,
+    setupStoredOAuth: null,
+    storage: null,
     setupStoredModel: null,
     modelSectionOpen: false,
     setupCollections: null,
@@ -306,6 +314,8 @@ function render(): void {
         credentialsDropped: state.credentialsDropped,
         fields: state.setupFields,
         storedUsername: state.setupStoredUsername,
+        storedOAuth: state.setupStoredOAuth,
+        storage: state.storage,
         storedModel: state.setupStoredModel,
         modelSectionOpen: state.modelSectionOpen,
         collections: state.setupCollections,
@@ -325,6 +335,7 @@ function render(): void {
         onCollectionChange: handleSetupCollectionChange,
         onLiveChange: handleSetupLiveChange,
         onForgetPassword: handleForgetPassword,
+        onForgetOAuth: handleForgetOAuth,
         onForgetModel: handleForgetModel,
         onModelSectionToggle: handleModelSectionToggle,
         onSave: handleSaveSettings,
@@ -546,6 +557,7 @@ function seedSetupForm(id: string): void {
   };
   state.setupRedirectTouched = false;
   state.setupStoredUsername = null;
+  state.setupStoredOAuth = null;
   state.setupStoredModel = null;
   // Collapsed until `refreshStoredModel` finds an endpoint for the site now
   // being edited. Carrying the previous site's expansion across would open the
@@ -557,6 +569,7 @@ function handleSetupInstanceChange(id: string): void {
   seedSetupForm(id);
   render();
   void refreshStoredUsername();
+  void refreshStoredOAuth();
   void refreshStoredModel();
   void refreshSetupCollections();
 }
@@ -694,6 +707,54 @@ function handleSetupAuthModeChange(mode: SettingsAuthMode): void {
  * say otherwise, and it is also the safe one -- it shows the password fields
  * rather than a Forget button for a credential that may not exist.
  */
+/**
+ * The OAuth credential stored for the site Setup is pointed at, minus the
+ * secret, seeded back into the form.
+ *
+ * WITHOUT THIS A CONFIGURED SITE LOOKED EMPTY. The client id and redirect url
+ * are stored per site and were readable by nothing: Setup showed blank boxes,
+ * the operator could not tell a configured site from an unconfigured one, and
+ * re-entering credentials against a form that did not reflect reality is what
+ * this whole investigation started as.
+ *
+ * Fails soft to null, like its password twin: showing the ordinary empty boxes
+ * is the honest answer when the store cannot say otherwise, and it is the safe
+ * one -- a Forget button for a credential that may not exist is worse.
+ *
+ * THE OPERATOR'S TYPING WINS. A value they have already put in the box is
+ * never overwritten by this, which resolves asynchronously and would otherwise
+ * land on top of it.
+ */
+async function refreshStoredOAuth(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') {
+    state.setupStoredOAuth = null;
+    return;
+  }
+  let stored: { clientId: string; redirectUri: string; hasSecret: boolean } | null = null;
+  try {
+    stored = await window.oeq.getOAuth(instanceId);
+  } catch {
+    stored = null;
+  }
+  // Switched sites while this was in flight: a stale answer must never be
+  // attributed to the site now being edited.
+  if (state.setupInstanceId !== instanceId) return;
+  state.setupStoredOAuth = stored;
+  if (stored !== null) {
+    const fields = { ...state.setupFields };
+    if (fields.clientId === '') fields.clientId = stored.clientId;
+    // Only when the operator has not touched it. seedSetupForm pre-fills this
+    // from the site's address as a starting point; a value the site was really
+    // registered with beats that guess, and what they typed beats both.
+    if (!state.setupRedirectTouched && stored.redirectUri !== '') {
+      fields.redirectUri = stored.redirectUri;
+    }
+    state.setupFields = fields;
+  }
+  render();
+}
+
 async function refreshStoredUsername(): Promise<void> {
   const instanceId = state.setupInstanceId;
   if (instanceId === '') {
@@ -732,6 +793,28 @@ async function refreshStoredUsername(): Promise<void> {
  * the username and password fields back, so the operator can enter another.
  * Distinct from "Reset settings", which wipes every site the app knows.
  */
+/**
+ * "Forget these OAuth credentials". The twin of `handleForgetPassword`, and
+ * the only way to clear a stored client secret: a blank secret on a save means
+ * "keep what is stored" (secrets.ts#saveInstance), because Setup never renders
+ * one back into a field.
+ *
+ * The boxes are emptied too, so what is on screen matches what is stored.
+ */
+async function handleForgetOAuth(): Promise<void> {
+  try {
+    await window.oeq.forgetOAuth(state.setupInstanceId);
+  } catch (err) {
+    state.setupError = errorMessage(err);
+    render();
+    return;
+  }
+  state.setupStoredOAuth = null;
+  state.setupFields = { ...state.setupFields, clientId: '', clientSecret: '' };
+  state.setupError = null;
+  render();
+}
+
 async function handleForgetPassword(): Promise<void> {
   try {
     await window.oeq.forgetPassword(state.setupInstanceId);
@@ -968,6 +1051,7 @@ async function handleSaveSettings(
       ...(modelError === null ? { modelKey: '' } : {}),
     };
     void refreshStoredUsername();
+    void refreshStoredOAuth();
     // NOT ON THE FAILED-MODEL PATH, and this is the same defect as the
     // half-filled section wearing another face. `refreshStoredModel` puts the
     // STORED address and model name back into the boxes; when the write it
@@ -1065,6 +1149,7 @@ function handleAddCredentials(): void {
   state.screen = nextScreen('signin', { type: 'addCredentials' });
   render();
   void refreshStoredUsername();
+  void refreshStoredOAuth();
   void refreshStoredModel();
   void refreshSetupCollections();
 }
@@ -1097,6 +1182,7 @@ function handleSiteSettings(from: Screen): void {
   state.screen = nextScreen(from, { type: 'siteSettings' });
   render();
   void refreshStoredUsername();
+  void refreshStoredOAuth();
   // EVERY ROUTE INTO SETUP HAS TO ASK, and this one most of all: it exists so a
   // setting can be changed without destroying anything, and arriving here
   // without reading the stored endpoint left the boxes holding defaults. An
@@ -1666,6 +1752,15 @@ async function init(): Promise<void> {
   // onProgress adds a NEW ipcRenderer listener on every call, so calling
   // this more than once would fire the handler multiple times per event.
   window.oeq.onProgress(handleProgress);
+  // Read once and never again: where this build stores its settings cannot
+  // change while it runs. Failure is not fatal -- the note it feeds is a
+  // courtesy, and an app that refused to start because it could not name its
+  // own settings folder would be worse than one that stays quiet about it.
+  try {
+    state.storage = await window.oeq.getStorageInfo();
+  } catch {
+    state.storage = null;
+  }
   try {
     // "First run" means the operator has added no site at all. One who
     // configured a single site must land on Sign-in, not be sent back through
@@ -1689,6 +1784,7 @@ async function init(): Promise<void> {
     else {
       // Setup is the launch screen, so nothing else will ask on the way in.
       void refreshStoredUsername();
+      void refreshStoredOAuth();
       void refreshStoredModel();
     }
   } catch (err) {

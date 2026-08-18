@@ -43,6 +43,8 @@ interface Harness {
     clearSettings: number;
     confirm: number;
     saveInstance: number;
+    /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
+    forgetOAuth: string[];
     /** Every instance id `window.oeq.signOut` was called with, in order. */
     signOut: string[];
     /**
@@ -104,6 +106,10 @@ interface BootOptions {
   /** What `getPassword` reports for the site. `null` means no password is
    *  stored, which is the real state of a site that signs in with OAuth. */
   storedPassword?: { username: string } | null;
+  /** The OAuth credential stored for the site, minus the secret. */
+  storedOAuth?: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
+  /** Where this build keeps its settings. Defaults to a packaged install. */
+  storage?: { path: string; appName: string; packaged: boolean };
   /** Make the schema read fail, which leaves the path unchecked. */
   schemaUnreadable?: boolean;
 }
@@ -120,6 +126,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     confirm: 0,
     saveInstance: 0,
     signOut: [] as string[],
+    forgetOAuth: [] as string[],
     modelSaves: [] as Harness['calls']['modelSaves'],
   };
   let stored: InstanceChoice = { ...SITE, ...options.site };
@@ -147,6 +154,16 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     },
     getPassword: async () =>
       options.storedPassword === undefined ? { username: 'a.operator' } : options.storedPassword,
+    getOAuth: async () => (options.storedOAuth === undefined ? null : options.storedOAuth),
+    forgetOAuth: async (instanceId: string) => {
+      calls.forgetOAuth.push(instanceId);
+    },
+    getStorageInfo: async () =>
+      options.storage ?? {
+        path: 'C:\Users\someone\AppData\Roaming\oeq-bulk-uploader',
+        appName: 'oeq-bulk-uploader',
+        packaged: true,
+      },
     getModel: async () => options.model ?? null,
     setModel: async (args: { settings: { baseUrl: string; model: string; budget: number } }) => {
       if (options.setModelFails === true) {
@@ -1388,5 +1405,128 @@ describe('a stored password does not override the stored sign-in method', () => 
     const html = harness.app.innerHTML;
     expect(radio(html, 'setup-auth-code')).toContain('checked');
     expect(radio(html, 'setup-auth-password')).not.toContain('checked');
+  });
+});
+
+/**
+ * ## A configured OAuth site must not look unconfigured
+ *
+ * REPORTED BY THE OPERATOR: they entered a client ID and secret, saved,
+ * reopened Site settings and found both boxes empty. Nothing was lost -- the
+ * values were stored correctly -- but no IPC could read them back, so Setup
+ * showed blanks and there was no way to tell a configured site from an empty
+ * one. They re-entered credentials against a form that did not reflect reality
+ * while the app went on signing in with the stored ones.
+ *
+ * The secret is deliberately NOT shown. It gets what the password already
+ * gets: the fact that one is stored, and a button to forget it.
+ */
+describe('Setup shows a stored OAuth credential', () => {
+  const OAUTH = { clientId: 'the-client-id', redirectUri: 'https://library.example.test/', hasSecret: true };
+
+  /**
+   * The VALUE a field renders with, read from the markup.
+   *
+   * `fakeDom` hands out unparented stubs whose `.value` is always '', so
+   * asking the element is asking the stand-in about itself. The markup is
+   * what the real DOM would be built from.
+   */
+  const rendered = (html: string, id: string): string =>
+    new RegExp(`<input[^>]*id="${id}"[^>]*>`).exec(html)?.[0].match(/value="([^"]*)"/)?.[1] ?? '(no value attribute)';
+
+  const openSetup = async (): Promise<string> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    return harness.app.innerHTML;
+  };
+
+  it('fills the client ID back in', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(rendered(html, 'setup-client-id')).toBe('the-client-id');
+  });
+
+  it('fills the redirect URL back in, verbatim', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(rendered(html, 'setup-redirect-uri')).toBe('https://library.example.test/');
+  });
+
+  it('says a secret is stored instead of showing an empty box', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(html).toMatch(/client secret .*stored/i);
+    expect(harness.app.has('#setup-forget-oauth')).toBe(true);
+  });
+
+  /** The value must never reach the renderer, so it cannot reach the markup. */
+  it('never puts the secret in the page', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(html).not.toContain('hasSecret');
+    expect(JSON.stringify(OAUTH)).toContain('hasSecret');
+  });
+
+  it('forgets the credential when asked, for the site being edited', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    await openSetup();
+    harness.app.fire('#setup-forget-oauth');
+    await flush();
+    expect(harness.calls.forgetOAuth).toEqual(['library-example-test']);
+  });
+
+  /** Nothing stored means the ordinary empty boxes, not a Forget button for a
+   *  credential that does not exist. */
+  it('offers no Forget button for a site with no stored credential', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    const html = await openSetup();
+    expect(harness.app.has('#setup-forget-oauth')).toBe(false);
+    expect(rendered(html, 'setup-client-id')).toBe('');
+  });
+});
+
+/**
+ * ## Which settings store this build is using
+ *
+ * A development run does NOT share a store with the installed app: Electron
+ * derives userData from the app name, and `electron dist-desktop/...` has no
+ * package.json at its root, so it falls back to the default name and writes
+ * somewhere else entirely.
+ *
+ * THE ISOLATION IS RIGHT AND STAYS -- a dev build must not be able to overwrite
+ * the credentials staff use, and one already did during this investigation.
+ * What was wrong is that it was invisible: saves looked lost because the file
+ * being watched was the other one, and 'this used to work' was true of a
+ * configuration the dev build could not see.
+ */
+describe('Setup says which settings store is in use', () => {
+  const DEV = {
+    path: 'C:\Users\someone\AppData\Roaming\Electron',
+    appName: 'Electron',
+    packaged: false,
+  };
+
+  it('warns that a development build keeps its own settings, and names the folder', async () => {
+    harness = await boot({ storage: DEV });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(html).toMatch(/development build/i);
+    expect(html).toMatch(/separate/i);
+    expect(html).toContain('AppData');
+    expect(html).toContain('Electron');
+  });
+
+  /** An installed copy is the ordinary case and must not shout about it. */
+  it('says nothing of the kind in a packaged build', async () => {
+    harness = await boot();
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    expect(harness.app.innerHTML).not.toMatch(/development build/i);
   });
 });
