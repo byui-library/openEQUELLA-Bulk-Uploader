@@ -729,3 +729,143 @@ describe('the presence source', () => {
     expect(buildRow(profile, 'a.pdf', doc('He went somewhere else entirely.')).cells['MWDL/description']).toBe('');
   });
 });
+
+describe('a finished row remembers which cells were only a guess', () => {
+  const doc = (text: string): DocumentData => ({ text, hasTextLayer: true, properties: {}, tables: [] });
+
+  /**
+   * `notes` is a flat list, so a finished row could not say WHICH column was
+   * uncertain -- and "may the model replace this?" is exactly that question.
+   * The information already existed inside buildRow and was being thrown away.
+   */
+  it('records the note against the column it belongs to', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [
+        { path: 'MWDL/title', sources: [{ filenameStem: true }] },
+        { path: 'MWDL/description', sources: [{ opening: true }] },
+      ],
+    };
+    const row = buildRow(
+      profile,
+      'a.pdf',
+      doc(
+        'A sentence long enough to be taken as an opening paragraph by the reader, with plenty of lowercase words in it.',
+      ),
+    );
+    expect(row.flagged['MWDL/description']).toMatch(/start of the document/);
+    // `toBeUndefined` passes for a key that is PRESENT with value undefined, so
+    // it cannot see the note being recorded unconditionally. The contract is
+    // that only flagged columns appear at all, and Task 9's confirmation dialog
+    // will count these keys -- so count them here.
+    expect(Object.keys(row.flagged)).toStrictEqual(['MWDL/description']);
+  });
+
+  it('leaves flagged empty when every value was stated', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/title', sources: [{ filenameStem: true }] }],
+    };
+    // toStrictEqual, not toEqual: toEqual ignores a present-but-undefined key.
+    expect(buildRow(profile, 'a.pdf', EMPTY_DOC).flagged).toStrictEqual({});
+  });
+
+  /**
+   * A transform note is NOT a flag, and these two pin that distinction -- the
+   * entire claim of this change. The source was certain it had the right value
+   * for the column; only rendering it is in doubt. A model replacing it would
+   * be overwriting something the document really does say.
+   */
+  it('does not flag a name the transform could not confidently split', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/creators/creator', sources: [{ label: 'Performer' }], transform: 'people' }],
+    };
+    const row = buildRow(profile, 'a.pdf', {
+      text: 'Performer: Thorn, Rowan',
+      hasTextLayer: true,
+      properties: {},
+      tables: [],
+    });
+    expect(row.notes.join(' ')).toMatch(/may be one name or two/);
+    expect(row.flagged).toStrictEqual({});
+  });
+
+  it('does not flag a date the transform could not recognise', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/date', sources: [{ label: 'Date' }], transform: 'date' }],
+    };
+    const row = buildRow(profile, 'a.pdf', {
+      text: 'Date: sometime in the spring',
+      hasTextLayer: true,
+      properties: {},
+      tables: [],
+    });
+    expect(row.notes.join(' ')).toMatch(/was not recognised as a date/);
+    expect(row.flagged).toStrictEqual({});
+  });
+});
+
+/**
+ * `{ ai: true }` declares intent; it does not fetch. resolve() is synchronous
+ * and `src/core/extract/` never touches the network -- the property that lets
+ * an operator build a spreadsheet without signing in to anything. The async
+ * pass in core/ai/fill.ts acts on the marker afterwards.
+ */
+describe('an ai source resolves to nothing', () => {
+  it('leaves the cell for the later pass rather than fetching anything', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/description', sources: [{ ai: true }] }],
+    };
+    const row = buildRow(profile, 'a.pdf', {
+      text: 'Some text.',
+      hasTextLayer: true,
+      properties: {},
+      tables: [],
+    });
+    expect(row.cells['MWDL/description']).toBe('');
+    // No `_source` either: nothing filled this cell, so claiming one would put
+    // a provenance the row does not have into the spreadsheet.
+    expect(row.sources['MWDL/description']).toBeUndefined();
+  });
+
+  /**
+   * The marker must not swallow the column. An earlier source still wins, and
+   * a source AFTER the marker still gets its turn -- `resolve` returning empty
+   * is what makes both true, and a `return` rather than a fallthrough would
+   * have made the second false.
+   */
+  it('does not stop a later source from filling the cell', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/title', sources: [{ ai: true }, { filenameStem: true }] }],
+    };
+    const row = buildRow(profile, 'a.pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/title']).toBe('a');
+  });
+
+  /**
+   * The other half, and the one that protects a real value: a marker placed
+   * after a source that succeeded must not blank what that source found. This
+   * is the position the profile convention actually puts it in -- last, behind
+   * every deterministic source -- so it is the case that runs on every row.
+   */
+  it('does not blank a value an earlier source already found', () => {
+    const profile: Profile = {
+      version: 1,
+      pattern: '{name}.pdf',
+      columns: [{ path: 'MWDL/title', sources: [{ filenameStem: true }, { ai: true }] }],
+    };
+    const row = buildRow(profile, 'a.pdf', EMPTY_DOC);
+    expect(row.cells['MWDL/title']).toBe('a');
+    expect(row.sources['MWDL/title']).toBe('filename');
+  });
+});

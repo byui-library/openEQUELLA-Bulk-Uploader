@@ -1,3 +1,4 @@
+import type { ModelProgress } from '../core/ai/fill.js';
 import type { ItemState, Manifest } from '../core/types.js';
 import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
@@ -8,7 +9,7 @@ import type { DuplicateFinding } from '../core/duplicates.js';
 // this module is reachable from the sandboxed renderer. A type-only import is
 // erased at compile time and never becomes a runtime require (see
 // tests/desktop/rendererPurity.test.ts).
-import type { Settings, SettingsAuthMode } from './secrets.js';
+import type { ModelSettings, Settings, SettingsAuthMode } from './secrets.js';
 // Also `import type`, and for the same reason: session.ts reaches the auth
 // providers and the filesystem through them. The type is declared where it is
 // produced (session.ts) and re-exported below, so the renderer can name what
@@ -40,6 +41,28 @@ export interface InstanceChoice {
   live: boolean;
   /** The chosen collection's schema, or ''. The key to the offline schema cache. */
   schemaUuid: string;
+}
+
+/**
+ * One site's stored model endpoint, as the renderer sees it.
+ *
+ * MIRRORS `ModelSettings` MINUS THE KEY, exactly as `InstanceChoice` mirrors
+ * `Instance` minus the client secret and `getPassword` answers without the
+ * password. The renderer needs three things from a stored endpoint -- enough to
+ * say what is configured, the numbers the confirmation dialog is built from,
+ * and the fact that there is a key to forget -- and none of those is the key
+ * itself. It is written field by field for the same reason `toInstance` is: a
+ * spread would carry a new secret into the renderer the day one was added to
+ * `ModelSettings`, silently.
+ */
+export interface ModelChoice {
+  baseUrl: string;
+  model: string;
+  budget: number;
+  cap: number;
+  timeoutMs: number;
+  /** Whether a key is stored. The key itself never crosses this boundary. */
+  hasApiKey: boolean;
 }
 
 /**
@@ -176,6 +199,85 @@ export interface OeqApi {
   forgetPassword(instanceId: string): Promise<void>;
 
   /**
+   * The stored OAuth credential for one site, minus the secret.
+   *
+   * The twin of `getPassword`. Setup shows the client id and redirect url in
+   * editable boxes, so it needs their values; it shows the SECRET as the fact
+   * that one is stored, with a button to forget it, so it needs only
+   * `hasSecret`. Handing the renderer a client secret it never renders would
+   * be an exposure with nothing bought for it.
+   *
+   * Without this, a site configured for OAuth came back looking unconfigured:
+   * the values were stored and nothing could read them.
+   */
+  getOAuth(instanceId: string): Promise<{ clientId: string; redirectUri: string; hasSecret: boolean } | null>;
+  /** Remove one site's OAuth credential, leaving the site itself. */
+  forgetOAuth(instanceId: string): Promise<void>;
+
+  /**
+   * Where this copy of the app keeps its settings, and whether it is a
+   * packaged build.
+   *
+   * A DEVELOPMENT RUN DOES NOT SHARE A STORE WITH THE INSTALLED APP: Electron
+   * derives userData from the app name, and `electron dist-desktop/...` has no
+   * package.json at its root, so it falls back to the default name and writes
+   * somewhere else entirely. That is the right isolation -- a dev run must not
+   * be able to overwrite the credentials staff use -- but it is invisible, and
+   * it has already cost one investigation, where saves looked lost because the
+   * file being watched was the other one. Setup says which store is in use.
+   */
+  getStorageInfo(): Promise<{ path: string; appName: string; packaged: boolean }>;
+
+  /**
+   * Is there a usable OAuth token stored for this site?
+   *
+   * ASKED RATHER THAN INFERRED FROM A FAILURE. Setup's collection list needs
+   * a signed-in session; under OAuth that cannot exist until the operator has
+   * been to the Sign-in screen, and the list used to discover this by trying,
+   * failing, and reporting it as a problem with collections. Reading the state
+   * is what lets the screen say something BEFORE they act.
+   *
+   * FALSE IS ALSO THE ANSWER FOR A PASSWORD SITE, which has no token and needs
+   * none -- callers must decide on the auth mode first. It answers exactly the
+   * question it is named for and nothing wider.
+   */
+  hasToken(instanceId: string): Promise<boolean>;
+
+  /**
+   * Store the language-model endpoint one site's extractions may use.
+   *
+   * REJECTS a budget, cap or time limit core's own guards refuse, with core's
+   * own message -- see secrets.ts#setModel. That is what puts a mistyped box in
+   * front of the operator on Setup instead of four hundred rows into a run.
+   */
+  setModel(args: { instanceId: string; settings: ModelSettings }): Promise<void>;
+  /**
+   * This site's model endpoint without its key, or null when none is stored.
+   *
+   * NULL IS WHAT MAKES THE FEATURE ABSENT, and every caller reads it that way:
+   * no confirmation, no request, no mention. A site that has never been given
+   * an endpoint behaves exactly as this tool did before the feature existed.
+   */
+  getModel(instanceId: string): Promise<ModelChoice | null>;
+  /** Behind Setup's "Forget these model settings". Leaves the site alone. */
+  forgetModel(instanceId: string): Promise<void>;
+
+  /**
+   * What the model endpoint at `baseUrl` says it can run.
+   *
+   * ADVISORY, NEVER A GATE. The operator reported not being able to tell
+   * which model they had; the name is typed, and a tag that is nearly right
+   * fails mid-batch rather than in the settings. Plenty of endpoints serve
+   * completions and no list at all -- a failure here must leave the typed
+   * name usable, or a convenience has become an obstacle.
+   *
+   * `apiKey` is what the operator has typed, which may be blank because the
+   * stored one is never rendered back. Blank means "use the key stored for
+   * this site", the same rule the save follows.
+   */
+  listModels(args: { instanceId: string; baseUrl: string; apiKey: string }): Promise<string[]>;
+
+  /**
    * Sign in to one site and confirm who that made you.
    *
    * REJECTS on a guest session rather than resolving one. openEQUELLA answers
@@ -286,8 +388,42 @@ export interface OeqApi {
   extractScan(dir: string, instanceId?: string): Promise<ExtractScan>;
   /** First few rows for the live preview. Cheap enough to call on every edit. */
   extractPreview(args: { dir: string; profile: Profile }): Promise<ExtractedRow[]>;
-  /** Write the spreadsheet. */
-  extractRun(args: { dir: string; profile: Profile; outPath: string }): Promise<ExtractRunReport>;
+  /**
+   * Write the spreadsheet.
+   *
+   * `instanceId` says whose stored model endpoint the run may use, and is the
+   * SAME id the renderer's confirmation was built from (`getModel`). Two reads
+   * of one per-instance entry: without it the operator could be shown one
+   * endpoint and their documents sent to another. Omitted, or naming an
+   * instance with nothing stored, means no model -- and every column that asked
+   * for one says so in `_notes`.
+   */
+  extractRun(args: {
+    dir: string;
+    profile: Profile;
+    outPath: string;
+    instanceId?: string;
+    /**
+     * That the operator has been shown what would be sent and agreed to it.
+     *
+     * THE SIDE THAT SENDS MUST KNOW SOMEBODY AGREED, and before this it did not:
+     * the main process resolved the endpoint from its own read of the store and
+     * sent, carrying no evidence of consent and unable to tell an approved run
+     * from an unapproved one. The two sides are independent reads of the same
+     * store WITH DIFFERENT FAILURE MODES -- the renderer treated a throw from
+     * `getModel` as "no model, carry on without asking", the main process treats
+     * a throw as "no model, send nothing" -- so a transient IPC failure on the
+     * renderer's read produced a full hosted send with no dialog at any point.
+     * They agreed on the interpretation; they did not agree on the observation,
+     * and only the observation gated the send.
+     *
+     * ABSENT OR FALSE MEANS SEND NOTHING. The default is the safe direction, so
+     * a caller that has not thought about consent cannot spend money by
+     * omission, and the renderer's unreadable-store case now declines to send
+     * rather than sending unasked.
+     */
+    modelApproved?: boolean;
+  }): Promise<ExtractRunReport>;
   /**
    * Every valid schema xpath, for the Add-column picker.
    *
@@ -322,6 +458,19 @@ export interface OeqApi {
   openPath(path: string): Promise<void>;
 
   onProgress(cb: (p: RunProgress) => void): void;
+
+  /**
+   * Told what the model pass is doing, cell by cell, while it runs.
+   *
+   * A SEPARATE CHANNEL FROM `onProgress`, which belongs to the upload runner.
+   * They report different work at different times and nothing watches both.
+   *
+   * It exists because the pass can sit silent for a long time: measured on a
+   * real machine, the first call took 48 seconds while the runtime loaded the
+   * model, and warm calls about 4. One HTTP call per eligible cell, in
+   * sequence -- so a batch is minutes, and the app said nothing for all of it.
+   */
+  onModelProgress(cb: (p: ModelProgress) => void): void;
 }
 
 /** What a folder actually contains, and what evidence is available to map from. */
@@ -358,7 +507,18 @@ export interface ExtractScan {
 export interface ExtractRunReport {
   outPath: string;
   written: number;
+  /**
+   * Rows with something genuinely wrong -- the triage number.
+   *
+   * A MODEL WRITE IS NOT COUNTED HERE. Every one carries a note, so counting
+   * notes would report "400 of 400 need review" the moment a model is enabled
+   * and bury the batch's one genuine failure, which is the loss `flagIfEmpty`
+   * exists to prevent. See core/ai/review.ts.
+   */
   flagged: number;
+  /** Rows a language model wrote into. Its own number rather than hidden: a
+   *  machine wrote text that is about to become a permanent record. */
+  aiWritten: number;
 }
 
 export const CHANNELS = {
@@ -370,6 +530,14 @@ export const CHANNELS = {
   setPassword: 'oeq:setPassword',
   getPassword: 'oeq:getPassword',
   forgetPassword: 'oeq:forgetPassword',
+  getOAuth: 'oeq:getOAuth',
+  forgetOAuth: 'oeq:forgetOAuth',
+  getStorageInfo: 'oeq:getStorageInfo',
+  hasToken: 'oeq:hasToken',
+  setModel: 'oeq:setModel',
+  getModel: 'oeq:getModel',
+  forgetModel: 'oeq:forgetModel',
+  listModels: 'oeq:listModels',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',
   currentUser: 'oeq:currentUser',
@@ -385,6 +553,7 @@ export const CHANNELS = {
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
+  modelProgress: 'oeq:modelProgress',
   extractScan: 'oeq:extractScan',
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',

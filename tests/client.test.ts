@@ -537,6 +537,80 @@ describe('escapeWhereValue', () => {
  * naive fix that rebuilt the URL could drop it and break search and discovery
  * at a prefixed site only.
  */
+/**
+ * A NETWORK FAILURE SAYS WHAT FAILED.
+ *
+ * Every API request this tool makes passes through `request()`, and it read
+ * `cause.message` only -- which for Node's fetch is the literal string "fetch
+ * failed" and nothing else. A wrong address, a stopped server and an expired
+ * certificate all reported the same eight words, in the message the operator
+ * is shown and the one they paste into an email asking for help.
+ */
+describe('OeqClient — a network failure names the reason', () => {
+  const stubAuth = {
+    getToken: async () => 'tok',
+    authHeader: async () => ({ 'X-Authorization': 'access_token=tok' }),
+    invalidate: () => {},
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const failWith = (error: unknown) => {
+    vi.stubGlobal('fetch', async () => {
+      throw error;
+    });
+    return new OeqClient('https://oeq.example.edu', stubAuth);
+  };
+
+  it('names a DNS failure Node hid under a cause', async () => {
+    const client = failWith(
+      new TypeError('fetch failed', {
+        cause: new Error('getaddrinfo ENOTFOUND oeq.example.edu'),
+      }),
+    );
+    await expect(client.currentUser()).rejects.toThrow(/ENOTFOUND/);
+  });
+
+  it('names a refused connection', async () => {
+    const client = failWith(
+      new TypeError('fetch failed', { cause: new Error('connect ECONNREFUSED 10.0.0.1:443') }),
+    );
+    await expect(client.currentUser()).rejects.toThrow(/ECONNREFUSED/);
+  });
+
+  it('names a certificate failure', async () => {
+    const client = failWith(
+      new TypeError('fetch failed', { cause: new Error('unable to verify the first certificate') }),
+    );
+    await expect(client.currentUser()).rejects.toThrow(/verify the first certificate/);
+  });
+
+  /** The three above must not all read the same, which is the defect. */
+  it('gives three different failures three different messages', async () => {
+    const messages: string[] = [];
+    for (const reason of ['ENOTFOUND host', 'ECONNREFUSED 1.2.3.4:443', 'certificate expired']) {
+      const client = failWith(new TypeError('fetch failed', { cause: new Error(reason) }));
+      const error = await client.currentUser().catch((e: unknown) => e);
+      messages.push((error as Error).message);
+    }
+    expect(new Set(messages).size).toBe(3);
+  });
+
+  it('still says which request it was', async () => {
+    const client = failWith(new TypeError('fetch failed', { cause: new Error('ECONNRESET') }));
+    await expect(client.currentUser()).rejects.toThrow(/\/api\/content\/currentuser/);
+  });
+
+  it('reports it as a status-0 ApiError, as it always has', async () => {
+    const client = failWith(new Error('boom'));
+    const error = await client.currentUser().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(0);
+  });
+});
+
 describe('OeqClient — an instance hosted under a path prefix', () => {
   const PREFIXED = 'https://library.example.edu/oeq';
 
@@ -585,5 +659,94 @@ describe('OeqClient — an instance hosted under a path prefix', () => {
     const seen = captureFetch({ start: 0, length: 0, available: 0, results: [], resumptionToken: '' });
     await new OeqClient('https://oeq.example.edu', stubAuth).listCollections({});
     expect(new URL(seen[0]!).pathname).toBe('/api/collection');
+  });
+});
+
+/**
+ * ## A SERVER FAILURE SAYS WHAT THE SERVER ANSWERED
+ *
+ * The sibling of the network-failure block above, and found the same way -- by
+ * a person using the app. Setup saved, Choose loaded, and the collection box
+ * read:
+ *
+ *   GET /api/collection?privilege=CREATE_ITEM&length=100&full=true failed
+ *
+ * No status. No reason. Nothing to act on, and nothing to tell an
+ * administrator. The status and body WERE captured -- `ApiError` has carried
+ * both all along -- but they are custom fields on an Error, and Electron's IPC
+ * serialises only `message` across the boundary. So for the desktop app they
+ * may as well not exist: every non-2xx failure in the GUI reads "failed",
+ * permanently.
+ *
+ * 401 and 403 are the ones that matter here. openEQUELLA answers an
+ * unauthenticated request with 200 and an empty list rather than refusing it,
+ * so a 4xx on this endpoint means something quite different from "not signed
+ * in" -- and the operator cannot tell which they are looking at unless the
+ * number reaches the screen.
+ */
+describe('OeqClient — a server failure names the status', () => {
+  const stubAuth = {
+    getToken: async () => 'tok',
+    authHeader: async () => ({ 'X-Authorization': 'access_token=tok' }),
+    invalidate: () => {},
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const respondWith = (status: number, statusText: string, body = '') => {
+    vi.stubGlobal('fetch', async () => new Response(body, { status, statusText }));
+    return new OeqClient('https://oeq.example.edu', stubAuth);
+  };
+
+  it('puts the status in the message, where IPC can carry it', async () => {
+    const client = respondWith(403, 'Forbidden', 'no CREATE_ITEM here');
+    await expect(client.listCollections({ privilege: 'CREATE_ITEM' })).rejects.toThrow(/403/);
+  });
+
+  it('names the status text too, so the number is not alone', async () => {
+    const client = respondWith(403, 'Forbidden', '');
+    await expect(client.listCollections({})).rejects.toThrow(/Forbidden/);
+  });
+
+  it('still names the request that failed', async () => {
+    const client = respondWith(500, 'Internal Server Error');
+    await expect(client.listCollections({ privilege: 'CREATE_ITEM' })).rejects.toThrow(
+      /GET \/api\/collection\?privilege=CREATE_ITEM/,
+    );
+  });
+
+  it("quotes what the server said, so an administrator has something to read", async () => {
+    const client = respondWith(403, 'Forbidden', 'User does not have the required privilege.');
+    await expect(client.listCollections({})).rejects.toThrow(/required privilege/);
+  });
+
+  /** An openEQUELLA error page is HTML, and a wall of markup in a dialog is
+   *  worse than none: collapsed to one line and cut short. */
+  it('collapses an HTML error page instead of pasting it into the dialog', async () => {
+    const html = `<html>\n  <body>\n    <h1>Problem description:</h1>\n    <p>${'x'.repeat(500)}</p>\n  </body>\n</html>`;
+    const client = respondWith(500, 'Internal Server Error', html);
+    const err = (await client.listCollections({}).catch((e: unknown) => e)) as Error;
+    expect(err.message).not.toMatch(/\n/);
+    expect(err.message.length).toBeLessThan(400);
+    expect(err.message).toMatch(/500/);
+  });
+
+  it('says nothing extra when the body is empty', async () => {
+    const client = respondWith(502, 'Bad Gateway', '');
+    const err = (await client.listCollections({}).catch((e: unknown) => e)) as Error;
+    expect(err.message).toMatch(/502 Bad Gateway$/);
+  });
+
+  /** The status and body stay on the error as well, for callers that read
+   *  them in-process -- `retryable` depends on the number. */
+  it('keeps carrying the status and body as fields', async () => {
+    const client = respondWith(503, 'Service Unavailable', 'try later');
+    const err = (await client.listCollections({}).catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(503);
+    expect(err.body).toBe('try later');
+    expect(err.retryable).toBe(true);
   });
 });

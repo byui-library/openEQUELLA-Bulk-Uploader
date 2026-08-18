@@ -246,3 +246,60 @@ describe('readSheet — duplicate column headers', () => {
     }
   });
 });
+
+/**
+ * ## The guard the extractor adds has to come off here
+ *
+ * `src/core/extract/csv.ts` prefixes a value beginning `=`, `+`, `-` or `@`
+ * with an apostrophe, so Excel shows it instead of running it. This side has to
+ * remove it again: `plan` reads that same spreadsheet and uploads what it
+ * finds, so a guard left on would put a character that was never in the
+ * document into a permanent catalogue record.
+ *
+ * Both directions are tested, because over-stripping is the mirror-image bug
+ * and just as silent.
+ */
+describe('the formula guard, coming back in', () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'oeq-sheet-guard-'));
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const read = async (name: string, body: string): Promise<Sheet> => {
+    const path = join(dir, name);
+    await writeFile(path, body, 'utf8');
+    return readSheet(path);
+  };
+
+  it('removes the guard the extractor added', async () => {
+    const sheet = await read('guarded.csv', 'MWDL/title,MWDL/description\nA title,\'=SUM(A1)\n');
+    expect(sheet.rows[0]?.cells['MWDL/description']).toBe('=SUM(A1)');
+  });
+
+  it('leaves an apostrophe a person actually typed alone', async () => {
+    const sheet = await read('apostrophe.csv', 'MWDL/title,MWDL/description\nA title,\'tis the season\n');
+    expect(sheet.rows[0]?.cells['MWDL/description']).toBe("'tis the season");
+  });
+
+  it('reduces a doubled apostrophe to the single one it stood for', async () => {
+    const sheet = await read('doubled.csv', 'MWDL/title,MWDL/description\nA title,"\'\'=SUM(A1)"\n');
+    expect(sheet.rows[0]?.cells['MWDL/description']).toBe("'=SUM(A1)");
+  });
+
+  it('applies to .xlsx too, since an operator may re-save the file from Excel', async () => {
+    const path = join(dir, 'guarded.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('s');
+    ws.addRow(['MWDL/title', 'MWDL/description']);
+    ws.addRow(['A title', "'=SUM(A1)"]);
+    await wb.xlsx.writeFile(path);
+
+    const sheet = await readSheet(path);
+    expect(sheet.rows[0]?.cells['MWDL/description']).toBe('=SUM(A1)');
+  });
+});

@@ -78,6 +78,21 @@ const AMBIGUOUS_ENDINGS = [
 const MAX_SECTION = 4000;
 
 /**
+ * How far back a word boundary may be and still be worth cutting to.
+ *
+ * The point of cutting at a space is to avoid ending mid-word, so the space
+ * being looked for is the one just before the cut. A space three thousand
+ * characters back is not the end of a word -- it means the tail has no spaces
+ * in it at all, which is what a failed OCR run, a base64 blob or a long
+ * identifier looks like, and cutting there throws the section away.
+ *
+ * Scanned material is the operator's real corpus, so this is not a hypothetical
+ * input. `'Abstract ' + 'A ' + 'X'.repeat(9000)` used to yield a section of
+ * length ONE.
+ */
+const LONGEST_WORD = 60;
+
+/**
  * The running head a journal stamps on every page — a title, a volume, a DOI, a
  * page number. It lands in the extracted text wherever the page broke.
  *
@@ -220,8 +235,17 @@ export function readSection(text: string, heading: string): SectionText {
 
   const capped = end > MAX_SECTION;
   const section = body.slice(0, Math.min(end, MAX_SECTION)).trim();
-  // If the cap cut it, stop at the last whole word rather than mid-word.
-  const whole = capped ? section.slice(0, section.lastIndexOf(' ')).trim() : section;
+  // If the cap cut it, stop at the last whole word rather than mid-word -- but
+  // only when there IS a word boundary near the end. `lastIndexOf` returning
+  // -1 fed `slice(0, -1)`, which drops the last character instead of keeping
+  // the string; and an early space in an otherwise unbroken tail collapsed the
+  // whole section to whatever preceded it. A SHORT NON-EMPTY VALUE IS THE WORST
+  // OUTCOME AVAILABLE HERE: `rows.ts` takes the first non-empty source, so one
+  // stray letter satisfies the cascade and the `opening` fallback that would
+  // have produced something usable never runs.
+  const lastSpace = section.lastIndexOf(' ');
+  const cutBackIsWorthIt = lastSpace >= section.length - LONGEST_WORD;
+  const whole = capped && cutBackIsWorthIt ? section.slice(0, lastSpace).trim() : section;
 
   return { text: trimFurniture(whole), capped, midSentence };
 }

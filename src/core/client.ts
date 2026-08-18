@@ -82,6 +82,7 @@
  */
 import type { AuthProvider } from './auth.js';
 import { ApiError, ValidationError } from './errors.js';
+import { describeReason, describeResponse } from './errorReason.js';
 import { instanceEndpoint } from './instanceUrl.js';
 import {
   displayName,
@@ -260,7 +261,16 @@ export class OeqClient {
       // status code. Model it as ApiError status 0, matching auth.ts's
       // convention, so `.retryable` (which treats 0 as transient) applies
       // uniformly here too.
-      const detail = cause instanceof Error ? cause.message : String(cause);
+      //
+      // describeReason, NOT `cause.message`. Node's fetch throws `TypeError:
+      // fetch failed` and puts the reason on `cause`, so this line used to
+      // report the same eight words for a wrong address, a stopped server and
+      // an expired certificate -- through the one function every API request
+      // this tool makes passes. No redactor: nothing here holds a secret, and
+      // the URL is never interpolated into the message (only `path`, which
+      // carries no credential; auth.ts and passwordAuth.ts keep their own
+      // safeEndpoint discipline for the two endpoints that do).
+      const detail = describeReason(cause);
       throw new ApiError(
         `${method} ${path} failed before a response was received: ${detail}`,
         0,
@@ -284,7 +294,22 @@ export class OeqClient {
       return this.request(path, init, true);
     }
     if (!res.ok) {
-      throw new ApiError(`${method} ${path} failed`, res.status, await res.text());
+      const body = await res.text();
+      // THE STATUS GOES IN THE MESSAGE, not only on the error object.
+      //
+      // `ApiError` has always carried `status` and `body`, and in-process
+      // callers read them -- `retryable` is computed from the number. But they
+      // are custom fields on an Error, and Electron's IPC serialises only
+      // `message` across the boundary, so in the desktop app they may as well
+      // not exist. Found by a person using it: Setup saved, Choose loaded, and
+      // the collection box read "GET /api/collection?... failed" with no
+      // status, no reason, and nothing to take to an administrator.
+      //
+      // It matters most on exactly that endpoint, because openEQUELLA answers
+      // an unauthenticated request to it with 200 and an empty list rather
+      // than refusing -- so a 4xx here means something quite different from
+      // "not signed in", and only the number tells them apart.
+      throw new ApiError(`${method} ${path} failed: ${describeResponse(res, body)}`, res.status, body);
     }
     return res;
   }

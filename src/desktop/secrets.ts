@@ -3,6 +3,11 @@ import { unlinkSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { StoredToken, TokenStore } from '../core/tokenStore.js';
 import { instanceKey, normaliseInstanceUrl } from '../core/instanceUrl.js';
+// The ONE copy of each rule about what these numbers may be. See `setModel`.
+import { assertUsableBudget } from '../core/ai/slice.js';
+import { assertUsableCap } from '../core/ai/fill.js';
+import { assertUsableTimeout, MODEL_TIMEOUT_MS } from '../core/ai/provider.js';
+import { ValidationError } from '../core/errors.js';
 
 /**
  * The subset of Electron's `safeStorage` this module needs, extracted as an
@@ -68,6 +73,49 @@ export interface PasswordSettings {
 export type Settings = OAuthSettings | PasswordSettings;
 
 /**
+ * The language-model endpoint one site's extractions may use, as stored.
+ *
+ * ABSENT IS THE DEFAULT AND ABSENT MEANS THE FEATURE DOES NOT EXIST. There is
+ * no "disabled" flag and no partially-configured state: `getModel` answers null
+ * and every surface reads that as "no model", which is what lets this tool be
+ * adopted without a data review. Nothing ships configured.
+ *
+ * PER INSTANCE, and stored in the `models` map beside `passwords` rather than
+ * inside the instance entry, for exactly the reason the passwords are: "forget
+ * these model settings" has to remove the endpoint while leaving the site, its
+ * name, its address and its credentials alone.
+ *
+ * The three numbers are the operator's, and every one of them is validated
+ * against core's own rule rather than a copy -- see `setModel`.
+ */
+export interface ModelSettings {
+  /** Base URL up to and including /v1. Ollama, LM Studio, OpenAI, Azure. */
+  baseUrl: string;
+  /** The model's name AT THAT ENDPOINT (`llama3`, `gpt-4o-mini`). */
+  model: string;
+  /**
+   * Empty for a local runtime, which needs no key. Encrypted with everything
+   * else in this file, and never rendered back into a field -- see
+   * `ModelChoice` in ipc.ts, which is what the renderer is actually given.
+   */
+  apiKey: string;
+  /** Characters to send from ONE document. See core/ai/slice.ts. */
+  budget: number;
+  /** Most REQUESTS one run may make -- not rows. See core/ai/fill.ts. */
+  cap: number;
+  /**
+   * Milliseconds to wait for one completion.
+   *
+   * STORED RATHER THAN FIXED because the timeout message tells the operator to
+   * "allow more time, or use a smaller model", and without this field the first
+   * half of that sentence names an action the app does not offer. A quantised
+   * model on an old CPU is the configuration this whole feature exists to
+   * serve, and it is the one that legitimately exceeds any default.
+   */
+  timeoutMs: number;
+}
+
+/**
  * The key one instance's credentials are stored under: `instanceKey` of its
  * address (core/instanceUrl.ts). A plain string, not a union of known names
  * -- the instances are the operator's own, added on Setup, and this tool
@@ -84,6 +132,14 @@ export type InstanceId = string;
  * production-or-not status and its site address are facts about the SITE, true
  * whether it is reached with a password or with an OAuth client.
  */
+/** What Setup is allowed to know about a stored OAuth credential. Never the secret. */
+export interface StoredOAuth {
+  clientId: string;
+  redirectUri: string;
+  /** Whether a client secret is stored, so Setup can say so and offer to forget it. */
+  hasSecret: boolean;
+}
+
 export interface Instance {
   id: InstanceId;
   /** What the operator calls it. Defaults to the address's host. */
@@ -176,6 +232,18 @@ interface StoredShapeV3 {
   version: 3;
   instances: Record<InstanceId, StoredEntry>;
   passwords: Record<InstanceId, StoredPassword>;
+  /**
+   * PURELY ADDITIVE, AND THE VERSION DELIBERATELY DID NOT CHANGE FOR IT.
+   *
+   * A v3 file written before model settings existed simply has no `models`
+   * key, which `loadAll` reads as "no model configured" with no migration step
+   * -- exactly as `passwords` was added. Bumping the version, or requiring this
+   * key, would send every stored credential through the "unrecognised shape ->
+   * empty" path a SECOND time; the operator has not yet told staff about the
+   * first one, and the Setup notice explaining a blank form would be explaining
+   * the wrong event.
+   */
+  models: Record<InstanceId, ModelSettings>;
 }
 
 /**
@@ -273,6 +341,107 @@ function parseStoredPassword(v: unknown): StoredPassword | null {
 }
 
 /**
+ * What a usable model endpoint IS. Throws, naming the setting, when it is not.
+ *
+ * ONE RULE, ASKED BY BOTH SIDES. `setModel` calls it to refuse a write; the
+ * loader below calls it to discard an entry. They used to disagree: the loader
+ * checked `typeof === 'number'` only, so a hand-edited `budget: 0`, `cap: -1`
+ * or `budget: 1e999` loaded perfectly happily -- every one of them a value the
+ * write side refuses, and `budget: 0` in particular a value that makes every
+ * row in a batch report "no text to read" about files that are full of text.
+ * That is the second opinion this codebase spends its comments arguing against,
+ * sitting inside the module that argues it.
+ *
+ * AN ADDRESS AND A MODEL NAME OR NOTHING. Half an endpoint cannot be called,
+ * and reporting it as configured would put a confirmation dialog in front of
+ * the operator for a run that can only fail on every row. Same rule as a
+ * password with no username: both halves, or neither. This is also why the
+ * write side asks -- `setModel` used to accept a blank address and resolve
+ * successfully, and the entry then read back as `null`: a write reported as
+ * done that did nothing, which is this codebase's oldest shape of defect.
+ *
+ * The three numbers are core's own rules, called rather than restated -- see
+ * `setModel`.
+ */
+function assertUsableModel(settings: ModelSettings): void {
+  if (settings.baseUrl.trim() === '') {
+    throw new ValidationError(
+      'A model endpoint needs an address, such as http://localhost:11434/v1 for a model ' +
+        'running on this computer. Leave both it and the model name empty to configure no model at all.',
+    );
+  }
+  if (settings.model.trim() === '') {
+    throw new ValidationError(
+      `A model endpoint needs the name of a model at that address, such as 'llama3'. ` +
+        'Leave both it and the address empty to configure no model at all.',
+    );
+  }
+  assertUsableBudget(settings.budget);
+  assertUsableCap(settings.cap);
+  assertUsableTimeout(settings.timeoutMs);
+}
+
+/**
+ * One stored model endpoint, or null when it is not a usable one.
+ *
+ * THE SAME RULE THE WRITE SIDE ENFORCES, asked here in the only way a loader
+ * can ask it: by catching. "Unusable" now means one thing in this module
+ * instead of two, so an entry that could never be run is discarded on the way
+ * out rather than being handed to a confirmation dialog and a fill pass that
+ * then refuse it.
+ *
+ * DISCARDING IS THE SAFE DIRECTION. A discarded endpoint is "no model
+ * configured", which is the shipped state and costs the operator nothing but
+ * re-entering it; a loaded-but-unusable one is a batch that looks configured
+ * and fails on every row.
+ *
+ * `timeoutMs` is defaulted when ABSENT -- an entry written before the field
+ * existed keeps working, the same courtesy `live` gets above. It is not
+ * defaulted when present and wrong; that is a value somebody chose.
+ */
+function parseStoredModel(v: unknown): ModelSettings | null {
+  const m = v as Record<string, unknown> | null;
+  if (typeof m !== 'object' || m === null) return null;
+  if (typeof m.baseUrl !== 'string') return null;
+  if (typeof m.model !== 'string') return null;
+  if (typeof m.apiKey !== 'string') return null;
+  if (typeof m.budget !== 'number' || typeof m.cap !== 'number') return null;
+  if (m.timeoutMs !== undefined && typeof m.timeoutMs !== 'number') return null;
+  const settings: ModelSettings = {
+    baseUrl: m.baseUrl,
+    model: m.model,
+    apiKey: m.apiKey,
+    budget: m.budget,
+    cap: m.cap,
+    timeoutMs: typeof m.timeoutMs === 'number' ? m.timeoutMs : MODEL_TIMEOUT_MS,
+  };
+  try {
+    assertUsableModel(settings);
+  } catch {
+    return null;
+  }
+  return settings;
+}
+
+/**
+ * Whether two model addresses are served by the same place, for deciding
+ * whether a key stored for one may be kept for the other.
+ *
+ * ORIGIN, NOT THE WHOLE URL: scheme, host and port are who the key is being
+ * handed to, and changing `/v1` to `/v1beta` on the same gateway is not a
+ * different service. FALSE FOR ANYTHING THAT WILL NOT PARSE, because every
+ * caller reads this as "is it safe to keep the key", and the unknown case has
+ * to be the one that drops it.
+ */
+export function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Credentials are per instance: each openEQUELLA site registers its own OAuth
  * client, so a client ID that works on one is refused outright by another. A
  * site's entry is keyed by `instanceKey` of its address, which is what makes
@@ -339,6 +508,10 @@ export class SecretStore {
 
     const { shape } = await this.loadAll();
     const previous = shape.instances[id];
+    // Read before the branch below: a site can be edited without its secret
+    // ever being rendered, so the save has to be able to keep what is there.
+    const previousSecret =
+      previous !== undefined && previous.authMode !== 'password' ? previous.clientSecret : undefined;
     const site = {
       label,
       baseUrl,
@@ -361,7 +534,17 @@ export class SecretStore {
         shape.passwords[id] = { username: settings.username, password: settings.password };
       }
     } else {
-      const { authMode, clientId, clientSecret, redirectUri } = settings;
+      const { authMode, clientId, redirectUri } = settings;
+      // A BLANK CLIENT SECRET MEANS "leave the stored one alone", not "clear
+      // it" -- exactly the rule the password above already follows, and for
+      // the same reason. Setup never renders a stored secret back into a
+      // field, so the form submitted by an operator who only renamed the site
+      // or changed its attachment path carries an empty one. Treating that as
+      // a deletion destroys a credential they can only replace by typing it
+      // again, which is the complaint that started this. `forgetOAuth` is the
+      // only way to remove one.
+      const clientSecret =
+        settings.clientSecret !== '' ? settings.clientSecret : (previousSecret ?? '');
       shape.instances[id] = { ...site, authMode, clientId, clientSecret, redirectUri };
       // Any password stored for this site is left where it is: switching to
       // Advanced to correct a client id must not throw away a credential the
@@ -390,6 +573,11 @@ export class SecretStore {
       if (!account) return null;
       return { authMode: 'password', username: account.username, password: account.password };
     }
+    // NO SECRET IS NO CREDENTIAL, the same answer this already gives for a
+    // password-mode site whose password has been forgotten. Reporting it as
+    // configured would put a Sign in button in front of the operator that can
+    // only fail.
+    if (stored.clientSecret === '') return null;
     return {
       authMode: 'code',
       clientId: stored.clientId,
@@ -426,6 +614,121 @@ export class SecretStore {
     const { shape } = await this.loadAll();
     if (!shape.passwords[instanceId]) return;
     delete shape.passwords[instanceId];
+    await this.write(shape);
+  }
+
+  /**
+   * What Setup may know about a stored OAuth credential.
+   *
+   * THE SECRET IS NOT IN IT, deliberately and permanently. This is the twin of
+   * `getPassword`, which answers with a username and never the password: the
+   * renderer needs the client id and the redirect url because it shows them in
+   * editable boxes, and it needs to know a secret EXISTS so it can say so and
+   * offer to forget it. It has no use for the value.
+   *
+   * Null when the site signs in with a password, is not stored, or has had its
+   * OAuth credential forgotten -- three different reasons to have nothing to
+   * show, none of which the form renders differently.
+   */
+  async getOAuth(instanceId: InstanceId): Promise<StoredOAuth | null> {
+    const stored = (await this.loadAll()).shape.instances[instanceId];
+    if (!stored || stored.authMode === 'password') return null;
+    if (stored.clientId === '' && stored.clientSecret === '') return null;
+    return {
+      clientId: stored.clientId,
+      redirectUri: stored.redirectUri,
+      hasSecret: stored.clientSecret !== '',
+    };
+  }
+
+  /**
+   * Remove one site's OAuth credential, leaving the site itself.
+   *
+   * The twin of `forgetPassword`, and the only way to clear a client secret --
+   * a blank one on a save means "keep what is stored" (see `saveInstance`).
+   * The site keeps its label, address, attachment path and live flag: those are
+   * facts about the SITE, true whichever credential reaches it.
+   */
+  async forgetOAuth(instanceId: InstanceId): Promise<void> {
+    const { shape } = await this.loadAll();
+    const stored = shape.instances[instanceId];
+    if (!stored || stored.authMode === 'password') return;
+    shape.instances[instanceId] = { ...stored, clientId: '', clientSecret: '', redirectUri: '' };
+    await this.write(shape);
+  }
+
+  /**
+   * Store one site's model endpoint.
+   *
+   * VALIDATED AGAINST CORE'S OWN RULES, NOT A COPY OF THEM. `assertUsableBudget`
+   * (slice.ts), `assertUsableCap` (fill.ts) and `assertUsableTimeout`
+   * (provider.ts) are the code that will actually run with these numbers, and
+   * they are exported precisely so this boundary can ask them. Restating the
+   * rules here would give the settings screen a second opinion free to drift
+   * from the first -- and the failure that produces is the worst-shaped one
+   * available: a value accepted on Setup and refused four hundred rows into a
+   * run, by a message about a text box the operator closed an hour ago.
+   *
+   * Checked BEFORE anything is read or written, so a refused setting leaves the
+   * store exactly as it was rather than half-updated.
+   *
+   * ## A blank key keeps the stored one -- but only for the same endpoint
+   *
+   * Setup never renders a stored key back into its box (see `ModelChoice` in
+   * ipc.ts), so the form submitted by an operator who only raised the character
+   * budget carries an empty key. Reading that as a deletion would throw away a
+   * credential they never touched, and they can only replace it by finding it
+   * again -- the identical trap `saveInstance` avoids for a blank password.
+   *
+   * BUT THE KEY BELONGS TO THE ENDPOINT, not to the site. Carrying it across a
+   * change of address would send a key issued by one service to a different
+   * one: repoint a site from `api.openai.com` to a model on this machine and
+   * the old rule would hand the operator's paid key to their own Ollama, in
+   * plain http, for nothing. So the stored key is kept only when the origin has
+   * not moved; anywhere else, a blank key means no key.
+   */
+  async setModel(instanceId: InstanceId, settings: ModelSettings): Promise<void> {
+    // The SAME function `parseStoredModel` catches on, so a write that succeeds
+    // is a write that reads back. Accepting a blank address here used to
+    // resolve successfully and then read back as null.
+    assertUsableModel(settings);
+    this.requireEncryption();
+    const { shape } = await this.loadAll();
+    const previous = shape.models[instanceId];
+    const apiKey =
+      settings.apiKey !== '' ||
+      previous === undefined ||
+      !sameOrigin(previous.baseUrl, settings.baseUrl)
+        ? settings.apiKey
+        : previous.apiKey;
+    shape.models[instanceId] = { ...settings, apiKey };
+    await this.write(shape);
+  }
+
+  /**
+   * This site's model endpoint, or null when nothing is configured.
+   *
+   * NULL IS WHAT MAKES THE FEATURE ABSENT. Every surface reads it that way, so
+   * a site that has never been given an endpoint gets exactly today's
+   * behaviour: no prompt, no error, no degraded mode, nothing sent anywhere.
+   * Never throws -- an unreadable store is "no model", same as every other read
+   * here.
+   */
+  async getModel(instanceId: InstanceId): Promise<ModelSettings | null> {
+    return (await this.loadAll()).shape.models[instanceId] ?? null;
+  }
+
+  /**
+   * Behind Setup's "Forget these model settings". Removes the endpoint and its
+   * key while leaving the site, its credentials and its per-site settings
+   * alone. Removing what is absent is not an error and costs no write, so it
+   * cannot fail on a machine whose encryption has stopped working -- where
+   * there is nothing to forget in the first place.
+   */
+  async forgetModel(instanceId: InstanceId): Promise<void> {
+    const { shape } = await this.loadAll();
+    if (!shape.models[instanceId]) return;
+    delete shape.models[instanceId];
     await this.write(shape);
   }
 
@@ -495,7 +798,7 @@ export class SecretStore {
   /** Reads and validates the on-disk store. Never throws -- see class doc. */
   private async loadAll(): Promise<LoadResult> {
     const empty = (dropped = false): LoadResult => ({
-      shape: { version: 3, instances: {}, passwords: {} },
+      shape: { version: 3, instances: {}, passwords: {}, models: {} },
       dropped,
     });
     let blob: Buffer;
@@ -528,7 +831,19 @@ export class SecretStore {
           if (account) passwords[id] = account;
         }
       }
-      return { shape: { version: 3, instances, passwords }, dropped: false };
+      // Absent on any v3 file written before model settings existed, which is
+      // simply "no model configured" -- no migration, nothing dropped, every
+      // credential in the file untouched. See `StoredShapeV3.models`: this key
+      // was added exactly the way `passwords` was, and for the same reason.
+      const models: Record<InstanceId, ModelSettings> = {};
+      const rawModels = parsed.models;
+      if (typeof rawModels === 'object' && rawModels !== null) {
+        for (const [id, v] of Object.entries(rawModels as Record<string, unknown>)) {
+          const model = parseStoredModel(v);
+          if (model) models[id] = model;
+        }
+      }
+      return { shape: { version: 3, instances, passwords, models }, dropped: false };
     } catch {
       // Corrupt, hand-edited, or written by a different OS user. Treat as
       // absent: the resulting "set up your credentials" prompt is the right

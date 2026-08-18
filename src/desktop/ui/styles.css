@@ -530,6 +530,17 @@ button.link-button:hover:not(:disabled) {
 
 .screen.wide { max-width: 62rem; }
 
+/* THE PAGE HAS TO MAKE ROOM, or the rule above does nothing.
+
+   `#app` caps every screen at 760px, and a child cannot exceed its parent's
+   max-width -- so `.screen.wide` asked for 62rem and got 760px, silently, for
+   as long as it has existed. The columns screen is the one that needs the
+   room: it carries five columns, one of them holding schema paths seventy
+   characters long, and at 760px the source column was squeezed to a couple of
+   words per line. Reported from a screenshot; no test can see a column that is
+   merely too narrow to read. */
+#app:has(.screen.wide) { max-width: 62rem; }
+
 .segments { font-family: monospace; }
 .segments .segment {
   display: inline-block; padding: 0.15rem 0.4rem;
@@ -545,6 +556,33 @@ table.columns .name code { display: block; font-size: 0.78em; color: var(--muted
 table.columns .handle button { padding: 0 0.35rem; line-height: 1.4; }
 table.columns .remove button { color: var(--error-border); font-size: 1.1em; background: none; border: 0; }
 table.columns .fixed { color: var(--muted); font-size: 0.85em; }
+/* What the one dropdown does not govern. A row, not a paragraph: the default
+   margins push the whole row apart and the source cell is already the widest. */
+table.columns .chain-rest { margin: 0.2rem 0 0; font-size: 0.8em; line-height: 1.35; }
+/* A cell with a chain is taller than one without, so the controls beside it
+   read better aligned to the top than floating in the middle of it. */
+table.columns td.source { vertical-align: top; }
+
+/* COLUMN WIDTHS. Without them the browser sizes each column to its content,
+   and one long schema path takes the width the source column needs: the
+   obituary template's death date is
+   BYUI_extended/BYUI_information/special_collections/alumni_obituary/death_date,
+   74 characters, which crushed the dropdown and its note down to a couple of
+   words per line. Reported from a screenshot -- nothing in the suite can see a
+   column that is merely too narrow to read. */
+table.columns { table-layout: fixed; }
+table.columns td.handle,
+table.columns td.remove { width: 3.5rem; white-space: nowrap; }
+table.columns td.name { width: 30%; }
+table.columns td.source { width: 34%; }
+table.columns td.default { width: 22%; }
+/* The path wraps rather than setting the column's width. `anywhere`, not
+   `break-word`: these have no spaces to break at. */
+table.columns .name code,
+table.columns .name strong { overflow-wrap: anywhere; }
+/* Fill the cell they were given, rather than a default intrinsic width. */
+table.columns td.source select,
+table.columns td.default input { width: 100%; box-sizing: border-box; }
 
 .preview-scroll { overflow-x: auto; }
 table.preview { border-collapse: collapse; font-size: 0.85em; }

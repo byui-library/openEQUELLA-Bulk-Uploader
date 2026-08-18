@@ -272,15 +272,50 @@ function resolve(source: Source, context: Context): Resolved {
     return { value: '' };
   }
 
+  // A marker, not a fetch. `resolve` is synchronous and `src/core/extract/`
+  // never touches the network -- the property that lets an operator build a
+  // spreadsheet without signing in to anything. An async pass acts on the
+  // marker after the row is finished; it does not exist yet, and arrives as
+  // `core/ai/fill.ts` in Task 7 of
+  // docs/superpowers/plans/2026-08-14-llm-provider.md.
+  if ('ai' in source) return { value: '' };
+
   return { value: context.doc.properties[source.property] ?? '' };
 }
 
-function fill(column: Column, context: Context, notes: string[]): { value: string; source?: string } {
+/**
+ * `flagged` records the SAME note against the column it came from, so a
+ * finished row can be asked about one cell rather than only read as prose.
+ *
+ * The rule is structural: a note the SOURCE attached, meaning the source was
+ * not certain this is the right value for this column. That is not the same as
+ * "the document did not state it", and deliberately so -- it INCLUDES a
+ * `dateNear` that found several dates and took the first, and a `section` that
+ * was cut short or matched a word mid-sentence, all of which are text the
+ * document really does print. Being stated is not the test; a source's own
+ * doubt is, and that keeps this in step with the sources without a per-source
+ * table anyone has to remember to update.
+ *
+ * The transform notes below are excluded because they are not the source
+ * speaking. The source was certain it had the right value -- an unrecognised
+ * date, an ambiguous name list -- and only rendering it is in doubt. Replacing
+ * one of those would overwrite a value the document supplied and no source
+ * questioned.
+ */
+function fill(
+  column: Column,
+  context: Context,
+  notes: string[],
+  flagged: Record<string, string>,
+): { value: string; source?: string } {
   for (const source of column.sources) {
     const resolved = resolve(source, context);
     const raw = resolved.value.trim();
     if (raw === '') continue;
-    if (resolved.note !== undefined) notes.push(`${column.path}: ${resolved.note}`);
+    if (resolved.note !== undefined) {
+      notes.push(`${column.path}: ${resolved.note}`);
+      flagged[column.path] = resolved.note;
+    }
 
     if (column.transform === 'people') {
       const { value, ambiguous } = splitPeople(raw);
@@ -309,6 +344,31 @@ function fill(column: Column, context: Context, notes: string[]): { value: strin
 
   if (column.default !== undefined) return { value: column.default, source: 'default' };
   return { value: '' };
+}
+
+/**
+ * The note a `flagIfEmpty` column leaves when nothing was found for it.
+ *
+ * A FUNCTION, AND EXPORTED, so the model pass can take it back off the row when
+ * it fills that cell -- otherwise the commonest case in the design ships a row
+ * telling the operator to hand-fill a cell that now has content. Removing it by
+ * matching a prefix would couple two modules through a sentence, and break
+ * silently the day the wording changes; removing the string this function
+ * returns cannot.
+ *
+ * Says what to DO, and that a blank may be the RIGHT answer. One obituary of
+ * ten states no date anywhere -- it places the death by season and time of day
+ * and nothing else -- so leaving that cell blank is correct, not a failure to
+ * fix. A note that only
+ * reported the absence invited someone to invent a value, which is the failure
+ * this whole tool is built to avoid. The xpath stays so it is obvious which
+ * column to edit.
+ */
+export function expectedButEmptyNote(path: string): string {
+  return (
+    `nothing could be found for '${path}', which this template expects. ` +
+    `Fill that cell in by hand, or leave it blank if the document genuinely does not say.`
+  );
 }
 
 /**
@@ -345,6 +405,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
 
   const cells: Record<string, string> = {};
   const sources: Record<string, string> = {};
+  const flagged: Record<string, string> = {};
 
   // Two passes, because a composed column reads other columns' FINISHED values
   // -- after their transforms, not the raw text they came from. Composed
@@ -353,7 +414,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   const isComposed = (c: Column) => c.sources.some((s) => 'compose' in s);
 
   for (const column of profile.columns.filter((c) => !isComposed(c))) {
-    const { value, source } = fill(column, context, notes);
+    const { value, source } = fill(column, context, notes, flagged);
     const finished = column.path === ATTACHMENT_COLUMN ? filename : value;
     if (column.as !== undefined) context.composed[column.as] = finished;
 
@@ -367,7 +428,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   }
 
   for (const column of profile.columns.filter(isComposed)) {
-    const { value, source } = fill(column, context, notes);
+    const { value, source } = fill(column, context, notes, flagged);
     // The same override as the first pass. profile.ts rejects a composed
     // attachment column, but the two passes applying different rules is how
     // that got through review at all -- a row naming something that is not a
@@ -382,16 +443,7 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   // correct the filename and the batch's single genuine failure looked clean.
   for (const column of profile.columns) {
     if (column.flagIfEmpty && (cells[column.path] ?? '') === '') {
-      // Says what to do, and that a blank may be the RIGHT answer. Alden
-      // Larkspar's obituary states no date anywhere -- only "the early hours of
-      // Saturday morning" -- so leaving his blank is correct, not a failure to
-      // fix. A note that only reported the absence invited someone to invent a
-      // value, which is the failure this whole tool is built to avoid. The
-      // xpath stays so it is obvious which column to edit.
-      notes.push(
-        `nothing could be found for '${column.path}', which this template expects. ` +
-          `Fill that cell in by hand, or leave it blank if the document genuinely does not say.`,
-      );
+      notes.push(expectedButEmptyNote(column.path));
     }
   }
 
@@ -415,5 +467,8 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
     }
   }
 
-  return { cells, sources, notes };
+  // `aiWritten` starts empty and stays empty unless the async model pass runs:
+  // `resolve` returns nothing for an `ai` source and this function never
+  // touches the network. See `core/ai/fill.ts`.
+  return { cells, sources, notes, flagged, aiWritten: {} };
 }

@@ -6,6 +6,7 @@
 // CommonJS extension. See main.ts, which points `preload` at `preload.cjs`.
 import { contextBridge, ipcRenderer } from 'electron';
 import type { OeqApi, RunProgress } from './ipc.js';
+import type { ModelProgress } from '../core/ai/fill.js';
 
 /**
  * CHANNELS is duplicated here rather than imported as a value from `ipc.ts`.
@@ -39,6 +40,14 @@ const CHANNELS = {
   setPassword: 'oeq:setPassword',
   getPassword: 'oeq:getPassword',
   forgetPassword: 'oeq:forgetPassword',
+  getOAuth: 'oeq:getOAuth',
+  forgetOAuth: 'oeq:forgetOAuth',
+  getStorageInfo: 'oeq:getStorageInfo',
+  hasToken: 'oeq:hasToken',
+  setModel: 'oeq:setModel',
+  getModel: 'oeq:getModel',
+  forgetModel: 'oeq:forgetModel',
+  listModels: 'oeq:listModels',
   signIn: 'oeq:signIn',
   signOut: 'oeq:signOut',
   currentUser: 'oeq:currentUser',
@@ -54,6 +63,7 @@ const CHANNELS = {
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
+  modelProgress: 'oeq:modelProgress',
   extractScan: 'oeq:extractScan',
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',
@@ -79,6 +89,14 @@ const api: OeqApi = {
   setPassword: (args) => invoke(CHANNELS.setPassword, args),
   getPassword: (instanceId) => invoke(CHANNELS.getPassword, instanceId),
   forgetPassword: (instanceId) => invoke(CHANNELS.forgetPassword, instanceId),
+  getOAuth: (instanceId) => invoke(CHANNELS.getOAuth, instanceId),
+  forgetOAuth: (instanceId) => invoke(CHANNELS.forgetOAuth, instanceId),
+  getStorageInfo: () => invoke(CHANNELS.getStorageInfo),
+  hasToken: (instanceId) => invoke(CHANNELS.hasToken, instanceId),
+  setModel: (args) => invoke(CHANNELS.setModel, args),
+  getModel: (instanceId) => invoke(CHANNELS.getModel, instanceId),
+  forgetModel: (instanceId) => invoke(CHANNELS.forgetModel, instanceId),
+  listModels: (args) => invoke(CHANNELS.listModels, args),
   signIn: (instanceId) => invoke(CHANNELS.signIn, instanceId),
   signOut: (instanceId) => invoke(CHANNELS.signOut, instanceId),
   currentUser: (instanceId) => invoke(CHANNELS.currentUser, instanceId),
@@ -106,6 +124,9 @@ const api: OeqApi = {
   openPath: (path) => invoke(CHANNELS.openPath, path),
   onProgress: (cb) => {
     ipcRenderer.on(CHANNELS.progress, (_e, p: RunProgress) => cb(p));
+  },
+  onModelProgress: (cb) => {
+    ipcRenderer.on(CHANNELS.modelProgress, (_e, p: ModelProgress) => cb(p));
   },
 };
 

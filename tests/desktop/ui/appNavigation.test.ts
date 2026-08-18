@@ -43,8 +43,22 @@ interface Harness {
     clearSettings: number;
     confirm: number;
     saveInstance: number;
+    /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
+    forgetOAuth: string[];
+    /** Every instance id the collection list was asked for, in order. */
+    listCollections: string[];
+    /** Every endpoint `window.oeq.listModels` was asked about, in order. */
+    listModels: { baseUrl: string; apiKey: string }[];
     /** Every instance id `window.oeq.signOut` was called with, in order. */
     signOut: string[];
+    /**
+     * Every endpoint `window.oeq.setModel` was actually handed, in order.
+     *
+     * A COUNT WOULD NOT DO. The question these tests ask is what reached the
+     * store, and the defect they pin is a save that reported success while
+     * storing something other than what the operator typed -- or nothing at all.
+     */
+    modelSaves: { baseUrl: string; model: string; budget: number }[];
   };
   /** Lets run() resolve, when the harness was booted holding it open. */
   finishRun(): void;
@@ -75,6 +89,17 @@ interface BootOptions {
   fresh?: boolean;
   /** What signOut reports back. Defaults to one session, cleanly ended. */
   signOutReport?: { sessions: number; unconfirmed: number };
+  /** The model endpoint stored for the site. Defaults to none, the shipped state. */
+  model?: {
+    baseUrl: string;
+    model: string;
+    budget: number;
+    cap: number;
+    timeoutMs: number;
+    hasApiKey: boolean;
+  } | null;
+  /** Make storing the model endpoint reject, as a mistyped cap does. */
+  setModelFails?: boolean;
   /** Leave run() unresolved, so the app stays on the Progress screen. */
   holdRun?: boolean;
   /**
@@ -82,6 +107,20 @@ interface BootOptions {
    * attachment field at all, so nothing is filled in unless a test asks for it.
    */
   schemaPaths?: string[];
+  /** What `getPassword` reports for the site. `null` means no password is
+   *  stored, which is the real state of a site that signs in with OAuth. */
+  storedPassword?: { username: string } | null;
+  /** The OAuth credential stored for the site, minus the secret. */
+  storedOAuth?: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
+  /** Where this build keeps its settings. Defaults to a packaged install. */
+  storage?: { path: string; appName: string; packaged: boolean };
+  /** Whether a usable OAuth token is stored for the site. Only a code-mode
+   *  site can lack one; password mode signs in on every call. */
+  hasToken?: boolean;
+  /** What the model endpoint reports it can run. */
+  models?: string[];
+  /** Make the ask fail, as an endpoint without a model list does. */
+  modelsError?: string;
   /** Make the schema read fail, which leaves the path unchecked. */
   schemaUnreadable?: boolean;
 }
@@ -93,7 +132,16 @@ interface BootOptions {
  */
 async function boot(options: BootOptions = {}): Promise<Harness> {
   const dom = fakeDom();
-  const calls = { clearSettings: 0, confirm: 0, saveInstance: 0, signOut: [] as string[] };
+  const calls = {
+    clearSettings: 0,
+    confirm: 0,
+    saveInstance: 0,
+    signOut: [] as string[],
+    forgetOAuth: [] as string[],
+    listCollections: [] as string[],
+    listModels: [] as { baseUrl: string; apiKey: string }[],
+    modelSaves: [] as Harness['calls']['modelSaves'],
+  };
   let stored: InstanceChoice = { ...SITE, ...options.site };
   let releaseRun: () => void = () => {};
 
@@ -112,12 +160,40 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     hasSettings: async () => true,
     currentUser: async () => USER,
     signIn: async () => USER,
-    listCollections: async () => ({ collections: COLLECTIONS, withheld: false }),
+    listCollections: async (instanceId: string) => {
+      calls.listCollections.push(instanceId);
+      return { collections: COLLECTIONS, withheld: false };
+    },
+    hasToken: async () => options.hasToken ?? true,
     fetchSchema: async () => {
       if (options.schemaUnreadable === true) throw new Error('schema unreadable');
       return { uuid: 'schema-1', name: 'Schema', paths: options.schemaPaths ?? ['MWDL/title'] };
     },
-    getPassword: async () => ({ username: 'a.operator' }),
+    getPassword: async () =>
+      options.storedPassword === undefined ? { username: 'a.operator' } : options.storedPassword,
+    listModels: async (args: { baseUrl: string; apiKey: string }) => {
+      calls.listModels.push({ baseUrl: args.baseUrl, apiKey: args.apiKey });
+      if (options.modelsError !== undefined) throw new Error(options.modelsError);
+      return options.models ?? [];
+    },
+    getOAuth: async () => (options.storedOAuth === undefined ? null : options.storedOAuth),
+    forgetOAuth: async (instanceId: string) => {
+      calls.forgetOAuth.push(instanceId);
+    },
+    getStorageInfo: async () =>
+      options.storage ?? {
+        path: 'C:\Users\someone\AppData\Roaming\oeq-bulk-uploader',
+        appName: 'oeq-bulk-uploader',
+        packaged: true,
+      },
+    getModel: async () => options.model ?? null,
+    setModel: async (args: { settings: { baseUrl: string; model: string; budget: number } }) => {
+      if (options.setModelFails === true) {
+        throw new Error('The model run limit must be zero or a positive number, but it was \'-1\'.');
+      }
+      calls.modelSaves.push(args.settings);
+    },
+    forgetModel: async () => {},
     chooseSpreadsheet: async () => 'C:\\batch\\upload.csv',
     chooseFolder: async () => 'C:\\batch\\files',
     clearSettings: async () => {
@@ -694,5 +770,915 @@ describe('Progress carries none of it', () => {
 
     harness.finishRun();
     await flush();
+  });
+});
+
+/**
+ * The optional model endpoint, driven through app.ts rather than asserted as
+ * markup -- because both faults this covers are in the WIRING, and a markup
+ * assertion cannot see either. One is a container that forgets it was opened;
+ * the other is a screen reached by a route that never asked what was stored.
+ */
+describe('the model section on Setup', () => {
+  const STORED = {
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3',
+    budget: 4321,
+    cap: 77,
+    timeoutMs: 300_000,
+    hasApiKey: false,
+  };
+
+  /**
+   * THE `keepCaret` FAILURE CLASS, ARRIVING THROUGH THE CONTAINER.
+   *
+   * Setup re-renders by replacing `innerHTML` on every keystroke. With the
+   * disclosure's `open` derived from what is STORED, an operator who expands
+   * the section to configure their first endpoint loses it on the first
+   * character they type: the fresh `<details>` has no `open`, the section snaps
+   * shut, and `keepCaret`'s `focus()` lands on an element inside a closed
+   * `<details>`, which is not focusable -- so the caret goes too.
+   *
+   * That is the whole of the path that turns the feature on, and it is the one
+   * state in which nothing is stored. `#setup-advanced` does not have this
+   * because its `open` comes from `authMode`, which is app state and does not
+   * change while typing.
+   */
+  it('stays open once the operator opens it, through every keystroke', async () => {
+    const { app } = await boot({ fresh: true });
+    expect(app.innerHTML).toMatch(/<details id="setup-model"(?!\s+open)/);
+
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'h' } });
+    await flush();
+
+    expect(app.innerHTML).toMatch(/<details id="setup-model" open/);
+    expect(app.innerHTML).toContain('value="h"');
+  });
+
+  /** And closes when they close it -- state, not a one-way latch. Deriving
+   *  `open` from "something is stored" would spring it back open here. */
+  it('stays closed once the operator closes it', async () => {
+    const { app } = await boot({ model: STORED });
+    app.fire('#site-settings-btn');
+    await flush();
+    expect(app.innerHTML).toMatch(/<details id="setup-model" open/);
+
+    app.fire('#setup-model', 'toggle', { target: { open: false } });
+    app.fire('#setup-label', 'input', { target: { value: 'Renamed' } });
+    await flush();
+
+    expect(app.innerHTML).toMatch(/<details id="setup-model"(?!\s+open)/);
+  });
+
+  /**
+   * "Site settings for {site}…" exists precisely so a setting can be changed
+   * without destroying credentials (CLAUDE.md). Reached that way with an
+   * endpoint stored and nothing asking the store what it holds:
+   *
+   *  - the "Forget these model settings" button is not rendered at all, so the
+   *    only route to it is switching the dropdown to another site and back,
+   *    which nobody will find; and
+   *  - the boxes hold the DEFAULTS, so an operator who corrects the address
+   *    and saves silently resets their budget, cap and time limit. The raised
+   *    time limit is the setting a slow local model needs, which is the whole
+   *    reason that field is stored rather than fixed.
+   */
+  it.each([
+    ['Site settings, from Choose', async (app: FakeElement) => {
+      await reachChoose(app);
+      app.fire('#choose-site-settings');
+    }],
+    ['Site settings, from Sign-in', async (app: FakeElement) => {
+      app.fire('#site-settings-btn');
+    }],
+  ])('reads what is stored when Setup is reached by %s', async (_label, go) => {
+    const { app } = await boot({ model: STORED });
+    await go(app);
+    await flush();
+
+    expect(app.has('#setup-model-forget')).toBe(true);
+    expect(app.innerHTML).toContain('llama3');
+    // The stored numbers, not MODEL_FIELD_DEFAULTS. 300000ms shows as 300s.
+    expect(app.innerHTML).toContain('value="4321"');
+    expect(app.innerHTML).toContain('value="77"');
+    expect(app.innerHTML).toContain('value="300"');
+    expect(app.innerHTML).not.toContain('value="8000"');
+  });
+
+  /** First run lands straight on Setup without passing through the dropdown,
+   *  so `init` has to ask as well. A site with an endpoint that reaches Setup
+   *  this way is otherwise shown a blank, defaulted section. */
+  it('reads what is stored when Setup is the launch screen', async () => {
+    const { app } = await boot({ model: STORED, site: {}, fresh: false });
+    // Sign-in is the launch screen with a saved site, so go to Setup the way
+    // an operator with no credentials would.
+    app.fire('#site-settings-btn');
+    await flush();
+    expect(app.has('#setup-model-forget')).toBe(true);
+  });
+
+  /** Nothing stored is the shipped state: no card, nothing to forget, and the
+   *  section closed. */
+  it('offers nothing to forget when no endpoint is stored', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    expect(app.has('#setup-model-forget')).toBe(false);
+    expect(app.innerHTML).toMatch(/<details id="setup-model"(?!\s+open)/);
+  });
+});
+
+/**
+ * ## Typed input must never be discarded in silence
+ *
+ * REPORTED BY HAND-TESTING. The operator expanded the model section, typed a
+ * model name, left the address blank, and clicked Save credentials. The save
+ * reported success. They navigated away, came back, and both boxes were empty.
+ *
+ * The mechanism was `modelFrom` answering `null` for a half-filled section --
+ * the SAME `null` it answers for an untouched one -- so `app.ts` stored nothing
+ * and ran the ordinary success path. A step that could not run, reported as
+ * though it had, is this codebase's own recurring defect (CLAUDE.md: the
+ * duplicate check, the identifier check, `guest: true`, the cookie jar).
+ *
+ * Asserted here rather than only against `modelEntryProblem`'s string, because
+ * the failure was never the wording: it was that no wording reached a screen.
+ */
+describe('a half-filled model section', () => {
+  /** Type into the model section without completing it. */
+  async function typeHalf(app: FakeElement, over: Record<string, string>): Promise<void> {
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    for (const [selector, value] of Object.entries(over)) {
+      app.fire(selector, 'input', { target: { value } });
+    }
+    app.fire('#setup-form', 'submit');
+    await flush();
+  }
+
+  it('refuses the save and names the box that is empty', async () => {
+    const { app } = await boot();
+    await typeHalf(app, { '#setup-model-name': 'llama3' });
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).toContain('Model address');
+  });
+
+  it('names the model-name box when only the address was typed', async () => {
+    const { app } = await boot();
+    await typeHalf(app, { '#setup-model-base-url': 'http://localhost:11434/v1' });
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).toContain('Model name at that address');
+  });
+
+  /** NOTHING IS WRITTEN. The old path stored the site and reported success;
+   *  the correction is worthless if it only adds a sentence to that. */
+  it('writes neither the site nor the model settings', async () => {
+    const { app, calls } = await boot();
+    await typeHalf(app, { '#setup-model-name': 'llama3' });
+
+    expect(calls.saveInstance).toBe(0);
+    expect(calls.modelSaves).toEqual([]);
+  });
+
+  /** And the typed value is still on screen, so the refusal costs a keystroke
+   *  rather than the work. This is what "discarded in silence" cost. */
+  it('leaves the operator on Setup with what they typed still in the box', async () => {
+    const { app } = await boot();
+    await typeHalf(app, { '#setup-model-name': 'llama3' });
+
+    expect(app.has('#setup-form')).toBe(true);
+    expect(app.innerHTML).toContain('value="llama3"');
+  });
+
+  /** The message names a field, and `<details>` can be closed over the field it
+   *  names -- a refusal pointing at a box the operator cannot see reads as the
+   *  app refusing for no reason. */
+  it('opens the model section, so the box it names is visible', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'llama3' } });
+    // Closed again, as an operator who tidied up before saving would leave it.
+    app.fire('#setup-model', 'toggle', { target: { open: false } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/<details id="setup-model" open/);
+  });
+
+  /** A key with no endpoint is the same silent discard, and the key is the one
+   *  box whose contents cannot be recovered by looking at the screen. */
+  it('refuses a key typed with no address and no model name', async () => {
+    const { app, calls } = await boot();
+    await typeHalf(app, { '#setup-model-key': 'sk-typed' });
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(calls.saveInstance).toBe(0);
+    expect(app.innerHTML).toContain('value="sk-typed"');
+  });
+
+  /**
+   * THE ZERO-PREREQUISITE CASE, AND THE ONE THIS CHANGE MOST EASILY BREAKS.
+   * An operator who never touched the section must see no change whatsoever --
+   * no prompt, no error, no mention of a model. The three numbers arrive
+   * pre-filled, so a check that read them as intent would fire here.
+   */
+  it('says nothing, and saves normally, when the section was never touched', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-form', 'submit');
+    // SYNCHRONOUSLY, BEFORE THE SAVE CAN RESOLVE. A refusal renders and returns
+    // with no await in front of it, so this is the one moment at which a message
+    // that should not exist would be on screen -- after the flush below the
+    // screen has moved on and its absence proves nothing.
+    expect(app.innerHTML).not.toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).not.toMatch(/class="error"/);
+    await flush();
+
+    expect(calls.saveInstance).toBe(1);
+    expect(calls.modelSaves).toEqual([]);
+    // Left Setup, as an ordinary save does.
+    expect(app.has('#setup-form')).toBe(false);
+  });
+
+  /** Both boxes filled in stores normally, which is the case the refusal must
+   *  not have swallowed. */
+  it('stores the endpoint when both boxes are filled in', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'http://localhost:11434/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'llama3' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.modelSaves).toHaveLength(1);
+    expect(calls.modelSaves[0]).toMatchObject({ baseUrl: 'http://localhost:11434/v1', model: 'llama3' });
+    expect(app.has('#setup-form')).toBe(false);
+  });
+});
+
+/**
+ * The variant that would have been worse than the reported one: an endpoint is
+ * already stored and the operator returns to Setup to change ONE number.
+ *
+ * If the address and model-name boxes came back BLANK, saving after changing
+ * only the budget would hand `modelFrom` a half-filled section -- so with the
+ * old code the endpoint was silently left stale, and with a naive fix it would
+ * be refused with a message about boxes the operator was never shown filled.
+ *
+ * They do not come back blank: `refreshStoredModel` (app.ts) puts the stored
+ * address, model name and all three numbers back into the form on every route
+ * into Setup, and withholds only the key. These tests pin that, because the
+ * refusal added above depends on it -- repopulation is what makes "the address
+ * box is empty" mean the operator emptied it.
+ */
+describe('changing one number on a stored endpoint', () => {
+  const STORED_ENDPOINT = {
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3',
+    budget: 4321,
+    cap: 77,
+    timeoutMs: 300_000,
+    hasApiKey: true,
+  };
+
+  it('shows the stored address and model name in the boxes, not blank ones', async () => {
+    const { app } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+
+    expect(app.innerHTML).toContain('value="http://localhost:11434/v1"');
+    expect(app.innerHTML).toContain('value="llama3"');
+  });
+
+  /** The key is the exception, and stays the exception: a stored secret is
+   *  never rendered back where it can be read off the screen. */
+  it('still withholds the stored key', async () => {
+    const { app } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+
+    expect(app.innerHTML).not.toContain('sk-');
+    expect(app.innerHTML).toMatch(/key is stored/i);
+  });
+
+  it('saves the changed number without disturbing the address or the model name', async () => {
+    const { app, calls } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model-budget', 'input', { target: { value: '2000' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.modelSaves).toEqual([
+      expect.objectContaining({
+        baseUrl: 'http://localhost:11434/v1',
+        model: 'llama3',
+        budget: 2000,
+        cap: 77,
+        timeoutMs: 300_000,
+      }),
+    ]);
+    // Nothing was refused, so Setup was left as an ordinary save leaves it.
+    expect(app.has('#setup-form')).toBe(false);
+  });
+
+  /** Clearing the address on a stored endpoint is a deliberate act, and it is
+   *  now answered rather than silently ignored -- the endpoint is neither
+   *  updated nor removed, and the operator is told which box to fix. */
+  it('refuses a save that empties the address of a stored endpoint', async () => {
+    const { app, calls } = await boot({ model: STORED_ENDPOINT });
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model-base-url', 'input', { target: { value: '' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/nothing has been saved/i);
+    expect(app.innerHTML).toContain('Model address');
+    expect(calls.modelSaves).toEqual([]);
+    expect(calls.saveInstance).toBe(0);
+    // And Forget is still the only way to remove one.
+    expect(app.has('#setup-model-forget')).toBe(true);
+  });
+});
+
+/**
+ * Saving the site and saving its model endpoint are two writes, and the second
+ * can fail on its own.
+ */
+describe('when the site saves but the model settings do not', () => {
+  /** Fill in enough of Setup to make `modelFrom` produce an endpoint. */
+  function typeAnEndpoint(app: FakeElement): void {
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'https://api.openai.com/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'gpt-4o-mini' } });
+  }
+
+  /**
+   * `saveInstance` COMMITS BEFORE `setModel` RUNS, so a rejection there is not
+   * a failed save -- it is half a save. Reported as a total failure, the
+   * operator read "nothing was saved" while a site that really did exist was
+   * missing from the dropdown, and the form was still pointed at nothing.
+   */
+  it('says which half was saved, rather than reporting a total failure', async () => {
+    const { app } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/were saved/i);
+    expect(app.innerHTML).toMatch(/model settings were not/i);
+    // Core's own words about the setting at fault, carried through.
+    expect(app.innerHTML).toMatch(/run limit/i);
+  });
+
+  /** Left on the screen the box is on, so the mistake can be corrected --
+   *  not carried off to Choose as a success. */
+  it('stays on Setup', async () => {
+    const { app } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.has('#setup-model-base-url')).toBe(true);
+    expect(app.has('#setup-form')).toBe(true);
+  });
+
+  /** The site half really did commit, so the app's own picture of what exists
+   *  has to catch up with the disk whatever happened to the second write. */
+  it('still refreshes the saved-site list', async () => {
+    const { app, calls } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.saveInstance).toBe(1);
+    expect(app.innerHTML).toContain('Library');
+  });
+
+  /** The typed key is the one thing the operator cannot get back by looking at
+   *  the screen. It is cleared only once it has actually reached the store. */
+  it('keeps the typed key so the retry does not need it typed again', async () => {
+    const { app } = await boot({ setModelFails: true });
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-model-key', 'input', { target: { value: 'sk-typed' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toContain('value="sk-typed"');
+  });
+
+  /** And the ordinary path is unchanged: both writes succeed, Setup is left. */
+  it('leaves Setup as usual when both halves save', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app);
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.has('#setup-model-base-url')).toBe(false);
+  });
+});
+
+/**
+ * The one setting whose box and whose rule speak different units.
+ *
+ * Setup asks for SECONDS; `ProviderConfig.timeoutMs` and every guard behind it
+ * work in milliseconds, and `modelFrom` multiplies before anything is checked.
+ * Left to come back from the store, the refusal named a unit the operator was
+ * never shown and quoted a number they never typed.
+ */
+describe('a mistyped time limit', () => {
+  function typeAnEndpoint(app: FakeElement, seconds: string): void {
+    app.fire('#setup-model', 'toggle', { target: { open: true } });
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'http://localhost:11434/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'llama3' } });
+    app.fire('#setup-model-timeout', 'input', { target: { value: seconds } });
+  }
+
+  it('is refused in seconds, on the screen the box is on', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '5000000');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/seconds/);
+    expect(app.innerHTML).not.toMatch(/millisecond/i);
+    // Never the converted number, which is what the old message quoted.
+    expect(app.innerHTML).not.toContain('5000000000');
+  });
+
+  it('is refused for a blank box without ever showing the word NaN', async () => {
+    const { app } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '   ');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(app.innerHTML).toMatch(/seconds/);
+    expect(app.innerHTML).not.toContain('NaN');
+  });
+
+  /** Nothing is written, so the site is not half-saved on the way to a message
+   *  about a text box. */
+  it('saves nothing at all', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '0');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.saveInstance).toBe(0);
+  });
+
+  it('accepts an ordinary value and saves', async () => {
+    const { app, calls } = await boot();
+    app.fire('#site-settings-btn');
+    await flush();
+    typeAnEndpoint(app, '300');
+    app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(calls.saveInstance).toBe(1);
+  });
+});
+
+/**
+ * THE SAME DEFECT, WEARING ANOTHER FACE, found while fixing the first one.
+ *
+ * The reported bug was typed input discarded on save. This one discards it a
+ * beat later, on the one path that most needs it kept: `setModel` fails, the
+ * screen says so and asks the operator to correct a setting -- and
+ * `refreshStoredModel`, fired unconditionally after every save, then puts the
+ * STORED address and model name back into the boxes. Nothing was written, so
+ * what it restores is the OLD endpoint, replacing the correction in the very
+ * fields the error message is pointing at.
+ *
+ * Reachable only with an endpoint already stored AND the write failing, which is
+ * why the existing "keeps the typed key" test never saw it: that one boots with
+ * nothing stored, so `refreshStoredModel` finds null and touches no field.
+ */
+describe('a failed model write with an endpoint already stored', () => {
+  const OLD = {
+    baseUrl: 'http://old.example.test/v1',
+    model: 'old-model',
+    budget: 4321,
+    cap: 77,
+    timeoutMs: 300_000,
+    hasApiKey: false,
+  };
+
+  async function correctAndSave(): Promise<FakeElement> {
+    const { app } = await boot({ setModelFails: true, model: OLD });
+    app.fire('#site-settings-btn');
+    await flush();
+    app.fire('#setup-model-base-url', 'input', { target: { value: 'http://new.example.test/v1' } });
+    app.fire('#setup-model-name', 'input', { target: { value: 'new-model' } });
+    app.fire('#setup-form', 'submit');
+    await flush();
+    return app;
+  }
+
+  it('leaves the operator’s correction in the boxes', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).toContain('value="http://new.example.test/v1"');
+    expect(app.innerHTML).toContain('value="new-model"');
+  });
+
+  it('does not restore the endpoint that is still on disk over it', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).not.toContain('value="http://old.example.test/v1"');
+    expect(app.innerHTML).not.toContain('value="old-model"');
+  });
+
+  /** The card still describes what is actually stored, because that is what is
+   *  actually stored -- the failed write changed nothing. */
+  it('still describes the stored endpoint, and still offers to forget it', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).toContain('old-model');
+    expect(app.has('#setup-model-forget')).toBe(true);
+  });
+
+  /** And the half-a-save message is unchanged: the site really did commit. */
+  it('still says which half was saved', async () => {
+    const app = await correctAndSave();
+    expect(app.innerHTML).toMatch(/were saved/i);
+    expect(app.innerHTML).toMatch(/model settings were not/i);
+  });
+});
+
+/**
+ * ## Setup must show how the site ACTUALLY signs in
+ *
+ * REPORTED BY THE OPERATOR, and it blocked the app entirely: they entered an
+ * OAuth client ID and secret, saved, reopened Site settings, and both boxes
+ * were empty with "Use OAuth client credentials" no longer selected. The app
+ * meanwhile kept signing in with the stored OAuth client, and openEQUELLA
+ * refused the token -- a 403 with an empty body, which is what a rejected
+ * access token looks like and nothing else does.
+ *
+ * The cause: `Instance` carries `authMode` and it reaches the renderer, but
+ * `seedSetupForm` rebuilt the form as `blankSetupFields()` plus five instance
+ * fields and dropped it, and `blankSetupFields` hardcodes 'password'.
+ *
+ * THE SAME DEFECT CLASS AS `setDefault`: a form that rebuilds a record from
+ * defaults and silently discards the fields it does not display. Here the
+ * discarded field is how you sign in, so the operator cannot see the truth and
+ * a later save can silently change it.
+ */
+describe('Setup shows the sign-in method the site is stored with', () => {
+  /** The whole `<input>` for a radio, which spans several lines of markup. */
+  const radio = (html: string, id: string): string =>
+    new RegExp(`<input[^>]*id="${id}"[^>]*>`).exec(html)?.[0] ?? '';
+
+  it('selects OAuth for a site stored as OAuth', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-code')).toContain('checked');
+    expect(radio(html, 'setup-auth-password')).not.toContain('checked');
+  });
+
+  /** A control the operator has to open to discover their own configuration
+   *  has failed at showing it. */
+  it('opens the Advanced section for a site stored as OAuth', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    expect(/<details[^>]*id="setup-advanced"[^>]*open/.test(harness.app.innerHTML)).toBe(true);
+  });
+
+  it('still selects password for a site stored with a password', async () => {
+    harness = await boot({ site: { authMode: 'password' } });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-password')).toContain('checked');
+    expect(radio(html, 'setup-auth-code')).not.toContain('checked');
+  });
+
+  /** "Add another site…" is not a site: nothing is stored, so the default
+   *  stands -- an ordinary account is what an institution has on day one. */
+  it('defaults a brand-new site to password', async () => {
+    harness = await boot({ fresh: true, storedPassword: null });
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-password')).toContain('checked');
+    expect(radio(html, 'setup-auth-code')).not.toContain('checked');
+  });
+});
+
+/**
+ * ## A leftover password must not redecide how the site signs in
+ *
+ * `refreshStoredPassword` used to force password mode whenever a stored
+ * account came back, on the reasoning that "it is the one thing Setup can see
+ * about a saved credential". That reasoning expired the moment the form
+ * started reading the site's real `authMode`: it runs asynchronously, lands
+ * after the form is seeded, and would put the radio back.
+ *
+ * The case is real rather than theoretical -- a site set up with a password and
+ * later switched to OAuth keeps its password entry until somebody presses
+ * "Forget this password".
+ */
+describe('a stored password does not override the stored sign-in method', () => {
+  const radio = (html: string, id: string): string =>
+    new RegExp(`<input[^>]*id="${id}"[^>]*>`).exec(html)?.[0] ?? '';
+
+  it('keeps OAuth selected for an OAuth site that still has a password stored', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: { username: 'a.operator' },
+    });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-code')).toContain('checked');
+    expect(radio(html, 'setup-auth-password')).not.toContain('checked');
+  });
+});
+
+/**
+ * ## A configured OAuth site must not look unconfigured
+ *
+ * REPORTED BY THE OPERATOR: they entered a client ID and secret, saved,
+ * reopened Site settings and found both boxes empty. Nothing was lost -- the
+ * values were stored correctly -- but no IPC could read them back, so Setup
+ * showed blanks and there was no way to tell a configured site from an empty
+ * one. They re-entered credentials against a form that did not reflect reality
+ * while the app went on signing in with the stored ones.
+ *
+ * The secret is deliberately NOT shown. It gets what the password already
+ * gets: the fact that one is stored, and a button to forget it.
+ */
+describe('Setup shows a stored OAuth credential', () => {
+  const OAUTH = { clientId: 'the-client-id', redirectUri: 'https://library.example.test/', hasSecret: true };
+
+  /**
+   * The VALUE a field renders with, read from the markup.
+   *
+   * `fakeDom` hands out unparented stubs whose `.value` is always '', so
+   * asking the element is asking the stand-in about itself. The markup is
+   * what the real DOM would be built from.
+   */
+  const rendered = (html: string, id: string): string =>
+    new RegExp(`<input[^>]*id="${id}"[^>]*>`).exec(html)?.[0].match(/value="([^"]*)"/)?.[1] ?? '(no value attribute)';
+
+  const openSetup = async (): Promise<string> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    return harness.app.innerHTML;
+  };
+
+  it('fills the client ID back in', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(rendered(html, 'setup-client-id')).toBe('the-client-id');
+  });
+
+  it('fills the redirect URL back in, verbatim', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(rendered(html, 'setup-redirect-uri')).toBe('https://library.example.test/');
+  });
+
+  it('says a secret is stored instead of showing an empty box', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(html).toMatch(/client secret .*stored/i);
+    expect(harness.app.has('#setup-forget-oauth')).toBe(true);
+  });
+
+  /** The value must never reach the renderer, so it cannot reach the markup. */
+  it('never puts the secret in the page', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    const html = await openSetup();
+    expect(html).not.toContain('hasSecret');
+    expect(JSON.stringify(OAUTH)).toContain('hasSecret');
+  });
+
+  it('forgets the credential when asked, for the site being edited', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    await openSetup();
+    harness.app.fire('#setup-forget-oauth');
+    await flush();
+    expect(harness.calls.forgetOAuth).toEqual(['library-example-test']);
+  });
+
+  /** Nothing stored means the ordinary empty boxes, not a Forget button for a
+   *  credential that does not exist. */
+  it('offers no Forget button for a site with no stored credential', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    const html = await openSetup();
+    expect(harness.app.has('#setup-forget-oauth')).toBe(false);
+    expect(rendered(html, 'setup-client-id')).toBe('');
+  });
+});
+
+/**
+ * ## Which settings store this build is using
+ *
+ * A development run does NOT share a store with the installed app: Electron
+ * derives userData from the app name, and `electron dist-desktop/...` has no
+ * package.json at its root, so it falls back to the default name and writes
+ * somewhere else entirely.
+ *
+ * THE ISOLATION IS RIGHT AND STAYS -- a dev build must not be able to overwrite
+ * the credentials staff use, and one already did during this investigation.
+ * What was wrong is that it was invisible: saves looked lost because the file
+ * being watched was the other one, and 'this used to work' was true of a
+ * configuration the dev build could not see.
+ */
+describe('Setup says which settings store is in use', () => {
+  const DEV = {
+    path: 'C:\Users\someone\AppData\Roaming\Electron',
+    appName: 'Electron',
+    packaged: false,
+  };
+
+  it('warns that a development build keeps its own settings, and names the folder', async () => {
+    harness = await boot({ storage: DEV });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(html).toMatch(/development build/i);
+    expect(html).toMatch(/separate/i);
+    expect(html).toContain('AppData');
+    expect(html).toContain('Electron');
+  });
+
+  /** An installed copy is the ordinary case and must not shout about it. */
+  it('says nothing of the kind in a packaged build', async () => {
+    harness = await boot();
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    expect(harness.app.innerHTML).not.toMatch(/development build/i);
+  });
+});
+/**
+ * ## Which model is on the other end
+ *
+ * REPORTED BY THE OPERATOR: "in the ollama settings I can't tell which ollama
+ * model I have". The name is typed, and a tag that is nearly right --
+ * `llama3.1` where the machine holds `llama3.1:8b` -- does not fail as a
+ * settings mistake. It fails later, in the middle of a batch.
+ *
+ * ADVISORY, NOT A GATE. Endpoints that serve completions without a model list
+ * are common; when the ask fails, the message says so and the typed name is
+ * still usable. A convenience that becomes an obstacle is worse than none.
+ */
+describe('asking the model endpoint what it can run', () => {
+  const setup = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+  };
+
+  it('lists what the endpoint offers', async () => {
+    harness = await boot({ models: ['llama3.1:8b', 'deepseek-r1:14b'] });
+    await setup();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    expect(harness.app.innerHTML).toContain('llama3.1:8b');
+    expect(harness.app.innerHTML).toContain('deepseek-r1:14b');
+  });
+
+  it('asks about the address in the box, not a remembered one', async () => {
+    harness = await boot({ models: ['m'] });
+    await setup();
+    harness.app.fire('#setup-model-base-url', 'input', { target: { value: 'http://127.0.0.1:9999/v1' } });
+    await flush();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    expect(harness.calls.listModels.at(-1)?.baseUrl).toBe('http://127.0.0.1:9999/v1');
+  });
+
+  /** Reachable and holding nothing is a real answer, and a different one from
+   *  "could not ask". */
+  it('says so when the endpoint offers none', async () => {
+    harness = await boot({ models: [] });
+    await setup();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    expect(harness.app.innerHTML).toMatch(/no models/i);
+  });
+
+  it('reports a refusal without losing the typed name', async () => {
+    harness = await boot({ modelsError: 'does not offer a list of models' });
+    await setup();
+    harness.app.fire('#setup-model-name', 'input', { target: { value: 'typed-by-hand' } });
+    await flush();
+    harness.app.fire('#setup-list-models');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(html).toMatch(/does not offer a list of models/i);
+    expect(new RegExp('<input[^>]*id="setup-model-name"[^>]*>').exec(html)?.[0]).toContain('typed-by-hand');
+  });
+});
+
+/**
+ * ## A site that cannot list collections yet
+ *
+ * REPORTED BY THE OPERATOR, who switched a site to OAuth and read this in the
+ * collection field: "No cached OAuth token for https://content-test.byui.edu."
+ *
+ * The list needs a signed-in session. In password mode every call signs in, so
+ * it works. Under OAuth it cannot work until `exchangeCode` has run once and
+ * written a token -- which happens on a DIFFERENT screen. So Setup asked,
+ * failed, and reported the failure as a problem with the collection list,
+ * when the truth is that the site has not been signed in to yet.
+ *
+ * ASKED, NOT INFERRED FROM A FAILURE. Reading the state is what lets the screen
+ * say something BEFORE the operator acts; catching the error only ever explains
+ * it afterwards.
+ */
+describe('a site that cannot list collections yet', () => {
+  /**
+   * Reaching Setup goes THROUGH Choose, which lists collections for its own
+   * dropdown and is entitled to. The question here is only what SETUP asks, so
+   * the count is taken at the door.
+   */
+  const openSetup = async (): Promise<number> => {
+    await reachChoose(harness.app);
+    const before = harness.calls.listCollections.length;
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    return harness.calls.listCollections.length - before;
+  };
+
+  it('says an OAuth site needs signing in, without having to fail first', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+      hasToken: false,
+    });
+    const asked = await openSetup();
+
+    expect(harness.app.innerHTML).toMatch(/sign in to this site/i);
+    // The point of the whole task: it did not have to try and fail to know.
+    expect(asked).toBe(0);
+  });
+
+  it('lists collections for a password site with no sign-in step at all', async () => {
+    harness = await boot({ site: { authMode: 'password' }, hasToken: false });
+    const asked = await openSetup();
+
+    expect(asked).toBeGreaterThan(0);
+    expect(harness.app.innerHTML).not.toMatch(/sign in to this site/i);
+  });
+
+  it('lists collections for an OAuth site that has been signed in to', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+      hasToken: true,
+    });
+    const asked = await openSetup();
+
+    expect(asked).toBeGreaterThan(0);
+    expect(harness.app.innerHTML).not.toMatch(/sign in to this site/i);
   });
 });

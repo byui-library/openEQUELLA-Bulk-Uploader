@@ -502,3 +502,68 @@ describe('AuthorizationCodeAuth — an instance hosted under a path prefix', () 
     expect((err as ApiError).message).not.toContain('client_secret');
   });
 });
+
+/**
+ * ## Telling our own redirect apart from somebody else's
+ *
+ * The authorization-code flow ends with a redirect carrying a `code`. Nothing
+ * about that redirect proves it came from the sign-in this app started -- the
+ * CLI's loopback capture in particular answers an ordinary HTTP request on a
+ * local port, which any other process or open web page on the machine can also
+ * send. `state` is the unguessable value that distinguishes them.
+ */
+describe('AuthorizationCodeAuth — the state parameter', () => {
+  const make = () =>
+    new AuthorizationCodeAuth(
+      'https://example.test',
+      'client-1',
+      'secret',
+      'https://example.test/',
+      new FileTokenStore(tokenPath()),
+    );
+
+  it('puts a state on the authorize URL', () => {
+    const url = new URL(make().getAuthorizeUrl());
+    expect(url.searchParams.get('state')).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('uses a different state each time, so an observed one cannot be replayed', () => {
+    expect(new URL(make().getAuthorizeUrl()).searchParams.get('state')).not.toBe(
+      new URL(make().getAuthorizeUrl()).searchParams.get('state'),
+    );
+  });
+
+  it('accepts the state it sent', () => {
+    const auth = make();
+    const sent = new URL(auth.getAuthorizeUrl()).searchParams.get('state');
+    expect(auth.checkState(sent)).toBe(true);
+  });
+
+  it('refuses a different state, an absent one, and an empty one', () => {
+    const auth = make();
+    auth.getAuthorizeUrl();
+    expect(auth.checkState('not-the-one')).toBe(false);
+    expect(auth.checkState(null)).toBe(false);
+    expect(auth.checkState('')).toBe(false);
+  });
+
+  /**
+   * Nothing was ever sent, so nothing can match. Answering true here would make
+   * this a check that reports success without having run -- the exact defect
+   * this codebase has shipped twice, once for the duplicate check and once for
+   * the identifier pre-flight.
+   */
+  it('refuses everything when no authorize URL was ever built', () => {
+    expect(make().checkState('anything')).toBe(false);
+    expect(make().checkState(null)).toBe(false);
+  });
+
+  /** A later sign-in attempt must invalidate the earlier attempt's state. */
+  it('only accepts the most recent state', () => {
+    const auth = make();
+    const first = new URL(auth.getAuthorizeUrl()).searchParams.get('state');
+    const second = new URL(auth.getAuthorizeUrl()).searchParams.get('state');
+    expect(auth.checkState(first)).toBe(false);
+    expect(auth.checkState(second)).toBe(true);
+  });
+});

@@ -25,12 +25,18 @@ export interface ExtractState {
   templateId: string;
   /** True while an IPC call is in flight. Disables the controls rather than stacking calls. */
   busy: boolean;
+  /** What the model pass is doing right now, or null when it is not running. */
+  modelStatus: string | null;
   error: string | null;
   /** Set once the spreadsheet has been written. */
   savedPath: string | null;
   /** Rows actually written by the run, which can be fewer than the folder scan found. */
   savedWritten: number;
   savedFlagged: number;
+  /** Rows a language model wrote into. Reported beside savedFlagged rather than
+   *  inside it -- an expected model write is not a problem to triage, and a
+   *  machine writing into a permanent record is not a thing to hide either. */
+  savedAiWritten: number;
   /** True while the Add-column picker is open. */
   adding: boolean;
   /** The picker's search box. */
@@ -52,10 +58,12 @@ export function initialExtractState(): ExtractState {
     templates: [],
     templateId: '',
     busy: false,
+    modelStatus: null,
     error: null,
     savedPath: null,
     savedWritten: 0,
     savedFlagged: 0,
+    savedAiWritten: 0,
     adding: false,
     addQuery: '',
     removed: null,

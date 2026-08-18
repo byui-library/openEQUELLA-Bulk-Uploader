@@ -53,15 +53,31 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **1450 tests across 88 files.**
+exists to remove. **2149 tests across 104 files** on `feature/llm-provider`.
 
-That is spec 1 of two. Publishing the repository — a licence, a README written
-for outside readers, and the audit of ~196 commits of history — is spec 2 and
-**has not started**. It is the only step that cannot be undone, which is why it
-was kept separate.
+That was spec 1 of two. **Spec 2 — publishing the repository — is DONE, and it
+is the step that cannot be undone.** Verified 2026-08-14: `gh repo view` reports
+`"isPrivate": false, "visibility": "PUBLIC"` for `byui-library/openEQUELLA-Bulk-Uploader`,
+`LICENSE` is present, `package.json` declares `"license": "Apache-2.0"` (commit
+`ac16721`), and the README carries a section written for outside readers. The
+history is **298 commits**, not the ~196 this file used to estimate.
 
-**Not yet released.** `package.json` is still at 1.0.0; nothing has been tagged
-since. Two things staff must be told before v1.1.0 reaches them: **they will
+**Everything committed from here is public the moment it is pushed.** No
+credential, no real name, no real spreadsheet, no institutional detail that was
+only safe behind a private repo. Read the "every person is invented" convention
+below as a hard rule now rather than a tidiness preference.
+
+**A known violation is already public.** `m.miles` — the operator's real
+surname, not a botanical pseudonym — appears **40 times across 4 test files**:
+`tests/desktop/secrets.test.ts` (24), `tests/desktop/ui/setup.test.ts` (9),
+`tests/desktop/session.test.ts` (6), `tests/desktop/handlers.test.ts` (1). The
+real surname also appears once more as `milesm` in a comment at
+`tests/passwordAuth.test.ts:351`, recording a live cookie measurement. **The
+scrub is deliberately NOT part of the language-model work** and is to be done
+and reviewed as a change of its own; do not fold it into an unrelated commit.
+
+**v1.1.1 is released and tagged**; `package.json` carries it. Two things staff
+must be told about that release: **they will
 re-enter their credentials once** (deliberate — the store version changed and
 Setup explains it), and **they must choose their collection on Setup**, which is
 what fills the attachment field in from the schema. Skipping it leaves the field
@@ -86,16 +102,37 @@ Description extraction is tiered — a stated field, then a named section
 language model. **Tiers 1–3 are built.** Anything from tier 3, and any section
 that ran to the length cap, is always flagged in `_notes`.
 
-**Tier 4 is deferred by the operator** — "hold off on the ai piece for now",
-2026-08-10. Do not start it without being asked. It needs a provider decision
-and its own conversation; the open questions are listed at the end of
-[docs/superpowers/specs/2026-08-06-description-extraction-design.md](docs/superpowers/specs/2026-08-06-description-extraction-design.md).
+**Tier 4 — the language model — is BUILT, on `feature/llm-provider`.** It was
+deferred by the operator on 2026-08-10 ("hold off on the ai piece for now") and
+taken up again on 2026-08-14. `src/core/ai/` holds it; either front end can run
+it; the shipped obituary template enables it on `MWDL/description` and on
+nothing else. Design:
+[docs/superpowers/specs/2026-08-14-llm-provider-design.md](docs/superpowers/specs/2026-08-14-llm-provider-design.md).
+
+**It has now been run against two real models, and that split the question in
+two.** Ten scanned obituaries, `llama3.2:3b` on CPU (2026-08-14) and then
+`llama3.1:8b` on a GPU (2026-08-16), both served locally by Ollama:
+**fabrication is measured and guarded, and whether the kept descriptions are
+GOOD is still a human judgement.** Two of the ten generated descriptions
+asserted facts the documents do not contain, so `src/core/ai/verify.ts` was
+built and every generated value is now checked against the document before it is
+written — see the verification fact below for the evidence and the measurement.
+The 8B run is strong evidence the kept descriptions now follow house style,
+which is not the same thing as being worth cataloguing: no assertion in the
+suite can say a description reads well or serves a cataloguer, and none tries.
+What was already tested is the machinery — the rule about what may be
+overwritten, the cap, every failure path, and the guarantee that an institution
+which configures no endpoint sends nothing anywhere.
 
 **Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
 in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
-builds both Windows installers and creates the GitHub Release. The repo is
-private, so the Release is the version archive, not the delivery channel --
-staff get the executable from the network share.
+builds both Windows installers and creates the GitHub Release. **The repo is
+PUBLIC** -- this sentence used to say "private, so the Release is the version
+archive, not the delivery channel", and it is the worst sentence in this file to
+leave wrong, because it is what a next reader consults when deciding what may
+safely be committed. Staff still get the executable from the network share, so
+the Release remains the version archive in practice; it is now also world-
+readable, along with every artifact attached to it.
 
 The wire format is settled — the `{ type: 'file', filename, description, uuid }`
 attachment payload was confirmed by the production run, not just by
@@ -119,6 +156,20 @@ src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by e
   instanceUrl.ts    Validate/normalise an operator-typed address. HTTPS enforcement lives here.
   redact.ts         One redactor for secrets on the wire. Used by every error path.
 src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
+src/core/ai/      The language-model pass. SEPARATE FROM extract/ because it is async and
+                  does I/O, which extract/ must never be. Runs AFTER extraction, over the
+                  finished rows.
+  eligible.ts       Pure. The rule: which cells a model may write. The safety property.
+  slice.ts          Pure. How much of a document to send, and how the budget is divided.
+  prompt.ts         Pure. Builds the request; cleans and judges the reply.
+  verify.ts         Pure. Which claims in a reply the document does not support. The guard.
+  provider.ts       One OpenAI-compatible HTTP call. Injectable fetch. Every failure throws.
+  fill.ts           The pass itself. Mutates rows, flags every write, discloses in the item.
+  pass.ts           One construction of provider+options, so CLI and desktop cannot diverge.
+  confirm.ts        The consent text. ONE copy, shown by both surfaces. Renderer-safe.
+  defaults.ts       budget/cap. Imports NOTHING -- Setup reads it from the sandboxed renderer.
+  endpoint.ts       Is this address on this machine? Decides the dialog and the key rule.
+  review.ts         Two counts: what is wrong, and what a machine wrote. Renderer-safe.
 src/cli/          plan | run | status | retry | login | logout | check | extract
 src/mcp/          Nine MCP tools
 src/desktop/      Electron app. Renderer is sandboxed: NO Node access, no `node:` imports.
@@ -154,9 +205,25 @@ shape, never as a value the code may assume.
   differs from the export's, and the probe of 2026-08-12 is the only reason we
   know. Where a schema declares no name path the answer is **null**, and every
   consumer must report "could not check" rather than substitute a guess.
-- **A collection LIST entry already carries `schema: { uuid }`.** So a chosen
-  collection resolves to its schema in one hop, with no per-collection
-  follow-up request. Confirmed live 2026-08-12.
+- *(BYU-Idaho production's configuration — NOT universal)* **A collection LIST
+  entry MAY carry `schema: { uuid }`**, and where it does, a chosen collection
+  resolves to its schema in one hop with no follow-up request. Confirmed live
+  on `content.byui.edu`, 2026-08-12.
+
+  **It is absent on `content-test.byui.edu`**, measured 2026-08-17 by pasting
+  the URL into a signed-in browser: all 29 entries carry only `uuid`, `name`,
+  `nameStrings`, `readonly` and `links`, **with and without `full=true`**,
+  while the recorded production fixture carries `description`, `owner`,
+  `schema`, `filestoreId` and the rest. Two instances of the same product
+  answer the same request with different entity shapes.
+
+  This bullet used to state the one-hop resolution as a property of
+  openEQUELLA. It is not, and reading it that way is the mistake this file
+  warns about at the top of this section. **Where the list carries no schema,
+  `parseCollections` yields `schema: ''`**, and everything downstream of it —
+  the attachment-field autofill on Setup, the schema-derived title path in the
+  duplicate check — has nothing to read. Not yet handled in code; see the
+  handoff.
 - **A schema's `definition` comes back over REST as nested JSON, not XML**, so
   `parseSchemaPaths` (which parses the export) cannot be reused on that path —
   `discovery.ts` walks the tree instead. The two must agree: parse
@@ -247,9 +314,17 @@ shape, never as a value the code may assume.
   that combination and says so; do not describe password mode as "the default"
   without saying which surface.
 - **The password travels in the query string.** `POST /api/auth/login?username=&password=`
-  is openEQUELLA's API and cannot be changed from here. So https is *refused*
-  rather than warned about (loopback exempted), and nothing may put a login URL
-  into a log, a message or the manifest. `tests/passwordAuth.test.ts` walks
+  is openEQUELLA's API and cannot be changed from here. So plain http is
+  *refused* rather than warned about, and nothing may put a login URL into a
+  log, a message or the manifest. **`normaliseInstanceUrl` rejects loopback over
+  http too** -- this file used to say "(loopback exempted)" here, and that is
+  wrong about the rule. The exemption is `preflight.ts#httpsCheck`'s alone: it
+  *reports* a loopback base URL as passing, and per its own docblock that verdict
+  is only ever reachable in the OAuth modes, because `OEQ_AUTH_MODE=password`
+  against `http://localhost` fails when `UsernamePasswordAuth` is constructed,
+  before any report is built. Note this is the OPPOSITE of the model endpoint
+  rule below, and deliberately: there the reason to refuse http is a bearer key,
+  which loopback genuinely removes. `tests/passwordAuth.test.ts` walks
   every string reachable from a thrown error for the password in literal and
   percent-encoded form; that guard exists because a debug line added later
   would leak passwords into a file the operator emails around asking for help.
@@ -367,6 +442,33 @@ shape, never as a value the code may assume.
   is destroyed and recreated on every keystroke; without it the field loses
   focus after one character, or types backwards if it re-focuses without
   restoring the caret. Both shipped for months unnoticed.
+- **An escape applied on the way out must be removed on the way in, and the two
+  halves live in one module.** The extractor writes document text into a CSV the
+  operator opens in Excel, which executes a cell beginning `=`, `+`, `-` or `@`
+  — so those values are guarded with an apostrophe. But `plan` reads that same
+  spreadsheet back and uploads what it finds, so guarding without unguarding
+  would write a character that was never in the document into a permanent
+  catalogue record: a data-integrity bug bought with a security fix, in a tool
+  whose whole purpose is faithful records. `src/core/formulaGuard.ts` therefore
+  owns both directions and the trigger list they share, and
+  `unguardFormula(guardFormula(v)) === v` is pinned for every shape they
+  distinguish — including a value that already began with an apostrophe, which
+  has to be escaped too or the reader cannot tell the guard from the data. The
+  test that matters is the round trip through `writeCsv` → `readSheet`, because
+  it asserts what openEQUELLA would actually receive.
+- **An edit copies the record whole and changes what it names; a control that
+  governs part of a value says which part.** Both halves were violated at once
+  in the shipped profile editor, and neither was visible in 2069 tests.
+  `setDefault` rebuilt a `Column` from a list of fields it meant to keep, so it
+  dropped the three it had never been told about — destroying the shipped
+  obituary template's `as: birth_date` alias and leaving a profile
+  `parseProfile` would refuse to load. The columns screen showed one source per
+  column and wrote back a one-element list, so choosing from the dropdown
+  deleted every later tier and **silently switched the language model off**.
+  A list of fields to preserve is wrong again the day a field is added; a copy
+  is not. And where a control genuinely cannot govern the whole value yet, the
+  screen must NAME what it is leaving alone rather than count it — a hint
+  pointing at an expansion that does not exist is a claim to retract later.
 - **Never put a `style` attribute in rendered markup. The CSP blocks it
   silently.** `index.html` sets `default-src 'self'` with no `style-src`, so
   Chromium refuses inline styles — *"Refused to apply inline style because it
@@ -395,6 +497,149 @@ shape, never as a value the code may assume.
   harmlessly. Compare a sorted set of whole pairs — not `toContain`, which
   passes for `AWSALB=lb; Path=/` and would drop the guard against echoing
   cookie attributes back.
+- **`resolve()` is synchronous and `src/core/extract/` never touches the
+  network. The model pass is separate FOR THAT REASON and must stay so.** The
+  design framed the model as "one more source in the union", which is right for
+  configuration and wrong for execution: making `resolve` async ripples through
+  `buildRow`, `extract.ts` and `extractHandlers.ts` and drags network concerns
+  into the extractor whose offline-ness is what lets an operator build a
+  spreadsheet without signing in to anything. `{ ai: true }` is therefore a
+  MARKER — `resolve` returns empty for it — and `core/ai/fill.ts` reads the
+  finished rows afterwards. Two further things fall out of that order and are
+  only available there: the rule is evaluated on the COMPLETED row, and the
+  confirmation needs a count that does not exist until tiers 1–3 have run.
+- **A model may fill an empty cell or replace a FLAGGED one, never one a source
+  was sure of** — and "flagged" is structural, not a judgement. It means a
+  source attached a note to that cell (`row.flagged[path]`), so a tier that
+  starts flagging itself becomes model-replaceable with nobody having to
+  remember, and `eligible.ts` cannot drift out of step with the sources. A
+  re-derived opinion about which values "look uncertain" is a second judgement
+  free to disagree with the one the operator is reading in `_notes`. Note the
+  live consequence on the shipped obituary template: `compose` attaches no note,
+  so a partially composed description (`Born 1907-11-13` and nothing else) is a
+  stated value and is never sent. **Measured on a real batch of ten documents,
+  2026-08-14: the model fired on 1 of 10 rows**, because `compose` produced a
+  value for the other nine. That is the rule working as designed, not the feature
+  failing, and it is the number to expect.
+- **A language model fabricates checkable facts, the prompt does not stop it, and
+  a flag is not a guard — so a generated value is verified against the document
+  before it is written, and one carrying an unsupported claim is refused whole.**
+  Established by running the feature against a real batch on 2026-08-14 — ten
+  scanned obituaries, `llama3.2:3b` served locally by Ollama. (Ten generated
+  descriptions and the 1-of-10 eligibility figure above are not in conflict:
+  the shipped template sends almost nothing, so getting ten outputs to read means
+  the scratch evaluation profile Task 13 of the plan prescribes — never a
+  loosened rule.) **2 of 10 generated descriptions asserted facts the source
+  documents do not contain**: an
+  affiliated institution neither document mentions, and in one case a full death
+  date for a document that states no date of any kind. The shipped prompt says,
+  in as many words, *"Use only what the document states. Do not invent names,
+  dates, places or events"*, and the profile instruction says to include the
+  affiliation clause only where the document supports it. **Neither held.** It is
+  not a misreading either: that document was processed **three times at
+  temperature 0 and produced three different death dates**, so what is happening
+  is the generation of a plausibly shaped value to fill a slot. Everything
+  downstream behaved correctly — the cell was flagged, `_source` read `ai`, and
+  the note told the operator to check — and that is exactly what made the point.
+  In a collection with no moderation workflow, a fabricated date a reviewer skims
+  past is permanent and indistinguishable from a real one. `verify.ts` therefore
+  runs between a usable reply and a written cell, never after, and `fill.ts`
+  discards the WHOLE value when any checkable claim fails: this tool does not
+  edit generated prose, and a half-removed sentence reads as complete while
+  meaning something different. **Built from invented fixtures only, then run
+  against those ten real documents it had never seen: 2 of 2 fabrications
+  refused, 8 of 8 supported descriptions kept, zero false rejections.** The
+  checks derive from the profile's own configuration — a `presence` source's
+  trigger list is an operator saying which claims this collection cares about —
+  and from the document's own text. **Nothing in it knows anything about any
+  collection**, which is what makes it survive at another institution; a list of
+  colleges would be the hardcoded assumption an entire release was spent
+  removing. **What it buys is bounded, and saying so is part of the fact.** It
+  catches a claim the document does not support. It cannot tell whether a
+  supported date is attached to the right person — a model can still say
+  something false using only true tokens — and it does not read prose at all,
+  because paraphrase is legitimate description and checking it would have
+  rejected the eight good ones. Every model-written cell stays flagged for that
+  reason.
+- **The prompt is not the lever; model capability is, and verification covers
+  the residue.** The same ten documents were re-run on 2026-08-16 with
+  `llama3.1:8b` on a GPU. **8 of 8 written outputs followed the house style**,
+  where `llama3.2:3b` managed about three of eight — the rest prepended names,
+  gave an age where a death date belongs, or wrote prose sentences naming a
+  hospital. Nothing about the instruction changed between the runs, **so do not
+  elaborate the prompt against a weak model** — the house-style failures were
+  never the wording's fault, and rewriting it would have been work aimed at a
+  problem that was not there. And capability is not the guard either: **the same
+  two documents defeated both models** —
+  one states no date of any kind, the other never mentions the institution it
+  claimed — and both were refused both times, which is the argument for
+  verification rather than better prompting. Nothing ungrounded reached the
+  spreadsheet, confirmed by an independent audit against the sources. **State
+  the caveat wherever the result is stated:** that run passed the date checks
+  partly because `llama3.1:8b` answers in ISO format. Ten documents, one
+  collection, one language, is evidence, not coverage.
+- **The verifier reads English month names and numeric date forms ONLY, and
+  says so rather than blaming the document.** `Falleció el 6 de enero de 2024`
+  states a day and `verify.ts` sees only the year, so a correct day-precision
+  description of it is refused. Refusing is the safe direction and stays; the
+  wording is what had to change, because *"the document states no such date"* is
+  a claim about the document when all that is known is that no date **this tool
+  can read** supports the value. Stated, never silent — in `verify.ts`, in
+  `MONTH_NAMES` in `src/core/extract/dates.ts` (the one array both recognisers
+  are built from), in the README and in `docs/INSTALL.md`. Adding a language is
+  adding its month names there and its numeral words to `verify.ts`'s `SMALL`;
+  note the three-letter stem must stay distinct, since both patterns abbreviate
+  on it.
+- **Consent must be CARRIED, not re-derived.** `extractRun` used to resolve the
+  model endpoint from its own read of the store and send, holding no evidence
+  anyone had agreed. The renderer's read and the main process's read agreed on
+  what an unreadable store MEANT and were making different OBSERVATIONS — a
+  throw meant "no model, carry on without asking" on one side and "no model,
+  send nothing" on the other — so a transient IPC failure on the renderer's
+  read, which is exactly when no dialog is shown, produced a full hosted send.
+  `modelApproved` is now a condition of resolving the endpoint at all, and
+  absent means no. Any decision a human makes on one side of a boundary must
+  cross it as data; the far side must never reconstruct it.
+- **Redact before truncating.** Cutting a message to length and then redacting
+  leaves the redactor a fragment to match, it matches nothing, and a prefix
+  walks out — up to 163 characters of a 164-character key. A leak-walker that
+  searches for the whole secret is blind to this, and one asserted
+  `provider.ts` was clean while it was leaking; `tests/ai/provider.test.ts` now
+  searches for every prefix. The same order applies to any cause chain: an error
+  object this code did not build cannot be redacted from the outside, which is
+  why `OpenAiCompatibleProvider` attaches no `cause` at all.
+- **A bearer key does not cross plain http unless the host is this machine.**
+  Exactly that one combination is refused — http, plus a key, plus a non-loopback
+  host. `normaliseInstanceUrl` is deliberately NOT reused for a model address:
+  it refuses all http because openEQUELLA's sign-in carries the password in the
+  QUERY STRING, and that is a fact about openEQUELLA's API which does not
+  transfer. Reusing it would ban `http://localhost:11434/v1`, which is what every
+  local runtime serves and what the local half of this design rests on.
+- **`_notes` never reaches openEQUELLA** — `plan.ts` skips every column
+  `schema.ts#isAnnotationHeader` recognises (any header starting with `_`)
+  while building the manifest. That is what makes it safe to quote
+  discarded model output there, and it is also why `aiProvenance` exists: the
+  spreadsheet flags are invisible to every future reader of the catalogue, so a
+  profile that wants the disclosure to survive must name an ordinary metadata
+  column to hold it.
+- **`ExtractedRow.aiWritten` exists so a counter can subtract expected model
+  writes BY IDENTITY.** Both surfaces counted "rows needing review" as
+  `notes.length > 0`, which was right while every note meant something had gone
+  wrong; every model write is flagged without exception, so one enabled column
+  turns that into "400 of 400 need review" and buries the row that genuinely
+  failed. `aiWritten[path].note` is the exact string that was pushed, so the
+  subtraction is set membership. Matching the prose instead is wrong in both
+  directions: a reworded note silently stops being subtracted, and a real
+  failure that happens to mention a model ("not sent to the model -- this file
+  has no text to read") starts being.
+- **A reply truncated at `max_tokens` is a FAILURE, not a value.** `finish_reason:
+  'length'` has to be checked before the content, because a cut-off reply is a
+  perfectly well-formed non-empty string: it sails through every emptiness check,
+  through `cleanReply` as `ok`, and into a permanent catalogue record ending
+  mid-sentence, carrying the ordinary "please check this" note and nothing
+  anywhere saying it was cut. Only the explicit value counts — several backends
+  omit the field, and treating absence as truncation fails every call against
+  them.
 
 ## Process
 

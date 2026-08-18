@@ -4,6 +4,7 @@ import { parse } from 'csv-parse/sync';
 import ExcelJS from 'exceljs';
 import type { Row, Sheet } from './types.js';
 import { SheetError } from './errors.js';
+import { unguardFormula } from './formulaGuard.js';
 
 /** A row of raw cell text, tagged with its true 1-based position in the source spreadsheet. */
 interface RawRow {
@@ -34,7 +35,13 @@ function toSheet(headers: string[], raw: RawRow[]): Sheet {
   const rows: Row[] = raw.map(({ rowNumber, values }) => {
     const cells: Record<string, string> = {};
     headers.forEach((h, col) => {
-      cells[h] = (values[col] ?? '').trim();
+      // Undoes `guardFormula` from the writing side (src/core/extract/csv.ts).
+      // Applied here rather than in `readCsv` so a spreadsheet re-saved as
+      // .xlsx by an operator working in Excel is treated identically: the
+      // guard is a property of the value, not of the file format it arrived
+      // in. Without this the uploader would write an apostrophe that was never
+      // in the document into a permanent catalogue record.
+      cells[h] = unguardFormula((values[col] ?? '').trim());
     });
     return { rowNumber, cells };
   });
