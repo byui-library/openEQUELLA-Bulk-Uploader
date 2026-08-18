@@ -1,3 +1,4 @@
+import { DEFAULT_LOGIN_HINT } from '../../core/loginHint.js';
 /**
  * Strips Electron's `ipcRenderer.invoke()` error-wrapping so the
  * operator-facing text written for `src/core/errors.ts` (surfaced verbatim
@@ -61,7 +62,29 @@ export function stripElectronWrapper(raw: string): string {
  * makes that text reach the screen verbatim instead of behind Electron's
  * wrapper.
  */
+/**
+ * What to tell a desktop operator who has no token.
+ *
+ * REPORTED BY THE OPERATOR, who switched a site to OAuth and read this in the
+ * collection field: "No cached OAuth token for https://content-test.byui.edu.
+ * Run:  oeq-upload login". They have a window and no terminal, and have never
+ * run that command.
+ *
+ * `getToken()` cannot know which front end is asking, so it names the CLI's
+ * flow and exports the string for others to replace. `runPreflight` already
+ * does this for `check` and for MCP. This is the app's version.
+ */
+const DESKTOP_LOGIN_HINT =
+  'Sign in to this site first -- go back to Sign in and use the sign-in button, then return ' +
+  'here. The collection list needs a signed-in session, and with OAuth that only happens when ' +
+  'you sign in.';
+
 export function errorMessage(err: unknown): string {
-  if (err instanceof Error) return stripElectronWrapper(err.message);
+  // Substituted HERE rather than per handler: this is where every
+  // `window.oeq.*` rejection already funnels, so fixing it at one call site
+  // would leave the same sentence in every other auth failure.
+  if (err instanceof Error) {
+    return stripElectronWrapper(err.message).split(DEFAULT_LOGIN_HINT).join(DESKTOP_LOGIN_HINT);
+  }
   return String(err);
 }
