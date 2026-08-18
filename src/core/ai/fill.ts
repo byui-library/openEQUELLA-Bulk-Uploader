@@ -2,6 +2,7 @@
 import { describeReason } from '../errorReason.js';
 import { ValidationError } from '../errors.js';
 import { expectedButEmptyNote } from '../extract/rows.js';
+import { ATTACHMENT_COLUMN } from '../extract/types.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Transform } from '../extract/types.js';
 import { eligibleColumns } from './eligible.js';
 import { buildPrompt, cleanReply } from './prompt.js';
@@ -43,7 +44,34 @@ export interface Completer {
   complete(prompt: string): Promise<string>;
 }
 
+/**
+ * One thing the model pass did, as it does it.
+ *
+ * PER CELL, not per row: a cell is the unit of work and of cost, a row can
+ * consult the model more than once, and "asked about the description of file
+ * three" is what somebody watching wants to see.
+ *
+ * `asking` is emitted BEFORE the call. That is the whole point -- measured on
+ * a real machine the first call took 48 seconds while the runtime loaded the
+ * model, and an event that arrives only afterwards leaves exactly that silence
+ * unexplained.
+ */
+export interface ModelProgress {
+  /** The file the row came from, so a number means something in a folder. */
+  file: string;
+  /** The column being filled. */
+  path: string;
+  stage: 'asking' | 'written' | 'refused' | 'discarded' | 'failed' | 'skipped';
+  /** Why, for the stages that have a reason worth reading. */
+  detail?: string;
+}
+
 export interface FillOptions {
+  /**
+   * Told what the pass is doing, as it does it. Optional: the CLI and every
+   * test run without one, and nothing here may depend on anyone listening.
+   */
+  onProgress?: (event: ModelProgress) => void;
   /** Characters of document to send. See `slice.ts`. */
   budget: number;
   /** Section headings to prefer when the whole document will not fit. */
@@ -508,6 +536,13 @@ export async function fillWithModel(
       continue;
     }
 
+    // The file this row came from. `ATTACHMENT_COLUMN` is the one cell
+    // guaranteed to name it -- that is what the column is for.
+    const file = (row.cells[ATTACHMENT_COLUMN] ?? '').trim();
+    const report = (stage: ModelProgress['stage'], path: string, detail?: string): void => {
+      options.onProgress?.({ file, path, stage, ...(detail === undefined ? {} : { detail }) });
+    };
+
     // ONE PER ROW, NOT ONE PER CELL. See `discloseInItem`.
     let wroteSomething = false;
 
@@ -530,6 +565,7 @@ export async function fillWithModel(
       const path = column.path;
 
       if (used >= options.cap) {
+        report('skipped', path, 'the limit for this run was reached');
         row.notes.push(
           `${path}: not sent to the model -- this run reached its limit of ${options.cap} model requests.`,
         );
@@ -538,6 +574,7 @@ export async function fillWithModel(
       // Counted before the call, not after it: a call that throws still cost
       // whatever the endpoint charged for accepting it.
       used += 1;
+      report('asking', path);
 
       // WHICH FAILURE SENTENCE IS TRUE DEPENDS ON WHAT IS IN THE CELL. The
       // eligible set is "empty OR flagged", so on the design's headline case --
@@ -559,6 +596,7 @@ export async function fillWithModel(
           }),
         );
       } catch (error) {
+        report('failed', path, describeReason(error));
         // The reason is read through the cause chain because Node's own fetch
         // throws `TypeError: fetch failed` and hides the useful half beneath it
         // -- a wrong address, a stopped model and an expired certificate
@@ -577,6 +615,7 @@ export async function fillWithModel(
         // answer" is false for two of them: it answered, and this tool
         // discarded what it said. `cleanReply` writes the clause; repeating the
         // judgement here would be a second place for it to drift.
+        report('discarded', path, cleaned.reason);
         row.notes.push(
           `${path}: ${outcome} -- ${cleaned.reason}.` +
             `${quoted(cleaned.discarded)}${sentClause(slice.shape)}`,
@@ -616,6 +655,7 @@ export async function fillWithModel(
         // model is the only remedy there is. Clearing `flagged` to stop the
         // re-send would mark the source's doubt as settled by an answer this
         // tool threw away.
+        report('refused', path, unsupported.join('; '));
         row.notes.push(
           `${refusalNote(path, outcome, unsupported)}` +
             `${quoted(cleaned.text)}${sentClause(slice.shape)}`,
@@ -625,6 +665,7 @@ export async function fillWithModel(
 
       const note = `${writtenNote(column, path)}${sentClause(slice.shape)}`;
       wroteSomething = true;
+        report('written', path);
       row.cells[path] = cleaned.text;
       row.sources[path] = AI_SOURCE;
       row.notes.push(note);

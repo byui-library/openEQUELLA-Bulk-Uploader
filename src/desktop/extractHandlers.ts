@@ -22,6 +22,7 @@ import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.
 import { modelColumns } from '../core/ai/eligible.js';
 import { noteMissingModel, type FillTarget } from '../core/ai/fill.js';
 import { runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
+import type { ModelProgress } from '../core/ai/fill.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
 import type { SchemaInfo } from '../core/discovery.js';
 import { CHANNELS, type ExtractScan, type ExtractRunReport } from './ipc.js';
@@ -83,6 +84,14 @@ function bundledSchemaOnce(schemaFile: string): Promise<StarterSchema> {
 }
 
 export interface ExtractHandlerOptions {
+  /**
+   * Tell the renderer what the model pass is doing, cell by cell.
+   *
+   * Injected rather than reached for: this module has no window and should
+   * not learn about one. Optional, so the pass runs unchanged where nobody
+   * is listening -- a run must never depend on somebody watching it.
+   */
+  onModelProgress?: (event: ModelProgress) => void;
   /** Path to the schema export. Resolved by the caller, which knows if the app is packaged. */
   schemaFile: string;
   /** Directory of shipped template profiles. Resolved by the caller, same as schemaFile. */
@@ -226,7 +235,7 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
             args.modelApproved === true ? 'not-configured' : 'not-approved',
           );
         } else {
-          await runModelPass(targets, args.profile, settings, options.fetchImpl);
+          await runModelPass(targets, args.profile, settings, options.fetchImpl, options.onModelProgress);
         }
       }
 

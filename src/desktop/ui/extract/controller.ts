@@ -5,6 +5,8 @@ import type { Profile, Source } from '../../../core/extract/types.js';
 import { errorMessage } from '../errors.js';
 import { aiConfirmation } from '../../../core/ai/confirm.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
+import type { ModelProgress } from '../../../core/ai/fill.js';
+import { plainLabel } from './picker.js';
 
 export interface ExtractControllerOptions {
   api: OeqApi;
@@ -88,6 +90,31 @@ export function createExtractController(options: ExtractControllerOptions): Extr
    * "Error invoking remote method '<channel>': <Class>: <real message>";
    * stripElectronWrapper removes that so the operator sees the real message.
    */
+  /**
+   * Turn one model-pass event into the line the operator reads.
+   *
+   * `asking` is the one that has to be live: it is what explains a wait. The
+   * outcomes are already recorded in `_notes` and counted on the save screen,
+   * so they scroll past here rather than being the point.
+   */
+  function describeModelEvent(event: ModelProgress): string {
+    const field = plainLabel(event.path);
+    if (event.stage === 'asking') return `Asking the model about ${field} for ${event.file}…`;
+    if (event.stage === 'written') return `The model wrote ${field} for ${event.file}.`;
+    if (event.stage === 'refused')
+      return `Refused the model's ${field} for ${event.file} — the document does not support it.`;
+    if (event.stage === 'discarded') return `Discarded the model's ${field} for ${event.file}.`;
+    if (event.stage === 'failed') return `The model could not be reached for ${event.file}.`;
+    return `Skipped ${field} for ${event.file}.`;
+  }
+
+  // REGISTERED ONCE, not per run: preload's `onModelProgress` adds a new
+  // ipcRenderer listener on every call, so registering it inside `save()`
+  // would fire the handler once per save the operator had ever done.
+  options.api.onModelProgress((event) => {
+    set({ modelStatus: describeModelEvent(event) });
+  });
+
   const guard = async (work: () => Promise<Partial<ExtractState>>): Promise<void> => {
     set({ busy: true, error: null });
     try {
@@ -314,6 +341,9 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       // still call the whole thing off in between.
       const approval = await approveModelRun(state.profile);
       if (!approval.proceed) return;
+      // Cleared before the run so a line left over from a previous save is
+      // never read as this one's progress.
+      set({ modelStatus: null });
       await guard(async () => {
         const report = await options.api.extractRun({
           dir: state.dir!,

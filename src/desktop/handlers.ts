@@ -10,7 +10,7 @@ import {
   type RunReport,
   type SchemaSummary,
 } from './ipc.js';
-import { SecretStore, EncryptedTokenStore, type Instance } from './secrets.js';
+import { SecretStore, EncryptedTokenStore, type Instance, sameOrigin } from './secrets.js';
 import type { CurrentUser } from '../core/client.js';
 import { assertNotGuest } from '../core/identity.js';
 import { SchemaCache } from '../core/schemaCache.js';
@@ -25,6 +25,7 @@ import {
   type SessionEndReport,
 } from './session.js';
 import { readSheet } from '../core/sheet.js';
+import { listModelsAt } from '../core/ai/pass.js';
 import {
   extractDefinition,
   extractItemNamePath,
@@ -358,6 +359,23 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       instance: Parameters<OeqApi['saveInstance']>[0],
       s: Parameters<OeqApi['saveInstance']>[1],
     ) => secrets().saveInstance(instance, s),
+  );
+
+  ipcMain.handle(
+    CHANNELS.listModels,
+    async (_e, args: Parameters<OeqApi['listModels']>[0]) => {
+      // A BLANK KEY MEANS THE STORED ONE, the same rule the save follows: the
+      // stored key is never rendered back into the box, so the operator asking
+      // "which models are there?" after opening Setup has an empty field and a
+      // configured endpoint. Resolved here rather than in the renderer, which
+      // is never handed a key.
+      let apiKey = args.apiKey;
+      if (apiKey === '') {
+        const stored = await secrets().getModel(args.instanceId);
+        apiKey = stored !== null && sameOrigin(stored.baseUrl, args.baseUrl) ? stored.apiKey : '';
+      }
+      return listModelsAt({ baseUrl: args.baseUrl, apiKey });
+    },
   );
 
   ipcMain.handle(CHANNELS.getOAuth, async (_e, instanceId: string) => secrets().getOAuth(instanceId));
@@ -793,6 +811,12 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   // and so the schema path is resolved once, here, where packaging is known.
   registerExtractHandlers(ipcMain, {
     schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
+    // Sent to whichever window is open. Guarded: a run can outlive the
+    // window that started it, and a destroyed webContents throws on send.
+    onModelProgress: (event) => {
+      const win = getWindow();
+      if (win !== null && !win.isDestroyed()) win.webContents.send(CHANNELS.modelProgress, event);
+    },
     templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
     // The site's OWN schema, when one has been fetched and cached, in
     // preference to the bundled export -- which is BYU-Idaho's and correct

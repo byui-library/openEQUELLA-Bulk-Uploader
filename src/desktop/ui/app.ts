@@ -96,6 +96,8 @@ interface AppState extends BatchState {
   setupStoredOAuth: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
   /** Where this build keeps its settings. Read once; it cannot change. */
   storage: { path: string; appName: string; packaged: boolean } | null;
+  /** The last answer from asking the model endpoint what it offers. */
+  modelList: { models: string[] } | { error: string } | null;
   // The model endpoint stored for `setupInstanceId`, or null when there is
   // none -- which is the shipped state and the common one. WITHOUT its key,
   // for the same reason the password never comes back (ipc.ts's ModelChoice).
@@ -220,6 +222,7 @@ function initialState(): AppState {
     setupStoredUsername: null,
     setupStoredOAuth: null,
     storage: null,
+    modelList: null,
     setupStoredModel: null,
     modelSectionOpen: false,
     setupCollections: null,
@@ -316,6 +319,8 @@ function render(): void {
         storedUsername: state.setupStoredUsername,
         storedOAuth: state.setupStoredOAuth,
         storage: state.storage,
+        modelList: state.modelList,
+        onListModels: handleListModels,
         storedModel: state.setupStoredModel,
         modelSectionOpen: state.modelSectionOpen,
         collections: state.setupCollections,
@@ -801,6 +806,33 @@ async function refreshStoredUsername(): Promise<void> {
  *
  * The boxes are emptied too, so what is on screen matches what is stored.
  */
+/**
+ * Ask the address in the box which models it offers.
+ *
+ * THE ADDRESS IN THE BOX, not the stored one: the operator is usually asking
+ * because they are setting it up or changing it, and answering about a
+ * remembered endpoint would be answering a different question. The key is
+ * sent as typed, and blank means "use the one stored for this site" -- the
+ * main process resolves that, because the renderer is never handed a key.
+ *
+ * A FAILURE IS NOT AN ERROR HERE. It is recorded as an answer and shown as a
+ * hint: endpoints that serve completions without a list are common, nothing
+ * is blocked, and the name can still be typed.
+ */
+async function handleListModels(): Promise<void> {
+  try {
+    const models = await window.oeq.listModels({
+      instanceId: state.setupInstanceId,
+      baseUrl: state.setupFields.modelBaseUrl,
+      apiKey: state.setupFields.modelKey,
+    });
+    state.modelList = { models };
+  } catch (err) {
+    state.modelList = { error: errorMessage(err) };
+  }
+  render();
+}
+
 async function handleForgetOAuth(): Promise<void> {
   try {
     await window.oeq.forgetOAuth(state.setupInstanceId);

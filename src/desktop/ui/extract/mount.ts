@@ -82,6 +82,7 @@ export function renderExtract(
         aiWritten: state.savedAiWritten,
         savedPath: state.savedPath,
         busy: state.busy,
+        modelStatus: state.modelStatus,
         error: state.error,
         onSave: () => void controller.save(),
         onBack: () => controller.back(),

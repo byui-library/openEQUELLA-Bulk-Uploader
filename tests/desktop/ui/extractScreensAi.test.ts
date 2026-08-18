@@ -110,6 +110,7 @@ function saved(over: Partial<ExtractSaveProps> = {}): string {
     aiWritten: 0,
     savedPath: 'C:/files/out.csv',
     busy: false,
+    modelStatus: null,
     error: null,
     onSave: () => {},
     onBack: () => {},

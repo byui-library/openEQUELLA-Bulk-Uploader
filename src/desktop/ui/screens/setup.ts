@@ -129,6 +129,15 @@ export interface SetupProps {
    * to the other copy.
    */
   storage: { path: string; appName: string; packaged: boolean } | null;
+  /**
+   * What the model endpoint last said it could run, or the reason it could
+   * not be asked. Null before anyone has asked.
+   *
+   * ADVISORY. Nothing here gates a save: endpoints that serve completions
+   * without a model list are common, and the typed name stays usable.
+   */
+  modelList: { models: string[] } | { error: string } | null;
+  onListModels(): void;
   onForgetOAuth(): void;
   /**
    * The collections this account can actually contribute to, or null when they
@@ -581,6 +590,36 @@ export function storageNote(storage: SetupProps['storage']): string {
     </p>`;
 }
 
+/**
+ * What the endpoint answered when asked which models it offers.
+ *
+ * Three states, and they are different answers: nothing asked yet, asked and
+ * told (possibly nothing at all -- reachable and empty is not the same as
+ * unreachable), and asked and refused. The refusal is a hint rather than an
+ * error box: it does not stop anything, because the name can still be typed.
+ */
+export function modelListNote(props: SetupProps): string {
+  const list = props.modelList;
+  if (list === null) return '';
+  if ('error' in list) {
+    return `<p class="hint">Could not ask that address which models it has: ${escapeHtml(list.error)}
+      You can still type the name yourself.</p>`;
+  }
+  if (list.models.length === 0) {
+    return `<p class="hint">That address answered, and has <strong>no models</strong> installed.</p>`;
+  }
+  return `
+    <p class="hint">Models on that endpoint &mdash; click one to use it:</p>
+    <div class="button-row">
+      ${list.models
+        .map(
+          (m) =>
+            `<button type="button" class="secondary model-choice" data-model="${escapeHtml(m)}">${escapeHtml(m)}</button>`,
+        )
+        .join('')}
+    </div>`;
+}
+
 function authSection(props: SetupProps, forWhat: string): string {
   const f = props.fields;
   const account =
@@ -1017,7 +1056,7 @@ function modelSection(props: SetupProps): string {
           value="${escapeHtml(f.modelBaseUrl)}"
         />
 
-        <label for="setup-model-name">${MODEL_NAME_LABEL} — for example <code>llama3</code></label>
+        <label for="setup-model-name">${MODEL_NAME_LABEL} — for example <code>llama3.1:8b</code></label>
         <input
           id="setup-model-name"
           name="modelName"
@@ -1026,6 +1065,10 @@ function modelSection(props: SetupProps): string {
           spellcheck="false"
           value="${escapeHtml(f.modelName)}"
         />
+        <div class="button-row">
+          <button id="setup-list-models" type="button" class="secondary">Show models on this endpoint</button>
+        </div>
+        ${modelListNote(props)}
 
         <label for="setup-model-key">
           API key — needed only for a <strong>hosted</strong> service that charges for
@@ -1420,6 +1463,14 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   field('#setup-password', 'password');
   root.querySelector<HTMLButtonElement>('#setup-forget-oauth')?.addEventListener('click', () => {
     props.onForgetOAuth();
+  });
+  root.querySelector<HTMLButtonElement>('#setup-list-models')?.addEventListener('click', () => {
+    props.onListModels();
+  });
+  root.querySelectorAll<HTMLButtonElement>('.model-choice').forEach((b) => {
+    b.addEventListener('click', () => {
+      props.onFieldChange('modelName', b.dataset['model'] ?? '');
+    });
   });
   field('#setup-client-id', 'clientId');
   field('#setup-client-secret', 'clientSecret');

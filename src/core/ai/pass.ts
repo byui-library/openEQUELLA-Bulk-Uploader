@@ -7,6 +7,7 @@
 import type { Profile } from '../extract/types.js';
 import { fillWithModel, modelSections, type FillTarget } from './fill.js';
 import { OpenAiCompatibleProvider } from './provider.js';
+import type { ModelProgress } from './fill.js';
 
 /**
  * A model endpoint as either front end holds it.
@@ -72,6 +73,26 @@ function buildProvider(settings: ModelPassSettings, fetchImpl?: typeof fetch): O
 }
 
 /**
+ * Ask an endpoint which models it offers.
+ *
+ * Goes through `buildProvider` like everything else here, so the settings
+ * screen cannot end up with a different idea of what a usable endpoint is than
+ * the batch that runs later -- which is the whole reason this module exists.
+ *
+ * `model` is not needed to ask for a list and is passed as given: the operator
+ * is asking precisely because they do not know what to put there yet.
+ */
+export async function listModelsAt(
+  endpoint: { baseUrl: string; apiKey: string; timeoutMs?: number },
+  fetchImpl?: typeof fetch,
+): Promise<string[]> {
+  return buildProvider(
+    { baseUrl: endpoint.baseUrl, model: '', apiKey: endpoint.apiKey, ...(endpoint.timeoutMs === undefined ? {} : { timeoutMs: endpoint.timeoutMs }) } as ModelPassSettings,
+    fetchImpl,
+  ).listModels();
+}
+
+/**
  * Run the model pass over rows that have already been extracted.
  *
  * ## Why this is one function rather than two copies
@@ -99,8 +120,12 @@ export async function runModelPass(
   profile: Profile,
   settings: ModelPassSettings,
   fetchImpl?: typeof fetch,
+  /** Told what the pass is doing, cell by cell, as it does it. Optional:
+   *  the CLI runs without one. See `ModelProgress`. */
+  onProgress?: (event: ModelProgress) => void,
 ): Promise<void> {
   await fillWithModel(targets, profile, buildProvider(settings, fetchImpl), {
+    ...(onProgress === undefined ? {} : { onProgress }),
     budget: settings.budget,
     cap: settings.cap,
     // Both read off the profile rather than passed in, so a template's house

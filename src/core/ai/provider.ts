@@ -258,6 +258,94 @@ export class OpenAiCompatibleProvider {
     assertUsableTimeout(this.timeoutMs);
   }
 
+  /**
+   * What this endpoint says it can run.
+   *
+   * REPORTED BY THE OPERATOR: "in the ollama settings I can't tell which
+   * ollama model I have". The model name is typed, and a tag that is nearly
+   * right -- `llama3.1` where the machine holds `llama3.1:8b` -- does not fail
+   * as a settings mistake. It fails later, mid-batch, as a completion error.
+   *
+   * GENERIC, NOT AN OLLAMA FEATURE. `/models` belongs to the OpenAI-compatible
+   * contract this provider already targets, so a hosted endpoint answers it
+   * too. Plenty of endpoints implement completions and not this; that is a
+   * fact about them rather than a fault in the settings, and the error says
+   * so. NOTHING may treat a failure here as a reason to refuse a save: the
+   * name can always be typed, and a convenience that becomes a gate is worse
+   * than no convenience.
+   *
+   * An empty list is a real answer -- reachable, holding nothing -- and is not
+   * an error. "Cannot ask" and "nothing installed" are different things and
+   * the operator needs to tell them apart.
+   */
+  async listModels(): Promise<string[]> {
+    const url = instanceEndpoint(this.config.baseUrl, '/models');
+    const headers: Record<string, string> = {};
+    // The key goes in the header, never the URL -- same rule as `complete`.
+    if (this.config.apiKey) headers['authorization'] = `Bearer ${this.config.apiKey}`;
+
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    let res: Response;
+    let body: string;
+    try {
+      ({ res, body } = await this.raceTheClock(async () => {
+        const response = await this.fetchImpl(url, { method: 'GET', headers, signal });
+        return { res: response, body: await response.text() };
+      }, signal));
+    } catch (cause) {
+      throw new ApiError(
+        this.redact(
+          `Could not reach ${safeEndpoint(url)} to ask which models it offers: ` +
+            `${describeReason(cause, (t) => this.redact(t))}`,
+        ),
+        0,
+        '',
+      );
+    }
+
+    if (res.status === 404) {
+      throw new ApiError(
+        this.redact(
+          `${safeEndpoint(url)} does not offer a list of models. Many endpoints serve ` +
+            `completions without it -- type the model name instead.`,
+        ),
+        404,
+        this.redact(body),
+      );
+    }
+    if (!res.ok) {
+      throw new ApiError(
+        this.redact(`${safeEndpoint(url)} refused the request for its model list: ${res.status}.`),
+        res.status,
+        this.redact(body),
+      );
+    }
+
+    let parsed: { data?: { id?: unknown }[] };
+    try {
+      parsed = JSON.parse(body) as { data?: { id?: unknown }[] };
+    } catch {
+      parsed = {};
+    }
+    if (!Array.isArray(parsed.data)) {
+      throw new ApiError(
+        this.redact(
+          `${safeEndpoint(url)} did not answer with a list of models. It may not be an ` +
+            `OpenAI-compatible address -- check it ends with /v1.`,
+        ),
+        res.status,
+        this.redact(body),
+      );
+    }
+
+    return parsed.data
+      .map((entry) => (typeof entry?.id === 'string' ? entry.id : ''))
+      .filter((id) => id !== '')
+      // Sorted so the same endpoint gives the same order every time: a list
+      // that reshuffles between clicks reads as a different answer.
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   async complete(prompt: string): Promise<string> {
     const url = this.endpoint;
     const headers: Record<string, string> = { 'content-type': 'application/json' };

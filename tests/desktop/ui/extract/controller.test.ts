@@ -39,6 +39,11 @@ function api(over: Record<string, unknown> = {}) {
     // catch that covers an unreadable store -- two different states that a
     // missing method would silently merge into one.
     getModel: vi.fn(async () => null),
+    // Registered once when the controller is built. A fake without it throws
+    // at construction, which is the right failure -- the controller genuinely
+    // depends on it -- but it must be present for every test, not just the
+    // ones about progress.
+    onModelProgress: vi.fn(),
     ...over,
   };
 }
@@ -706,5 +711,54 @@ describe('what the run is told about the model', () => {
     await c.save();
     expect(c.state().savedAiWritten).toBe(3);
     expect(c.state().savedFlagged).toBe(1);
+  });
+});
+
+/**
+ * ## Saying what the model is doing while it does it
+ *
+ * REPORTED BY THE OPERATOR: "the writing to the spreadsheet is taking longer
+ * now". It is -- one call per eligible cell, in sequence -- and measured on
+ * their own machine the FIRST call took 48 seconds while Ollama loaded
+ * llama3.1:8b, against about 4 for a warm one. The screen showed a disabled
+ * button and nothing else, which reads as a hang.
+ */
+describe('the model pass reports itself', () => {
+  /** Hands back the callback the controller registered, so a test can play the
+   *  main process and emit an event. */
+  const withProgress = () => {
+    let emit: ((e: unknown) => void) | null = null;
+    const a = api({ onModelProgress: vi.fn((cb: (e: unknown) => void) => { emit = cb; }) });
+    return { a, fire: (e: unknown) => emit?.(e) };
+  };
+
+  it('names the field and the file it is waiting on', () => {
+    const { a, fire } = withProgress();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    fire({ stage: 'asking', path: 'MWDL/description', file: 'Fennel_Marcus.pdf' });
+    expect(c.state().modelStatus).toMatch(/asking the model about/i);
+    expect(c.state().modelStatus).toContain('Fennel_Marcus.pdf');
+  });
+
+  it('says when a value was refused rather than written', () => {
+    const { a, fire } = withProgress();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    fire({ stage: 'refused', path: 'MWDL/description', file: 'a.pdf' });
+    expect(c.state().modelStatus).toMatch(/refused/i);
+  });
+
+  it('says when the endpoint could not be reached', () => {
+    const { a, fire } = withProgress();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    fire({ stage: 'failed', path: 'MWDL/description', file: 'a.pdf' });
+    expect(c.state().modelStatus).toMatch(/could not be reached/i);
+  });
+
+  /** Registered once for the controller's life: preload adds a listener per
+   *  call, so registering per run would fire it once per previous save. */
+  it('subscribes exactly once', () => {
+    const { a } = withProgress();
+    createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    expect(a.onModelProgress).toHaveBeenCalledTimes(1);
   });
 });

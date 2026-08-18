@@ -1245,3 +1245,79 @@ describe('a reply the document does not support', () => {
     expect(evidenced.cells['MWDL/description']).toBe(asserted);
   });
 });
+
+/**
+ * ## Saying what the model is doing while it does it
+ *
+ * REPORTED BY THE OPERATOR: "the writing to the spreadsheet is taking longer
+ * now". It is -- one HTTP call per eligible cell, in sequence, and measured
+ * against their own machine the FIRST call took 48 seconds while Ollama loaded
+ * llama3.1:8b into memory, with warm calls at about 4. The app said nothing for
+ * the whole of it.
+ *
+ * A pass that can sit silent for a minute has to report. The events are per
+ * CELL rather than per row because that is the unit of work and of cost: one
+ * row can consult the model twice, and "asked about the description of file
+ * three" is what the operator is waiting to see.
+ *
+ * `asking` is emitted BEFORE the call, which is the whole point -- an event
+ * that arrives only afterwards leaves exactly the 48-second silence unexplained.
+ */
+describe('fillWithModel progress', () => {
+  const trace = () => {
+    const seen: { stage: string; path: string; file: string; detail?: string }[] = [];
+    return { seen, onProgress: (e: (typeof seen)[number]) => seen.push(e) };
+  };
+
+  it('says it is asking before the call, and what it wrote after', async () => {
+    const t = trace();
+    const rows = [{ row: row(), doc: doc('A document.') }];
+    await fillWithModel(rows, profile, provider('A description.'), options({ onProgress: t.onProgress }));
+
+    expect(t.seen.map((e) => e.stage)).toEqual(['asking', 'written']);
+    expect(t.seen[0]!.path).toBe('MWDL/description');
+  });
+
+  /** The event has to name the file, or "row 3" means nothing in a folder. */
+  it('names the file each event belongs to', async () => {
+    const t = trace();
+    const rows = [{ row: row({ cells: { 'MWDL/description': '', 'attachment name': 'a.pdf' } }), doc: doc('A document.') }];
+    await fillWithModel(rows, profile, provider('A description.'), options({ onProgress: t.onProgress }));
+    expect(t.seen[0]!.file).toBe('a.pdf');
+  });
+
+  it('reports a value the verifier refused, rather than reporting it as written', async () => {
+    const t = trace();
+    const rows = [{ row: row(), doc: doc('A document mentioning nothing in particular.') }];
+    await fillWithModel(
+      rows,
+      profile,
+      provider('He died on 6 January 2024 at Ricks College.'),
+      options({ onProgress: t.onProgress }),
+    );
+    expect(t.seen.map((e) => e.stage)).toEqual(['asking', 'refused']);
+    expect(rows[0]!.row.cells['MWDL/description']).toBe('');
+  });
+
+  it('reports a provider failure without stopping the batch', async () => {
+    const t = trace();
+    const failing = { complete: vi.fn(async () => { throw new Error('connection refused'); }) };
+    const rows = [{ row: row(), doc: doc('A document.') }];
+    await fillWithModel(rows, profile, failing, options({ onProgress: t.onProgress }));
+    expect(t.seen.map((e) => e.stage)).toEqual(['asking', 'failed']);
+  });
+
+  /** A row nothing is eligible on costs nothing and is not reported: an event
+   *  per untouched row would bury the ones that matter. */
+  it('says nothing about a row it never sends', async () => {
+    const t = trace();
+    const rows = [{ row: row({ cells: { 'MWDL/description': 'Stated.' } }), doc: doc('A document.') }];
+    await fillWithModel(rows, profile, provider('x'), options({ onProgress: t.onProgress }));
+    expect(t.seen).toEqual([]);
+  });
+
+  it('works when nobody is listening', async () => {
+    const rows = [{ row: row(), doc: doc('A document.') }];
+    await expect(fillWithModel(rows, profile, provider('A description.'), options())).resolves.toBeUndefined();
+  });
+});
