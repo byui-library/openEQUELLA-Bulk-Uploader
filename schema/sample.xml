@@ -219,12 +219,12 @@ This XML file does not appear to have any style information associated with it. 
 <newitem>false</newitem>
 <thumbnail>default</thumbnail>
 <owner>
-97030c71-55e5-4f47-8905-14f9612ff4a6
-<user id="97030c71-55e5-4f47-8905-14f9612ff4a6">
-<username>milesm</username>
-<givenname>Mathew</givenname>
-<surname>Miles</surname>
-<email>MilesM@byui.edu</email>
+00000000-0000-0000-0000-000000000000
+<user id="00000000-0000-0000-0000-000000000000">
+<username>m.rowan</username>
+<givenname>Morgan</givenname>
+<surname>Rowan</surname>
+<email>m.rowan@example.edu</email>
 </user>
 </owner>
 <datecreated>2026-04-13T08:45:28-0700</datecreated>
@@ -244,9 +244,9 @@ This XML file does not appear to have any style information associated with it. 
 </rights>
 <badurls/>
 <history>
-<clone applies="false" date="2026-04-13T08:45:10-0700" state="draft" user="97030c71-55e5-4f47-8905-14f9612ff4a6">97030c71-55e5-4f47-8905-14f9612ff4a6</clone>
-<contributed applies="false" date="2026-04-13T08:45:28-0700" state="draft" user="97030c71-55e5-4f47-8905-14f9612ff4a6">97030c71-55e5-4f47-8905-14f9612ff4a6</contributed>
-<edit applies="false" date="2026-04-13T08:45:28-0700" state="draft" user="97030c71-55e5-4f47-8905-14f9612ff4a6">97030c71-55e5-4f47-8905-14f9612ff4a6</edit>
+<clone applies="false" date="2026-04-13T08:45:10-0700" state="draft" user="00000000-0000-0000-0000-000000000000">00000000-0000-0000-0000-000000000000</clone>
+<contributed applies="false" date="2026-04-13T08:45:28-0700" state="draft" user="00000000-0000-0000-0000-000000000000">00000000-0000-0000-0000-000000000000</contributed>
+<edit applies="false" date="2026-04-13T08:45:28-0700" state="draft" user="00000000-0000-0000-0000-000000000000">00000000-0000-0000-0000-000000000000</edit>
 </history>
 <moderation/>
 <navigationNodes/>

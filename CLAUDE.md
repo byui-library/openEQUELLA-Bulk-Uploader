@@ -216,9 +216,12 @@ shape, never as a value the code may assume.
   ```text
   Set-Cookie: AWSALB (124 chars), AWSALBCORS (124), JSESSIONID (32), ROUTEID (2)
 
-  JSESSIONID alone -> username=guest,  guest=true
-  all four         -> username=milesm, guest=false
+  JSESSIONID alone -> username=guest,      guest=true
+  all four         -> username=<operator>, guest=false
   ```
+
+  (The real account name is not recorded. What was measured is that one request
+  was answered as the guest and the other as the signed-in operator.)
 
   The instance is behind an AWS load balancer; `AWSALB` and `ROUTEID` carry the
   routing state that reaches the backend actually holding the session, and

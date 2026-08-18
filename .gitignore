@@ -66,4 +66,11 @@ Thumbs.db
 # missing. Point the extractor wherever you like, but any real batch belongs
 # under a path this file already covers.
 tests/test files/
+# Real scanned obituaries, used for hands-on trials of the description work.
+# These name deceased people and state their birth and death dates, so they
+# are personal data about identifiable individuals in a PUBLIC repository --
+# the exact material that had to be scrubbed out of tests, docs and source
+# comments once already (see the pseudonym rule in CLAUDE.md). They arrived
+# untracked and NOT ignored, one `git add -A` away from being published.
 tests/obits/
+obits/
