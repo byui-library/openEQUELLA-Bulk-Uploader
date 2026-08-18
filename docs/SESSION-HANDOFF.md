@@ -238,7 +238,7 @@ Guarded by four mutations, each applied with the Edit tool and watched go red.
 
 **Deliberately not done, each for a stated reason:**
 
-- **The `m.miles` scrub** — 48 occurrences across 5 test files and 2 docs,
+- **The the operator’s surname scrub** — 48 occurrences across 5 test files and 2 docs,
   including this one. `CLAUDE.md` records that it is reviewed as a change of its
   own and kept off this branch; doing it here would break that twice over. **Do
   it on its own branch off `main`.** It is a disclosure in a public repository,
@@ -413,7 +413,7 @@ Same ten scanned obituaries, `llama3.1:8b` on a GPU, where the first run was
   off `main` before PR #14, so it still carries real dates in `dates.test.ts`
   and elsewhere. **Merge `main` in once #14 lands**, or the LLM PR will read as
   re-introducing them.
-- **`m.miles` in 40 fixtures, and the phrase in published history** — both
+- **the operator’s surname in 40 fixtures, and the phrase in published history** — both
   unchanged, both below under *Two privacy items*.
 
 ### The local model runtime, and why the diagnosis is kept
@@ -439,7 +439,7 @@ this are in the README and `docs/INSTALL.md`.
 
 ### Two privacy items, both outstanding
 
-- **`m.miles` appears in 40 test fixtures across four files**, and `milesm` once
+- **the operator’s surname appears in 40 test fixtures across four files**, and the same surname once
   in `tests/passwordAuth.test.ts`. The operator's real surname, not a botanical
   pseudonym, in a **public** repository. Deliberately kept off this branch so it
   can be reviewed on its own.
@@ -582,8 +582,8 @@ this" and "the model may replace this". An incomplete composed value deserves
 the first and not the second. Separating them is the honest version of what
 "let the model improve a partial description" was reaching for.
 
-**Known, not fixed:** `m.miles` appears in 40 test fixtures across four files,
-and `milesm` once in `tests/passwordAuth.test.ts`. Both are the operator's real
+**Known, not fixed:** the operator’s surname appears in 40 test fixtures across four files,
+and the same surname once in `tests/passwordAuth.test.ts`. Both are the operator's real
 surname rather than a botanical pseudonym, both violate this repo's own rule,
 and the repository is now public. The scrub was deliberately kept out of the
 LLM branch so it can be reviewed on its own.
@@ -712,7 +712,7 @@ carries a section written for outside readers, and `gh repo view` returns
 
 **Anything committed to this repository is world-readable.** That changes what
 may safely go in a fixture, a comment or a doc — see the pseudonym rule in
-`CLAUDE.md`, and the `m.miles` note above, which is now a public exposure
+`CLAUDE.md`, and the the operator’s surname note above, which is now a public exposure
 rather than an untidiness.
 
 ### What the probe found — 2026-08-12, content.byui.edu

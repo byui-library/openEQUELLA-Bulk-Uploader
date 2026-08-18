@@ -16,7 +16,7 @@
 
 **Deliberately out, and why:**
 
-- **The `m.miles` scrub** (48 occurrences across 5 test files and 2 docs). `CLAUDE.md` records a decision that it is done and reviewed as a change of its own and kept off the language-model branch. Folding it in here would break that on both counts. Do it on its own branch off `main`.
+- **The the operator’s surname scrub** (48 occurrences across 5 test files and 2 docs). `CLAUDE.md` records a decision that it is done and reviewed as a change of its own and kept off the language-model branch. Folding it in here would break that on both counts. Do it on its own branch off `main`.
 - **The dependency advisories.** Analysed in the review and found not to apply — `fast-xml-parser`'s advisory is against `XMLBuilder` and only `XMLParser` is used; the `uuid` advisory needs a `buf` argument nothing passes. Both fixes are breaking major bumps, one of them to `exceljs`, which writes the spreadsheet. The analysis is recorded in Task 6 so nobody force-upgrades on a red audit line.
 - **The password in openEQUELLA's login query string.** Not fixable from here; documented in Task 6.
 
