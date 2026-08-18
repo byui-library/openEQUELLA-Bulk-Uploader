@@ -515,6 +515,27 @@ function seedSetupForm(id: string): void {
     // Per-site settings, seeded from what was stored. `live` falls back to
     // TRUE for a site not saved yet -- assumed live until said otherwise.
     attachmentUuidPath: selected?.attachmentUuidPath ?? '',
+    // HOW THIS SITE SIGNS IN, read back from the site's own record rather than
+    // left at the blank form's default.
+    //
+    // REPORTED BY THE OPERATOR, and it blocked the app entirely: they saved an
+    // OAuth client ID and secret, reopened Site settings, and found both boxes
+    // empty with the OAuth radio unselected -- while the app went on signing in
+    // with the stored OAuth client, whose token openEQUELLA refused with a 403
+    // and an empty body. Instance has carried authMode all along (secrets.ts
+    // calls it "how this site signs in; carries no secret"); this line is where
+    // it was being dropped.
+    //
+    // The consequence is worse than an uninformative form. Showing "Username
+    // and password" for a site stored as OAuth means a save writes that mode
+    // back, so an operator changing the attachment path could silently change
+    // how the site authenticates -- the same defect as setDefault rebuilding a
+    // Column from the fields it happened to know about.
+    //
+    // The client ID and redirect URL are still NOT restored, because no IPC
+    // exposes them: getPassword answers with a username and nothing else. Until
+    // one does, this fixes the radio and not the boxes beside it.
+    authMode: selected?.authMode ?? 'password',
     live: selected?.live ?? true,
     // Sensible starting point for a field non-technical staff cannot fill in
     // from nothing: the site's own address. Pre-filled into the form, where
@@ -689,9 +710,20 @@ async function refreshStoredUsername(): Promise<void> {
   // answer for the previous site must never be attributed to the new one.
   if (state.setupInstanceId !== instanceId) return;
   state.setupStoredUsername = stored?.username ?? null;
-  // A stored account is also the honest default for HOW this site signs in:
-  // it is the one thing Setup can see about a saved credential.
-  if (stored) state.setupFields = { ...state.setupFields, authMode: 'password' };
+  // THE STORED ACCOUNT NO LONGER DECIDES HOW THE SITE SIGNS IN.
+  //
+  // This used to force password mode whenever an account came back, because
+  // a stored username was "the one thing Setup can see about a saved
+  // credential". That stopped being true when seedSetupForm started reading
+  // the site's real authMode off its own record -- and this runs
+  // asynchronously, landing AFTER the form is seeded, so it would have put
+  // the radio straight back.
+  //
+  // The case is real, not theoretical: a site set up with a password and
+  // later switched to OAuth keeps its password entry until somebody presses
+  // "Forget this password", and that leftover must not redecide how the site
+  // authenticates. The username is still read -- it is what the "Signed in
+  // as ..." card shows -- it just no longer votes on the mode.
   render();
 }
 

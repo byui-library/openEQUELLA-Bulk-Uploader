@@ -101,6 +101,9 @@ interface BootOptions {
    * attachment field at all, so nothing is filled in unless a test asks for it.
    */
   schemaPaths?: string[];
+  /** What `getPassword` reports for the site. `null` means no password is
+   *  stored, which is the real state of a site that signs in with OAuth. */
+  storedPassword?: { username: string } | null;
   /** Make the schema read fail, which leaves the path unchecked. */
   schemaUnreadable?: boolean;
 }
@@ -142,7 +145,8 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
       if (options.schemaUnreadable === true) throw new Error('schema unreadable');
       return { uuid: 'schema-1', name: 'Schema', paths: options.schemaPaths ?? ['MWDL/title'] };
     },
-    getPassword: async () => ({ username: 'a.operator' }),
+    getPassword: async () =>
+      options.storedPassword === undefined ? { username: 'a.operator' } : options.storedPassword,
     getModel: async () => options.model ?? null,
     setModel: async (args: { settings: { baseUrl: string; model: string; budget: number } }) => {
       if (options.setModelFails === true) {
@@ -1283,5 +1287,106 @@ describe('a failed model write with an endpoint already stored', () => {
     const app = await correctAndSave();
     expect(app.innerHTML).toMatch(/were saved/i);
     expect(app.innerHTML).toMatch(/model settings were not/i);
+  });
+});
+
+/**
+ * ## Setup must show how the site ACTUALLY signs in
+ *
+ * REPORTED BY THE OPERATOR, and it blocked the app entirely: they entered an
+ * OAuth client ID and secret, saved, reopened Site settings, and both boxes
+ * were empty with "Use OAuth client credentials" no longer selected. The app
+ * meanwhile kept signing in with the stored OAuth client, and openEQUELLA
+ * refused the token -- a 403 with an empty body, which is what a rejected
+ * access token looks like and nothing else does.
+ *
+ * The cause: `Instance` carries `authMode` and it reaches the renderer, but
+ * `seedSetupForm` rebuilt the form as `blankSetupFields()` plus five instance
+ * fields and dropped it, and `blankSetupFields` hardcodes 'password'.
+ *
+ * THE SAME DEFECT CLASS AS `setDefault`: a form that rebuilds a record from
+ * defaults and silently discards the fields it does not display. Here the
+ * discarded field is how you sign in, so the operator cannot see the truth and
+ * a later save can silently change it.
+ */
+describe('Setup shows the sign-in method the site is stored with', () => {
+  /** The whole `<input>` for a radio, which spans several lines of markup. */
+  const radio = (html: string, id: string): string =>
+    new RegExp(`<input[^>]*id="${id}"[^>]*>`).exec(html)?.[0] ?? '';
+
+  it('selects OAuth for a site stored as OAuth', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-code')).toContain('checked');
+    expect(radio(html, 'setup-auth-password')).not.toContain('checked');
+  });
+
+  /** A control the operator has to open to discover their own configuration
+   *  has failed at showing it. */
+  it('opens the Advanced section for a site stored as OAuth', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    expect(/<details[^>]*id="setup-advanced"[^>]*open/.test(harness.app.innerHTML)).toBe(true);
+  });
+
+  it('still selects password for a site stored with a password', async () => {
+    harness = await boot({ site: { authMode: 'password' } });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-password')).toContain('checked');
+    expect(radio(html, 'setup-auth-code')).not.toContain('checked');
+  });
+
+  /** "Add another site…" is not a site: nothing is stored, so the default
+   *  stands -- an ordinary account is what an institution has on day one. */
+  it('defaults a brand-new site to password', async () => {
+    harness = await boot({ fresh: true, storedPassword: null });
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-password')).toContain('checked');
+    expect(radio(html, 'setup-auth-code')).not.toContain('checked');
+  });
+});
+
+/**
+ * ## A leftover password must not redecide how the site signs in
+ *
+ * `refreshStoredPassword` used to force password mode whenever a stored
+ * account came back, on the reasoning that "it is the one thing Setup can see
+ * about a saved credential". That reasoning expired the moment the form
+ * started reading the site's real `authMode`: it runs asynchronously, lands
+ * after the form is seeded, and would put the radio back.
+ *
+ * The case is real rather than theoretical -- a site set up with a password and
+ * later switched to OAuth keeps its password entry until somebody presses
+ * "Forget this password".
+ */
+describe('a stored password does not override the stored sign-in method', () => {
+  const radio = (html: string, id: string): string =>
+    new RegExp(`<input[^>]*id="${id}"[^>]*>`).exec(html)?.[0] ?? '';
+
+  it('keeps OAuth selected for an OAuth site that still has a password stored', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: { username: 'a.operator' },
+    });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const html = harness.app.innerHTML;
+    expect(radio(html, 'setup-auth-code')).toContain('checked');
+    expect(radio(html, 'setup-auth-password')).not.toContain('checked');
   });
 });
