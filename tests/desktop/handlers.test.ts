@@ -280,7 +280,7 @@ describe('forgetPassword', () => {
   async function savePassword(): Promise<void> {
     await store().saveInstance(
       { label: 'Live', baseUrl: SITE },
-      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+      { authMode: 'password', username: 'm.rowan', password: 'hunter2' },
     );
   }
 

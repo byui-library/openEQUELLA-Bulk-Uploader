@@ -89,10 +89,10 @@ describe('buildConfig', () => {
    * institution not behind SSO could not sign in at all.
    */
   it('produces a password-mode config from password-mode settings', () => {
-    const settings: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+    const settings: Settings = { authMode: 'password', username: 'm.rowan', password: 'hunter2' };
     const cfg = buildConfig(LIVE, settings, 'coll-uuid');
     expect(cfg.authMode).toBe('password');
-    expect(cfg.username).toBe('m.miles');
+    expect(cfg.username).toBe('m.rowan');
     expect(cfg.password).toBe('hunter2');
   });
 
@@ -101,7 +101,7 @@ describe('buildConfig', () => {
   // happened while the mode was hardcoded, since loadConfig's required list
   // is mode-dependent and it was always asked for the OAuth branch.
   it('does not demand a client id or secret in password mode', () => {
-    const settings: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+    const settings: Settings = { authMode: 'password', username: 'm.rowan', password: 'hunter2' };
     expect(() => buildConfig(LIVE, settings, 'coll-uuid')).not.toThrow();
     const cfg = buildConfig(LIVE, settings, 'coll-uuid');
     expect(cfg.clientId).toBe('');
@@ -126,7 +126,7 @@ describe('buildConfig', () => {
    * staring at openEQUELLA's "client_id (null)".
    */
   it('builds a UsernamePasswordAuth from a password-mode desktop config', () => {
-    const settings: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+    const settings: Settings = { authMode: 'password', username: 'm.rowan', password: 'hunter2' };
     const provider = createAuthProvider(buildConfig(LIVE, settings, 'coll-uuid'));
     expect(provider).toBeInstanceOf(UsernamePasswordAuth);
   });
@@ -161,7 +161,7 @@ describe('buildConfig', () => {
  * looking in openEQUELLA weeks later.
  */
 describe('buildConfig and the attachment-uuid path', () => {
-  const PASSWORD: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+  const PASSWORD: Settings = { authMode: 'password', username: 'm.rowan', password: 'hunter2' };
   const PATH = 'BYUI_extended/attachments/attachment';
 
   it('takes it from the stored instance, per site', () => {
@@ -235,7 +235,7 @@ describe('requireInstance', () => {
  * reachable, so nothing ever has to sign in in order to sign out.
  */
 describe('live session registry', () => {
-  const PASSWORD: Settings = { authMode: 'password', username: 'm.miles', password: 'hunter2' };
+  const PASSWORD: Settings = { authMode: 'password', username: 'm.rowan', password: 'hunter2' };
   const OAUTH: Settings = {
     authMode: 'code',
     clientId: 'cid',

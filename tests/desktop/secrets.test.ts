@@ -360,8 +360,8 @@ describe('SecretStore', () => {
 describe('SecretStore passwords', () => {
   it('round-trips a username and password for one instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.setPassword(instanceKey(LIVE), 'm.miles', 'hunter2');
-    expect(await s.getPassword(instanceKey(LIVE))).toEqual({ username: 'm.miles', password: 'hunter2' });
+    await s.setPassword(instanceKey(LIVE), 'm.rowan', 'hunter2');
+    expect(await s.getPassword(instanceKey(LIVE))).toEqual({ username: 'm.rowan', password: 'hunter2' });
   });
 
   it('keeps two instances apart rather than letting one overwrite the other', async () => {
@@ -378,22 +378,22 @@ describe('SecretStore passwords', () => {
 
   it('keys a password by the normalised address, like every other credential', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.setPassword(instanceKey(`${LIVE}/`), 'm.miles', 'hunter2');
-    expect((await s.getPassword(instanceKey(LIVE)))?.username).toBe('m.miles');
+    await s.setPassword(instanceKey(`${LIVE}/`), 'm.rowan', 'hunter2');
+    expect((await s.getPassword(instanceKey(LIVE)))?.username).toBe('m.rowan');
   });
 
   it('replaces a stored password rather than accumulating them', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.setPassword(instanceKey(LIVE), 'm.miles', 'old');
-    await s.setPassword(instanceKey(LIVE), 'm.miles', 'new');
-    expect(await s.getPassword(instanceKey(LIVE))).toEqual({ username: 'm.miles', password: 'new' });
+    await s.setPassword(instanceKey(LIVE), 'm.rowan', 'old');
+    await s.setPassword(instanceKey(LIVE), 'm.rowan', 'new');
+    expect(await s.getPassword(instanceKey(LIVE))).toEqual({ username: 'm.rowan', password: 'new' });
   });
 
   // Behind the Forget button.
   it('forgetPassword leaves nothing behind, for that instance only', async () => {
     const path = join(dir, 'settings.enc');
     const s = new SecretStore(path, fakeCipher);
-    await s.setPassword(instanceKey(LIVE), 'm.miles', 'sup3rs3cretPassword');
+    await s.setPassword(instanceKey(LIVE), 'm.rowan', 'sup3rs3cretPassword');
     await s.setPassword(instanceKey(SANDBOX), 'other', 'other-pass');
 
     await s.forgetPassword(instanceKey(LIVE));
@@ -402,7 +402,7 @@ describe('SecretStore passwords', () => {
     expect(await s.getPassword(instanceKey(SANDBOX))).toEqual({ username: 'other', password: 'other-pass' });
     // Not merely hidden from getPassword: gone from the file.
     const raw = fakeCipher.decrypt(await readFile(path));
-    expect(raw).not.toContain('m.miles');
+    expect(raw).not.toContain('m.rowan');
   });
 
   it('forgetting a password that was never stored is not an error', async () => {
@@ -412,7 +412,7 @@ describe('SecretStore passwords', () => {
 
   it('returns null when no password is stored for that instance', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.setPassword(instanceKey(LIVE), 'm.miles', 'hunter2');
+    await s.setPassword(instanceKey(LIVE), 'm.rowan', 'hunter2');
     expect(await s.getPassword(instanceKey(SANDBOX))).toBeNull();
   });
 
@@ -434,7 +434,7 @@ describe('SecretStore passwords', () => {
   it('never writes the password in plaintext', async () => {
     const path = join(dir, 'settings.enc');
     const s = new SecretStore(path, fakeCipher);
-    await s.setPassword(instanceKey(LIVE), 'm.miles', 'sup3rs3cretPassword');
+    await s.setPassword(instanceKey(LIVE), 'm.rowan', 'sup3rs3cretPassword');
     const raw = await readFile(path, 'utf8');
     expect(raw).not.toContain('sup3rs3cretPassword');
   });
@@ -444,21 +444,21 @@ describe('SecretStore passwords', () => {
   // downgraded to a text file holding somebody's account password.
   it('refuses to store a password when encryption is unavailable', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), { ...fakeCipher, isAvailable: () => false });
-    await expect(s.setPassword(instanceKey(LIVE), 'm.miles', 'hunter2')).rejects.toThrow(/encryption/i);
+    await expect(s.setPassword(instanceKey(LIVE), 'm.rowan', 'hunter2')).rejects.toThrow(/encryption/i);
   });
 
   it('round-trips a password-mode instance through saveInstance and loadSettings', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
     const inst = await s.saveInstance(
       { label: 'Live', baseUrl: LIVE },
-      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+      { authMode: 'password', username: 'm.rowan', password: 'hunter2' },
     );
     expect(await s.loadSettings(inst.id)).toEqual({
       authMode: 'password',
-      username: 'm.miles',
+      username: 'm.rowan',
       password: 'hunter2',
     });
-    expect(await s.getPassword(inst.id)).toEqual({ username: 'm.miles', password: 'hunter2' });
+    expect(await s.getPassword(inst.id)).toEqual({ username: 'm.rowan', password: 'hunter2' });
   });
 
   /**
@@ -472,13 +472,13 @@ describe('SecretStore passwords', () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
     await s.saveInstance(
       { label: 'Live', baseUrl: LIVE },
-      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+      { authMode: 'password', username: 'm.rowan', password: 'hunter2' },
     );
     await s.saveInstance(
       { label: 'Renamed', baseUrl: LIVE },
-      { authMode: 'password', username: 'm.miles', password: '' },
+      { authMode: 'password', username: 'm.rowan', password: '' },
     );
-    expect(await s.getPassword(instanceKey(LIVE))).toEqual({ username: 'm.miles', password: 'hunter2' });
+    expect(await s.getPassword(instanceKey(LIVE))).toEqual({ username: 'm.rowan', password: 'hunter2' });
     expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Renamed');
   });
 
@@ -489,7 +489,7 @@ describe('SecretStore passwords', () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
     await s.saveInstance(
       { label: 'Live', baseUrl: LIVE },
-      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+      { authMode: 'password', username: 'm.rowan', password: 'hunter2' },
     );
     await s.forgetPassword(instanceKey(LIVE));
     expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
@@ -547,21 +547,21 @@ describe('SecretStore passwords', () => {
         JSON.stringify({
           version: 3,
           instances: { [instanceKey(LIVE)]: { label: 'Live', baseUrl: LIVE, authMode: 'password' } },
-          passwords: { [instanceKey(LIVE)]: { username: 'm.miles', password: 'hunter2' } },
+          passwords: { [instanceKey(LIVE)]: { username: 'm.rowan', password: 'hunter2' } },
         }),
       ),
     );
 
     expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
       authMode: 'password',
-      username: 'm.miles',
+      username: 'm.rowan',
       password: 'hunter2',
     });
   });
 
   it('clear() takes the passwords with it', async () => {
     const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
-    await s.setPassword(instanceKey(LIVE), 'm.miles', 'hunter2');
+    await s.setPassword(instanceKey(LIVE), 'm.rowan', 'hunter2');
     await s.clear();
     expect(await s.getPassword(instanceKey(LIVE))).toBeNull();
   });
@@ -688,7 +688,7 @@ describe('SecretStore — per-site settings', () => {
     await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
     await s.saveInstance(
       { label: 'Sandbox', baseUrl: SANDBOX },
-      { authMode: 'password', username: 'm.miles', password: 'hunter2' },
+      { authMode: 'password', username: 'm.rowan', password: 'hunter2' },
     );
     expect((await s.loadInstance(instanceKey(LIVE)))?.authMode).toBe('code');
     expect((await s.loadInstance(instanceKey(SANDBOX)))?.authMode).toBe('password');
@@ -714,7 +714,7 @@ describe('SecretStore — per-site settings', () => {
           instances: {
             [instanceKey(LIVE)]: { label: 'Live', baseUrl: LIVE, authMode: 'password' },
           },
-          passwords: { [instanceKey(LIVE)]: { username: 'm.miles', password: 'hunter2' } },
+          passwords: { [instanceKey(LIVE)]: { username: 'm.rowan', password: 'hunter2' } },
         }),
       ),
     );

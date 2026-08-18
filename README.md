@@ -786,7 +786,7 @@ Register the server with Claude Code (after `npm run build`, since it spawns
 `dist/cli/index.js`):
 
 ```bash
-claude mcp add oeq-uploader -- node "c:/Users/milesm/Documents/repos/openEQUELLA Bulk Uploader/dist/mcp/index.js"
+claude mcp add oeq-uploader -- node "C:/path/to/openEQUELLA Bulk Uploader/dist/mcp/index.js"
 ```
 
 Nine tools:
