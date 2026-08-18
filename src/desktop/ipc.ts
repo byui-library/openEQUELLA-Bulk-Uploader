@@ -198,6 +198,36 @@ export interface OeqApi {
   forgetPassword(instanceId: string): Promise<void>;
 
   /**
+   * The stored OAuth credential for one site, minus the secret.
+   *
+   * The twin of `getPassword`. Setup shows the client id and redirect url in
+   * editable boxes, so it needs their values; it shows the SECRET as the fact
+   * that one is stored, with a button to forget it, so it needs only
+   * `hasSecret`. Handing the renderer a client secret it never renders would
+   * be an exposure with nothing bought for it.
+   *
+   * Without this, a site configured for OAuth came back looking unconfigured:
+   * the values were stored and nothing could read them.
+   */
+  getOAuth(instanceId: string): Promise<{ clientId: string; redirectUri: string; hasSecret: boolean } | null>;
+  /** Remove one site's OAuth credential, leaving the site itself. */
+  forgetOAuth(instanceId: string): Promise<void>;
+
+  /**
+   * Where this copy of the app keeps its settings, and whether it is a
+   * packaged build.
+   *
+   * A DEVELOPMENT RUN DOES NOT SHARE A STORE WITH THE INSTALLED APP: Electron
+   * derives userData from the app name, and `electron dist-desktop/...` has no
+   * package.json at its root, so it falls back to the default name and writes
+   * somewhere else entirely. That is the right isolation -- a dev run must not
+   * be able to overwrite the credentials staff use -- but it is invisible, and
+   * it has already cost one investigation, where saves looked lost because the
+   * file being watched was the other one. Setup says which store is in use.
+   */
+  getStorageInfo(): Promise<{ path: string; appName: string; packaged: boolean }>;
+
+  /**
    * Store the language-model endpoint one site's extractions may use.
    *
    * REJECTS a budget, cap or time limit core's own guards refuse, with core's
@@ -456,6 +486,9 @@ export const CHANNELS = {
   setPassword: 'oeq:setPassword',
   getPassword: 'oeq:getPassword',
   forgetPassword: 'oeq:forgetPassword',
+  getOAuth: 'oeq:getOAuth',
+  forgetOAuth: 'oeq:forgetOAuth',
+  getStorageInfo: 'oeq:getStorageInfo',
   setModel: 'oeq:setModel',
   getModel: 'oeq:getModel',
   forgetModel: 'oeq:forgetModel',

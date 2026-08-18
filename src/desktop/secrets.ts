@@ -132,6 +132,14 @@ export type InstanceId = string;
  * production-or-not status and its site address are facts about the SITE, true
  * whether it is reached with a password or with an OAuth client.
  */
+/** What Setup is allowed to know about a stored OAuth credential. Never the secret. */
+export interface StoredOAuth {
+  clientId: string;
+  redirectUri: string;
+  /** Whether a client secret is stored, so Setup can say so and offer to forget it. */
+  hasSecret: boolean;
+}
+
 export interface Instance {
   id: InstanceId;
   /** What the operator calls it. Defaults to the address's host. */
@@ -500,6 +508,10 @@ export class SecretStore {
 
     const { shape } = await this.loadAll();
     const previous = shape.instances[id];
+    // Read before the branch below: a site can be edited without its secret
+    // ever being rendered, so the save has to be able to keep what is there.
+    const previousSecret =
+      previous !== undefined && previous.authMode !== 'password' ? previous.clientSecret : undefined;
     const site = {
       label,
       baseUrl,
@@ -522,7 +534,17 @@ export class SecretStore {
         shape.passwords[id] = { username: settings.username, password: settings.password };
       }
     } else {
-      const { authMode, clientId, clientSecret, redirectUri } = settings;
+      const { authMode, clientId, redirectUri } = settings;
+      // A BLANK CLIENT SECRET MEANS "leave the stored one alone", not "clear
+      // it" -- exactly the rule the password above already follows, and for
+      // the same reason. Setup never renders a stored secret back into a
+      // field, so the form submitted by an operator who only renamed the site
+      // or changed its attachment path carries an empty one. Treating that as
+      // a deletion destroys a credential they can only replace by typing it
+      // again, which is the complaint that started this. `forgetOAuth` is the
+      // only way to remove one.
+      const clientSecret =
+        settings.clientSecret !== '' ? settings.clientSecret : (previousSecret ?? '');
       shape.instances[id] = { ...site, authMode, clientId, clientSecret, redirectUri };
       // Any password stored for this site is left where it is: switching to
       // Advanced to correct a client id must not throw away a credential the
@@ -551,6 +573,11 @@ export class SecretStore {
       if (!account) return null;
       return { authMode: 'password', username: account.username, password: account.password };
     }
+    // NO SECRET IS NO CREDENTIAL, the same answer this already gives for a
+    // password-mode site whose password has been forgotten. Reporting it as
+    // configured would put a Sign in button in front of the operator that can
+    // only fail.
+    if (stored.clientSecret === '') return null;
     return {
       authMode: 'code',
       clientId: stored.clientId,
@@ -587,6 +614,46 @@ export class SecretStore {
     const { shape } = await this.loadAll();
     if (!shape.passwords[instanceId]) return;
     delete shape.passwords[instanceId];
+    await this.write(shape);
+  }
+
+  /**
+   * What Setup may know about a stored OAuth credential.
+   *
+   * THE SECRET IS NOT IN IT, deliberately and permanently. This is the twin of
+   * `getPassword`, which answers with a username and never the password: the
+   * renderer needs the client id and the redirect url because it shows them in
+   * editable boxes, and it needs to know a secret EXISTS so it can say so and
+   * offer to forget it. It has no use for the value.
+   *
+   * Null when the site signs in with a password, is not stored, or has had its
+   * OAuth credential forgotten -- three different reasons to have nothing to
+   * show, none of which the form renders differently.
+   */
+  async getOAuth(instanceId: InstanceId): Promise<StoredOAuth | null> {
+    const stored = (await this.loadAll()).shape.instances[instanceId];
+    if (!stored || stored.authMode === 'password') return null;
+    if (stored.clientId === '' && stored.clientSecret === '') return null;
+    return {
+      clientId: stored.clientId,
+      redirectUri: stored.redirectUri,
+      hasSecret: stored.clientSecret !== '',
+    };
+  }
+
+  /**
+   * Remove one site's OAuth credential, leaving the site itself.
+   *
+   * The twin of `forgetPassword`, and the only way to clear a client secret --
+   * a blank one on a save means "keep what is stored" (see `saveInstance`).
+   * The site keeps its label, address, attachment path and live flag: those are
+   * facts about the SITE, true whichever credential reaches it.
+   */
+  async forgetOAuth(instanceId: InstanceId): Promise<void> {
+    const { shape } = await this.loadAll();
+    const stored = shape.instances[instanceId];
+    if (!stored || stored.authMode === 'password') return;
+    shape.instances[instanceId] = { ...stored, clientId: '', clientSecret: '', redirectUri: '' };
     await this.write(shape);
   }
 

@@ -110,6 +110,27 @@ export interface SetupProps {
    */
   storedUsername: string | null;
   /**
+   * The OAuth credential stored for this site, minus the secret, or null when
+   * there is none.
+   *
+   * `hasSecret` rather than the secret itself, exactly as `storedUsername` is
+   * rather than the password: this screen shows that one is stored and offers
+   * to forget it, and never renders the value.
+   */
+  storedOAuth: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
+  /**
+   * Where this build keeps its settings, or null while it is being read.
+   *
+   * SHOWN ONLY WHEN IT IS NOT THE ORDINARY CASE. A development run does not
+   * share a store with the installed app -- Electron derives userData from the
+   * app name, and a bare `electron dist-desktop/...` falls back to the default
+   * one -- which is the right isolation and was invisible. It cost an
+   * investigation: saves looked lost because the file being watched belonged
+   * to the other copy.
+   */
+  storage: { path: string; appName: string; packaged: boolean } | null;
+  onForgetOAuth(): void;
+  /**
    * The collections this account can actually contribute to, or null when they
    * have not been read (no site saved yet, still loading, or the read failed).
    *
@@ -543,6 +564,23 @@ export function attachmentPathVerdict(
  * boxes happen to be filled in: a half-typed form would then quietly change
  * how the operator signs in.
  */
+/**
+ * A development build says so, and says where its settings live.
+ *
+ * Empty for a packaged install: that is the ordinary case, and a notice that
+ * fires on everything is one people stop reading.
+ */
+export function storageNote(storage: SetupProps['storage']): string {
+  if (storage === null || storage.packaged) return '';
+  return `
+    <p class="hint">
+      <strong>Development build.</strong> Its settings are kept separately from the
+      installed app's, so sites and credentials saved here are not the ones the
+      installed copy uses. Stored under
+      <code>${escapeHtml(storage.path)}</code>.
+    </p>`;
+}
+
 function authSection(props: SetupProps, forWhat: string): string {
   const f = props.fields;
   const account =
@@ -624,15 +662,29 @@ function authSection(props: SetupProps, forWhat: string): string {
             value="${escapeHtml(f.clientId)}"
           />
 
-          <label for="setup-client-secret">Client secret (${forWhat})</label>
-          <input
-            id="setup-client-secret"
-            name="clientSecret"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            value="${escapeHtml(f.clientSecret)}"
-          />
+          ${
+            props.storedOAuth?.hasSecret === true
+              ? `<div class="signed-in-card">
+                   <p>Client secret <strong>stored</strong> for this site.</p>
+                   <div class="button-row">
+                     <button id="setup-forget-oauth" type="button" class="secondary">Forget these OAuth credentials</button>
+                   </div>
+                   <p class="note">
+                     Stored encrypted for your Windows account only, and never shown again &mdash;
+                     the same as a saved password. Leave this alone and it is kept as it is;
+                     to replace it, forget it and enter a new one.
+                   </p>
+                 </div>`
+              : `<label for="setup-client-secret">Client secret (${forWhat})</label>
+                 <input
+                   id="setup-client-secret"
+                   name="clientSecret"
+                   type="password"
+                   autocomplete="off"
+                   spellcheck="false"
+                   value="${escapeHtml(f.clientSecret)}"
+                 />`
+          }
 
           <label for="setup-redirect-uri">Redirect URL &mdash; must match exactly what is registered on the OAuth client, including or excluding a trailing slash.</label>
           <input
@@ -1086,6 +1138,7 @@ export function setupMarkup(props: SetupProps): string {
       }
 
       <form id="setup-form" novalidate>
+        ${storageNote(props.storage)}
         <label for="setup-base-url">Site address &mdash; for example https://oeq.yourschool.edu</label>
         <input
           id="setup-base-url"
@@ -1365,6 +1418,9 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   field('#setup-label', 'label');
   field('#setup-username', 'username');
   field('#setup-password', 'password');
+  root.querySelector<HTMLButtonElement>('#setup-forget-oauth')?.addEventListener('click', () => {
+    props.onForgetOAuth();
+  });
   field('#setup-client-id', 'clientId');
   field('#setup-client-secret', 'clientSecret');
   field('#setup-redirect-uri', 'redirectUri');
