@@ -12,7 +12,11 @@ import { redactSecret } from './redact.js';
  * hint for MCP callers -- see getToken()'s comment below for why that lives
  * there and not here.
  */
-export const DEFAULT_LOGIN_HINT = 'Run:  oeq-upload login';
+// Re-exported so every existing importer keeps working. It LIVES in its own
+// module because the sandboxed renderer needs the string and must never
+// import this file, which reaches node:crypto. See loginHint.ts.
+import { DEFAULT_LOGIN_HINT } from './loginHint.js';
+export { DEFAULT_LOGIN_HINT };
 
 /**
  * OAuth 2.0 authorization-code grant.
