@@ -229,6 +229,21 @@ export interface OeqApi {
   getStorageInfo(): Promise<{ path: string; appName: string; packaged: boolean }>;
 
   /**
+   * Is there a usable OAuth token stored for this site?
+   *
+   * ASKED RATHER THAN INFERRED FROM A FAILURE. Setup's collection list needs
+   * a signed-in session; under OAuth that cannot exist until the operator has
+   * been to the Sign-in screen, and the list used to discover this by trying,
+   * failing, and reporting it as a problem with collections. Reading the state
+   * is what lets the screen say something BEFORE they act.
+   *
+   * FALSE IS ALSO THE ANSWER FOR A PASSWORD SITE, which has no token and needs
+   * none -- callers must decide on the auth mode first. It answers exactly the
+   * question it is named for and nothing wider.
+   */
+  hasToken(instanceId: string): Promise<boolean>;
+
+  /**
    * Store the language-model endpoint one site's extractions may use.
    *
    * REJECTS a budget, cap or time limit core's own guards refuse, with core's
@@ -518,6 +533,7 @@ export const CHANNELS = {
   getOAuth: 'oeq:getOAuth',
   forgetOAuth: 'oeq:forgetOAuth',
   getStorageInfo: 'oeq:getStorageInfo',
+  hasToken: 'oeq:hasToken',
   setModel: 'oeq:setModel',
   getModel: 'oeq:getModel',
   forgetModel: 'oeq:forgetModel',

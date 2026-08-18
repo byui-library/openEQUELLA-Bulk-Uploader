@@ -78,6 +78,7 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   storedUsername: null,
   storedOAuth: null,
   storage: null,
+  needsSignIn: false,
   modelList: null,
   onListModels: () => {},
   onForgetOAuth: () => {},

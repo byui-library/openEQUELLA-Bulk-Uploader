@@ -136,6 +136,13 @@ export interface SetupProps {
    * ADVISORY. Nothing here gates a save: endpoints that serve completions
    * without a model list are common, and the typed name stays usable.
    */
+  /**
+   * Whether this site must be signed in to before its collections can be read.
+   *
+   * A STATEMENT, NOT AN ERROR. It is the ordinary state of an OAuth site that
+   * has not been signed in to yet, and the operator has done nothing wrong.
+   */
+  needsSignIn: boolean;
   modelList: { models: string[] } | { error: string } | null;
   onListModels(): void;
   onForgetOAuth(): void;
@@ -783,6 +790,19 @@ function collectionSection(props: SetupProps): string {
   }
 
   const body = ((): string => {
+    // BEFORE the error branch, and phrased as a statement rather than a
+    // failure: an OAuth site that has not been signed in to yet is an ordinary
+    // state and the operator has done nothing wrong. They used to meet it as
+    // "The list of collections could not be read: No cached OAuth token...",
+    // which names the wrong thing and offers nothing to do about it.
+    if (props.needsSignIn) {
+      return `<p class="notice">
+        <strong>Sign in to this site first.</strong> This site signs in with OAuth, so the
+        list of collections is only available once you have signed in &mdash; go back to
+        Sign in, use the sign-in button, then return here to choose a collection.
+        (A site that signs in with a username and password needs no such step.)
+      </p>`;
+    }
     if (props.collectionsError !== null) {
       return `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`;
     }

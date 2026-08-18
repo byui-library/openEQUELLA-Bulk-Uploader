@@ -45,6 +45,8 @@ interface Harness {
     saveInstance: number;
     /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
     forgetOAuth: string[];
+    /** Every instance id the collection list was asked for, in order. */
+    listCollections: string[];
     /** Every endpoint `window.oeq.listModels` was asked about, in order. */
     listModels: { baseUrl: string; apiKey: string }[];
     /** Every instance id `window.oeq.signOut` was called with, in order. */
@@ -112,6 +114,9 @@ interface BootOptions {
   storedOAuth?: { clientId: string; redirectUri: string; hasSecret: boolean } | null;
   /** Where this build keeps its settings. Defaults to a packaged install. */
   storage?: { path: string; appName: string; packaged: boolean };
+  /** Whether a usable OAuth token is stored for the site. Only a code-mode
+   *  site can lack one; password mode signs in on every call. */
+  hasToken?: boolean;
   /** What the model endpoint reports it can run. */
   models?: string[];
   /** Make the ask fail, as an endpoint without a model list does. */
@@ -133,6 +138,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     saveInstance: 0,
     signOut: [] as string[],
     forgetOAuth: [] as string[],
+    listCollections: [] as string[],
     listModels: [] as { baseUrl: string; apiKey: string }[],
     modelSaves: [] as Harness['calls']['modelSaves'],
   };
@@ -154,7 +160,11 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     hasSettings: async () => true,
     currentUser: async () => USER,
     signIn: async () => USER,
-    listCollections: async () => ({ collections: COLLECTIONS, withheld: false }),
+    listCollections: async (instanceId: string) => {
+      calls.listCollections.push(instanceId);
+      return { collections: COLLECTIONS, withheld: false };
+    },
+    hasToken: async () => options.hasToken ?? true,
     fetchSchema: async () => {
       if (options.schemaUnreadable === true) throw new Error('schema unreadable');
       return { uuid: 'schema-1', name: 'Schema', paths: options.schemaPaths ?? ['MWDL/title'] };
@@ -1604,5 +1614,71 @@ describe('asking the model endpoint what it can run', () => {
     const html = harness.app.innerHTML;
     expect(html).toMatch(/does not offer a list of models/i);
     expect(new RegExp('<input[^>]*id="setup-model-name"[^>]*>').exec(html)?.[0]).toContain('typed-by-hand');
+  });
+});
+
+/**
+ * ## A site that cannot list collections yet
+ *
+ * REPORTED BY THE OPERATOR, who switched a site to OAuth and read this in the
+ * collection field: "No cached OAuth token for https://content-test.byui.edu."
+ *
+ * The list needs a signed-in session. In password mode every call signs in, so
+ * it works. Under OAuth it cannot work until `exchangeCode` has run once and
+ * written a token -- which happens on a DIFFERENT screen. So Setup asked,
+ * failed, and reported the failure as a problem with the collection list,
+ * when the truth is that the site has not been signed in to yet.
+ *
+ * ASKED, NOT INFERRED FROM A FAILURE. Reading the state is what lets the screen
+ * say something BEFORE the operator acts; catching the error only ever explains
+ * it afterwards.
+ */
+describe('a site that cannot list collections yet', () => {
+  /**
+   * Reaching Setup goes THROUGH Choose, which lists collections for its own
+   * dropdown and is entitled to. The question here is only what SETUP asks, so
+   * the count is taken at the door.
+   */
+  const openSetup = async (): Promise<number> => {
+    await reachChoose(harness.app);
+    const before = harness.calls.listCollections.length;
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    return harness.calls.listCollections.length - before;
+  };
+
+  it('says an OAuth site needs signing in, without having to fail first', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+      hasToken: false,
+    });
+    const asked = await openSetup();
+
+    expect(harness.app.innerHTML).toMatch(/sign in to this site/i);
+    // The point of the whole task: it did not have to try and fail to know.
+    expect(asked).toBe(0);
+  });
+
+  it('lists collections for a password site with no sign-in step at all', async () => {
+    harness = await boot({ site: { authMode: 'password' }, hasToken: false });
+    const asked = await openSetup();
+
+    expect(asked).toBeGreaterThan(0);
+    expect(harness.app.innerHTML).not.toMatch(/sign in to this site/i);
+  });
+
+  it('lists collections for an OAuth site that has been signed in to', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+      hasToken: true,
+    });
+    const asked = await openSetup();
+
+    expect(asked).toBeGreaterThan(0);
+    expect(harness.app.innerHTML).not.toMatch(/sign in to this site/i);
   });
 });

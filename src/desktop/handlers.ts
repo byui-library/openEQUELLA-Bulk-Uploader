@@ -378,6 +378,19 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     },
   );
 
+  // Answered from the token store rather than by attempting a call: the
+  // question is whether a sign-in has happened, not whether the server is up.
+  ipcMain.handle(CHANNELS.hasToken, async (_e, instanceId: string) => {
+    const inst = await secrets().loadInstance(instanceId);
+    if (inst === null) return false;
+    const raw = await tokens().loadRaw();
+    if (raw === null) return false;
+    // A token issued for another site is not a token for this one --
+    // `getToken` refuses to reuse it across instances, so reporting true
+    // here would promise a sign-in that will be rejected.
+    return raw.baseUrl === inst.baseUrl;
+  });
+
   ipcMain.handle(CHANNELS.getOAuth, async (_e, instanceId: string) => secrets().getOAuth(instanceId));
 
   ipcMain.handle(CHANNELS.forgetOAuth, async (_e, instanceId: string) => {
