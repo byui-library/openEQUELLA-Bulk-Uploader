@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listTemplates, loadTemplate } from '../../src/core/extract/templates.js';
+import { setDefault, setFirstSource } from '../../src/core/extract/columns.js';
 import { parseProfile } from '../../src/core/extract/profile.js';
 import { buildRow } from '../../src/core/extract/rows.js';
 import { extractDefinition, parseSchemaPaths } from '../../src/core/schema.js';
@@ -108,12 +109,168 @@ describe('shipped templates', () => {
     await expect(loadTemplate('no-such-template')).rejects.toThrow();
   });
 
+  describe('the model is offered where it helps and nowhere else', () => {
+    it('asks for a model on the description, after the deterministic sources', async () => {
+      const profile = await loadTemplate('alumni-obituary');
+      const description = profile.columns.find((c) => c.path === 'MWDL/description');
+      const sources = description?.sources ?? [];
+      expect(sources.some((s) => 'ai' in s)).toBe(true);
+      // Last, so every deterministic source has its turn first. The rule does
+      // not depend on order, but a reader of the profile should see the
+      // intended precedence.
+      expect('ai' in (sources[sources.length - 1] ?? {})).toBe(true);
+    });
+
+    /**
+     * A death date is a FACT. A model that fills one produces something no
+     * reviewer can distinguish from a real one, in a collection with no
+     * moderation queue. Prose only, in this release.
+     */
+    it('asks for a model on no other column', async () => {
+      const profile = await loadTemplate('alumni-obituary');
+      const asked = profile.columns.filter((c) => c.sources.some((s) => 'ai' in s)).map((c) => c.path);
+      expect(asked).toEqual(['MWDL/description']);
+    });
+
+    /**
+     * A MODEL-WRITTEN DESCRIPTION AND A COMPOSED ONE MUST LOOK ALIKE IN THE
+     * CATALOGUE. The compose source produces `Died <iso>; Born <iso>; Attended
+     * Ricks College`, dropping any clause it could not fill, and the model is
+     * asked for the same shape rather than left to invent a format -- otherwise
+     * one batch reads one way and the next reads another, in a permanent record
+     * nobody re-edits.
+     *
+     * EVERY EXPECTATION IS DERIVED FROM THE PROFILE, none hardcoded. An earlier
+     * version of this test checked that the instruction contained the literals
+     * `Died` and `Born` plus a hardcoded /Attended Ricks College/, which caught
+     * a reworded compose verb and nothing else: not a reordered instruction, not
+     * a changed date format, and -- worst -- not a dropped evidence clause. Its
+     * commit message claimed the two "cannot drift apart silently", which was
+     * more than it did.
+     */
+    it('asks the model for the same shape the compose source produces', async () => {
+      const profile = await loadTemplate('alumni-obituary');
+      const compose = profile.columns
+        .find((c) => c.path === 'MWDL/description')
+        ?.sources.find((s) => 'compose' in s);
+      const template = compose && 'compose' in compose ? compose.compose : '';
+      const instruction = profile.aiInstruction ?? '';
+      expect(template, 'the description column no longer composes').not.toBe('');
+      expect(instruction, 'the template carries no aiInstruction').not.toBe('');
+
+      // IN ORDER, not merely present. An instruction listing the clauses the
+      // other way round yields descriptions that do not match the composed ones
+      // sitting beside them in the same collection, which is the whole thing
+      // the house style exists to prevent.
+      let cursor = 0;
+      for (const literal of template
+        .split(/\{[^}]*\}/)
+        .map((part) => part.replace(/[;\s]+/g, ' ').trim())) {
+        if (literal === '') continue;
+        const at = instruction.indexOf(literal, cursor);
+        expect(at, `aiInstruction is missing '${literal}', or has it out of order`).toBeGreaterThanOrEqual(0);
+        cursor = at + literal.length;
+      }
+
+      for (const name of [...template.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)].map((m) => m[1]!)) {
+        const column = profile.columns.find((c) => c.as === name);
+        expect(column, `compose reads {${name}} but no column is named that`).toBeDefined();
+
+        // A `date` transform emits ISO, so the instruction has to ask for ISO.
+        // Without this, changing the transform leaves the model writing one
+        // format beside composed cells written in another.
+        if (column!.transform === 'date') {
+          expect(instruction, 'a composed column emits ISO dates and aiInstruction does not ask for them')
+            .toContain('YYYY-MM-DD');
+        }
+
+        for (const source of column!.sources) {
+          if (!('presence' in source)) continue;
+
+          // The clause's own words, from the profile rather than from memory.
+          expect(instruction, `aiInstruction never mentions the '${source.presence.then}' clause`)
+            .toContain(source.presence.then);
+
+          // AND WHAT LICENSES IT. This is the assertion that matters most in
+          // the file. The shipped instruction ends "Include the last clause
+          // only if the document says the person attended Ricks College or
+          // BYU-Idaho"; drop that sentence and a model is invited to append a
+          // claim about a real person's education to a permanent catalogue
+          // record with no moderation queue, on no evidence at all.
+          //
+          // The clause text is removed before looking, because it CONTAINS one
+          // of the trigger phrases -- "Attended Ricks College" holds "Ricks
+          // College" -- so a naive search passes on an instruction that states
+          // the clause and gates it on nothing.
+          const beyondTheClause = instruction.split(source.presence.then).join(' ');
+          expect(
+            source.presence.any.some((term) => beyondTheClause.includes(term)),
+            `aiInstruction states the '${source.presence.then}' clause but never says what ` +
+              `evidence licenses it -- name one of ${source.presence.any.join(', ')}`,
+          ).toBe(true);
+        }
+      }
+    });
+  });
+
   /**
    * The id crosses IPC from the renderer. Without the guard, a traversal like
    * '../../package' would be read and parsed.
    */
   it('refuses an id that is not a template name', async () => {
     await expect(loadTemplate('../../package')).rejects.toThrow(/Not a template name/);
+  });
+
+  /**
+   * ## An editing operation changes what it names, and nothing else
+   *
+   * Asserted over EVERY column of EVERY shipped template, rather than over a
+   * fixture, because both defects this pins were found in the shipped one and
+   * neither was visible in the fixtures the editor's own tests use. A template
+   * added later is covered on the day it is added.
+   *
+   * What went wrong: `setDefault` rebuilt the column from a list of fields and
+   * dropped `as`, `flagIfEmpty` and `composeOnly`; the columns screen wrote a
+   * one-element source list and deleted every later tier. Both are silent, both
+   * damage a profile the operator did not ask to change, and one of them leaves
+   * a profile `parseProfile` will refuse to load next time.
+   */
+  it('survives an edit to one column with every other setting intact', async () => {
+    for (const { id } of await listTemplates()) {
+      const original = await loadTemplate(id);
+      for (const column of original.columns) {
+        if (column.path === ATTACHMENT_COLUMN) continue;
+
+        for (const edited of [
+          setDefault(original, column.path, 'a default'),
+          setFirstSource(original, column.path, { label: 'Something else' }),
+        ]) {
+          // Everything except the edited column, byte for byte.
+          expect({ ...edited, columns: edited.columns.filter((c) => c.path !== column.path) })
+            .toEqual({ ...original, columns: original.columns.filter((c) => c.path !== column.path) });
+
+          // And the edited column, except for what was edited.
+          const after = edited.columns.find((c) => c.path === column.path)!;
+          expect(
+            { ...after, default: undefined, sources: undefined },
+            `${id}: editing ${column.path} changed more than it named`,
+          ).toEqual({ ...column, default: undefined, sources: undefined });
+        }
+      }
+    }
+  });
+
+  /** The order is the meaning, so an edit to the first source must not disturb it. */
+  it('keeps the rest of a source chain when the first source is replaced', async () => {
+    const original = await loadTemplate('alumni-obituary');
+    const chained = original.columns.filter((c) => c.sources.length > 1);
+    expect(chained.length, 'no shipped column has a chain, so this proves nothing').toBeGreaterThan(0);
+
+    for (const column of chained) {
+      const after = setFirstSource(original, column.path, { label: 'Something else' })
+        .columns.find((c) => c.path === column.path)!;
+      expect(after.sources).toEqual([{ label: 'Something else' }, ...column.sources.slice(1)]);
+    }
   });
 });
 

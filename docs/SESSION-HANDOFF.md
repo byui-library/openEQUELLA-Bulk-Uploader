@@ -1,18 +1,491 @@
-# Session handoff — updated 2026-08-13
+# Session handoff — updated 2026-08-18
 
 Read this first.
 
+## RESUME HERE — Task 2 of the sign-in plan
+
+**The desktop app is no longer blocked.** Yesterday's entry (kept below) said
+it was; that is superseded. The operator drove it by hand today and everything
+listed under *What was fixed today* was confirmed on screen by them, not just
+by tests.
+
+**Next:** Task 2 of
+[the sign-in plan](superpowers/plans/2026-08-18-sign-in-states.md) — a
+**Sign in to this site** button on Setup, so an OAuth site can be signed in to
+from where the operator is standing rather than a screen away. Tasks 3, 4 and 5
+follow it; each ends in a marked STOP where the operator tests before the next
+one starts. **Task 1 is done and confirmed** (row 5 of the state table).
+
+### What was fixed today, all confirmed by the operator in the app
+
+Every one of these was reported by them using it, and none was visible to the
+2200-odd tests passing throughout.
+
+- **Setup showed the wrong sign-in method.** `Instance` carries `authMode` and
+  the form dropped it, so the radio always read "Username and password". Worse,
+  saving from that form wrote the wrong mode back, so changing an attachment
+  path could silently change how a site authenticates. Two places had to be
+  fixed: the seed, and an async refresh that landed afterwards and put it back.
+- **A configured OAuth site looked unconfigured.** The client ID and redirect
+  URL were stored correctly and no IPC could read them back. `getOAuth` now
+  answers with both plus `hasSecret`; the secret itself never crosses, and gets
+  the treatment the password already had — a "stored" card with a Forget
+  button. A blank secret on save now means *keep the stored one*.
+- **Every configured column read "(nothing — fill in Excel)".** The dropdown
+  marks an option selected by matching labels against what the FILES supply,
+  and the shipped obituary template's sources — `join`, `dateNear`, `presence`,
+  `compose` — are none of them. `optionsForColumn` appends the column's own
+  source. **Both the renderer and the change handler must call it**: the value
+  is an index into that list.
+- **The columns table was unreadable.** `.screen.wide` had never worked — a
+  child cannot exceed its parent's max-width, and `#app` capped everything at
+  760px. Plus no column sizing, so one 74-character schema path took the width
+  the source column needed.
+- **The model pass ran silently.** Measured on the operator's own machine: the
+  first call takes **48 seconds** while Ollama loads `llama3.1:8b`, warm calls
+  about **4**. One call per eligible cell, in sequence. It now reports per cell
+  as it goes, and `asking` is emitted BEFORE the call.
+- **The model name was typed blind.** `listModels` asks the endpoint what it
+  offers — `/v1/models`, part of the OpenAI-compatible contract, so it is not an
+  Ollama feature. Advisory only: an endpoint without it leaves the box usable.
+- **A windowed operator was told to run a CLI command.** `DEFAULT_LOGIN_HINT`
+  moved to its own module so the sandboxed renderer can import it, and
+  `errorMessage` substitutes a desktop instruction — at the one place every
+  `window.oeq.*` rejection already funnels.
+- **An OAuth site failed to list collections instead of saying it needed
+  signing in.** Task 1: `hasToken` is asked BEFORE the attempt.
+
+### Two facts worth keeping
+
+- **A 403 with an empty body from openEQUELLA means a REJECTED ACCESS TOKEN.**
+  Measured against the live instance: no header, a malformed header, a session
+  cookie and a Bearer token are all answered 200 as the guest; only
+  `X-Authorization: access_token=<invalid|empty>` gives 403 with zero bytes.
+  That is how the whole auth-mode defect was found.
+- **The dev build and the installed app do NOT share a settings store.**
+  Electron derives `userData` from the app name, and `electron dist-desktop/...`
+  has no package.json at its root, so it falls back to `Electron` and writes to
+  `%APPDATA%/Electron`. The isolation is right — a dev run must not overwrite
+  the credentials staff use, and one did during this investigation — but it was
+  invisible, and it cost hours: saves looked lost because the file being watched
+  was the other one. **Setup now says which store is in use.** Anyone preparing
+  a packaged build for a demo must configure it separately.
+
+
+**Start here, not with the language-model work.** The operator ran the desktop
+app against `content-test.byui.edu` and could not get past the Choose screen.
+The diagnosis is finished; the fix is not written.
+
+### The symptom, and the whole chain
+
+The collection box read:
+
+```text
+GET /api/collection?privilege=CREATE_ITEM&length=100&full=true failed: 403
+```
+
+**403 with an empty body and no reason phrase.** Measured against the live
+instance, unauthenticated, while diagnosing — that signature has exactly one
+cause:
+
+```text
+no auth header        -> 200 (guest, available:29, results:[])
+malformed header      -> 200
+session cookie        -> 200
+Bearer token          -> 200
+invalid access_token= -> 403, zero-length body   <-- the signature
+empty   access_token= -> 403, zero-length body   <-- also matches
+```
+
+Only `OAuthClientCredentials` and `AuthorizationCodeAuth` emit
+`X-Authorization: access_token=`. `UsernamePasswordAuth` sends cookies and never
+touches it. So **the app was signing in with OAuth while the operator believed
+they were using a username and password**, and openEQUELLA refused the token.
+
+**Why it was in OAuth mode — the actual defect, and it shipped in v1.1.1.**
+`Instance` carries `authMode` (`secrets.ts`, documented there as "how this site
+signs in; carries no secret") and it reaches the renderer. But
+`ui/app.ts`'s site-change handler rebuilds the form as
+`blankSetupFields()` plus `baseUrl, label, attachmentUuidPath, live,
+redirectUri` — **and drops `authMode`**, which `blankSetupFields` hardcodes to
+`'password'`. So:
+
+- the sign-in radio always comes back on "Username and password", whatever the
+  site is really set to;
+- `clientId` and `redirectUri` are worse — they live in the encrypted settings
+  and **no IPC exposes them at all** (`getPassword` returns `{ username }` and
+  nothing else), so the OAuth boxes cannot be repopulated even in principle.
+  The operator reported exactly this: entered a client ID and secret, saved,
+  reopened, and both were blank with the radio unchecked;
+- an operator therefore cannot see how a site signs in, and re-saving from a
+  form showing defaults can silently change it.
+
+**This is the same defect class as the `setDefault` bug fixed this morning: a
+form that rebuilds a record from defaults and silently discards the fields it
+does not display.** Here the discarded field is *how you sign in*.
+
+### What to do next, in order
+
+1. **Seed `authMode` from the selected instance** in `ui/app.ts`'s site-change
+   handler. Small, no IPC change, and it stops a save silently flipping a
+   site's sign-in method. Do this first.
+2. **Expose a non-secret view of stored credentials over IPC** — `clientId` and
+   `redirectUri` returned, the client secret NEVER, mirroring how the password
+   is handled today ("Signed in as …" plus a Forget button rather than the
+   value). The OAuth section then shows "client secret stored" instead of a
+   blank box that reads as unconfigured. **The operator had not agreed the
+   shape of this when the session ended — ask before building it.**
+3. **Unverified and important:** the operator was asked to select "Username and
+   password", save, and report whether the collection list then works. **That
+   answer never arrived.** If it still fails, the save itself is not taking
+   effect and there is a third bug in play. Get that answer before trusting
+   either fix above.
+
+### Two facts established live, both worth keeping
+
+- **A 403 with an empty body from openEQUELLA means a REJECTED ACCESS TOKEN.**
+  Nothing else in the request produces it — not a bad cookie, not a malformed
+  header, not the absence of credentials, all of which are answered 200 as the
+  guest. Diagnostic gold, and it is how this was found.
+- **A collection LIST entry does NOT always carry `schema: { uuid }`.**
+  `CLAUDE.md` records that it does, "confirmed live 2026-08-12" — but that was
+  **production**. On `content-test`, with and without `full=true`, all 29
+  entries carry only `uuid, name, nameStrings, readonly, links`. The recorded
+  production fixture carries `owner, schema, filestoreId` and the rest.
+  **Consequence, waiting behind the auth bug:** once sign-in works here,
+  `parseCollections` yields `schema: ''`, so the attachment-field autofill on
+  Setup and the schema-derived title path in the duplicate check have nothing
+  to read. Corrected in `CLAUDE.md`; not yet handled in code.
+
+### A wrong turn worth not repeating
+
+`schema/swagger.json` documents `full` as "Return full entity (needs VIEW or
+EDIT privilege)", which made `full=true` look like the cause. **It is not** —
+the operator pasted both URLs into a signed-in browser and both returned 200
+with 29 collections. Confirm against the live instance before building on the
+spec; this file has now disagreed with the server five times.
+
+### Incidental confirmation
+
+The operator's sign-in completed, which means **the OAuth `state` check added
+this session works against the live server** — openEQUELLA echoes `state` back
+and the new code accepted it. That path had never been exercised outside tests.
+
+## Branches open at the end of this session
+
+Three, none merged, all pushed:
+
+| Branch | Head | What it holds |
+| --- | --- | --- |
+| `feature/llm-provider` | profile-editor stage 1, security hardening, the error-message fix | the main line of work |
+| `fix/scrub-operator-identity` | off `main` | the privacy scrub |
+| `chore/dependency-advisories` | off `main` | fast-xml-parser 5 |
+
+**Merge the scrub first.** The other two branch off pre-scrub `main` and still
+carry the operator's surname (56 and 47 hits); nothing regresses, but merging
+the scrub last means re-doing it.
+
+### Two process failures this session, both caught, both worth reading
+
+- **`git add -A` staged the ten real obituary PDFs.** `tests/obits/` was
+  gitignored on `feature/llm-provider` but NOT on `main`, and the scrub branch
+  was cut from `main`. Caught in the commit output, reset, the ignore rule
+  ported over, recommitted, and the abandoned commit purged with
+  `git reflog expire --expire-unreachable=now` + `git gc --prune=now`. Never
+  pushed. **Do not use `git add -A` in this repository** — name the paths.
+- **Backticks in a `git commit -m "…"` message were expanded by bash and
+  actually ran `npm audit fix --force`** — the exact command the message was
+  documenting as harmful. It downgraded `exceljs` to 3.4.0 and moved `electron`
+  and `vitest` across majors in the working tree. The commit itself was
+  unaffected (staging precedes expansion); restored with `npm ci`. **Write
+  commit messages to a file and use `git commit -F`.**
+
+## The language-model work — where it stood before tonight
+
+**Branch `feature/llm-provider`, NOT merged.** `npm test` → **2156 across 104
+files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
+`main` carries the privacy scrub (PR #14) and has been merged in, so this branch
+is 0 behind.
+
+### Security hardening — done, and what it deliberately left
+
+A review of the whole tool on 2026-08-17, prompted by the operator asking what
+to tell other institutions. Design and findings:
+[SECURITY.md](../SECURITY.md), which is written for adopters rather than for us.
+Plan: [superpowers/plans/2026-08-17-security-hardening.md](superpowers/plans/2026-08-17-security-hardening.md).
+
+**Two exploitable findings, both closed:**
+
+- **A document could write a live formula into the spreadsheet.** Excel executes
+  a cell beginning `=`, `+`, `-` or `@`, and the extractor writes OCR'd text
+  from donated documents into a CSV the operator opens in Excel — the one input
+  to this tool an outsider supplies. `src/core/formulaGuard.ts` holds **both
+  halves in one module on purpose**: `plan` reads that same spreadsheet back and
+  uploads what it finds, so guarding on write without unguarding on read would
+  have traded an injection risk for an apostrophe written into a permanent
+  catalogue record. `unguardFormula(guardFormula(v)) === v` for every string,
+  and a round-trip test asserts what openEQUELLA would actually receive.
+- **The OAuth flow accepted any redirect that arrived.** `state` is now sent and
+  checked. This matters most for the CLI's loopback capture — an ordinary HTTP
+  server on a local port that any process or open web page on the machine can
+  reach. The existing end-to-end test fired `state=xyz` at that port and was
+  accepted; it now carries the real value, which is what proves the guard works.
+  **The CLI's manual-paste flow is deliberately NOT checked and says so**: people
+  paste a bare code, and a check that passed whenever the state was absent would
+  be the "reports success without running" defect this repo has shipped twice.
+
+Guarded by four mutations, each applied with the Edit tool and watched go red.
+
+**Deliberately not done, each for a stated reason:**
+
+- **The `m.miles` scrub** — 48 occurrences across 5 test files and 2 docs,
+  including this one. `CLAUDE.md` records that it is reviewed as a change of its
+  own and kept off this branch; doing it here would break that twice over. **Do
+  it on its own branch off `main`.** It is a disclosure in a public repository,
+  so it should not wait long.
+- **The three `npm audit` advisories.** Checked against the call sites and none
+  applies: the `fast-xml-parser` advisory is against `XMLBuilder` and only
+  `XMLParser` is used; the `uuid` one needs a `buf` argument nothing passes.
+  Both fixes are breaking majors, one to `exceljs`, which writes every
+  spreadsheet. The analysis is in `SECURITY.md` so nobody force-upgrades on a
+  red audit line before a release.
+- **The password in openEQUELLA's login query string.** Not fixable from here —
+  the API declares no body form. TLS covers it in transit; server and
+  load-balancer access logs may hold it at rest. Documented for adopters.
+
+**None of it has been driven through the desktop app.** The desktop sign-in
+window's state check in particular has no test — a `BrowserWindow` is not
+constructible in this suite — so it is verified by reading only.
+
+### The two profile-editor defects are FIXED — stage 1 is built
+
+Read this as the record, not as a queue. Both were reachable from the Extract
+flow's columns screen, both damaged the one template that ships, and neither
+was caught by the 2069 tests passing at the time.
+
+- **`setDefault` (`src/core/extract/columns.ts`) dropped half the column.** It
+  rebuilt one from a list of fields — `path`, `sources`, `transform`, `locked`,
+  `default` — and so discarded **`as`, `flagIfEmpty` and `composeOnly`**.
+  Typing a default into the Alumni Obituary template's `MWDL/coverage` column
+  destroyed its `as: birth_date` alias, after which the description's `compose`
+  template named a column that no longer existed and `parseProfile` would
+  refuse the saved profile. It now **copies the column whole**, so a ninth
+  field added to `Column` is preserved on the day it is added rather than the
+  day someone remembers the list. (The rebuild carried a comment blaming
+  `noUnusedLocals` for it. That option is not enabled in this project and never
+  has been — `CLAUDE.md` already says so.)
+- **The columns screen collapsed the source chain.** It read
+  `column.sources[0]` and wrote back a one-element list, so choosing anything
+  from the dropdown replaced the whole ordered chain. Touching the description
+  column's dropdown on that same template **silently switched the language
+  model off**. It is now `setFirstSource` — element 0 is replaced, or removed
+  by the blank option, and the rest is left alone. Put in
+  `core/extract/columns.ts` beside `setSources` rather than in the controller,
+  because the rule is about editing a profile and not about a screen.
+
+Two things came with the fix:
+
+- **The dropdown now offers "A language model."** That was the operator's
+  actual complaint — turning the model on for a column otherwise means
+  hand-editing JSON. Its label is `describeSource`'s, because the screen marks
+  the current option by comparing label strings and a hand-written one renders
+  a dropdown that never shows what a column is already set to. **When** a model
+  may write is untouched and stays unconfigurable: an empty cell or a flagged
+  one, never a stated value.
+- **A column whose chain is longer than one says so beside the dropdown**, and
+  names the later sources rather than counting them. The design proposed *"and
+  1 more, shown when this column is expanded"*; stage 1 ships no expansion, and
+  a hint pointing at a control that does not exist is exactly the kind of claim
+  this project keeps retracting.
+
+**Guarded by four mutations, each applied with the Edit tool and watched go
+red** (never a `sed` pattern with `\n` in it — the working copy is CRLF and
+this project has twice had a mutation silently not apply). The strongest test
+is in `tests/extract/templates.test.ts`: both editing operations applied to
+every column of every *shipped* template, comparing the whole profile. It
+passed the moment it was written, which proves nothing, so both defects were
+reintroduced and it was watched to fail on each.
+
+**Stages 2–4 of
+[the profile-editor design](superpowers/specs/2026-08-17-profile-editor-design.md)
+are not built** — the ordered source-chain editor, the profile-wide
+`aiInstruction` field, and showing the settings the GUI does not edit. Stage 1
+stands on its own; nothing below depends on it.
+
+**Nobody has driven this through the app.** It is a GUI change on a branch of
+which that is already true, and this project's record on GUI changes verified
+only by tests is unambiguous — see *What is genuinely outstanding* below.
+
+**The nine review findings this block used to list as a queue are CLOSED**
+(`29061f9`). Every one has a test, and eight mutations — including all four the
+review found surviving — were run and confirmed red. Do not go looking for them;
+the record of what was wrong is under *What the hardening established* below,
+kept as history rather than as work.
+
+### The one-paragraph version
+
+A language model was wired in as a last-resort source for cells extraction could
+not fill. Run against a real batch it **fabricated**: 2 of 10 generated
+descriptions asserted facts the documents do not contain, including a full death
+date for a document stating no date at all — three runs at temperature 0, three
+different dates. `src/core/ai/verify.ts` now refuses a generated value carrying
+a claim the document does not support, and the layer has since been hardened
+against the defect that made it depend on a model's formatting habits. It has
+been re-run against the same batch with a capable model: **8 of 8 written
+outputs follow the house style, the same 2 were refused, and nothing ungrounded
+reached the spreadsheet.** The sample is still ten documents, one collection,
+one language.
+
+### What the hardening established — closed, `29061f9`
+
+Read this as the record, not as a queue.
+
+- **A date with no year was never checked at all**, so `He died on January 6.`
+  over a document stating no date was written into the catalogue. That was the
+  founding failure surviving inside the layer built to stop it. `FORMS` was
+  rebuilt around the rule that **a month name, or a day-and-month pair, is a
+  claim whether or not a year sits beside it.** Now refused where it was written
+  before: `He died on January 6.`, `Jan. 6`, `the 6th of January`, `1/6`,
+  `January 6, aged 87` over a year-only document, `in January`,
+  `2024-01-06T00:00:00Z`, `2024-01-06 12:30`, `in January of 2024`,
+  `January the 6th, 2024`, `6.1.2024`.
+- **Precision ranking was replaced by a `Reading`** — a date decomposed into the
+  parts the text actually stated — with one rule, `entails`: every part the
+  claim states must be stated, and equal, in the document's. `new Date` is gone
+  from the path; month names resolve through a stem table, so every reading is
+  calendar-validated and `2024-02-30` is not a date.
+- **Twelve classes of false rejection fixed**: `.`-separated dates, two-digit
+  years, `the 6th of January`, thousands separators, spelled numbers above
+  ninety-nine, ordinal words, `a dozen`, `three and a half`.
+- **A UTF-16/code-point desync in `blank()`** let an emoji in the reply shift
+  the mask — enough of them and a fabricated number went unmasked and was
+  written. Note `quoted()` in `fill.ts` is *correctly* code-point-based; they
+  are not the same problem.
+- **The year↔number equivalence is symmetric and is NOT guarded** — pinned by
+  test and stated in the docblock, because guarding it means reading prose.
+- **Four surviving mutations killed**, of which one was dangerous: **a single
+  blank string in a profile's trigger list silently disabled the assertion
+  check** for that source, because `includes('')` is true of every string. A
+  check reporting success without running, inside the module that exists to
+  prevent exactly that.
+- **The tool no longer says "the document states no such date."** It says no
+  date *it can read* supports the value. **It reads English month names and
+  numeric forms only**, and that is stated rather than silent — in `verify.ts`,
+  in `MONTH_NAMES` in `src/core/extract/dates.ts`, in the README and in
+  `docs/INSTALL.md`.
+
+### The second run — a capable model, 2026-08-16
+
+Same ten scanned obituaries, `llama3.1:8b` on a GPU, where the first run was
+`llama3.2:3b` on CPU. 140 seconds for ten documents.
+
+- **8 of 8 written outputs follow the house style**
+  (`Died 2024-01-09; Born 1935-04-03; Attended Ricks College.`). With the 3B
+  model about three of eight did — the rest prepended names, gave an age where a
+  death date belongs, or wrote prose sentences naming a hospital. **The house-style
+  failures were model capability, not prompt wording. Do not elaborate the
+  instruction.** That was the open question this block used to carry as a guess;
+  it now has an answer.
+- **The same two documents defeated both models.** One states no date of any
+  kind; the other never mentions the institution it claimed. Both were refused
+  by both runs. Capability did not help there, which is the argument for
+  verification rather than better prompting.
+- **Nothing ungrounded reached the spreadsheet**, confirmed by an independent
+  audit against the source documents.
+- **The hardened verifier was re-checked against both models' stored output:**
+  2 of 2 fabrications still caught, 8 of 8 good descriptions still kept, zero
+  false rejections.
+- **Caveat, and it must be stated wherever the result is:** that run passed the
+  date checks partly because `llama3.1:8b` answers in ISO format. Evidence
+  within a sample of ten, one collection, one language — not coverage.
+
+### What is genuinely outstanding
+
+- **Nobody has driven this through the desktop app.** Nothing on this branch has
+  been exercised in the GUI. This project's record is that one screenshot of an
+  empty dropdown produced six defects with 1236 tests green throughout, and every
+  serious fault here has lived at a boundary the tests do not cross.
+- **Whether the eight kept descriptions are *good* is still a human judgement.**
+  The 8B result is strong evidence they now follow house style, which is not the
+  same as being worth cataloguing. Groundedness is not quality and no test can
+  answer it.
+- **This branch predates the privacy scrub.** `feature/llm-provider` branched
+  off `main` before PR #14, so it still carries real dates in `dates.test.ts`
+  and elsewhere. **Merge `main` in once #14 lands**, or the LLM PR will read as
+  re-introducing them.
+- **`m.miles` in 40 fixtures, and the phrase in published history** — both
+  unchanged, both below under *Two privacy items*.
+
+### The local model runtime, and why the diagnosis is kept
+
+Recorded because an adopting institution pointing this tool at a local runtime
+will hit runtime problems that look like tool problems.
+
+Every model returned HTTP 500 with `ROCm error: invalid device function`, and
+llama-server died with `0xc0000409`. **It was not the tool and not the model.** A
+user environment variable `HSA_OVERRIDE_GFX_VERSION=11.0.0` forced ROCm to load
+kernels built for a discrete gfx1100 card onto an *integrated* Radeon 860M
+(gfx1150). Removing it, plus setting `OLLAMA_IGPU_ENABLE=1` — Ollama
+deliberately drops integrated GPUs from the Vulkan path, and says so in its own
+log — gave a working Vulkan backend with all layers offloaded.
+
+**The diagnostic route generalises: read the Ollama server log and see which
+library and which GPU it chose.** The earlier CPU-only workaround
+(`HIP_VISIBLE_DEVICES=-1`, `ROCR_VISIBLE_DEVICES=-1`, `OLLAMA_LLM_LIBRARY=cpu`
+on port 11435) is superseded and no longer needed. Operator-facing versions of
+this are in the README and `docs/INSTALL.md`.
+
+**Then** open the PR.
+
+### Two privacy items, both outstanding
+
+- **`m.miles` appears in 40 test fixtures across four files**, and `milesm` once
+  in `tests/passwordAuth.test.ts`. The operator's real surname, not a botanical
+  pseudonym, in a **public** repository. Deliberately kept off this branch so it
+  can be reviewed on its own.
+- **Real document text is in published history.** The phrase *"in the early
+  hours of Saturday morning"*, quoted from a real scanned obituary, reached
+  `verify.ts` and two fixtures during this session and was removed in `a238858`
+  — **but it was already on `origin/main`** in three commits from the
+  collection-templates work (`7897136`, `4156bfe`, `7f8ad6d`). Removing it from
+  published history is a separate decision, not a code change.
+- `tests/obits/` and a bare `obits/` are now gitignored (`481cf1a`). They
+  arrived **untracked and not ignored**, one `git add -A` from publishing ten
+  scanned obituaries naming real people with their dates.
+
+### Reproducing the run
+
+```bash
+npm run build
+OEQ_MODEL_BASE_URL=http://127.0.0.1:11434/v1 OEQ_MODEL=llama3.1:8b \
+OEQ_MODEL_TIMEOUT_SECONDS=600 \
+  node dist/cli/index.js extract --dir "tests/obits" \
+    --profile templates/alumni-obituary.profile.json --out out.csv --ai
+```
+
+The first run used `llama3.2:3b` on port 11435, which was the CPU-only
+workaround for the GPU fault described above. Neither is needed now.
+
+Fires on **1 of 10** rows with the shipped template — that is the eligibility
+rule working, not a fault. To get ten outputs to read, copy the template and
+give the description an `{ "ai": true }` source alone. **That scratch profile is
+for evaluation and must never ship**, and the eligibility rule must not be
+loosened to make an evaluation easier.
+
 ## START HERE
 
-1. `npm install && npm test` — expect **1450 passing across 88 files**.
-   `npm run typecheck` and `npm run build:desktop` are both clean.
-2. **The institution-agnostic work is merged and released.** `main` carries
-   **v1.1.0** (tagged 2026-08-13, both installers built by CI). PRs #7–#11 are
-   in; the branches are pruned.
-3. **Open, awaiting the operator:** PR #12 (Apache 2.0 licence) and
-   `fix/attachment-field-wording` (the Setup changes below). The repository is
-   **still private** — making it public is the last step of spec 2 and is the
-   operator's to take.
+1. `npm install && npm test` — expect **2149 passing across 104 files**.
+   `npm run typecheck`, `npm run build` and `npm run build:desktop` are all
+   clean.
+2. **You are probably on `feature/llm-provider`.** It **is not merged**, and it
+   branched off `main` before the privacy scrub. `main` carries **v1.1.1**. The repository is **public**
+   (`byui-library/openEQUELLA-Bulk-Uploader`, Apache-2.0) — spec 2 happened;
+   anything committed here is world-readable.
+3. **The language-model feature has been run against two real models, and both
+   fabricated on the same two documents.** A verification layer refuses a value
+   the document does not support, and has since been hardened so that it no
+   longer depends on a model answering in ISO. See "The language model: run
+   against a real model, and guarded" below before touching any of it.
 4. **Three things you must not assume.** All are below in full; each would be
    an expensive mistake:
    - **A session behind a load balancer needs EVERY cookie, not just
@@ -28,6 +501,92 @@ Read this first.
      interface and match what it produces. `item/attachments/attachment/uuid`,
      which the sync documentation names, is **generated** by openEQUELLA and is
      not in the schema; nothing writes it.
+
+## The language model: run against a real model, and guarded — 2026-08-14
+
+**All 14 tasks of
+[the plan](superpowers/plans/2026-08-14-llm-provider.md) are implemented on
+`feature/llm-provider`.** One OpenAI-compatible provider serves a local runtime
+or a hosted endpoint; `src/core/ai/` holds the rule, the slicer, the prompt,
+the provider, the fill pass, the verification and the confirmation. `CLAUDE.md`
+carries the domain facts this established — read those before changing any of it.
+
+**It has now been run against a real model**, which is the thing this section
+used to say had never happened: ten scanned obituaries, `llama3.2:3b` served
+locally by Ollama, on 2026-08-14. Ten generated descriptions and the 1-of-10
+eligibility figure below are not in conflict — the shipped template sends almost
+nothing, so getting ten outputs to read means the scratch evaluation profile
+Task 13 prescribes, never a loosened rule.
+
+**What it found: the model fabricates, and the prompt does not stop it.** 2 of 10
+generated descriptions asserted facts the source documents do not contain — an
+affiliated institution neither document mentions, and in one case a full death
+date for a document that states **no date of any kind**. The shipped prompt says
+*"Use only what the document states. Do not invent names, dates, places or
+events"* and the profile instruction says to include the affiliation clause only
+where the document supports it. Neither held.
+
+**It is not a misreading.** The dateless document was processed three times at
+temperature 0 and produced three different death dates. It is generating a
+plausibly shaped value to fill a slot.
+
+**Everything downstream behaved correctly, which is the point.** The cell was
+flagged, `_source` read `ai`, the note told the operator to check. **A flag is
+not a guard**: in a collection with no moderation workflow, a fabricated date a
+reviewer skims past is permanent and indistinguishable from a real one.
+
+**What was built in response: `src/core/ai/verify.ts`**, commit `8224934`. Every
+generated value is checked against the whole document before it is written, and
+`fill.ts` refuses the **whole** value if any checkable claim is unsupported —
+never a repaired one, because this tool does not edit generated prose. Built from
+invented fixtures only, then run against those ten real documents it had never
+seen: **2 of 2 fabrications refused, 8 of 8 supported descriptions kept, zero
+false rejections.** The refused row ends with an empty cell, no `ai` in
+`_source`, and a note naming each unsupported claim. The design records the three
+decisions and their reasoning under "Verification: what may be written into a
+cell".
+
+**What the second run settled, and what it did not.** Re-run on 2026-08-16 with
+`llama3.1:8b` on a GPU, the same ten documents produced **8 of 8 written outputs
+in house style** where the 3B model managed about three of eight — so the
+house-style failures were **model capability, not prompt wording**, and the
+instruction should not be changed. The same two documents were refused by both
+models, and an independent audit against the sources confirmed nothing
+ungrounded reached the spreadsheet. What that does **not** settle is whether the
+kept descriptions are worth cataloguing: groundedness is not quality, following
+a house style is not quality either, and no test can answer it. Note also what
+verification cannot do — it catches a claim the document does not support, and
+it cannot tell whether a supported date is attached to the right person. A model
+can still say something false using only true tokens.
+
+**A normal batch fires on almost nothing, and that is now measured rather than
+predicted: 1 of 10 rows** on the shipped template. The plan's original premise
+was wrong — it claimed tier 3 flags every obituary row so every row is eligible.
+The shipped template's description uses `compose`, which attaches no note, and
+has no `{ opening: true }` source at all, so the model fires only where `compose`
+produced nothing: the death date, the birth date **and** the Ricks mention all
+missing at once. That happened on one document of ten. **Do not read that as the
+feature being broken, and do not loosen the eligibility rule to make an
+evaluation easier** — build a batch that genuinely defeats extraction, or use a
+scratch profile that is never shipped.
+
+**Why the rule is not loosening**, decided 2026-08-14 on archival grounds: a
+description assembled from extracted facts is evidence with a traceable origin,
+and `_source` records one origin per cell, so replacing it would merge verified
+fact and machine assertion with no way to tell them apart. An incomplete but
+traceable description outranks a complete but unverifiable one. The model may
+fill a gap; it may never overwrite one.
+
+**Worth doing eventually:** `flagged` currently means both "a human should check
+this" and "the model may replace this". An incomplete composed value deserves
+the first and not the second. Separating them is the honest version of what
+"let the model improve a partial description" was reaching for.
+
+**Known, not fixed:** `m.miles` appears in 40 test fixtures across four files,
+and `milesm` once in `tests/passwordAuth.test.ts`. Both are the operator's real
+surname rather than a botanical pseudonym, both violate this repo's own rule,
+and the repository is now public. The scrub was deliberately kept out of the
+LLM branch so it can be reviewed on its own.
 
 ### What v1.1.1 adds, and why
 
@@ -144,14 +703,17 @@ The lesson generalises past this codebase: **a 200 is not proof of identity.**
 If a probe cannot say *which user* the server thinks it is talking to, it has
 not verified sign-in.
 
-### DO NOT ASSUME: spec 2 has not started
+### Spec 2 has happened — the repository is PUBLIC
 
-Publishing the repository — **a licence, a README written for outside readers,
-and the audit of ~196 commits of history** — is
-[spec 2](superpowers/specs/2026-08-12-institution-agnostic-design.md), and none
-of it exists. It was kept separate on purpose: it is the only step that cannot
-be undone. Whether BYU-Idaho's `alumni-obituary` template and
-`schema/_entity.xml` ship as worked examples is decided there, not here.
+**Superseded.** This section used to say publishing had not started. As of
+2026-08-14: `LICENSE` exists, `package.json` declares `Apache-2.0`, the README
+carries a section written for outside readers, and `gh repo view` returns
+`"isPrivate": false`. History is 298 commits, not the ~196 estimated here.
+
+**Anything committed to this repository is world-readable.** That changes what
+may safely go in a fixture, a comment or a doc — see the pseudonym rule in
+`CLAUDE.md`, and the `m.miles` note above, which is now a public exposure
+rather than an untidiness.
 
 ### What the probe found — 2026-08-12, content.byui.edu
 
@@ -215,12 +777,17 @@ sign-in fix. To cut another: bump package.json, tag `vX.Y.Z`, push the tag.
 
 Sign-in is confirmed working on **both** instances; there is no open loop there.
 
-### Do not start the AI description tier
+### The AI description tier — deferred, then built
 
-The operator deferred it on 2026-08-10: *"Let's hold off on the ai piece for
-now."* Tiers 1–3 fill the description without a network call, and that is the
-shipped behaviour. Tier 4 needs a provider decision and its own conversation.
-Do not begin it unasked.
+**Superseded.** The operator deferred it on 2026-08-10 (*"Let's hold off on the
+ai piece for now"*) and un-deferred it on 2026-08-14, widening it to "any of
+the major AI LLMs including local models". It is built on
+`feature/llm-provider` — see "The language model: run against a real model, and
+guarded" at the top.
+
+Tiers 1–3 still fill the description without a network call, and **that remains
+the behaviour wherever no endpoint is configured**, which is the point: with
+nothing set up, nothing is contacted and nothing is sent.
 
 ### What is waiting on the operator
 
@@ -583,7 +1150,7 @@ as bugs this project has already shipped:
 - Stage 2 plan: [superpowers/plans/2026-08-05-metadata-extractor-stage2.md](superpowers/plans/2026-08-05-metadata-extractor-stage2.md)
 
 ```text
-npm test            1450 tests, 88 files
+npm test            2149 tests, 104 files
 npm run typecheck   clean
 npm run build       CLI + MCP -> dist/
 npm run build:desktop  Electron -> dist-desktop/
@@ -658,7 +1225,7 @@ anything wins; three of them are built:
 | 1 | table cell / label / document property | built earlier |
 | 2 | `{ "section": "Abstract" }` — text under a heading | **built** (`src/core/extract/sections.ts`) |
 | 3 | `{ "opening": true }` — first substantial paragraph | **built** (`src/core/extract/opening.ts`) |
-| 4 | a language model | **not started** — needs its own conversation |
+| 4 | a language model | **built** on `feature/llm-provider`; run against a real model 2026-08-14, and its output is now verified against the document before it is written |
 
 Measured on the operator's own folders after building tiers 2 and 3:
 

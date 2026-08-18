@@ -10,7 +10,7 @@ import {
   type RunReport,
   type SchemaSummary,
 } from './ipc.js';
-import { SecretStore, EncryptedTokenStore, type Instance } from './secrets.js';
+import { SecretStore, EncryptedTokenStore, type Instance, sameOrigin } from './secrets.js';
 import type { CurrentUser } from '../core/client.js';
 import { assertNotGuest } from '../core/identity.js';
 import { SchemaCache } from '../core/schemaCache.js';
@@ -25,6 +25,7 @@ import {
   type SessionEndReport,
 } from './session.js';
 import { readSheet } from '../core/sheet.js';
+import { listModelsAt } from '../core/ai/pass.js';
 import {
   extractDefinition,
   extractItemNamePath,
@@ -360,6 +361,50 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     ) => secrets().saveInstance(instance, s),
   );
 
+  ipcMain.handle(
+    CHANNELS.listModels,
+    async (_e, args: Parameters<OeqApi['listModels']>[0]) => {
+      // A BLANK KEY MEANS THE STORED ONE, the same rule the save follows: the
+      // stored key is never rendered back into the box, so the operator asking
+      // "which models are there?" after opening Setup has an empty field and a
+      // configured endpoint. Resolved here rather than in the renderer, which
+      // is never handed a key.
+      let apiKey = args.apiKey;
+      if (apiKey === '') {
+        const stored = await secrets().getModel(args.instanceId);
+        apiKey = stored !== null && sameOrigin(stored.baseUrl, args.baseUrl) ? stored.apiKey : '';
+      }
+      return listModelsAt({ baseUrl: args.baseUrl, apiKey });
+    },
+  );
+
+  // Answered from the token store rather than by attempting a call: the
+  // question is whether a sign-in has happened, not whether the server is up.
+  ipcMain.handle(CHANNELS.hasToken, async (_e, instanceId: string) => {
+    const inst = await secrets().loadInstance(instanceId);
+    if (inst === null) return false;
+    const raw = await tokens().loadRaw();
+    if (raw === null) return false;
+    // A token issued for another site is not a token for this one --
+    // `getToken` refuses to reuse it across instances, so reporting true
+    // here would promise a sign-in that will be rejected.
+    return raw.baseUrl === inst.baseUrl;
+  });
+
+  ipcMain.handle(CHANNELS.getOAuth, async (_e, instanceId: string) => secrets().getOAuth(instanceId));
+
+  ipcMain.handle(CHANNELS.forgetOAuth, async (_e, instanceId: string) => {
+    await secrets().forgetOAuth(instanceId);
+  });
+
+  // Read from Electron itself rather than recomputed here: app.getPath is the
+  // one authority on where this build actually writes.
+  ipcMain.handle(CHANNELS.getStorageInfo, async () => ({
+    path: userData(),
+    appName: app.getName(),
+    packaged: app.isPackaged,
+  }));
+
   ipcMain.handle(CHANNELS.clearSettings, async () => {
     await secrets().clear();
     await tokens().clear();
@@ -424,6 +469,44 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       }
       await secrets().forgetPassword(instanceId);
     },
+  );
+
+  ipcMain.handle(
+    CHANNELS.setModel,
+    async (_e, args: Parameters<OeqApi['setModel']>[0]) =>
+      secrets().setModel(args.instanceId, args.settings),
+  );
+
+  // Returns everything EXCEPT the key, for the reason getPassword returns
+  // everything except the password -- see OeqApi.getModel and ModelChoice.
+  ipcMain.handle(
+    CHANNELS.getModel,
+    async (_e, instanceId: Parameters<OeqApi['getModel']>[0]) => {
+      const stored = await secrets().getModel(instanceId);
+      if (stored === null) return null;
+      return {
+        baseUrl: stored.baseUrl,
+        model: stored.model,
+        budget: stored.budget,
+        cap: stored.cap,
+        timeoutMs: stored.timeoutMs,
+        hasApiKey: stored.apiKey !== '',
+      };
+    },
+  );
+
+  /**
+   * "Forget these model settings".
+   *
+   * NO SESSION TO END, unlike `forgetPassword` above: nothing here holds a
+   * long-lived session with anybody. A model endpoint is called per request and
+   * the key is a bearer token sent on each one, so removing the stored settings
+   * is the whole of the removal.
+   */
+  ipcMain.handle(
+    CHANNELS.forgetModel,
+    async (_e, instanceId: Parameters<OeqApi['forgetModel']>[0]) =>
+      secrets().forgetModel(instanceId),
   );
 
   ipcMain.handle(
@@ -741,10 +824,23 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   // and so the schema path is resolved once, here, where packaging is known.
   registerExtractHandlers(ipcMain, {
     schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
+    // Sent to whichever window is open. Guarded: a run can outlive the
+    // window that started it, and a destroyed webContents throws on send.
+    onModelProgress: (event) => {
+      const win = getWindow();
+      if (win !== null && !win.isDestroyed()) win.webContents.send(CHANNELS.modelProgress, event);
+    },
     templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
     // The site's OWN schema, when one has been fetched and cached, in
     // preference to the bundled export -- which is BYU-Idaho's and correct
     // nowhere else. Null falls back to the bundle; see cachedSchema.
     cachedSchema,
+    // THE ONE PLACE THE API KEY IS READ FOR A RUN, and it stays in this
+    // process. `getModel` above answers the renderer with `ModelChoice`, which
+    // mirrors these settings minus the key on purpose; the run needs the key
+    // itself, so it resolves it here rather than being handed one across the
+    // IPC boundary. Same instance id both times, so the endpoint the operator
+    // confirmed against is the endpoint their documents go to.
+    modelFor: (instanceId: string) => secrets().getModel(instanceId),
   });
 }

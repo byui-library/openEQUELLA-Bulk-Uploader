@@ -1,9 +1,12 @@
 // src/desktop/ui/extract/controller.ts
 import type { OeqApi } from '../../ipc.js';
-import { addColumn, removeColumn, moveColumn, setSources, setDefault } from '../../../core/extract/columns.js';
+import { addColumn, removeColumn, moveColumn, setFirstSource, setDefault } from '../../../core/extract/columns.js';
 import type { Profile, Source } from '../../../core/extract/types.js';
 import { errorMessage } from '../errors.js';
+import { aiConfirmation } from '../../../core/ai/confirm.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
+import type { ModelProgress } from '../../../core/ai/fill.js';
+import { plainLabel } from './picker.js';
 
 export interface ExtractControllerOptions {
   api: OeqApi;
@@ -18,6 +21,23 @@ export interface ExtractControllerOptions {
    * extraction runs either way (ipc.ts's schemaPaths).
    */
   instanceId?: string;
+  /**
+   * Ask the operator to approve something, and answer whether they did.
+   *
+   * INJECTED so `save()` can be tested without a DOM -- this project has no
+   * jsdom, deliberately -- and defaulted to `window.confirm`, which is the
+   * pattern app.ts's "Change credentials…" already uses for a click that cannot
+   * be undone.
+   *
+   * NOT THE PUBLISH GATE, and the difference is deliberate. Confirm's typed
+   * item count exists because publishing puts real items into a live collection
+   * with no moderation queue -- there is nothing to undo. This step writes a
+   * CSV to a path the operator picks; the recovery is to not use the file. What
+   * it costs is money and text leaving the machine, which is what the dialog
+   * states, and a run on a local model is not made to click through anything
+   * at all (core/ai/confirm.ts).
+   */
+  confirm?: (text: string) => boolean;
   /** Called when the operator leaves the flow. */
   onExit(): void;
   /** Called after every state change; the caller decides which screen to draw. */
@@ -70,6 +90,31 @@ export function createExtractController(options: ExtractControllerOptions): Extr
    * "Error invoking remote method '<channel>': <Class>: <real message>";
    * stripElectronWrapper removes that so the operator sees the real message.
    */
+  /**
+   * Turn one model-pass event into the line the operator reads.
+   *
+   * `asking` is the one that has to be live: it is what explains a wait. The
+   * outcomes are already recorded in `_notes` and counted on the save screen,
+   * so they scroll past here rather than being the point.
+   */
+  function describeModelEvent(event: ModelProgress): string {
+    const field = plainLabel(event.path);
+    if (event.stage === 'asking') return `Asking the model about ${field} for ${event.file}…`;
+    if (event.stage === 'written') return `The model wrote ${field} for ${event.file}.`;
+    if (event.stage === 'refused')
+      return `Refused the model's ${field} for ${event.file} — the document does not support it.`;
+    if (event.stage === 'discarded') return `Discarded the model's ${field} for ${event.file}.`;
+    if (event.stage === 'failed') return `The model could not be reached for ${event.file}.`;
+    return `Skipped ${field} for ${event.file}.`;
+  }
+
+  // REGISTERED ONCE, not per run: preload's `onModelProgress` adds a new
+  // ipcRenderer listener on every call, so registering it inside `save()`
+  // would fire the handler once per save the operator had ever done.
+  options.api.onModelProgress((event) => {
+    set({ modelStatus: describeModelEvent(event) });
+  });
+
   const guard = async (work: () => Promise<Partial<ExtractState>>): Promise<void> => {
     set({ busy: true, error: null });
     try {
@@ -93,6 +138,84 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     if (state.profile === null) return;
     await guard(async () => ({ ...(await refreshPreview(fn(state.profile!))), removed: null }));
   };
+
+  /**
+   * The two separate answers a confirmation produces.
+   *
+   * THEY ARE NOT THE SAME QUESTION, and collapsing them to one boolean is what
+   * let an unreadable settings store turn into an unannounced hosted send.
+   * "Build the spreadsheet" and "send documents to a model" have different
+   * defaults: the first should proceed through almost anything, because
+   * extraction works offline and has no prerequisites; the second must not
+   * happen unless somebody said so.
+   */
+  interface ModelApproval {
+    /** Whether to run the extract at all. False only on a real refusal. */
+    proceed: boolean;
+    /** Whether the operator agreed to documents leaving this machine. Carried to
+     *  `extractRun`, which sends only on a true. */
+    sendToModel: boolean;
+  }
+
+  /**
+   * Whether this run may go ahead, having told the operator what it will send.
+   *
+   * TRUE IS THE ANSWER IN EVERY CASE BUT ONE -- a real refusal of a real
+   * dialog. `aiConfirmation` returns null for every state in which nothing
+   * would be sent (no endpoint stored, no column asking for one, no documents,
+   * a cap of zero) and for an endpoint on this machine, and a null is not a
+   * question to be answered.
+   *
+   * A STORE THAT CANNOT BE READ IS "NO MODEL", never a reason to stop the
+   * extract. Extraction works offline and without any of this; refusing to
+   * build a spreadsheet because a settings file would not decrypt would break
+   * the half of the tool that has no prerequisites, over a feature the operator
+   * may never have configured.
+   */
+  async function approveModelRun(profile: Profile): Promise<ModelApproval> {
+    let model: Awaited<ReturnType<OeqApi['getModel']>> = null;
+    try {
+      model = await options.api.getModel(options.instanceId ?? '');
+    } catch {
+      // AN UNREADABLE STORE IS NOT PERMISSION TO SEND. It used to answer "carry
+      // on" -- which was right about the extract and wrong about the model,
+      // because the main process then made its OWN read of the same store,
+      // possibly succeeded, and sent a whole batch to a hosted endpoint with no
+      // dialog ever shown. `sendToModel: false` is now carried to the run, so a
+      // read this side could not make cannot be overruled by a read the other
+      // side could.
+      return { proceed: true, sendToModel: false };
+    }
+    if (model === null) return { proceed: true, sendToModel: false };
+
+    // NO SCAN IS NOT AN EMPTY FOLDER. `aiConfirmation` returns null for zero
+    // documents -- correctly, since a dialog offering to send nothing teaches
+    // the operator that this dialog means nothing -- and null is an approval. So
+    // folding "we do not know how many files there are" into the same zero would
+    // make a missing count read as consent to a run of unknown size. Unreachable
+    // today, because `chooseFolder` sets `dir` and `scan` together and `save()`
+    // requires `dir`; it is a fragile way to gate consent all the same.
+    if (state.scan === null) return { proceed: true, sendToModel: false };
+
+    const text = aiConfirmation({
+      profile,
+      // The whole folder, not the preview: the run reads every file fresh
+      // (extractHandlers.ts), so the preview's five rows would understate the
+      // count by two orders of magnitude on a real batch.
+      documents: state.scan.supported.length,
+      model: model.model,
+      baseUrl: model.baseUrl,
+      budget: model.budget,
+      cap: model.cap,
+    });
+    // No dialog warranted -- a loopback endpoint, no column asking, no
+    // documents, a cap of zero. Not a question, and for the loopback case the
+    // model genuinely does run, so this is an approval and not a refusal.
+    if (text === null) return { proceed: true, sendToModel: true };
+
+    const agreed = (options.confirm ?? ((message: string) => window.confirm(message)))(text);
+    return { proceed: agreed, sendToModel: agreed };
+  }
 
   return {
     state: () => state,
@@ -170,7 +293,10 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       await edit((p) => moveColumn(p, path, delta))();
     },
     async setSource(path, source) {
-      await edit((p) => setSources(p, path, source === null ? [] : [source]))();
+      // The screen shows ONE source per column, so this governs position 0 and
+      // leaves the rest of the chain alone. It used to write `[source]`, which
+      // deleted every later tier -- see `setFirstSource`.
+      await edit((p) => setFirstSource(p, path, source))();
     },
     async setDefault(path, value) {
       await edit((p) => setDefault(p, path, value))();
@@ -208,9 +334,37 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       if (state.dir === null || state.profile === null) return;
       const outPath = await options.api.chooseCsvPath();
       if (outPath === null) return;
+      // LAST THING BEFORE THE RUN, and after the file picker on purpose:
+      // approving a send and then cancelling the save dialog left an approval
+      // standing for a run that never happened. A confirmation should be the
+      // step immediately before the thing it confirms, with nothing that can
+      // still call the whole thing off in between.
+      const approval = await approveModelRun(state.profile);
+      if (!approval.proceed) return;
+      // Cleared before the run so a line left over from a previous save is
+      // never read as this one's progress.
+      set({ modelStatus: null });
       await guard(async () => {
-        const report = await options.api.extractRun({ dir: state.dir!, profile: state.profile!, outPath });
-        return { savedPath: report.outPath, savedWritten: report.written, savedFlagged: report.flagged };
+        const report = await options.api.extractRun({
+          dir: state.dir!,
+          profile: state.profile!,
+          outPath,
+          // THE SAME ID `approveModelRun` JUST READ THE ENDPOINT FROM. The run
+          // resolves its own settings in the main process, where the API key
+          // lives; passing the id is what makes the two reads land on one
+          // per-instance entry. Send a different id -- or none -- and the
+          // operator is shown one endpoint and their documents go to another,
+          // or to none at all after they agreed to a send.
+          instanceId: options.instanceId ?? '',
+          // The consent, carried rather than re-derived. See `ModelApproval`.
+          modelApproved: approval.sendToModel,
+        });
+        return {
+          savedPath: report.outPath,
+          savedWritten: report.written,
+          savedFlagged: report.flagged,
+          savedAiWritten: report.aiWritten,
+        };
       });
     },
 

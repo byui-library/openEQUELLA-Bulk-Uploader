@@ -246,6 +246,27 @@ describe('profiles using the new sources', () => {
       }),
     ).toThrow();
   });
+
+  /**
+   * A source can be type-legal and loader-illegal at once: the `Source` union
+   * in types.ts and the zod union here are two separate lists, and only the
+   * `_sourcesAreExhaustive` guard ties them together. A profile the code
+   * accepts and `parseProfile` rejects is a template that fails at load with
+   * nothing pointing at the cause, so the loader is pinned directly.
+   */
+  it('accepts a column that asks for a model', () => {
+    const columns = [
+      GOOD.columns[0]!,
+      { path: 'MWDL/description', sources: [{ opening: true }, { ai: true }] },
+    ];
+    expect(() => parseProfile({ ...GOOD, columns })).not.toThrow();
+    // Parsed, not merely tolerated -- a union member that silently dropped the
+    // source would also "not throw".
+    expect(parseProfile({ ...GOOD, columns }).columns[1]?.sources).toStrictEqual([
+      { opening: true },
+      { ai: true },
+    ]);
+  });
 });
 
 describe('loadProfile / saveProfile', () => {
@@ -268,5 +289,128 @@ describe('loadProfile / saveProfile', () => {
     const path = join(dir, 'bad.profile.json');
     await writeFile(path, '{ not json', 'utf8');
     await expect(loadProfile(path)).rejects.toThrow(/bad\.profile\.json/);
+  });
+});
+
+/**
+ * WHERE THE PROVENANCE PATH IS CHECKED, AND WHY IT IS CHECKED HERE.
+ *
+ * `csv.ts` writes a spreadsheet by walking `profile.columns`. A value written
+ * into `row.cells` under a path that is not one of them is created and then
+ * silently dropped -- the exact "reported as if it had run" failure this
+ * codebase has shipped repeatedly, and one a row-level assertion cannot see,
+ * because at row level the value is genuinely there.
+ *
+ * So the path must be a real, writable column, and that is settled at load time
+ * rather than discovered after a batch has been sent to a paid endpoint. Being
+ * a column also buys the schema check for free: `validateAgainstSchema` walks
+ * `profile.columns`, so a provenance path the schema does not declare is
+ * reported by the machinery that already reports every other undeclared path,
+ * with no second validator and without `fill.ts` -- which must stay offline --
+ * ever seeing a schema.
+ */
+describe('parseProfile and the provenance field', () => {
+  const withProvenance = (over: Record<string, unknown>) => ({
+    ...GOOD,
+    columns: [...GOOD.columns, { path: 'MWDL/conversionSpecifications', sources: [] }],
+    aiProvenance: { path: 'MWDL/conversionSpecifications', append: 'Written by {model}', ...over },
+  });
+
+  it('accepts a provenance field that is a declared column', () => {
+    expect(() => parseProfile(withProvenance({}))).not.toThrow();
+  });
+
+  it('refuses a provenance path that is not a column, naming the problem', () => {
+    const bad = { ...GOOD, aiProvenance: { path: 'MWDL/conversionSpecifications', append: 'x' } };
+    expect(() => parseProfile(bad)).toThrow(/MWDL\/conversionSpecifications/);
+    expect(() => parseProfile(bad)).toThrow(/column/i);
+  });
+
+  /** Dropped from the sheet by `csv.ts` on purpose, so writing here is the same
+   *  silent no-op wearing a different hat. */
+  it('refuses a composeOnly column, which never reaches the spreadsheet', () => {
+    const bad = {
+      ...GOOD,
+      columns: [
+        ...GOOD.columns,
+        { path: 'MWDL/conversionSpecifications', sources: [], composeOnly: true, as: 'conv' },
+      ],
+      aiProvenance: { path: 'MWDL/conversionSpecifications', append: 'x' },
+    };
+    expect(() => parseProfile(bad)).toThrow(/composeOnly|spreadsheet/i);
+  });
+
+  /** It names the file on disk. Appending to it renames the attachment. */
+  it('refuses the attachment column', () => {
+    const bad = { ...GOOD, aiProvenance: { path: ATTACHMENT_COLUMN, append: 'x' } };
+    expect(() => parseProfile(bad)).toThrow(/attachment name/i);
+  });
+
+  /**
+   * A typo in a placeholder is not a typo in a log line. `{modle}` is written
+   * verbatim into a permanent catalogue record with no moderation queue, on
+   * every item in the batch, and nothing else would ever say so.
+   */
+  it('refuses an unknown placeholder rather than writing it out literally', () => {
+    expect(() => parseProfile(withProvenance({ append: 'Written by {modle}' }))).toThrow(/modle/);
+    expect(() => parseProfile(withProvenance({ append: 'Written by {modle}' }))).toThrow(/model/);
+  });
+
+  /** Naming no model at all is an honest disclosure, not a mistake. */
+  it('accepts an append with no placeholder in it', () => {
+    expect(() => parseProfile(withProvenance({ append: 'Description written by a language model' }))).not.toThrow();
+  });
+
+  /**
+   * THE SCHEMA CHECK THE SPEC ASKS FOR, ALREADY DONE. Nothing in `fill.ts`
+   * validates a path against a schema and nothing should: `src/core/extract/`
+   * never touches the network. Being a column is what puts the provenance path
+   * through the check every other path goes through.
+   */
+  it('reports a provenance column the schema does not declare, like any other', () => {
+    const profile = parseProfile(withProvenance({}));
+    const problems = validateAgainstSchema(profile, new Set(['MWDL/title']));
+    expect(problems.map((p) => p.path)).toContain('MWDL/conversionSpecifications');
+  });
+});
+
+/**
+ * The placeholder check reads EVERY brace, not only the ones that look like a
+ * name.
+ *
+ * `joinPlaceholders` matches `\{([A-Za-z][A-Za-z0-9_]*)\}`, which catches
+ * `{modle}` and misses `{ model }`, `{model-name}` and `{2}` -- each a plausible
+ * typo, and each written verbatim into every item in the batch, in a collection
+ * with no moderation queue, with nothing downstream ever mentioning it.
+ */
+describe('parseProfile and a mistyped provenance placeholder', () => {
+  const withAppend = (append: string) => ({
+    ...GOOD,
+    columns: [...GOOD.columns, { path: 'MWDL/conversionSpecifications', sources: [] }],
+    aiProvenance: { path: 'MWDL/conversionSpecifications', append },
+  });
+
+  it('refuses a name with spaces inside the braces', () => {
+    expect(() => parseProfile(withAppend('Written by { model }'))).toThrow(/not substituted/i);
+  });
+
+  it('refuses a hyphenated name', () => {
+    expect(() => parseProfile(withAppend('Written by {model-name}'))).toThrow(/model-name/);
+  });
+
+  it('refuses a number', () => {
+    expect(() => parseProfile(withAppend('Written by {2}'))).toThrow(/not substituted/i);
+  });
+
+  it('refuses an empty brace pair', () => {
+    expect(() => parseProfile(withAppend('Written by {}'))).toThrow(/not substituted/i);
+  });
+
+  it('refuses the wrong case, which does not substitute either', () => {
+    expect(() => parseProfile(withAppend('Written by {Model}'))).toThrow(/Model/);
+  });
+
+  it('still accepts the one that works', () => {
+    expect(() => parseProfile(withAppend('Written by {model}'))).not.toThrow();
   });
 });

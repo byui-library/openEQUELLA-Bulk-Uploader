@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -16,6 +16,7 @@ import {
   stripBomFromEnvKeys,
   extractCode,
   browserCommand,
+  extractState,
 } from '../src/cli/index.js';
 import { acquireLock, releaseLock } from '../src/core/lock.js';
 import { saveManifest, loadManifest } from '../src/core/state.js';
@@ -596,11 +597,17 @@ describe('loginAction', () => {
     mock.state.validAuthCodes.add('abc123');
     const store = new FileTokenStore(join(dir, 'token.json'));
 
+    // The pasted URL now carries the state the authorize URL was built with,
+    // because a pasted state IS checked -- see the describe below. This used
+    // to paste a literal `state=xyz`, which the check correctly refuses.
+    let sent: string | null = null;
     const logs = await captureLogs(() =>
       loginAction(env(), {
         tokenStore: store,
-        openBrowser: () => {},
-        promptForCode: async () => 'https://example.test/page/home?code=abc123&state=xyz',
+        openBrowser: (url) => {
+          sent = new URL(url).searchParams.get('state');
+        },
+        promptForCode: async () => `https://example.test/page/home?code=abc123&state=${sent ?? ''}`,
       }),
     );
 
@@ -630,6 +637,10 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
     const origLog = console.log;
     console.log = (...args: unknown[]) => logs.push(args.join(' '));
 
+    // The browser is handed the authorize URL and carries its `state` back on
+    // the redirect. Captured here so this test sends the value a real browser
+    // would, rather than one the login would now refuse.
+    let sentState: string | null = null;
     const loginPromise = loginAction(
       {
         OEQ_BASE_URL: mock.url,
@@ -638,7 +649,12 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
         OEQ_COLLECTION_UUID: 'c1',
         OEQ_REDIRECT_URI: redirectUri,
       },
-      { tokenStore: store, openBrowser: () => {} },
+      {
+        tokenStore: store,
+        openBrowser: (url) => {
+          sentState = new URL(url).searchParams.get('state');
+        },
+      },
     );
 
     try {
@@ -646,7 +662,7 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
       // operator signs in and authorizes -- loginAction should already be
       // listening for it by the time the server is up.
       await waitForPort(port);
-      const res = await fetch(`${redirectUri}?code=loop-code&state=xyz`);
+      const res = await fetch(`${redirectUri}?code=loop-code&state=${sentState ?? ''}`);
       expect(res.status).toBe(200);
       expect(await res.text()).toMatch(/close this tab/i);
 
@@ -688,6 +704,71 @@ describe('loginAction -- loopback capture (Bug 3a)', () => {
     await waitForPort(port);
     await fetch(`${redirectUri}?error=access_denied`);
     await assertion;
+  });
+
+  /**
+   * ## The loopback server answers anyone on this machine
+   *
+   * It is an ordinary HTTP server on a local port. Any other process, or any
+   * web page the operator happens to have open, can send it a request carrying
+   * a code of the attacker's choosing -- and a code accepted here is exchanged
+   * for a token that is then cached for every later command. The `state` sent
+   * on the authorize URL is what separates openEQUELLA's redirect from theirs.
+   *
+   * Driven through a real HTTP request rather than a stubbed capture, because
+   * the port being open to everything is the whole point.
+   */
+  it('refuses a redirect whose state is not the one it sent', async () => {
+    const port = await getFreePort();
+    const redirectUri = `http://127.0.0.1:${port}/callback`;
+    mock.state.expectedRedirectUri = redirectUri;
+    mock.state.validAuthCodes.add('loop-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const loginPromise = loginAction(
+      {
+        OEQ_BASE_URL: mock.url,
+        OEQ_CLIENT_ID: 'good-id',
+        OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
+        OEQ_REDIRECT_URI: redirectUri,
+      },
+      { tokenStore: store, openBrowser: () => {} },
+    );
+
+    const assertion = expect(loginPromise).rejects.toThrow(/did not come from the sign-in/i);
+    await waitForPort(port);
+    await fetch(`${redirectUri}?code=loop-code&state=attacker-chose-this`);
+    await assertion;
+
+    // Refused means refused: nothing was exchanged and nothing was cached.
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  it('refuses a redirect that carries no state at all', async () => {
+    const port = await getFreePort();
+    const redirectUri = `http://127.0.0.1:${port}/callback`;
+    mock.state.expectedRedirectUri = redirectUri;
+    mock.state.validAuthCodes.add('loop-code');
+    const store = new FileTokenStore(join(dir, 'token.json'));
+
+    const loginPromise = loginAction(
+      {
+        OEQ_BASE_URL: mock.url,
+        OEQ_CLIENT_ID: 'good-id',
+        OEQ_CLIENT_SECRET: 'secret',
+        OEQ_COLLECTION_UUID: 'c1',
+        OEQ_REDIRECT_URI: redirectUri,
+      },
+      { tokenStore: store, openBrowser: () => {} },
+    );
+
+    const assertion = expect(loginPromise).rejects.toThrow(/did not come from the sign-in/i);
+    await waitForPort(port);
+    await fetch(`${redirectUri}?code=loop-code`);
+    await assertion;
+
+    expect(await store.loadRaw()).toBeNull();
   });
 });
 
@@ -1053,5 +1134,124 @@ describe('browserCommand', () => {
   it('uses the platform opener on mac and linux', () => {
     expect(browserCommand('darwin', url).command).toBe('open');
     expect(browserCommand('linux', url).command).toBe('xdg-open');
+  });
+});
+
+/**
+ * ## The pasted-code flow checks the state when it can, and says when it cannot
+ *
+ * This flow exists for a redirect this machine cannot receive: the operator
+ * reads the code off openEQUELLA's page and pastes it. `extractCode` accepts a
+ * bare code for that reason, and a bare code carries no state -- so the check
+ * genuinely cannot run for everyone.
+ *
+ * That is not a reason to skip it for the people it CAN run for. Pasting the
+ * whole redirected URL is common, and that URL carries the state. So: verify
+ * when a state is present, refuse when it is present and wrong, and SAY SO when
+ * there is none -- the one thing that must never happen is silence, which reads
+ * as "checked, fine".
+ */
+describe('extractState', () => {
+  it('finds the state in a whole pasted URL', () => {
+    expect(extractState('https://oeq.example.edu/?code=abc&state=xyz')).toBe('xyz');
+  });
+
+  it('finds it regardless of parameter order', () => {
+    expect(extractState('https://oeq.example.edu/?state=xyz&code=abc')).toBe('xyz');
+  });
+
+  it('finds it in a bare query fragment someone pasted', () => {
+    expect(extractState('?code=abc&state=xyz')).toBe('xyz');
+  });
+
+  it('returns null for a bare code, which is what most people paste', () => {
+    expect(extractState('abc123')).toBeNull();
+  });
+
+  it('returns null for a URL that carries no state', () => {
+    expect(extractState('https://oeq.example.edu/?code=abc')).toBeNull();
+  });
+
+  it('decodes a percent-encoded value', () => {
+    expect(extractState('https://oeq.example.edu/?code=a&state=x%2Fy')).toBe('x/y');
+  });
+});
+
+describe('loginAction -- a pasted redirect URL is checked', () => {
+  let mock: MockServer;
+  let dir2: string;
+  beforeEach(async () => {
+    mock = await startMockServer();
+    dir2 = await mkdtemp(join(tmpdir(), 'oeq-paste-'));
+    mock.state.expectedRedirectUri = 'https://example.test/';
+  });
+  afterEach(async () => {
+    await mock.close();
+    await rm(dir2, { recursive: true, force: true });
+  });
+
+  const env2 = () => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
+    OEQ_REDIRECT_URI: 'https://example.test/',
+  });
+
+  it('refuses a pasted URL whose state is not the one it sent', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    const store = new FileTokenStore(join(dir2, 'token.json'));
+
+    const err = await captureLogs(() =>
+      loginAction(env2(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'https://example.test/?code=the-code&state=attacker',
+      }),
+    ).catch((e: unknown) => e as Error);
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/did not come from the sign-in/i);
+    expect(await store.loadRaw()).toBeNull();
+  });
+
+  it('accepts a pasted URL carrying the state it sent', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    const store = new FileTokenStore(join(dir2, 'token.json'));
+
+    let sent: string | null = null;
+    await captureLogs(() =>
+      loginAction(env2(), {
+        tokenStore: store,
+        openBrowser: (url) => {
+          sent = new URL(url).searchParams.get('state');
+        },
+        promptForCode: async () => `https://example.test/?code=the-code&state=${sent ?? ''}`,
+      }),
+    );
+
+    expect(await store.loadRaw()).not.toBeNull();
+  });
+
+  /**
+   * The bare code is the common case and must keep working -- but the operator
+   * has to be told the check did not run, or the silence reads as approval.
+   */
+  it('still accepts a bare code, and says the check could not run', async () => {
+    mock.state.validAuthCodes.add('the-code');
+    mock.state.currentUser = { username: 'jdoe', firstName: 'Jane', lastName: 'Doe' };
+    const store = new FileTokenStore(join(dir2, 'token.json'));
+
+    const logs = await captureLogs(() =>
+      loginAction(env2(), {
+        tokenStore: store,
+        openBrowser: () => {},
+        promptForCode: async () => 'the-code',
+      }),
+    );
+
+    expect(await store.loadRaw()).not.toBeNull();
+    expect(logs.join('\n')).toMatch(/could not be confirmed/i);
   });
 });

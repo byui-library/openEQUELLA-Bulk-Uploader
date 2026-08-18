@@ -6,14 +6,20 @@ import {
   attachmentPathVerdict,
   backLabel,
   instanceFrom,
+  modelEntryProblem,
+  modelFrom,
   renderSetup,
   setupMarkup,
   settingsFrom,
   suggestAttachmentPath,
+  MODEL_ADDRESS_LABEL,
+  MODEL_FIELD_DEFAULTS,
+  MODEL_NAME_LABEL,
   TEXT_INPUTS,
   type SetupFields,
   type SetupProps,
 } from '../../../src/desktop/ui/screens/setup.js';
+import type { ModelSettings } from '../../../src/desktop/secrets.js';
 import { parseSchema } from '../../../src/core/discovery.js';
 import { FakeElement } from '../../helpers/fakeDom.js';
 
@@ -35,8 +41,24 @@ const fields = (over: Partial<SetupFields> = {}): SetupFields => ({
   attachmentUuidPath: '',
   collectionUuid: '',
   live: true,
+  modelBaseUrl: '',
+  modelName: '',
+  modelKey: '',
+  modelBudget: '',
+  modelCap: '',
+  modelTimeout: '',
   ...over,
 });
+
+/** A model endpoint as the renderer sees one: no key, only whether there is one. */
+const MODEL = {
+  baseUrl: 'http://localhost:11434/v1',
+  model: 'llama3',
+  budget: 8000,
+  cap: 200,
+  timeoutMs: 120_000,
+  hasApiKey: false,
+};
 
 const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   instances: [
@@ -54,11 +76,21 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   credentialsDropped: false,
   fields: fields(),
   storedUsername: null,
+  storedOAuth: null,
+  storage: null,
+  needsSignIn: false,
+  modelList: null,
+  onListModels: () => {},
+  onForgetOAuth: () => {},
   collections: null,
   collectionsError: null,
   collectionsWithheld: false,
   schemaPaths: null,
   attachmentPathFilled: false,
+  storedModel: null,
+  modelSectionOpen: false,
+  onForgetModel: () => {},
+  onModelSectionToggle: () => {},
   error: null,
   saving: false,
   onInstanceChange: () => {},
@@ -931,5 +963,296 @@ describe('the sync caveat under the attachment field', () => {
   /** The answer that settles it without needing this tool to be right. */
   it('points at the wizard as the thing to match', () => {
     expect(setupMarkup(props())).toMatch(/own web interface and match whatever it writes/);
+  });
+});
+
+/**
+ * ## What "the feature does not exist when nothing is configured" means HERE
+ *
+ * The plan carried a test whose name and assertion disagreed --
+ * `it('is not offered until an endpoint is entered')` asserting that the
+ * endpoint FIELD is present. Both halves cannot be right, so this is what the
+ * design actually asks for.
+ *
+ * The design says: "With no endpoint configured the feature does not exist. No
+ * prompt, no error, no degraded mode, no mention on any screen." The thing that
+ * must be absent is the **feature** -- the sending, the dialog, any claim that a
+ * model wrote something. The endpoint FIELD is the one exception that proves it:
+ * Setup is the screen that configures the thing, and a settings screen which
+ * hides its own setting until that setting exists can never be used to create
+ * it. So the field is unconditionally present here, and what is pinned instead
+ * is that it stays out of the way, offers nothing to forget that does not
+ * exist, and -- in tests/ai/confirm.test.ts and extract/controller.test.ts -- that no
+ * document is sent and no dialog is shown until an endpoint is stored.
+ */
+describe('the Setup screen’s model section', () => {
+  it('always offers the endpoint field, because nothing could ever be configured otherwise', () => {
+    expect(setupMarkup(props())).toContain('id="setup-model-base-url"');
+    expect(setupMarkup(props())).toContain('id="setup-model-name"');
+  });
+
+  /** A local endpoint needs no key, and asking for one implies it does. */
+  it('says the key is only needed for a hosted endpoint', () => {
+    expect(setupMarkup(props())).toMatch(/hosted/i);
+    expect(setupMarkup(props())).toMatch(/model running on this computer needs no key/i);
+  });
+
+  /**
+   * OUT OF THE WAY UNTIL IT IS SET UP. The overwhelming majority of
+   * installations configure no model at all, and a section shouting at them on
+   * the one screen every operator must complete is the "mention on a screen"
+   * the design rules out. Collapsed is not hidden: the same treatment the
+   * Advanced OAuth disclosure already gets.
+   */
+  it('is collapsed by default', () => {
+    expect(setupMarkup(props())).toMatch(/<details id="setup-model"(?!\s+open)/);
+  });
+
+  /**
+   * OPEN COMES FROM PROPS, NEVER FROM `storedModel`. This screen re-renders on
+   * every keystroke, so an operator who expanded the section to type their
+   * first endpoint -- the one case where nothing is stored -- had it close
+   * again on the first character, taking the caret with it. Derived the other
+   * way round it would also spring back open every time they closed it.
+   * `app.ts` opens it once, when it finds something stored, and after that the
+   * operator decides (appNavigation.test.ts drives both directions).
+   */
+  it('is open when the app says so, whatever is or is not stored', () => {
+    expect(setupMarkup(props({ modelSectionOpen: true }))).toMatch(/<details id="setup-model" open/);
+    expect(setupMarkup(props({ modelSectionOpen: true, storedModel: MODEL }))).toMatch(
+      /<details id="setup-model" open/,
+    );
+  });
+
+  it('is closed when the app says so, even with an endpoint stored', () => {
+    expect(setupMarkup(props({ storedModel: MODEL }))).toMatch(/<details id="setup-model"(?!\s+open)/);
+  });
+
+  it('offers nothing to forget when nothing is configured', () => {
+    expect(setupMarkup(props())).not.toContain('id="setup-model-forget"');
+  });
+
+  it('offers a way to remove it once one is stored, and names what is stored', () => {
+    const html = setupMarkup(props({ storedModel: MODEL }));
+    expect(html).toContain('id="setup-model-forget"');
+    expect(html).toContain('llama3');
+    expect(html).toContain('localhost:11434');
+  });
+
+  /** The same rule as the password: a stored secret is never rendered back
+   *  into a field where it can be read off the screen or copied out. */
+  it('never renders a stored key back into the box', () => {
+    const html = setupMarkup(props({ storedModel: { ...MODEL, hasApiKey: true } }));
+    expect(html).not.toContain('sk-');
+    expect(html).toMatch(/key is stored/i);
+  });
+
+  it('carries every typed model box in TEXT_INPUTS, or the caret is lost after one character', () => {
+    for (const id of [
+      'setup-model-base-url',
+      'setup-model-name',
+      'setup-model-key',
+      'setup-model-budget',
+      'setup-model-cap',
+      'setup-model-timeout',
+    ]) {
+      expect(TEXT_INPUTS).toContain(`#${id}`);
+    }
+  });
+
+  it('renders every input TEXT_INPUTS names, so the list cannot outlive the markup', () => {
+    const html = setupMarkup(props({ storedModel: MODEL }));
+    for (const selector of TEXT_INPUTS) {
+      expect(html).toContain(`id="${selector.slice(1)}"`);
+    }
+  });
+});
+
+describe('modelFrom', () => {
+  const withModel = (over: Partial<SetupFields> = {}): SetupProps =>
+    props({
+      fields: fields({
+        modelBaseUrl: 'http://localhost:11434/v1',
+        modelName: 'llama3',
+        modelKey: '',
+        modelBudget: '8000',
+        modelCap: '200',
+        modelTimeout: '120',
+        ...over,
+      }),
+    });
+
+  /** The settings, for the assertions that are about the numbers rather than
+   *  about which of the three answers came back. */
+  const settingsOf = (entry: ReturnType<typeof modelFrom>) => {
+    expect(entry.kind).toBe('settings');
+    return (entry as { kind: 'settings'; settings: ModelSettings }).settings;
+  };
+
+  /** Nothing typed, nothing configured. This is the zero-prerequisite promise
+   *  arriving at the one screen that could break it. */
+  it('is ‘none’ when no endpoint is entered', () => {
+    expect(modelFrom(props())).toEqual({ kind: 'none' });
+  });
+
+  /**
+   * THE DEFECT. This used to be the SAME `null` as the case above, so `app.ts`
+   * stored nothing, ran the ordinary success path, and the operator's typed
+   * model name vanished with the save reporting success.
+   */
+  it('is ‘incomplete’, not ‘none’, when an address is entered but no model is named', () => {
+    const entry = modelFrom(withModel({ modelName: '  ' }));
+    expect(entry.kind).toBe('incomplete');
+  });
+
+  it('is ‘incomplete’ when a model is named but no address is entered', () => {
+    expect(modelFrom(withModel({ modelBaseUrl: '   ' })).kind).toBe('incomplete');
+  });
+
+  /** A key is not typed by accident, and it is the one box whose contents the
+   *  operator cannot recover by looking at the screen. */
+  it('is ‘incomplete’ when only a key was typed', () => {
+    const entry = modelFrom(
+      props({ fields: fields({ modelKey: 'sk-typed', modelBudget: '8000', modelCap: '200', modelTimeout: '120' }) }),
+    );
+    expect(entry.kind).toBe('incomplete');
+  });
+
+  /**
+   * THE ZERO-PREREQUISITE CASE, PINNED. The three numbers arrive pre-filled, so
+   * reading them as "the operator started configuring a model" would fire the
+   * refusal on every fresh form -- an operator who has never opened this section
+   * being told to fix a setting they have never seen.
+   */
+  it('is ‘none’, silently, when only the pre-filled numbers are present', () => {
+    const entry = modelFrom(
+      props({
+        fields: fields({
+          modelBudget: MODEL_FIELD_DEFAULTS.budget,
+          modelCap: MODEL_FIELD_DEFAULTS.cap,
+          modelTimeout: MODEL_FIELD_DEFAULTS.timeout,
+        }),
+      }),
+    );
+    expect(entry).toEqual({ kind: 'none' });
+  });
+
+  it('reads the whole endpoint back', () => {
+    expect(modelFrom(withModel())).toEqual({
+      kind: 'settings',
+      settings: {
+        baseUrl: 'http://localhost:11434/v1',
+        model: 'llama3',
+        apiKey: '',
+        budget: 8000,
+        cap: 200,
+        timeoutMs: 120_000,
+      },
+    });
+  });
+
+  /** Seconds on screen, milliseconds on the wire. An operator does not think
+   *  in milliseconds, and `ProviderConfig.timeoutMs` does not think in seconds. */
+  it('reads the time limit in seconds and stores it in milliseconds', () => {
+    expect(settingsOf(modelFrom(withModel({ modelTimeout: '300' }))).timeoutMs).toBe(300_000);
+  });
+
+  /**
+   * A BLANK BOX IS NOT ZERO. `Number('')` is 0, and a cap of 0 is a legitimate
+   * setting meaning "make no requests at all" -- so a blank box read that way
+   * would configure a model that silently never runs, and every row would say
+   * it was stopped by a limit the operator never set. NaN is refused by
+   * core's own guard with a sentence naming the setting.
+   *
+   * NOT by this screen: a blank NUMBER is still a complete endpoint as far as
+   * `modelFrom` is concerned, and the rule about what the number may be belongs
+   * to the code that runs with it.
+   */
+  it.each(['modelBudget', 'modelCap', 'modelTimeout'] as const)(
+    'refuses a blank %s rather than reading it as zero',
+    (field) => {
+      const settings = settingsOf(modelFrom(withModel({ [field]: '   ' })));
+      expect(Object.values(settings).some((v) => typeof v === 'number' && Number.isNaN(v))).toBe(true);
+    },
+  );
+
+  it('hands a mistyped number through as NaN, for the store’s own guard to refuse', () => {
+    expect(settingsOf(modelFrom(withModel({ modelCap: 'lots' }))).cap).toBeNaN();
+  });
+});
+
+/**
+ * What the operator is told when the model section is half filled in.
+ *
+ * The sentence is asserted here, and that it REACHES A SCREEN is asserted in
+ * appNavigation.test.ts, which drives a real save through app.ts. Both are
+ * needed: a message no screen shows is the defect wearing a different face.
+ */
+describe('modelEntryProblem', () => {
+  const half = (over: Partial<SetupFields>): string | null => modelEntryProblem(fields(over));
+
+  /** THE PROPERTY THAT MUST NOT MOVE. An operator who never touched the section
+   *  sees no prompt, no error and no mention of a model, on any path. */
+  it('says nothing at all about an untouched section', () => {
+    expect(modelEntryProblem(fields())).toBeNull();
+    expect(
+      modelEntryProblem(
+        fields({
+          modelBudget: MODEL_FIELD_DEFAULTS.budget,
+          modelCap: MODEL_FIELD_DEFAULTS.cap,
+          modelTimeout: MODEL_FIELD_DEFAULTS.timeout,
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('says nothing about a complete endpoint', () => {
+    expect(half({ modelBaseUrl: 'http://localhost:11434/v1', modelName: 'llama3' })).toBeNull();
+  });
+
+  /**
+   * NAMES THE BOX, BY THE NAME ON THE BOX. A refusal that says "the model
+   * settings are incomplete" and stops sends the operator hunting through six
+   * fields; the label constants are shared with the markup so the two cannot
+   * drift into calling the same field different things.
+   */
+  it('names the model-name box when only the address was filled in', () => {
+    const message = half({ modelBaseUrl: 'http://localhost:11434/v1' });
+    expect(message).toContain(MODEL_NAME_LABEL);
+    expect(message).not.toContain(MODEL_ADDRESS_LABEL);
+  });
+
+  it('names the address box when only the model was named', () => {
+    const message = half({ modelName: 'llama3' });
+    expect(message).toContain(MODEL_ADDRESS_LABEL);
+    expect(message).not.toContain(MODEL_NAME_LABEL);
+  });
+
+  it('names both when only a key was typed', () => {
+    const message = half({ modelKey: 'sk-typed' });
+    expect(message).toContain(MODEL_ADDRESS_LABEL);
+    expect(message).toContain(MODEL_NAME_LABEL);
+  });
+
+  /**
+   * SAYS NOTHING WAS SAVED, in as many words. The whole defect was a save that
+   * reported success while discarding what was typed, so the correction is
+   * worthless if the operator can read it as "saved, with a note".
+   */
+  it('says nothing has been saved', () => {
+    expect(half({ modelName: 'llama3' })).toMatch(/nothing has been saved/i);
+  });
+
+  /** And offers the other way out, because "fill in the box" is not the only
+   *  thing an operator who half-typed something may want to do. */
+  it('offers emptying the section as the way to leave the feature off', () => {
+    expect(half({ modelName: 'llama3' })).toMatch(/empty the model section/i);
+  });
+
+  /** The names it uses are the names the screen renders, not a second copy. */
+  it('uses labels the screen actually shows', () => {
+    const html = setupMarkup(props());
+    expect(html).toContain(MODEL_ADDRESS_LABEL);
+    expect(html).toContain(MODEL_NAME_LABEL);
   });
 });

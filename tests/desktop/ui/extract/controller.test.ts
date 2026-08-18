@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createExtractController } from '../../../../src/desktop/ui/extract/controller.js';
 import { ATTACHMENT_COLUMN, type Profile } from '../../../../src/core/extract/types.js';
+import type { ExtractRunReport } from '../../../../src/desktop/ipc.js';
 
 const profile: Profile = {
   version: 1,
@@ -14,7 +15,17 @@ function api(over: Record<string, unknown> = {}) {
     chooseFolder: vi.fn(async () => 'C:/files'),
     extractScan: vi.fn(async () => ({ supported: ['a.pdf'], skipped: [], labels: [], properties: [], tableColumns: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } })),
     extractPreview: vi.fn(async () => []),
-    extractRun: vi.fn(async () => ({ outPath: 'C:/files/out.csv', written: 1, flagged: 0 })),
+    // Every field `ExtractRunReport` declares. A fake short of one is invisible
+    // behind the `as never` cast at each call site, and `savedAiWritten` was
+    // `undefined` throughout this file the day it was added.
+    extractRun: vi.fn(
+      async (): Promise<ExtractRunReport> => ({
+        outPath: 'C:/files/out.csv',
+        written: 1,
+        flagged: 0,
+        aiWritten: 0,
+      }),
+    ),
     schemaPaths: vi.fn(async () => ['MWDL/title']),
     schemaNamePath: vi.fn(async () => '/MWDL/title'),
     listTemplates: vi.fn(async () => []),
@@ -22,6 +33,17 @@ function api(over: Record<string, unknown> = {}) {
     openProfile: vi.fn(async () => null),
     saveProfileAs: vi.fn(async () => null),
     chooseCsvPath: vi.fn(async () => 'C:/files/out.csv'),
+    // The shipped state: no endpoint configured anywhere. Present in the base
+    // fake rather than left undefined so a test that does not care about the
+    // model exercises the real "nothing is configured" path, instead of the
+    // catch that covers an unreadable store -- two different states that a
+    // missing method would silently merge into one.
+    getModel: vi.fn(async () => null),
+    // Registered once when the controller is built. A fake without it throws
+    // at construction, which is the right failure -- the controller genuinely
+    // depends on it -- but it must be present for every test, not just the
+    // ones about progress.
+    onModelProgress: vi.fn(),
     ...over,
   };
 }
@@ -81,6 +103,52 @@ describe('createExtractController', () => {
     await c.addColumn('MWDL/title');
     expect(a.extractPreview).toHaveBeenCalled();
     expect(c.state().profile?.columns.map((x) => x.path)).toEqual([ATTACHMENT_COLUMN, 'MWDL/title']);
+  });
+
+  /**
+   * ## Choosing a source must not switch the model off
+   *
+   * The screen shows one dropdown per column and the controller used to write
+   * back `[source]`, discarding whatever else the chain held. On the shipped
+   * Alumni Obituary template that meant touching the description's dropdown
+   * silently removed `{ ai: true }`. Driven through the controller rather than
+   * only through `setFirstSource`, because the call site is where the collapse
+   * lived and a pure function nobody calls correctly fixes nothing.
+   */
+  it('replaces the first source without discarding the rest of the chain', async () => {
+    const chained: Profile = {
+      version: 1,
+      pattern: '{part1}.pdf',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/description', sources: [{ compose: '{birth_date}' }, { ai: true }] },
+      ],
+    };
+    const a = api({ loadTemplate: vi.fn(async () => chained) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.setTemplate('alumni-obituary');
+    await c.setSource('MWDL/description', { section: 'Abstract' });
+    expect(c.state().profile?.columns[1]?.sources).toEqual([{ section: 'Abstract' }, { ai: true }]);
+  });
+
+  it('removes only the first source when the dropdown is cleared', async () => {
+    const chained: Profile = {
+      version: 1,
+      pattern: '{part1}.pdf',
+      columns: [
+        { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+        { path: 'MWDL/description', sources: [{ compose: '{birth_date}' }, { ai: true }] },
+      ],
+    };
+    const a = api({ loadTemplate: vi.fn(async () => chained) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    await c.continue();
+    await c.setTemplate('alumni-obituary');
+    await c.setSource('MWDL/description', null);
+    expect(c.state().profile?.columns[1]?.sources).toEqual([{ ai: true }]);
   });
 
   it('refuses to remove the locked attachment column and surfaces why', async () => {
@@ -295,5 +363,402 @@ describe('undo a removed column', () => {
     await c.removeColumn('MWDL/title');
     await c.addColumn('MWDL/date');
     expect(c.state().removed).toBeNull();
+  });
+});
+
+/**
+ * ## Where the confirmation goes, and why it is here rather than on the screen
+ *
+ * The plan named `screens/extractColumns.ts`. That screen's Continue does not
+ * run an extract -- it advances from the columns step to the save step, and the
+ * operator can still go Back from there without a single file having been read.
+ * A confirmation there would name a send that has not been decided on yet, and
+ * ask for approval of something the operator may never do.
+ *
+ * `save()` is the only point "before the extract runs": it picks the output
+ * path and calls `extractRun`, and that call is where the model pass will
+ * happen (Task 11). It is also the only place with an api to ask whether an
+ * endpoint is even configured; the screen is a pure render function with no
+ * such reach.
+ *
+ * NOTHING IS UPLOADED FROM HERE, which is what makes the dialog's closing
+ * sentence true. This flow ends at a CSV on disk at a path the operator chose;
+ * contributing to openEQUELLA is a separate flow reached from Choose, with its
+ * own typed-count confirmation. Checked rather than assumed -- `extractRun` is
+ * the last call on this path.
+ */
+describe('the model confirmation before a run', () => {
+  const withAi: Profile = {
+    version: 1,
+    pattern: '{part1}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ opening: true }, { ai: true }] },
+    ],
+  };
+
+  const HOSTED = {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    budget: 8000,
+    cap: 500,
+    timeoutMs: 120_000,
+    hasApiKey: true,
+  };
+
+  /** A controller sat on the save step with `profile` loaded, ready to save. */
+  async function ready(
+    a: ReturnType<typeof api>,
+    profile: Profile,
+    confirm: (text: string) => boolean,
+  ): Promise<ReturnType<typeof createExtractController>> {
+    const c = createExtractController({
+      api: a as never,
+      instanceId: 'https://oeq.example.edu',
+      confirm,
+      onExit: vi.fn(),
+      render: vi.fn(),
+    });
+    await c.chooseFolder();
+    await c.continue();
+    await c.setTemplate('t');
+    await c.continue();
+    return c;
+  }
+
+  /**
+   * THE ZERO-PREREQUISITE PROMISE, at the one place that could break it. A
+   * library that never configures an endpoint gets exactly today's behaviour:
+   * no dialog, no error, no degraded mode -- and, since `getModel` answered
+   * null, nothing to send anything to.
+   */
+  it('asks nothing and changes nothing when no model is configured', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({ loadTemplate: vi.fn(async () => withAi), getModel: vi.fn(async () => null) });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(a.extractRun).toHaveBeenCalled();
+    expect(c.state().savedPath).toBe('C:/files/out.csv');
+  });
+
+  /** A model configured, but no column asking for one: nothing would be sent,
+   *  so there is nothing to confirm. */
+  it('asks nothing when no column asked for a model', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({ getModel: vi.fn(async () => HOSTED) });
+    const c = await ready(a, profile, confirm);
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(a.extractRun).toHaveBeenCalled();
+  });
+
+  it('names the count, the host and the model before running', async () => {
+    const confirm = vi.fn((_text: string) => true);
+    const a = api({ loadTemplate: vi.fn(async () => withAi), getModel: vi.fn(async () => HOSTED) });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const text = confirm.mock.calls[0]![0];
+    expect(text).toContain('api.openai.com');
+    expect(text).toContain('gpt-4o-mini');
+    // One supported file, one model column: one request, said in the singular.
+    // This asserted "1 model requests" when it was written, which is how the
+    // ungrammatical form survived review of the dialog itself.
+    expect(text).toMatch(/up to 1 model request\b/);
+    expect(a.extractRun).toHaveBeenCalled();
+  });
+
+  /** Cancel means cancel: nothing is written, and the operator is left where
+   *  they were rather than dropped somewhere with a half-run behind them. */
+  it('runs nothing at all when the operator declines', async () => {
+    const confirm = vi.fn(() => false);
+    const a = api({ loadTemplate: vi.fn(async () => withAi), getModel: vi.fn(async () => HOSTED) });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(a.extractRun).not.toHaveBeenCalled();
+    expect(c.state().savedPath).toBeNull();
+    expect(c.state().step).toBe('save');
+  });
+
+  /** Local endpoint: nothing leaves the machine and nothing is billed, so the
+   *  dialog is friction that teaches the operator to click past dialogs. */
+  it('asks nothing for a model running on this computer, and still runs', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => ({ ...HOSTED, baseUrl: 'http://localhost:11434/v1', model: 'llama3' })),
+    });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(a.extractRun).toHaveBeenCalled();
+  });
+
+  /**
+   * A store that cannot be read is "no model configured", which is the safe
+   * answer as well as the honest one: it must never be read as permission to
+   * send documents somewhere.
+   */
+  it('treats an unreadable store as no model, and runs without asking', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => { throw new Error('store unreadable'); }),
+    });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(a.extractRun).toHaveBeenCalled();
+    expect(c.state().error).toBeNull();
+  });
+
+  /**
+   * THE ORDERING THAT MATTERS IS CONFIRM-BEFORE-RUN: nothing may be read, cut
+   * or sent until the operator has agreed to it.
+   *
+   * It also comes AFTER the file picker, which is the smaller point but a real
+   * one -- approving a send and then cancelling the save dialog would leave an
+   * approval standing for a run that never happens, and a confirmation ought to
+   * be the last step before the thing it confirms.
+   */
+  it('asks after the file is chosen and before the extract runs', async () => {
+    const order: string[] = [];
+    const confirm = vi.fn(() => {
+      order.push('confirm');
+      return true;
+    });
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => HOSTED),
+      chooseCsvPath: vi.fn(async () => {
+        order.push('choosePath');
+        return 'C:/files/out.csv';
+      }),
+      extractRun: vi.fn(async () => {
+        order.push('run');
+        return { outPath: 'C:/files/out.csv', written: 1, flagged: 0 };
+      }),
+    });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(order).toEqual(['choosePath', 'confirm', 'run']);
+  });
+
+  /** Cancelling the file picker asks nothing: there is no run to approve. */
+  it('asks nothing when the save dialog is cancelled', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => HOSTED),
+      chooseCsvPath: vi.fn(async () => null),
+    });
+    const c = await ready(a, withAi, confirm);
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(a.extractRun).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ## What `extractRun` is called WITH, which nothing here used to look at
+ *
+ * Every assertion in the confirmation suite above is `toHaveBeenCalled()`. That
+ * left the two arguments that decide whether a model runs at all completely
+ * unguarded: delete `instanceId` and the whole suite stays green while every
+ * desktop run resolves to no model -- the operator confirms a send, and then
+ * every AI cell reads "no model is configured". Delete `modelApproved` and the
+ * main process falls back to deciding for itself, which is the hole this pair
+ * exists to close.
+ */
+describe('what the run is told about the model', () => {
+  const withAi: Profile = {
+    version: 1,
+    pattern: '{part1}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ opening: true }, { ai: true }] },
+    ],
+  };
+
+  const HOSTED = {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    budget: 8000,
+    cap: 500,
+    timeoutMs: 120_000,
+    hasApiKey: true,
+  };
+
+  const SITE = 'https://oeq.example.edu';
+
+  async function ready(
+    a: ReturnType<typeof api>,
+    confirm: (text: string) => boolean,
+  ): Promise<ReturnType<typeof createExtractController>> {
+    const c = createExtractController({
+      api: a as never,
+      instanceId: SITE,
+      confirm,
+      onExit: vi.fn(),
+      render: vi.fn(),
+    });
+    await c.chooseFolder();
+    await c.continue();
+    await c.setTemplate('t');
+    await c.continue();
+    return c;
+  }
+
+  const runArgs = (a: ReturnType<typeof api>): Record<string, unknown> =>
+    (a.extractRun.mock.calls as unknown as Record<string, unknown>[][])[0]![0]!;
+
+  /**
+   * THE ONE LINE THAT MAKES THE DESKTOP PASS WORK. The run resolves its own
+   * settings in the main process, where the API key lives; the id is what makes
+   * that read and the read behind the dialog land on ONE per-instance entry.
+   * Without it the operator agrees to send to an endpoint the run then cannot
+   * find.
+   */
+  it('resolves against the same instance the confirmation was built from', async () => {
+    const a = api({ loadTemplate: vi.fn(async () => withAi), getModel: vi.fn(async () => HOSTED) });
+    const c = await ready(a, () => true);
+    await c.save();
+    expect(a.getModel).toHaveBeenCalledWith(SITE);
+    expect(runArgs(a)['instanceId']).toBe(SITE);
+  });
+
+  it('carries the approval when the operator agrees', async () => {
+    const a = api({ loadTemplate: vi.fn(async () => withAi), getModel: vi.fn(async () => HOSTED) });
+    const c = await ready(a, () => true);
+    await c.save();
+    expect(runArgs(a)['modelApproved']).toBe(true);
+  });
+
+  /**
+   * A LOCAL ENDPOINT IS APPROVED WITHOUT A DIALOG, not merely un-refused.
+   * Nothing leaves the machine and nothing is billed, so there is no question to
+   * ask -- but the model genuinely does run, so this must reach the main process
+   * as consent rather than as its absence.
+   */
+  it('approves a local endpoint without asking', async () => {
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => ({ ...HOSTED, baseUrl: 'http://localhost:11434/v1' })),
+    });
+    const confirm = vi.fn(() => true);
+    const c = await ready(a, confirm);
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(runArgs(a)['modelApproved']).toBe(true);
+  });
+
+  /**
+   * ## An unreadable store is not permission to send
+   *
+   * This case used to answer "carry on" -- correct about the extract, wrong
+   * about the model. The main process then made its OWN read of the same store,
+   * which could succeed where the renderer's failed, and sent a whole batch to a
+   * hosted endpoint with no dialog ever shown. The two sides agreed on what an
+   * unreadable store MEANS; they were making different observations, and only
+   * the main process's observation gated the send.
+   */
+  it('does not approve a send when the store could not be read', async () => {
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => {
+        throw new Error('store unreadable');
+      }),
+    });
+    const confirm = vi.fn(() => true);
+    const c = await ready(a, confirm);
+    await c.save();
+    // The extract still runs -- it works offline and has no prerequisites.
+    expect(a.extractRun).toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(runArgs(a)['modelApproved']).toBe(false);
+  });
+
+  it('does not approve a send when nothing is configured', async () => {
+    const a = api({ loadTemplate: vi.fn(async () => withAi), getModel: vi.fn(async () => null) });
+    const c = await ready(a, () => true);
+    await c.save();
+    expect(runArgs(a)['modelApproved']).toBe(false);
+  });
+
+  /** Cancel means cancel, and it means it on both counts. */
+  it('runs nothing at all when the operator declines', async () => {
+    const a = api({ loadTemplate: vi.fn(async () => withAi), getModel: vi.fn(async () => HOSTED) });
+    const c = await ready(a, () => false);
+    await c.save();
+    expect(a.extractRun).not.toHaveBeenCalled();
+  });
+
+  /** The report's own number reaches the screen that reads it. It was
+   *  `undefined` throughout this file until the fake was typed. */
+  it('keeps the model-written count from the report', async () => {
+    const a = api({
+      loadTemplate: vi.fn(async () => withAi),
+      getModel: vi.fn(async () => HOSTED),
+      extractRun: vi.fn(async () => ({
+        outPath: 'C:/files/out.csv',
+        written: 4,
+        flagged: 1,
+        aiWritten: 3,
+      })),
+    });
+    const c = await ready(a, () => true);
+    await c.save();
+    expect(c.state().savedAiWritten).toBe(3);
+    expect(c.state().savedFlagged).toBe(1);
+  });
+});
+
+/**
+ * ## Saying what the model is doing while it does it
+ *
+ * REPORTED BY THE OPERATOR: "the writing to the spreadsheet is taking longer
+ * now". It is -- one call per eligible cell, in sequence -- and measured on
+ * their own machine the FIRST call took 48 seconds while Ollama loaded
+ * llama3.1:8b, against about 4 for a warm one. The screen showed a disabled
+ * button and nothing else, which reads as a hang.
+ */
+describe('the model pass reports itself', () => {
+  /** Hands back the callback the controller registered, so a test can play the
+   *  main process and emit an event. */
+  const withProgress = () => {
+    let emit: ((e: unknown) => void) | null = null;
+    const a = api({ onModelProgress: vi.fn((cb: (e: unknown) => void) => { emit = cb; }) });
+    return { a, fire: (e: unknown) => emit?.(e) };
+  };
+
+  it('names the field and the file it is waiting on', () => {
+    const { a, fire } = withProgress();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    fire({ stage: 'asking', path: 'MWDL/description', file: 'Fennel_Marcus.pdf' });
+    expect(c.state().modelStatus).toMatch(/asking the model about/i);
+    expect(c.state().modelStatus).toContain('Fennel_Marcus.pdf');
+  });
+
+  it('says when a value was refused rather than written', () => {
+    const { a, fire } = withProgress();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    fire({ stage: 'refused', path: 'MWDL/description', file: 'a.pdf' });
+    expect(c.state().modelStatus).toMatch(/refused/i);
+  });
+
+  it('says when the endpoint could not be reached', () => {
+    const { a, fire } = withProgress();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    fire({ stage: 'failed', path: 'MWDL/description', file: 'a.pdf' });
+    expect(c.state().modelStatus).toMatch(/could not be reached/i);
+  });
+
+  /** Registered once for the controller's life: preload adds a listener per
+   *  call, so registering per run would fire it once per previous save. */
+  it('subscribes exactly once', () => {
+    const { a } = withProgress();
+    createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    expect(a.onModelProgress).toHaveBeenCalledTimes(1);
   });
 });

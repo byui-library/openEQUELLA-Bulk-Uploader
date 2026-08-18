@@ -2,8 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SecretStore, EncryptedTokenStore, type Cipher } from '../../src/desktop/secrets.js';
+import {
+  SecretStore,
+  EncryptedTokenStore,
+  type Cipher,
+  type ModelSettings,
+} from '../../src/desktop/secrets.js';
 import { instanceKey } from '../../src/core/instanceUrl.js';
+import { MODEL_TIMEOUT_MS } from '../../src/core/ai/provider.js';
 import type { StoredToken } from '../../src/core/tokenStore.js';
 
 // Stand-in for Electron's safeStorage. Reversible, not secure -- the point is
@@ -725,6 +731,383 @@ describe('SecretStore — per-site settings', () => {
   });
 });
 
+/**
+ * Model settings: one endpoint per site, in the same encrypted file, keyed the
+ * same way and removable on their own.
+ */
+describe('SecretStore — model settings', () => {
+  const model = (over: Partial<ModelSettings> = {}): ModelSettings => ({
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3',
+    apiKey: '',
+    budget: 8000,
+    cap: 200,
+    timeoutMs: 120_000,
+    ...over,
+  });
+
+  it('round-trips one instance’s settings, key included', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.setModel(instanceKey(LIVE), model({ apiKey: 'sk-secret', baseUrl: 'https://api.openai.com/v1' }));
+    expect(await s.getModel(instanceKey(LIVE))).toEqual(
+      model({ apiKey: 'sk-secret', baseUrl: 'https://api.openai.com/v1' }),
+    );
+  });
+
+  it('keeps two instances separate', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.setModel(instanceKey(LIVE), model());
+    expect(await s.getModel(instanceKey(SANDBOX))).toBeNull();
+  });
+
+  /** The zero-prerequisite promise: nothing configured, feature absent. */
+  it('returns null when nothing was ever configured', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('refuses to write when OS encryption is unavailable', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), { ...fakeCipher, isAvailable: () => false });
+    await expect(s.setModel(instanceKey(LIVE), model({ apiKey: 'sk-secret' }))).rejects.toThrow(/encryption/i);
+  });
+
+  it('never writes the key in plaintext', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await s.setModel(instanceKey(LIVE), model({ apiKey: 'sk-v3ryS3cret', baseUrl: 'https://api.openai.com/v1' }));
+    expect(await readFile(path, 'utf8')).not.toContain('sk-v3ryS3cret');
+  });
+
+  /** Removable without removing the site -- the same rule as forgetPassword. */
+  it('forgets the model without touching the site or its password', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    const inst = await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { authMode: 'password', username: 'r.thornbury', password: 'hunter2' },
+    );
+    await s.setModel(inst.id, model());
+    await s.forgetModel(inst.id);
+
+    expect(await s.getModel(inst.id)).toBeNull();
+    expect(await s.loadInstance(inst.id)).not.toBeNull();
+    expect(await s.loadSettings(inst.id)).toMatchObject({ password: 'hunter2' });
+  });
+
+  it('forgetting what is absent is not an error', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await expect(s.forgetModel(instanceKey(LIVE))).resolves.toBeUndefined();
+  });
+
+  /**
+   * THE RULES ARE CORE'S, NOT A SECOND COPY. `assertUsableBudget` (slice.ts),
+   * `assertUsableCap` (fill.ts) and `assertUsableTimeout` (provider.ts) decide
+   * what these numbers may be, and the store calls them rather than restating
+   * them -- a second copy on the way in is free to drift from the one that
+   * runs, and the operator would then be refused mid-run by a rule the settings
+   * screen accepted.
+   */
+  it.each([
+    ['a budget of zero', { budget: 0 }, /budget/i],
+    ['a budget that is not a number', { budget: Number.NaN }, /budget/i],
+    ['a negative cap', { cap: -1 }, /limit/i],
+    ['a cap that is not a number', { cap: Number.NaN }, /limit/i],
+    ['a time limit of zero', { timeoutMs: 0 }, /time limit/i],
+    ['a time limit beyond what a timer can hold', { timeoutMs: 3_000_000_000 }, /time limit/i],
+  ])('refuses %s, and says which setting', async (_label, over, expected) => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await expect(s.setModel(instanceKey(LIVE), model(over))).rejects.toThrow(expected);
+  });
+
+  /**
+   * HALF AN ENDPOINT IS NOT AN ENDPOINT, and the write side has to say so.
+   * Without this, `setModel` with a blank address resolved successfully and the
+   * entry then read back as null through `parseStoredModel` -- a write reported
+   * as done that did nothing, which is the shape of failure this codebase keeps
+   * being bitten by. Not reachable from Setup, where `modelFrom` answers null
+   * for a blank box, but this is the IPC surface.
+   */
+  it.each([
+    ['a blank address', { baseUrl: '   ' }, /address/i],
+    ['a blank model name', { model: '  ' }, /name of a model/i],
+  ])('refuses %s rather than storing something that reads back as nothing', async (_l, over, expected) => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await expect(s.setModel(instanceKey(LIVE), model(over))).rejects.toThrow(expected);
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+  });
+
+  /**
+   * THE LOAD SIDE AND THE WRITE SIDE AGREE, because they are one function. The
+   * loader used to check `typeof === 'number'` only, so every value below --
+   * each of them refused on the way in -- loaded cleanly on the way out. A
+   * `budget: 0` in particular makes `sliceForModel` return `empty` for every
+   * document, so a whole batch reports "no text to read" about files that are
+   * full of text, pointing nowhere near the setting at fault.
+   */
+  it.each([
+    ['a budget of zero', { budget: 0 }],
+    ['a negative cap', { cap: -1 }],
+    ['a budget too large to be finite', { budget: 1e999 }],
+    ['a time limit of zero', { timeoutMs: 0 }],
+    ['a time limit beyond what a timer can hold', { timeoutMs: 3_000_000_000 }],
+    ['a blank address', { baseUrl: '' }],
+    ['a blank model name', { model: '' }],
+  ])('discards a hand-edited entry with %s, exactly as it refuses to write one', async (_l, over) => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {},
+          passwords: { [instanceKey(LIVE)]: { username: 'r.thornbury', password: 'hunter2' } },
+          models: { [instanceKey(LIVE)]: model(over) },
+        }),
+      ),
+    );
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+    // Discarding one unusable endpoint must never cost a credential.
+    expect(await s.getPassword(instanceKey(LIVE))).toMatchObject({ username: 'r.thornbury' });
+  });
+
+  it('stores nothing at all when a setting is refused', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.setModel(instanceKey(LIVE), model()).catch(() => {});
+    await s.setModel(instanceKey(SANDBOX), model({ cap: -1 })).catch(() => {});
+    expect(await s.getModel(instanceKey(SANDBOX))).toBeNull();
+  });
+
+  /**
+   * ## A blank key keeps the stored one -- but only for the same endpoint
+   *
+   * Setup never renders a stored key back into its box, so the form submitted
+   * by an operator who only raised the character budget carries an empty key.
+   * Reading that as a deletion would throw away a credential they never
+   * touched and can only replace by finding it again -- the trap `saveInstance`
+   * already avoids for a blank password.
+   *
+   * BUT THE KEY BELONGS TO THE ENDPOINT, NOT THE SITE. Both halves were
+   * shipped untested: deleting the retention entirely was green, and so was
+   * inverting the origin check -- which is the "hand your paid key to your own
+   * Ollama over plain http" failure the rule exists to prevent.
+   */
+  describe('the key and the endpoint it belongs to', () => {
+    const hosted = model({ baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-secret', model: 'gpt-4o-mini' });
+
+    it('keeps the stored key when a blank one is saved for the same endpoint', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '', budget: 12_000 });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: 'sk-secret', budget: 12_000 });
+    });
+
+    /** Same host, different path: `/v1` to `/v1beta` on one gateway is not a
+     *  different service, and the key is still that service's. */
+    it('keeps it when only the path changes', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '', baseUrl: 'https://api.openai.com/v1beta' });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: 'sk-secret' });
+    });
+
+    /** THE ONE THE RULE EXISTS FOR. Repointing a site at a model on this
+     *  machine must not send the operator's paid key to it in clear. */
+    it('drops it when the endpoint moves to another origin', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), {
+        ...hosted,
+        apiKey: '',
+        baseUrl: 'http://localhost:11434/v1',
+        model: 'llama3',
+      });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: '', model: 'llama3' });
+    });
+
+    it.each([
+      ['a different host', 'https://api.anthropic.com/v1'],
+      ['a different scheme', 'http://api.openai.com/v1'],
+      ['a different port', 'https://api.openai.com:8443/v1'],
+    ])('drops it when the endpoint moves to %s', async (_label, baseUrl) => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '', baseUrl });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: '' });
+    });
+
+    /** An address that will not parse is not "the same endpoint". Every caller
+     *  reads this as "is it safe to keep the key", so the unknown case has to
+     *  be the one that drops it. */
+    it('drops it when the previous address will not parse', async () => {
+      const path = join(dir, 'settings.enc');
+      const s = new SecretStore(path, fakeCipher);
+      await writeFile(
+        path,
+        fakeCipher.encrypt(
+          JSON.stringify({
+            version: 3,
+            instances: {},
+            passwords: {},
+            models: {
+              [instanceKey(LIVE)]: {
+                baseUrl: 'not a url',
+                model: 'm',
+                apiKey: 'sk-secret',
+                budget: 8000,
+                cap: 500,
+                timeoutMs: 120_000,
+              },
+            },
+          }),
+        ),
+      );
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: '' });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: '' });
+    });
+
+    /** A typed key always wins -- it is the operator replacing it. */
+    it('takes a new key over the stored one', async () => {
+      const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+      await s.setModel(instanceKey(LIVE), hosted);
+      await s.setModel(instanceKey(LIVE), { ...hosted, apiKey: 'sk-replaced' });
+
+      expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ apiKey: 'sk-replaced' });
+    });
+  });
+
+  /**
+   * The one field defaulted rather than required on the way in, so an entry
+   * written before it existed keeps working -- the same courtesy `live` gets.
+   * It must be the argued-for default, not any number: mutating it to 1 made
+   * every call in the batch fail with "did not answer within 1 millisecond".
+   */
+  it('defaults a missing time limit to the provider’s own default', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {},
+          passwords: {},
+          models: {
+            [instanceKey(LIVE)]: {
+              baseUrl: 'http://localhost:11434/v1',
+              model: 'llama3',
+              apiKey: '',
+              budget: 8000,
+              cap: 500,
+            },
+          },
+        }),
+      ),
+    );
+    expect(await s.getModel(instanceKey(LIVE))).toMatchObject({ timeoutMs: MODEL_TIMEOUT_MS });
+  });
+
+  /**
+   * ADDING THIS MAP MUST NOT BE A SECOND CLEAN BREAK.
+   *
+   * The v2 -> v3 change discarded every stored credential through `loadAll`'s
+   * "unrecognised shape -> empty" path, and Setup shows a notice explaining the
+   * blank form. That was a deliberate one-time cost and the operator has not yet
+   * told staff about it. A store written before `models` existed simply has no
+   * such key, which reads as "no model configured" with no migration at all --
+   * exactly as `passwords` did when IT was added. If this test fails, staff
+   * re-enter their credentials a SECOND time and the notice explaining it is
+   * already stale.
+   */
+  it('reads a store written before model settings existed, with every password intact', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {
+            [instanceKey(LIVE)]: {
+              label: 'Live',
+              baseUrl: LIVE,
+              authMode: 'password',
+              attachmentUuidPath: 'BYUI_extended/attachments/attachment',
+              live: true,
+              schemaUuid: 'schema-1',
+            },
+            [instanceKey(SANDBOX)]: {
+              label: 'Sandbox',
+              baseUrl: SANDBOX,
+              authMode: 'code',
+              clientId: 'cid',
+              clientSecret: 'shhh',
+              redirectUri: SANDBOX,
+              attachmentUuidPath: '',
+              live: false,
+              schemaUuid: '',
+            },
+          },
+          passwords: { [instanceKey(LIVE)]: { username: 'r.thornbury', password: 'hunter2' } },
+          // No `models` key. That is the whole point of this test.
+        }),
+      ),
+    );
+
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
+      authMode: 'password',
+      username: 'r.thornbury',
+      password: 'hunter2',
+    });
+    expect(await s.loadSettings(instanceKey(SANDBOX))).toMatchObject({ clientSecret: 'shhh' });
+    expect(await s.listInstances()).toHaveLength(2);
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+    // Nothing was discarded, so Setup must not claim anything was.
+    expect(await s.credentialsDropped()).toBe(false);
+  });
+
+  it('adding a model to that store leaves the passwords where they were', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: { [instanceKey(LIVE)]: { label: 'Live', baseUrl: LIVE, authMode: 'password' } },
+          passwords: { [instanceKey(LIVE)]: { username: 'r.thornbury', password: 'hunter2' } },
+        }),
+      ),
+    );
+    await s.setModel(instanceKey(LIVE), model());
+    expect(await s.loadSettings(instanceKey(LIVE))).toMatchObject({ password: 'hunter2' });
+    expect(await s.getModel(instanceKey(LIVE))).toEqual(model());
+  });
+
+  /** A half-written entry is not a usable endpoint. Same rule as a password
+   *  with no username: both halves or neither. */
+  it('discards an entry that is not a usable endpoint, rather than half-loading it', async () => {
+    const path = join(dir, 'settings.enc');
+    const s = new SecretStore(path, fakeCipher);
+    await writeFile(
+      path,
+      fakeCipher.encrypt(
+        JSON.stringify({
+          version: 3,
+          instances: {},
+          passwords: {},
+          models: { [instanceKey(LIVE)]: { baseUrl: 'http://localhost:11434/v1' } },
+        }),
+      ),
+    );
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+  });
+});
+
 describe('EncryptedTokenStore', () => {
   const baseUrl = SANDBOX;
   const otherBaseUrl = LIVE;
@@ -787,5 +1170,134 @@ describe('EncryptedTokenStore', () => {
     await t.save({ accessToken: 'sup3rs3cretToken', baseUrl });
     const raw = await readFile(path, 'utf8');
     expect(raw).not.toContain('sup3rs3cretToken');
+  });
+});
+
+/**
+ * ## The OAuth half of what Setup is allowed to see
+ *
+ * REPORTED BY THE OPERATOR, and it blocked the app: they entered a client ID
+ * and secret, saved, reopened Site settings and found both boxes empty. The
+ * values were stored correctly the whole time -- nothing could read them back,
+ * because the only window the renderer had into a stored credential was
+ * `getPassword`, which answers with a username and nothing else.
+ *
+ * THE SECRET IS STILL NEVER RETURNED. It gets exactly what the password gets:
+ * the fact that one is stored, so Setup can say so and offer to forget it. A
+ * renderer that has no use for the value has no business holding it.
+ */
+describe('SecretStore — the OAuth settings Setup may read back', () => {
+  const CODE = { authMode: 'code', clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE } as const;
+
+  it('returns the client id and redirect url, and says a secret is stored', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    expect(await s.getOAuth(instanceKey(LIVE))).toEqual({
+      clientId: 'cid',
+      redirectUri: LIVE,
+      hasSecret: true,
+    });
+  });
+
+  /** The whole point: the value must not cross the boundary. */
+  it('never returns the secret itself', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    expect(JSON.stringify(await s.getOAuth(instanceKey(LIVE)))).not.toContain('shhh');
+  });
+
+  it('answers null for a site that signs in with a password', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, {
+      authMode: 'password',
+      username: 'a.operator',
+      password: 'hunter2',
+    });
+    expect(await s.getOAuth(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('answers null for a site that is not stored at all', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    expect(await s.getOAuth(instanceKey(LIVE))).toBeNull();
+  });
+
+  /**
+   * The same rule the password already has, and for the same reason: Setup
+   * never renders a stored secret back into a field, so the form submitted by
+   * an operator who only renamed the site carries an empty one. Treating that
+   * as a deletion would destroy a credential they can only replace by typing
+   * it again -- which is exactly the complaint that started this.
+   */
+  it('keeps the stored secret when a save carries a blank one', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.saveInstance({ label: 'Renamed', baseUrl: LIVE }, { ...CODE, clientSecret: '' });
+
+    expect(await s.getOAuth(instanceKey(LIVE))).toEqual({
+      clientId: 'cid',
+      redirectUri: LIVE,
+      hasSecret: true,
+    });
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
+      authMode: 'code',
+      clientId: 'cid',
+      clientSecret: 'shhh',
+      redirectUri: LIVE,
+    });
+    expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Renamed');
+  });
+
+  it('replaces the secret when a save carries a new one', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, { ...CODE, clientSecret: 'new-one' });
+    expect((await s.loadSettings(instanceKey(LIVE)) as { clientSecret: string }).clientSecret).toBe('new-one');
+  });
+});
+
+/**
+ * Forgetting an OAuth credential, mirroring `forgetPassword`.
+ *
+ * A site left with `authMode: 'code'` and no secret is a site with no usable
+ * credential, and `loadSettings` reports it as such -- the same answer it
+ * already gives for a password-mode site whose password has been forgotten.
+ * Reporting it as configured would put a Sign in button in front of the
+ * operator that can only fail.
+ */
+describe('SecretStore — forgetting an OAuth credential', () => {
+  const CODE = { authMode: 'code', clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE } as const;
+
+  it('removes the client id and secret', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.forgetOAuth(instanceKey(LIVE));
+    expect(await s.getOAuth(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('leaves the site itself in the list', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, attachmentUuidPath: 'a/b' }, CODE);
+    await s.forgetOAuth(instanceKey(LIVE));
+    const inst = await s.loadInstance(instanceKey(LIVE));
+    expect(inst?.label).toBe('Live');
+    expect(inst?.attachmentUuidPath).toBe('a/b');
+  });
+
+  it('reports the site as having no usable credential', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    await s.forgetOAuth(instanceKey(LIVE));
+    expect(await s.loadSettings(instanceKey(LIVE))).toBeNull();
+  });
+
+  it('does nothing for a site that has no OAuth credential', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, {
+      authMode: 'password',
+      username: 'a.operator',
+      password: 'hunter2',
+    });
+    await s.forgetOAuth(instanceKey(LIVE));
+    expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Live');
   });
 });

@@ -1,9 +1,10 @@
 // src/desktop/ui/screens/extractColumns.ts
 import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
-import { describeSource, sourceOptions, type SourceEvidence } from '../extract/sources.js';
+import { describeSource, optionsForColumn, restOfChain, type SourceEvidence } from '../extract/sources.js';
 import { plainLabel } from '../extract/picker.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
+import { countNeedingReview } from '../../../core/ai/review.js';
 
 export interface ExtractColumnsProps {
   profile: Profile;
@@ -33,9 +34,13 @@ export interface ExtractColumnsProps {
 function columnRow(props: ExtractColumnsProps, path: string, index: number): string {
   const column = props.profile.columns.find((c) => c.path === path)!;
   const locked = column.locked === true;
-  const options = sourceOptions(props.profile.pattern, props.scan);
+  // The column's OWN list: `sourceOptions` offers only what the files supply,
+  // and a column configured with anything else -- every one in the shipped
+  // obituary template -- matched nothing and rendered as "(nothing)".
+  const options = optionsForColumn(props.profile.pattern, props.scan, column.sources);
   const current = column.sources[0];
   const currentLabel = current === undefined ? '' : describeSource(current);
+  const rest = restOfChain(column.sources);
 
   const optionHtml = [
     `<option value="">(nothing &mdash; fill in Excel)</option>`,
@@ -64,7 +69,12 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
           locked
             ? '<span class="fixed">the file itself</span>'
             : `<label class="sr-only" for="src-${index}">Source for ${escapeHtml(plainLabel(path))}</label>
-               <select id="src-${index}" class="source-select">${optionHtml}</select>`
+               <select id="src-${index}" class="source-select">${optionHtml}</select>
+               ${
+                 rest === null
+                   ? ''
+                   : `<p class="hint chain-rest">This sets the first source; ${escapeHtml(rest)}. The rest is kept as it is &mdash; edit the profile file to change it.</p>`
+               }`
         }
       </td>
       <td class="default">
@@ -108,7 +118,7 @@ function previewTable(props: ExtractColumnsProps): string {
           .join('')}</tr>`,
     )
     .join('');
-  const flagged = props.preview.filter((r) => r.notes.length > 0).length;
+  const flagged = previewReviewCount(props.preview);
 
   return `
     <h3>Preview &mdash; first ${props.preview.length} file(s)
@@ -116,6 +126,38 @@ function previewTable(props: ExtractColumnsProps): string {
     </h3>
     <div class="preview-scroll"><table class="preview"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
     ${previewNotes(props.preview)}`;
+}
+
+/**
+ * How many previewed rows have something genuinely wrong.
+ *
+ * ## Why this is not `notes.length > 0` any more
+ *
+ * Every cell a language model writes is flagged, without exception -- that is
+ * the safety property the feature rests on. So on a profile with a model column,
+ * every row carries a note, and a count of noted rows reads "5 need review" for
+ * a preview in which nothing at all went wrong. `countNeedingReview` subtracts
+ * the model's own notes by identity against `aiWritten`, never by recognising
+ * their wording; see core/ai/review.ts.
+ *
+ * ## And why it is applied here even though the preview cannot show one today
+ *
+ * `extractPreview` does not run the model pass -- it re-renders on every column
+ * edit, and a paid call per keystroke is not a feature -- so `aiWritten` is
+ * empty on this screen in practice. The subtraction is applied all the same,
+ * because the alternative is a screen that starts miscounting the day anything
+ * hands it a model-written row, and that is exactly how this defect reached the
+ * run report. A reviewer flagged both surfaces; both are fixed the same way.
+ *
+ * `previewNotes` below deliberately does NOT subtract: the LIST keeps showing
+ * every note, including the model's, because the flag on a model-written cell is
+ * the whole argument for letting it write at all and hiding it at the moment of
+ * decision would be worse than miscounting.
+ *
+ * Exported so it can be tested directly: this project has no DOM environment.
+ */
+export function previewReviewCount(preview: readonly ExtractedRow[]): number {
+  return countNeedingReview(preview);
 }
 
 /**
@@ -215,9 +257,14 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
   );
   root.querySelectorAll<HTMLSelectElement>('.source-select').forEach((s) =>
     s.addEventListener('change', () => {
-      const options = sourceOptions(props.profile.pattern, props.scan);
+      // THE SAME LIST THE ROW WAS RENDERED FROM. The value is an index into
+      // it, so a list built any other way here would resolve that index to a
+      // different source -- a click on one thing storing another.
+      const path = pathOf(s);
+      const sources = props.profile.columns.find((c) => c.path === path)?.sources ?? [];
+      const options = optionsForColumn(props.profile.pattern, props.scan, sources);
       const chosen = s.value === '' ? null : (options[Number(s.value)]?.source ?? null);
-      props.onSourceChange(pathOf(s), chosen);
+      props.onSourceChange(path, chosen);
     }),
   );
   root.querySelectorAll<HTMLInputElement>('.default-input').forEach((i) =>

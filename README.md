@@ -127,6 +127,19 @@ What the probe of 2026-08-12 **did** confirm live, against `content.byui.edu`:
 | `GET /api/schema/{uuid}` | declares `namePath` and `descriptionPath`; `/MWDL/title` and `/MWDL/description` here |
 | `definition` is nested **JSON**, not XML | so the XML parser cannot be reused on the API path |
 
+**The language model pass has been run against real models twice** — the same
+ten scanned documents through a small local model (2026-08-14) and then a larger
+one (2026-08-16). Both fabricated on the same 2 of them, so the tool checks every
+generated value against the document before writing it and discards one that
+states something the document does not support; both times it caught both, and
+refused nothing good. What changed between the runs was the **quality** of the
+eight it kept: about three followed the requested form with the small model,
+eight of eight with the larger one. **No test can assert that a generated
+description is good**, and none tries to: whether the ones that survive the check
+are worth keeping is still your judgement. Note also that the check reads
+**English month names and numeric date forms only**. See *Letting a language
+model write a description*; it is off unless you configure an endpoint.
+
 What has **not** been confirmed anywhere: other openEQUELLA versions, other
 authentication configurations, and any schema that is not BYU-Idaho's MWDL. Apostrophe escaping in a `where` clause is still assumed
 (`Bach's Prelude` sends `Bach''s Prelude`; no live title has exercised it).
@@ -486,6 +499,11 @@ oeq-upload extract --dir ./files --profile music.profile.json --dry-run
 
 # 4. Write the spreadsheet
 oeq-upload extract --dir ./files --profile music.profile.json --out rows.csv
+
+# 5. Optional: let a language model fill the columns whose profile asks for one.
+#    Does nothing at all unless OEQ_MODEL_BASE_URL is set. See "Letting a
+#    language model write a description" below.
+oeq-upload extract --dir ./files --profile music.profile.json --out rows.csv --ai
 ```
 
 Then **open `rows.csv` and check it** before uploading. Two columns exist for
@@ -751,12 +769,444 @@ Two things are always flagged in `_notes`:
 - **Anything from the opening paragraph**, every time, with no exception. On a
   published PDF the opening is as likely to be a masthead as a summary.
 
-`_source` names the tier that filled each cell — `table`, `section`, `opening`
-— so you can sort by it in Excel and read only the rows that were guessed at.
+`_source` names the tier that filled each cell — `table`, `section`, `opening`.
+It is **one cell per row** holding every column's origin at once
+(`attachment name=filename; MWDL/title=join; MWDL/description=opening`), so
+sorting on it sorts the whole concatenated string and groups nothing useful.
+Filter or search the column for `=opening` instead, and you have the rows that
+were guessed at.
 
 Tier 3 refuses to guess when there is nothing to guess from: a page of headings
 and table fragments yields a blank cell rather than a line of timeline labels
 presented as a description.
+
+### Letting a language model write a description
+
+Tiers 1–3 above read what the document states. Where they find nothing, or find
+only a guess, a language model can be asked to write the cell instead. It is
+**off unless you configure an endpoint**, and it can point at a model running on
+your own computer or at a hosted service.
+
+> **The tool checks the model's work, and the model you pick decides how much
+> editing you do.** An answer that states something the document does not
+> support is discarded — see *When the tool refuses the model's answer* below.
+> What no test can assert is that a description which passes that check is any
+> *good*. On a real batch of ten, a capable model wrote eight usable
+> descriptions and a small one wrote about three; see *The model you choose
+> changes what you get* below before you judge the tool by its output. Whether
+> what comes out is worth keeping is your judgement, made by reading the
+> descriptions against the documents. Every cell a model writes is flagged for
+> exactly that reason.
+
+#### With nothing configured, nothing is contacted and nothing is sent
+
+No endpoint means no network call, no prompt, no error and no degraded mode. An
+institution can adopt the tool without a data review, because there is no data
+leaving the machine to review.
+
+**One thing does change, and only for a profile that asks for a model.** A
+column carrying `{ "ai": true }` that could not be filled records that in
+`_notes`, per cell, naming the column and what would have to change — that
+`--ai` was not given, or that no endpoint is set up for this site. A cell that
+could not be filled must never look like a document that had nothing to say.
+
+**The Alumni Obituary template that ships now asks for one**, so a run of it
+without `--ai` writes this on every row whose description came out empty:
+
+```text
+MWDL/description: this column asks for a language model, and --ai was not
+given, so nothing was written here. Re-run with --ai to fill it -- or fill
+this cell in by hand.
+```
+
+**The "needs review" count does not move.** An empty description on this
+template means `compose` found no death date, no birth date and no Ricks
+mention, and an empty death date already raises `flagIfEmpty` on its own
+column — so every row that gains this note was being counted anyway. What is
+new is the `_notes` text, not the triage number. If you do not want the line, remove
+`{ "ai": true }` from the description column; it is a profile edit like any
+other.
+
+#### The model you choose changes what you get
+
+**Point this at a small local model and the descriptions will need heavy
+editing. That is the model, not the tool.** It is worth knowing before you
+conclude the feature does not work.
+
+The same ten scanned obituaries, the same prompt, the same profile — twice:
+
+| | a 3B model, on CPU | an 8B model, on a GPU |
+| --- | --- | --- |
+| descriptions written in the house style the profile asked for | about 3 of 8 | **8 of 8** |
+| answers refused as unsupported | 2 of 2 | 2 of 2 |
+| good answers wrongly refused | 0 | 0 |
+| time for ten documents | slower | about 140 seconds |
+
+The 3B model's failures were not subtle: names prepended to a line that should
+start with a date, an age given where a death date belongs, prose sentences
+naming a hospital. **Rewriting the instruction does not fix that** — the wording
+that produced those results is the same wording that produced eight correct
+lines from the larger model. If the output is not in the shape you asked for,
+try a bigger model before you edit the prompt.
+
+**Two documents defeated both models**, and both times the tool refused the
+answer: one states no date of any kind, and the model invented one; the other
+never mentions the institution the model claimed for it. **A better model does
+not remove the need for the check.** That is why the check is always on.
+
+Treat the table as a sample of ten documents from one collection in one
+language, not as a benchmark. The 8B figures were measured on `llama3.1:8b`
+running on an integrated GPU — not on specialist hardware — and the 3B figures
+on the same machine before that GPU worked at all. One more thing to know if you
+compare your own results: the larger model happened to answer with `2024-01-06`
+style dates, which is the easiest shape for the tool's own check to read.
+
+#### A local model, from nothing (Ollama)
+
+```bash
+ollama pull llama3          # once
+ollama serve                # if it is not already running as a service
+```
+
+```bash
+export OEQ_MODEL_BASE_URL=http://localhost:11434/v1
+export OEQ_MODEL=llama3
+oeq-upload extract --dir ./obituaries --profile templates/alumni-obituary.profile.json \
+  --out rows.csv --ai
+```
+
+No API key, no account, no charge, and **nothing leaves the computer**. Plain
+`http` is fine here and only here — see the key rule below.
+
+#### When a local runtime misbehaves — it is the runtime, not this tool
+
+**Symptoms:** every request comes back `500`, on every model, and the runtime's
+own worker process dies (on Windows, exit code `0xc0000409`). The giveaway is
+that it fails the same way with this tool uninvolved:
+
+```bash
+ollama run llama3 "Say OK."
+```
+
+If that fails too, nothing here is going to help — and no amount of changing
+`OEQ_MODEL_*` settings will, either. **Read the Ollama server log**, which names
+the GPU it detected and the library it chose to load. That one line is usually
+the whole diagnosis.
+
+Two traps are worth naming because they cost a session here:
+
+- **A `HSA_OVERRIDE_GFX_VERSION` environment variable naming the wrong
+  architecture.** These are commonly copied from forum posts to make ROCm accept
+  an unsupported card. Set to a discrete card's architecture on a machine with an
+  integrated one, it makes the runtime load kernels the hardware cannot execute:
+  `ROCm error: invalid device function`, on every model. Check whether it is set
+  before assuming it is needed, and unset it if it names hardware you do not
+  have.
+- **An integrated GPU being skipped on purpose.** Ollama drops integrated GPUs
+  from its Vulkan path by default and says so in the log. `OLLAMA_IGPU_ENABLE=1`
+  opts back in. On the machine these figures were measured on, that plus removing
+  the override above was the difference between "nothing works" and every layer
+  offloaded to the GPU.
+
+You can always fall back to CPU — it is slower, not broken, and the tool's
+two-minute timeout is set for exactly that case.
+
+#### A hosted model
+
+```bash
+export OEQ_MODEL_BASE_URL=https://api.openai.com/v1
+export OEQ_MODEL=gpt-4o-mini
+export OEQ_MODEL_KEY=sk-...
+oeq-upload extract --dir ./obituaries --profile templates/alumni-obituary.profile.json \
+  --out rows.csv --ai --yes
+```
+
+**A hosted endpoint sends your document text to somebody else's computer.** Up
+to `OEQ_MODEL_BUDGET` characters of each file, over the network, to a third
+party under their terms. If your material cannot leave site — student records,
+anything under a donor agreement, anything an institutional review would have an
+opinion about — **use a local runtime**. That choice is the point of supporting
+both, and it is not a detail to settle later.
+
+Any OpenAI-compatible endpoint works: Ollama, LM Studio, llama.cpp, OpenAI,
+Azure OpenAI, Groq, Together, OpenRouter. Anthropic's and Google's own APIs do
+not speak this wire format and are not supported.
+
+#### The six environment variables
+
+| Variable | Meaning |
+| --- | --- |
+| `OEQ_MODEL_BASE_URL` | The endpoint, up to and including `/v1`. **This is the switch: unset, the feature does not exist.** |
+| `OEQ_MODEL` | The model's name at that endpoint — `llama3`, `gpt-4o-mini`. **No default.** |
+| `OEQ_MODEL_KEY` | Bearer key. Leave empty for a local runtime, which needs none. |
+| `OEQ_MODEL_BUDGET` | Characters to send from **one** document. Default 8000. |
+| `OEQ_MODEL_CAP` | Most **requests** one run may make. Default 500. |
+| `OEQ_MODEL_TIMEOUT_SECONDS` | How long to wait for one answer. Default 120. |
+
+On the CLI none of them is read at all without `--ai`; in the desktop app the
+same settings are entered per site on Setup and stored encrypted, and the
+environment is not consulted.
+
+Every one of them is checked **before a single file is read**, and the message
+names the variable that was wrong. That matters more than it sounds: setting
+`OEQ_MODEL_BASE_URL` and forgetting `OEQ_MODEL` used to put every document on
+the wire with an empty model name — all failing, all charged for by whatever a
+gateway charges for accepting a request. `OEQ_MODEL_CAP=eight` used to render
+the confirmation itself as *"About to send up to NaN model requests"*, which is
+the one screen standing between an operator and a paid batch.
+
+- Malformed budget, cap or timeout: refused, naming the variable and the rule.
+  A cap of `0` is legal and means "make no requests"; every row then says the
+  limit stopped it.
+- `OEQ_MODEL_KEY` set against a plain `http` address that is not this machine:
+  **refused**, because a bearer key in clear text is a key disclosed. `https`,
+  and plain `http` to loopback, are both fine.
+- Empty or unset budget/cap/timeout: the default.
+
+**The cap counts requests, not documents.** One request is made per cell a model
+may fill, so a profile with two such columns costs two per document. With the
+shipped template — one enabled column — the two numbers happen to be equal, but
+nothing relies on that: every figure in the confirmation is stated in requests,
+and it says what a request is in the same breath, because an operator has no
+reason to know.
+
+**The timeout is 2 minutes, not the usual 30 seconds.** A hosted model answers a
+prompt this size in single-digit seconds; a quantised 7B on a CPU can take
+ninety and be perfectly healthy. Abandoning a working model mid-generation
+spends the compute, leaves the cell blank, and tells the operator "this does not
+work" about a configuration that does.
+
+#### `--ai`, `--yes` and `--dry-run`
+
+**`--ai` never prompts.** Against a remote endpoint it prints exactly what it is
+about to send and **exits non-zero without sending anything** unless `--yes` is
+also given. It does not read stdin at all — a scheduled job's stdin is not a
+terminal, so a prompt there either reads EOF and treats it as consent nobody
+gave, or blocks for ever holding a nightly run open. Refusing behaves the same
+on a terminal and off one.
+
+`--yes` is not required when there is nothing to agree to: a **local** endpoint,
+or a cap of zero. Neither shows a confirmation, exactly as the desktop shows no
+dialog. (An empty folder is not asked about either, but the run then stops with
+`No readable files found`, so it is not a case you can use.)
+
+**`--ai` on a profile where no column asks for a model is refused**, not
+ignored. So is `--ai` with no endpoint configured. Both are an explicit
+instruction that cannot be carried out, and quietly proceeding is how a run
+"with the model on" turns out later not to have been.
+
+**`--dry-run` sends nothing, even with `--ai`.** It shows five rows; sending four
+hundred documents to a paid endpoint to print five answers is a bill nobody
+asked for. The run says so on screen rather than showing a blank column with no
+explanation.
+
+#### What you get back
+
+- **The confirmation**, before any file is opened: how many requests, to which
+  host, which model, the maximum characters, where the cap stops it, and that
+  nothing is uploaded to openEQUELLA by this step. A **local** endpoint gets no
+  confirmation at all, deliberately — nothing leaves the machine and nothing is
+  charged, and a dialog that does not matter is what trains people to click past
+  the one that does.
+- **A flag on every model-written cell**, without exception, in `_notes`, and
+  `MWDL/description=ai` in that row's `_source`. Filter or search `_source` for
+  `=ai` — it is one cell per row, so sorting it will not group them.
+- **A louder flag on a fact field.** Where the column declares a date or a
+  people transform, or reads a date from the document, the note says so: *an
+  invented date cannot be told from a real one by anyone reading the catalogue
+  afterwards*. Such a row also stays in the "needs review" count.
+- **A separate count**: `N of M row(s) had a value written by a language model`,
+  reported beside the "needs review" number and deliberately **not** folded into
+  it. Every model write carries a note, so counting notes would report "400 of
+  400 need review" and bury the one row that genuinely failed.
+- **A blank and a reason on any failure.** A refused, empty, truncated or
+  unreachable answer leaves the cell as it found it and says what happened,
+  quoting back up to 80 characters of anything the model said that was thrown
+  away. There is no retry.
+- **A refusal, where the answer states something the document does not.** The
+  cell is left exactly as it was and the note names each unsupported claim — see
+  below.
+
+#### When the tool refuses the model's answer
+
+Before anything is written, the generated value is checked against the document
+it came from. **Dates, numbers, and anything the profile already has a check
+for** must appear in the document; where one does not, the answer is discarded
+whole and the cell is left as it was, empty or holding whatever it held before.
+Nothing is edited or partially kept — a sentence with a clause removed reads as
+complete while meaning something else.
+
+The note names the claim in the model's own words and says why it failed:
+
+```text
+MWDL/description: left blank -- the model's answer was refused, because it
+stated things this document does not support. "2024-01-06": no date this tool
+can read in the document supports it -- it recognises English month names and
+numeric date forms only. The model did answer and the call succeeded -- this
+tool discarded the answer -- so there is nothing to retry; read the document
+and fill this cell in by hand. What it said, which was not used: "Died
+2024-01-06; Born 1907-11-13"
+```
+
+There is nothing to retry, because nothing went wrong at the endpoint: the call
+succeeded and the model answered. Read the document and fill the cell in by hand.
+
+**A date is a claim whether or not a year sits beside it.** `He died on January
+6.`, `He died 1/6.` and `Died 2024-01-06T00:00:00Z.` are all checked against the
+document, and all three used to be written out unchecked because no pattern
+matched them and "no form matched" was read as "no claim was made". That gap was
+the difference between this layer working and not working: the first model it was
+measured against happened to answer in ISO, and one that writes `He died on
+January 6` would have walked straight past it.
+
+#### It reads English dates, and says so rather than blaming the document
+
+> **If your collection is catalogued in another language, read this before
+> turning the model on.** The date recogniser knows English month names and the
+> numeric forms (`2024-01-06`, `6.1.2024`, `4/2/98`, `the 6th of January 2024`).
+> `Falleció el 6 de enero de 2024` states a day; this tool sees only the year in
+> it. So a **correct** description of that document, giving the day, is refused
+> and discarded.
+
+Refusing is deliberate and stays: the fabrication this check was built for came
+from a document that genuinely stated no date, and a check that gave up quietly
+on text it could not read would be worse than no check. What the note will never
+say is *"the document states no such date"* — that is a claim about the document,
+and all that is known is that no date **this tool can read** supports the value.
+The sentence in `_notes` says which of the two it means, so an operator is not
+sent to re-read a document that says exactly what they thought it said.
+
+Adding a language means adding its month names to `MONTH_NAMES` in
+`src/core/extract/dates.ts` — both recognisers in the tool are built from that
+one array — and its numeral words to `SMALL` in `src/core/ai/verify.ts`. Nothing
+else in the check is language-specific.
+
+Numbers are compared by value, so the document and the description need not agree
+on convention: `1,200`, `1.200`, `1 200` and `1200` are one number, and a
+document writing `two hundred`, `a dozen`, `the twenty-first` or `three and a
+half` supports `200`, `12`, `21st` and `3.5`.
+
+**Free prose is not checked**, because paraphrase is a legitimate way to describe
+a document and checking it would throw away good descriptions. **And a check that
+passes does not make a value true**: it means every checkable claim appears in
+the document, not that the sentence around it says the right thing — a date can
+be real and attached to the wrong person. Every model-written cell stays flagged
+for that reason, and reading them against the documents is still the job.
+
+#### The rule: what a model may and may not overwrite
+
+A model may write a cell only when the cell is **empty**, or when a source
+attached a note to it — the `{ "opening": true }` tier, which flags every time.
+**A value the document stated, that no source expressed doubt about, is never
+replaced.** That is the safety property of the whole feature.
+
+"Flagged" is structural, not a judgement: it is a note some source attached, not
+an opinion formed here. A tier that starts flagging itself becomes
+model-replaceable with nobody having to remember.
+
+#### On the shipped template, the model will almost never fire
+
+This surprises people, so it is worth stating before you run it rather than
+after.
+
+The Alumni Obituary description comes from `compose`, and **`compose` attaches
+no note**. Whatever it assembles is a stated value, so the rule above leaves it
+alone. `composeValue` returns empty only when *every* clause is empty — no
+death date, no birth date and no Ricks College mention, all three missing from
+the same document. A document that yielded only a birth date produces
+`Born 1907-11-13`, which is a stated value, unflagged, and never sent.
+
+So expect the model to write on a **small fraction** of a real batch. Measured on
+a real folder of ten scanned obituaries: **the model fired on 1 of them**,
+because `compose` produced a value for the other nine — 9 of 10 of those
+documents gave up a death date. That is not the feature failing.
+
+**It is deliberate, and it is the archival position.** A description assembled
+from extracted facts is evidence: every part of it can be traced back to
+something the document says. A model may fill a gap, and it may replace a guess
+the extractor already admitted to — but it may not overwrite evidence. Letting
+it do so would merge verified fact and machine assertion into one cell with no
+way to tell them apart afterwards, and `_source` records **one origin per
+cell**, so the composed half's provenance would simply be lost. An incomplete
+but traceable description outranks a complete but unverifiable one.
+
+To *evaluate* the model's output you need a scratch profile whose description
+column asks for the model alone, with no `compose` beside it, run against a
+copy of the folder. Keep it out of `templates/` and do not ship it — the way to
+see more model output is a throwaway profile, never a loosened rule.
+
+#### Widening it, without touching any code
+
+The shipped **Alumni Obituary** template enables a model on `MWDL/description`
+and on nothing else. Enabling another column is a profile edit:
+
+```json
+{ "path": "MWDL/description",
+  "sources": [
+    { "compose": "Died {death_date}; Born {birth_date}; {ricks}" },
+    { "ai": true }
+  ] }
+```
+
+**Put `{ "ai": true }` last by convention, not because position does anything.**
+`resolve` returns empty for the marker wherever it sits, and the union takes the
+first source that yields a value, so the model pass behaves identically if you
+put it first. It goes last because a profile is read by people: a reader
+scanning the sources should see the deterministic ones tried before the
+fallback, in the order they actually happen.
+
+Give the profile an `aiInstruction` and the model is asked for the house style
+rather than left to invent a format, so a generated description and a composed
+one look alike in the catalogue. This is the shipped one, in full:
+
+```json
+"aiInstruction": "Write one line in this form, omitting any part the document does not state: Died <date>; Born <date>; Attended Ricks College. Use ISO dates (YYYY-MM-DD). Include the last clause only if the document says the person attended Ricks College or BYU-Idaho."
+```
+
+**The last sentence is doing the most work in that string** — and on its own it
+is not enough. It asks the model not to append *Attended Ricks College* to a
+record that never mentioned it, which would be an assertion about a real person
+in a permanent catalogue with no moderation queue. **Measured against a small
+local model, the instruction did not hold**: it made exactly that claim about
+documents that do not support it, which is why the check described under *When
+the tool refuses the model's answer* exists and runs regardless of what the
+instruction says. Write one of your own by all means, and give every claim it
+invites the same evidence requirement — but treat it as a request, not a
+guarantee.
+
+**Think hard before enabling one on a fact field.** A death date, a name, an
+identifier or a term from a controlled vocabulary is not a quality problem when
+a model gets it wrong — it is indistinguishable from a real value to everyone
+downstream, permanently, in a collection with no moderation queue. The shipped
+template keeps its death date deterministic for that reason.
+
+#### Recording it in the item itself
+
+Everything above lives in `_notes`, which the uploader drops before anything is
+contributed — so a cataloguer reviewing the spreadsheet sees the flags and a
+future reader of the catalogue sees none of them. To disclose it in the record,
+name a **metadata column** to receive the note:
+
+```json
+"aiProvenance": {
+  "path": "MWDL/conversionSpecifications",
+  "append": "Description generated by {model}"
+}
+```
+
+That column already carries `Scanned to PDF` in the Alumni Obituary template —
+a processing-provenance note about an earlier machine transformation of the same
+document, which is exactly the job. The note is appended after a semicolon,
+once per row, only where a model actually wrote something — whatever the field
+already holds is kept.
+
+**The tool never picks this field and ships with none set.** Choosing a metadata
+path on an institution's behalf is the assumption an entire release was spent
+removing. The path must be a real, writable column in the same profile — it is
+validated against your schema alongside every other column path, and a profile
+naming a column that does not exist is refused when it loads. `{model}` is the
+only placeholder; anything else in braces is refused, because a mistyped
+`{modle}` would be written verbatim into every item in the batch.
 
 ### Known limitation: extra separators
 

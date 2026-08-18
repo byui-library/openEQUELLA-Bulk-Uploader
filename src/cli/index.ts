@@ -315,6 +315,28 @@ export function extractCode(input: string): string {
   return trimmed;
 }
 
+/**
+ * The `state` from pasted text, or null when there is none.
+ *
+ * Null is the ordinary case, not a failure: a bare code is what openEQUELLA's
+ * page shows and what most operators paste, and it carries no state. The
+ * caller checks when this returns a value and says out loud when it does not --
+ * see `loginAction`. Silence there would read as "checked, fine", which is the
+ * failure mode this project keeps meeting.
+ */
+export function extractState(input: string): string | null {
+  const trimmed = input.trim();
+  try {
+    const fromUrl = new URL(trimmed).searchParams.get('state');
+    if (fromUrl) return fromUrl;
+  } catch {
+    // Not an absolute URL -- fall through, the same way `extractCode` does, so
+    // a pasted bare query fragment still works.
+  }
+  const match = /(?:^|[?&])state=([^&\s]+)/.exec(trimmed);
+  return match ? decodeURIComponent(match[1]!) : null;
+}
+
 /** Minimal escaping for the one place `defaultCaptureLoopbackCode` reflects
  *  server-controlled text (the OAuth `error` param) into a locally-served
  *  HTML page. */
@@ -356,7 +378,7 @@ function loopbackTarget(redirectUri: string): { hostname: string; port: number; 
  * history entry at all -- it arrives as a normal HTTP request this process
  * is already listening for.
  */
-function defaultCaptureLoopbackCode(redirectUri: string): Promise<string> {
+function defaultCaptureLoopbackCode(redirectUri: string): Promise<{ code: string; state: string | null }> {
   const target = new URL(redirectUri);
   return new Promise((resolvePromise, reject) => {
     const server = createHttpServer((req, res) => {
@@ -383,7 +405,9 @@ function defaultCaptureLoopbackCode(redirectUri: string): Promise<string> {
       );
       server.close(() => {
         if (error) reject(new OeqError(`openEQUELLA returned an error during sign-in: ${error}`));
-        else resolvePromise(code!);
+        // The state travels back beside the code so `loginAction` can tell
+        // openEQUELLA's redirect from any other request to this open port.
+        else resolvePromise({ code: code!, state: reqUrl.searchParams.get('state') });
       });
     });
     server.on('error', reject);
@@ -411,8 +435,10 @@ export interface LoginDeps {
   tokenStore?: TokenStore;
   openBrowser?: (url: string) => void;
   promptForCode?: () => Promise<string>;
-  /** Overridable for tests; see `defaultCaptureLoopbackCode` for the real implementation. */
-  captureLoopbackCode?: (redirectUri: string) => Promise<string>;
+  /** Overridable for tests; see `defaultCaptureLoopbackCode` for the real implementation.
+   *  Returns the `state` beside the code so the caller can check the redirect
+   *  was the one it asked for -- see `loginAction`. */
+  captureLoopbackCode?: (redirectUri: string) => Promise<{ code: string; state: string | null }>;
 }
 
 /**
@@ -495,8 +521,9 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
   let code: string;
   if (loopback) {
     console.log('Waiting for openEQUELLA to redirect back to this machine...');
+    let captured: { code: string; state: string | null };
     try {
-      code = await (deps.captureLoopbackCode ?? defaultCaptureLoopbackCode)(cfg.redirectUri);
+      captured = await (deps.captureLoopbackCode ?? defaultCaptureLoopbackCode)(cfg.redirectUri);
     } catch (err) {
       throw new OeqError(
         `Could not capture the code automatically at ${cfg.redirectUri}: ${errorMessage(err)}. Check ` +
@@ -504,11 +531,51 @@ export async function loginAction(env: Env = process.env, deps: LoginDeps = {}):
           `to fall back to the manual-paste flow.`,
       );
     }
+    // The loopback server answers an ordinary HTTP request on a local port,
+    // which any other process on this machine -- or any web page the operator
+    // has open -- can also send. A code accepted here is exchanged for a token
+    // that every later command then uses, so the state is what has to
+    // distinguish openEQUELLA's redirect from somebody else's request.
+    if (!auth.checkState(captured.state)) {
+      throw new OeqError(
+        `That redirect did not come from the sign-in this command started: it did not carry back ` +
+          `the one-time value sent with the authorize URL. Nothing has been saved. Run ` +
+          `\`oeq-upload login\` again, and if it keeps happening, check whether something else on ` +
+          `this machine is answering ${cfg.redirectUri}.`,
+      );
+    }
+    code = captured.code;
     console.log('Code captured automatically from the local redirect.');
   } else {
     const raw = (await (deps.promptForCode ?? defaultPromptForCode)()).trim();
     if (!raw) {
       throw new OeqError('No code entered. Run `oeq-upload login` again when you have it.');
+    }
+    // CHECKED WHEN IT CAN BE, AND SAID OUT LOUD WHEN IT CANNOT.
+    //
+    // This flow exists for a redirect this machine cannot receive: the operator
+    // reads the code off openEQUELLA's page and pastes it. A bare code carries
+    // no state, so the check cannot run for everyone -- but pasting the whole
+    // redirected URL is common, and that URL does carry it. Skipping the check
+    // for the people it can serve, because it cannot serve everyone, would be
+    // giving up a real guard for a tidier rule.
+    //
+    // What must never happen is silence: saying nothing here would read as
+    // "checked, fine", which is the shape of defect this codebase has shipped
+    // twice.
+    const pastedState = extractState(raw);
+    if (pastedState !== null && !auth.checkState(pastedState)) {
+      throw new OeqError(
+        `That code did not come from the sign-in this command started: the pasted URL carried a ` +
+          `state value, and it is not the one sent with the authorize URL. Nothing has been saved. ` +
+          `Run \`oeq-upload login\` again.`,
+      );
+    }
+    if (pastedState === null) {
+      console.log(
+        'Note: what you pasted carried no state value, so this could not be confirmed as the ' +
+          'sign-in started here. Paste the whole redirected URL next time and it will be checked.',
+      );
     }
     code = extractCode(raw);
   }
@@ -732,8 +799,27 @@ export function buildProgram(env: Env = process.env): Command {
     .option('--schema-file <path>', 'local schema export', 'schema/_entity.xml')
     .option('--dry-run', 'show the first few rows without writing anything')
     .option('--init-profile', 'write a starter profile for this folder, then stop')
+    .option(
+      '--ai',
+      'let a language model fill the columns whose profile asks for one, using ' +
+        'OEQ_MODEL_BASE_URL, OEQ_MODEL, OEQ_MODEL_KEY, OEQ_MODEL_BUDGET, OEQ_MODEL_CAP and ' +
+        // Listed even though it is rarely set: `provider.ts` tells a timed-out
+        // operator to "allow more time", and without this in --help that advice
+        // names an action they cannot find.
+        'OEQ_MODEL_TIMEOUT_SECONDS',
+    )
+    // NOT A PROMPT. `--ai` against a remote endpoint prints what it is about to
+    // send and stops unless this is given: a scheduled job has no terminal, so
+    // asking would either hang for ever or read EOF and call it consent. See
+    // `approve` in cli/extract.ts.
+    .option('--yes', 'agree in advance to what --ai says it will send, for an unattended run')
     .action(async (o: ExtractCliOptions) => {
-      await runExtract(o, (message) => console.log(message));
+      // `env`, like every other action here (`planAction(o, env)`,
+      // `runAction(o, env)`, `checkAction(env)`). Without it the model variables
+      // were the one part of the program `buildProgram(env)` could not
+      // influence, which is invisible until a test or an embedder passes an
+      // environment and finds it silently ignored.
+      await runExtract(o, (message) => console.log(message), env);
     });
 
   return program;

@@ -87,6 +87,56 @@ async function betterSignInError(win: BrowserWindow, origin: string, fallback: E
   return found ? new OeqError(found) : fallback;
 }
 
+/**
+ * What the sign-in window should do about a URL it has just seen.
+ *
+ * `forged` is separate from `ignore` on purpose: one is a page we have no
+ * interest in, the other is a code we are refusing, and the operator has to be
+ * told about the second.
+ */
+export type CaptureDecision =
+  | { kind: 'ignore' }
+  | { kind: 'code'; code: string }
+  | { kind: 'forged' };
+
+/**
+ * The capture rule, as a pure function.
+ *
+ * `signInInteractive` builds a `BrowserWindow` and cannot be unit-tested, which
+ * left this decision -- made on every navigation the window performs --
+ * verified by reading only. `extractOeqError` below is split out for exactly
+ * the same reason.
+ *
+ * Three things it decides, two of them learned from live runs:
+ *
+ *  1. ORIGIN. Signing in via SSO also produces a `?code=` on the identity
+ *     provider's own host, and exchanging that one fails obscurely.
+ *  2. The authorize URL carries `state` as a REQUEST parameter, so it is
+ *     skipped rather than read as a response.
+ *  3. STATE. A code without the value we sent did not come from the sign-in
+ *     this window started, and is refused rather than ignored -- ignoring it
+ *     leaves the operator watching a window that never closes.
+ */
+export function decideCapture(
+  url: string,
+  origin: string,
+  checkState: (received: string | null) => boolean,
+): CaptureDecision {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { kind: 'ignore' };
+  }
+  if (parsed.origin !== origin) return { kind: 'ignore' };
+  if (parsed.pathname.startsWith('/oauth/authorise')) return { kind: 'ignore' };
+
+  const code = parsed.searchParams.get('code');
+  if (!code) return { kind: 'ignore' };
+  if (!checkState(parsed.searchParams.get('state'))) return { kind: 'forged' };
+  return { kind: 'code', code };
+}
+
 export interface SignInRace {
   /** Resolves once a code has been captured. Never rejects. */
   code: Promise<string>;
@@ -206,21 +256,36 @@ export async function signInInteractive(
 
   const inspect = (url: string): void => {
     if (!armed || codeCaptured) return;
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
+    // The rule itself is `decideCapture`, which is pure and tested. This
+    // function is only the wiring: which promise each answer settles.
+    const decision = decideCapture(url, origin, (received) => auth.checkState(received));
+    if (decision.kind === 'ignore') return;
+    if (decision.kind === 'forged') {
+      // Refused loudly rather than ignored: a code silently skipped here leaves
+      // the operator watching a window that never closes until the ten-minute
+      // timeout, with nothing said anywhere.
+      rejectStateMismatch(
+        new OeqError(
+          'Sign-in was refused: the response did not carry back the one-time value this app sent, ' +
+            'so it did not come from the sign-in that was started here. Nothing has been saved. ' +
+            'Close this and try signing in again.',
+        ),
+      );
       return;
     }
-    if (parsed.origin !== origin) return;
-    if (parsed.pathname.startsWith('/oauth/authorise')) return;
-    const found = parsed.searchParams.get('code');
-    if (found) resolveCode(found);
+    resolveCode(decision.code);
   };
 
   win.webContents.on('will-redirect', (_e, url) => inspect(url));
   win.webContents.on('did-navigate', (_e, url) => inspect(url));
   win.webContents.on('will-navigate', (_e, url) => inspect(url));
+
+  /** A redirect carrying a code we did not ask for. Its own failure mode, so
+   *  the operator is told rather than left waiting out the timeout. */
+  let rejectStateMismatch!: (err: Error) => void;
+  const stateMismatchPromise = new Promise<never>((_resolve, reject) => {
+    rejectStateMismatch = reject;
+  });
 
   const closedPromise = new Promise<never>((_resolve, reject) => {
     win.on('closed', () => {
@@ -282,6 +347,7 @@ export async function signInInteractive(
       }),
       closedPromise,
       timeoutPromise,
+      stateMismatchPromise,
     ]);
   } finally {
     stopped = true;
