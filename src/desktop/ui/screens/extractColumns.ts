@@ -1,7 +1,7 @@
 // src/desktop/ui/screens/extractColumns.ts
 import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
-import { describeSource, restOfChain, sourceOptions, type SourceEvidence } from '../extract/sources.js';
+import { describeSource, optionsForColumn, restOfChain, type SourceEvidence } from '../extract/sources.js';
 import { plainLabel } from '../extract/picker.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
 import { countNeedingReview } from '../../../core/ai/review.js';
@@ -34,7 +34,10 @@ export interface ExtractColumnsProps {
 function columnRow(props: ExtractColumnsProps, path: string, index: number): string {
   const column = props.profile.columns.find((c) => c.path === path)!;
   const locked = column.locked === true;
-  const options = sourceOptions(props.profile.pattern, props.scan);
+  // The column's OWN list: `sourceOptions` offers only what the files supply,
+  // and a column configured with anything else -- every one in the shipped
+  // obituary template -- matched nothing and rendered as "(nothing)".
+  const options = optionsForColumn(props.profile.pattern, props.scan, column.sources);
   const current = column.sources[0];
   const currentLabel = current === undefined ? '' : describeSource(current);
   const rest = restOfChain(column.sources);
@@ -254,9 +257,14 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
   );
   root.querySelectorAll<HTMLSelectElement>('.source-select').forEach((s) =>
     s.addEventListener('change', () => {
-      const options = sourceOptions(props.profile.pattern, props.scan);
+      // THE SAME LIST THE ROW WAS RENDERED FROM. The value is an index into
+      // it, so a list built any other way here would resolve that index to a
+      // different source -- a click on one thing storing another.
+      const path = pathOf(s);
+      const sources = props.profile.columns.find((c) => c.path === path)?.sources ?? [];
+      const options = optionsForColumn(props.profile.pattern, props.scan, sources);
       const chosen = s.value === '' ? null : (options[Number(s.value)]?.source ?? null);
-      props.onSourceChange(pathOf(s), chosen);
+      props.onSourceChange(path, chosen);
     }),
   );
   root.querySelectorAll<HTMLInputElement>('.default-input').forEach((i) =>

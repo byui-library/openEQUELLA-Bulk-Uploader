@@ -1,6 +1,6 @@
 // tests/desktop/ui/extract/sources.test.ts
 import { describe, it, expect } from 'vitest';
-import { sourceOptions, describeSource, restOfChain } from '../../../../src/desktop/ui/extract/sources.js';
+import { sourceOptions, describeSource, restOfChain, optionsForColumn } from '../../../../src/desktop/ui/extract/sources.js';
 import { ATTACHMENT_COLUMN } from '../../../../src/core/extract/types.js';
 
 const scan = { supported: ['a.pdf'], skipped: [], labels: ['Performer'], properties: ['title', 'created'], tableColumns: ['Company'], sections: ['Abstract'], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
@@ -104,5 +104,55 @@ describe('describeSource', () => {
     expect(describeSource({ filename: true })).toBe('The file itself');
     expect(describeSource({ tableColumn: 'Job Description' })).toBe('Table column: Job Description');
     expect(describeSource({ section: 'Abstract' })).toBe('Section: Abstract');
+  });
+});
+
+/**
+ * ## A configured column must not read as an empty one
+ *
+ * REPORTED BY THE OPERATOR: "the dropdowns all show (nothing - fill in Excel)
+ * while there still appears to be something else that was selected."
+ *
+ * The `<select>` marks an option selected by comparing labels, and
+ * `sourceOptions` offers only what the FILES supply -- placeholders, labels and
+ * sections actually found, plus the three that need no evidence. The shipped
+ * obituary template's first sources are `join`, `dateNear`, `presence` and
+ * `compose`, and not one of them is on that list. Nothing matched, so every
+ * configured column fell back to the first entry and reported itself as empty.
+ *
+ * Dangerous rather than merely untidy: a column that reads as unconfigured
+ * invites somebody to configure it, and the shipped template's real sources are
+ * one click from being replaced.
+ */
+describe('optionsForColumn', () => {
+  const shown = (opts: { label: string }[]) => opts.map((o) => o.label);
+
+  it('offers the current source when the files do not supply it', () => {
+    const opts = optionsForColumn('{a}.pdf', scan, [{ dateNear: ['died'] }]);
+    expect(shown(opts)).toContain('A date after: died');
+  });
+
+  /** Appended, so every index already handed out keeps meaning what it did. */
+  it('leaves the offered options where they were', () => {
+    const base = sourceOptions('{a}.pdf', scan);
+    const opts = optionsForColumn('{a}.pdf', scan, [{ compose: '{x}' }]);
+    expect(shown(opts).slice(0, base.length)).toEqual(shown(base));
+  });
+
+  it('does not repeat a source the files already supply', () => {
+    const opts = optionsForColumn('{a}.pdf', scan, [{ section: 'Abstract' }]);
+    expect(shown(opts).filter((l) => l === 'Section: Abstract')).toHaveLength(1);
+  });
+
+  it('adds nothing for a column with no sources', () => {
+    expect(shown(optionsForColumn('{a}.pdf', scan, []))).toEqual(shown(sourceOptions('{a}.pdf', scan)));
+  });
+
+  /** Only the FIRST source is what the dropdown governs; the rest are named
+   *  beside it by `restOfChain` and must not become options. */
+  it('offers only the first of a chain', () => {
+    const opts = optionsForColumn('{a}.pdf', scan, [{ compose: '{x}' }, { presence: { any: ['x'], then: 'y' } }]);
+    expect(shown(opts)).toContain('Built from other columns: {x}');
+    expect(shown(opts).some((l) => l.startsWith('"y" when'))).toBe(false);
   });
 });
