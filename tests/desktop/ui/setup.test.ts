@@ -69,6 +69,7 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
       authMode: 'password',
       attachmentUuidPath: '',
       live: true,
+      collectionUuid: '',
       schemaUuid: '',
     },
   ],

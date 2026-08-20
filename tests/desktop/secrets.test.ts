@@ -1301,3 +1301,45 @@ describe('SecretStore — forgetting an OAuth credential', () => {
     expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Live');
   });
 });
+
+/**
+ * ## Which collection the stored schema came from
+ *
+ * REPORTED BY THE OPERATOR: choose a collection on Site settings, save, come
+ * back, and nothing is selected. The choice really was not kept — the record
+ * stored `schemaUuid`, derived from that collection, and not the collection.
+ *
+ * It matters beyond tidiness. The schema is what the attachment field is
+ * checked against, so a screen that cannot show WHICH collection it read leaves
+ * the operator unable to tell a setting that was never saved from one that was
+ * saved and forgotten — and this app has had several of the latter.
+ */
+describe('SecretStore — the collection a site was set up against', () => {
+  const CODE = { authMode: 'code', clientId: 'cid', clientSecret: 'shhh', redirectUri: LIVE } as const;
+
+  it('round-trips the chosen collection', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    const inst = await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE, collectionUuid: 'coll-1', schemaUuid: 'schema-1' },
+      CODE,
+    );
+    expect(inst.collectionUuid).toBe('coll-1');
+    expect((await s.loadInstance(instanceKey(LIVE)))?.collectionUuid).toBe('coll-1');
+  });
+
+  /** An entry written before this field existed is not a broken entry. */
+  it('reads an older entry that has no collection as having none', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, CODE);
+    expect((await s.loadInstance(instanceKey(LIVE)))?.collectionUuid).toBe('');
+  });
+
+  /** Same rule the other per-site fields follow: an omitted field keeps what
+   *  is stored, so saving after only renaming the site loses nothing. */
+  it('keeps the stored collection when a save does not mention one', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE, collectionUuid: 'coll-1' }, CODE);
+    await s.saveInstance({ label: 'Renamed', baseUrl: LIVE }, CODE);
+    expect((await s.loadInstance(instanceKey(LIVE)))?.collectionUuid).toBe('coll-1');
+  });
+});

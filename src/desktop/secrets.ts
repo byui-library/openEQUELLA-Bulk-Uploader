@@ -186,6 +186,19 @@ export interface Instance {
    * collection's own `schema.uuid` (discovery.ts#parseCollections), never
    * typed by the operator.
    */
+  /**
+   * The collection this site was set up against, or '' for none.
+   *
+   * STORED BESIDE `schemaUuid` RATHER THAN DERIVED FROM IT. The schema is what
+   * the attachment field is checked against; without the collection, Setup
+   * could not show which collection it had read, so a saved setting was
+   * indistinguishable from one that was never kept. Reported by the operator,
+   * who chose a collection, saved, came back and found nothing selected.
+   *
+   * NOT the collection a batch is uploaded to -- that is chosen per batch on
+   * Choose, because it decides where real items land.
+   */
+  collectionUuid: string;
   schemaUuid: string;
 }
 
@@ -204,6 +217,19 @@ type StoredEntry = {
   baseUrl: string;
   attachmentUuidPath: string;
   live: boolean;
+  /**
+   * The collection this site was set up against, or '' for none.
+   *
+   * STORED BESIDE `schemaUuid` RATHER THAN DERIVED FROM IT. The schema is what
+   * the attachment field is checked against; without the collection, Setup
+   * could not show which collection it had read, so a saved setting was
+   * indistinguishable from one that was never kept. Reported by the operator,
+   * who chose a collection, saved, came back and found nothing selected.
+   *
+   * NOT the collection a batch is uploaded to -- that is chosen per batch on
+   * Choose, because it decides where real items land.
+   */
+  collectionUuid: string;
   schemaUuid: string;
 } & (
   | { authMode: 'code'; clientId: string; clientSecret: string; redirectUri: string }
@@ -289,6 +315,7 @@ function parseStoredEntry(v: unknown): StoredEntry | null {
     attachmentUuidPath: typeof e.attachmentUuidPath === 'string' ? e.attachmentUuidPath : '',
     live: typeof e.live === 'boolean' ? e.live : true,
     schemaUuid: typeof e.schemaUuid === 'string' ? e.schemaUuid : '',
+    collectionUuid: typeof e.collectionUuid === 'string' ? e.collectionUuid : '',
   };
 
   if (e.authMode === 'password') return { ...base, authMode: 'password' };
@@ -328,6 +355,7 @@ function toInstance(id: InstanceId, stored: StoredEntry): Instance {
     attachmentUuidPath: stored.attachmentUuidPath,
     live: stored.live,
     schemaUuid: stored.schemaUuid,
+    collectionUuid: stored.collectionUuid,
   };
 }
 
@@ -496,6 +524,7 @@ export class SecretStore {
       attachmentUuidPath?: string;
       live?: boolean;
       schemaUuid?: string;
+      collectionUuid?: string;
     },
     settings: Settings,
   ): Promise<Instance> {
@@ -522,6 +551,10 @@ export class SecretStore {
       // to when nothing at all is known.
       live: instance.live ?? previous?.live ?? true,
       schemaUuid: instance.schemaUuid ?? previous?.schemaUuid ?? '',
+      // Omitted keeps what is stored, like every other per-site field: saving
+      // after only renaming the site must not forget which collection it was
+      // set up against.
+      collectionUuid: instance.collectionUuid ?? previous?.collectionUuid ?? '',
     };
     if (settings.authMode === 'password') {
       shape.instances[id] = { ...site, authMode: 'password' };

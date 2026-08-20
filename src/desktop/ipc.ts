@@ -40,6 +40,9 @@ export interface InstanceChoice {
   /** Whether this is a live site. Drives the banner (ui/banner.ts). Defaults true. */
   live: boolean;
   /** The chosen collection's schema, or ''. The key to the offline schema cache. */
+  /** The collection this site was set up against, or '' for none. NOT the
+   *  collection a batch uploads to -- that is chosen per batch on Choose. */
+  collectionUuid: string;
   schemaUuid: string;
 }
 
@@ -173,6 +176,7 @@ export interface OeqApi {
       attachmentUuidPath?: string;
       live?: boolean;
       schemaUuid?: string;
+      collectionUuid?: string;
     },
     s: Settings,
   ): Promise<InstanceChoice>;
