@@ -1559,6 +1559,32 @@ async function loadCollections(): Promise<void> {
     // dropdown used to read "showing 0 of 0 -- No collections match" for a
     // session that was not signed in at all (screens/choose.ts).
     state.collectionsWithheld = list.withheld;
+    // PRE-SELECT THE ONE THIS SITE WAS SET UP AGAINST. The collection was
+    // deliberately not remembered here -- it decides where real items land,
+    // and the target collection has no moderation workflow, so a wrong one
+    // publishes live with no queue to catch it. Picking it every time was the
+    // safeguard. What that cost was a dropdown that started empty on every
+    // batch for a site used with one collection, and the operator has weighed
+    // that and asked for the remembered value (2026-08-20).
+    //
+    // A DEFAULT IS NOT A DECISION TAKEN AWAY. The pick stays visible here and
+    // is named again on Confirm before anything uploads.
+    //
+    // ONLY IF THE SERVER LISTED IT. A remembered collection the account can no
+    // longer contribute to must not be filled in: the operator would be shown a
+    // destination the server will refuse, and "it was already there" is the
+    // worst possible reason to believe a destination is right.
+    //
+    // AND ONLY WHEN NOTHING IS CHOSEN YET, so returning to Choose mid-session
+    // cannot overwrite a pick the operator just made.
+    const remembered = currentInstance()?.collectionUuid ?? '';
+    if (state.collectionUuid === null && remembered !== '') {
+      const match = list.collections.find((c) => c.uuid === remembered);
+      if (match) {
+        state.collectionUuid = match.uuid;
+        state.collectionName = match.name;
+      }
+    }
   } catch (err) {
     state.collections = [];
     state.collectionsError = errorMessage(err);
