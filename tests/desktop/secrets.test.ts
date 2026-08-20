@@ -1479,7 +1479,7 @@ describe('forgetting an OAuth credential a site no longer signs in with', () => 
  * Rows 11 to 13. There are three destructive controls on Setup and they differ
  * sharply in reach: **Forget this password** (one site's account), **Forget
  * these OAuth credentials** (one site's client), **Forget the model settings**
- * (one site's endpoint) -- and, on the Sign-in screen, **Change credentials**,
+ * (one site's endpoint) -- and, on the Sign-in screen, **Clear all credentials**,
  * which wipes the store entirely.
  *
  * Only the last one is meant to reach past the thing it names, and it warns.

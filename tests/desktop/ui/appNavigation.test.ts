@@ -14,7 +14,7 @@ import type { InstanceChoice } from '../../../src/desktop/ipc.js';
  * WHY THIS TEST EXISTS AT THE APP LEVEL AND NOT AS MARKUP. There are two ways
  * into Setup and only one of them is safe here: `handleSiteSettings` clears
  * nothing, while `handleResetSettings` -- offered a few pixels away on Sign-in
- * as "Change credentials…" -- wipes every saved site, blanks the form and
+ * as "Clear all credentials…" -- wipes every saved site, blanks the form and
  * un-selects the instance. Which of the two a link is wired to is invisible to
  * a markup assertion, and it is the whole difference between "change one
  * setting" and "lose your credentials". Nothing in this repo had ever
@@ -412,7 +412,7 @@ describe('Setup -> back where the operator came from', () => {
  * the only way out of a mistyped address, and confirming it is what stops a
  * misplaced click from costing an administrator-issued secret.
  */
-describe('Change credentials… (the destructive route)', () => {
+describe('Clear all credentials… (the destructive route)', () => {
   it('still confirms and still clears', async () => {
     harness.app.fire('#reset-settings-btn');
     await flush();
@@ -448,7 +448,7 @@ describe('Choose -> Sign-in', () => {
     expect(harness.app.innerHTML).not.toContain('Choose what to upload');
   });
 
-  it('destroys no credentials on the way -- this is not "Change credentials…"', async () => {
+  it('destroys no credentials on the way -- this is not "Clear all credentials…"', async () => {
     await reachChoose(harness.app);
     harness.app.fire('#choose-sign-out');
     await flush();
@@ -550,7 +550,7 @@ describe('Setup -> Back', () => {
   });
 
   /**
-   * ...and absent after "Change credentials…" too, which wipes every saved site
+   * ...and absent after "Clear all credentials…" too, which wipes every saved site
    * and puts the operator in the same position as a fresh install. Sending them
    * "back" to a Sign-in screen listing no sites would be a route to nowhere.
    */
@@ -2229,5 +2229,28 @@ describe('forgetting an OAuth credential', () => {
   it('asks the store to forget it', async () => {
     await forget();
     expect(harness.calls.forgetOAuth).toEqual([SITE.id]);
+  });
+});
+
+/**
+ * ## The label has to carry the warning too
+ *
+ * DECIDED BY THE OPERATOR, 2026-08-20. "Clear all credentials…" reads like an
+ * edit — you click it expecting a form — and what it does is unlink the whole
+ * store. The confirm now discloses that before anything happens, but a label is
+ * what somebody clicks and a dialog is what they skim, so the disclosure should
+ * not depend entirely on the second one being read.
+ *
+ * "Clear" says destruction and "all" says the reach. It still does not say the
+ * SITES go as well as the credentials; the confirm carries that, and a button
+ * long enough to say it would not be a button.
+ */
+describe('the label on the destructive route', () => {
+  it('says it clears, rather than changes', async () => {
+    expect(harness.app.innerHTML).toMatch(/Clear all credentials/i);
+  });
+
+  it('no longer offers to "change" them', async () => {
+    expect(harness.app.innerHTML).not.toMatch(/Change credentials/i);
   });
 });

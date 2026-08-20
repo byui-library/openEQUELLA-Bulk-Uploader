@@ -871,7 +871,7 @@ describe('the way back out of Setup', () => {
   /**
    * SAYS WHAT IT COSTS. The one thing an operator cannot see is whether
    * leaving throws away what they typed, or -- far worse, and the mistake the
-   * neighbouring "Change credentials…" route really does make -- something
+   * neighbouring "Clear all credentials…" route really does make -- something
    * already saved.
    */
   it('says nothing typed is kept and nothing saved is touched', () => {

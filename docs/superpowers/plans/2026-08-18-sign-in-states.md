@@ -39,7 +39,7 @@ error the operator can only understand by reading the source.**
 | 11 | Forget OAuth credentials | Site remains; treated as having no credential |
 | 12 | Forget password | Same |
 | 13 | Sign out | Token cleared; back to needs-signin |
-| 14 | Change credentials | Every site wiped, after a confirm |
+| 14 | Clear all credentials | Every site wiped, after a confirm |
 | 15 | Redirect URL without trailing slash | openEQUELLA's own reason is surfaced |
 
 **Rows 5 and 7 are the known gaps.** The other thirteen are in this table to be
@@ -267,7 +267,7 @@ boxes match it, and the collection list behaves per rows 3 and 5.
 
 Rows 11 to 14. There are now three destructive controls and they differ sharply:
 **Forget this password** (one site's account), **Forget these OAuth credentials**
-(one site's client), and **Change credentials** (every site, after a confirm —
+(one site's client), and **Clear all credentials** (every site, after a confirm —
 it deleted the whole dev store this morning).
 
 - [x] **Step 1:** Tests that each removes only what it names, and that a site
@@ -305,10 +305,12 @@ different function's.
 **Files:** `src/desktop/ui/app.ts`, `tests/desktop/ui/appNavigation.test.ts`,
 `tests/desktop/secrets.test.ts`
 
-**Open for the operator:** the BUTTON still says "Change credentials…", which
-reads like an edit rather than a wipe. The confirm now discloses the reach
-before anything happens, so this is a question of vocabulary for the staff who
-will use it, not a correctness gap.
+**The button is renamed, at the operator's decision.** "Change credentials…"
+read like an edit -- you click it expecting a form -- and what it does is unlink
+the whole store. It is now **"Clear all credentials…"**: "Clear" says
+destruction, "all" says the reach. It still does not say the SITES go as well as
+the credentials, which the confirm carries; a button long enough to say it would
+not be a button. Sentence case to match every other control on the screen.
 
 ### STOP — TEST 5 (operator)
 
@@ -317,7 +319,7 @@ will use it, not a correctness gap.
 1. **Forget these OAuth credentials.** Expect: the site stays in the list, its
    boxes empty, and Sign-in reports missing credentials.
 2. Re-enter them and save.
-3. Read the wording on **Change credentials** and tell me whether it is clear
+3. Read the wording on **Clear all credentials** and tell me whether it is clear
    that it wipes *every* site rather than just this one.
 
 ---

@@ -345,7 +345,7 @@ function render(): void {
         attachmentPathFilled: state.setupAttachmentPathFilled,
         error: state.setupError,
         saving: state.setupSaving,
-        // Null on first run and after "Change credentials…", where there is
+        // Null on first run and after "Clear all credentials…", where there is
         // nowhere behind Setup and no Back is rendered at all.
         returnTo: state.setupEnteredFrom,
         onBack: handleSetupBack,
@@ -1301,7 +1301,7 @@ function handleAddCredentials(): void {
  * NON-DESTRUCTIVE, and that is the whole point of it existing separately from
  * `handleResetSettings` below: the per-site settings (which collection's
  * schema, where the attachment uuid goes, whether it is live) live on Setup,
- * and the only other route there was "Change credentials…", which wipes every
+ * and the only other route there was "Clear all credentials…", which wipes every
  * saved site first. A setting an operator can only change by destroying their
  * credentials is a setting they will not change.
  *
@@ -1352,7 +1352,7 @@ function handleSiteSettings(from: Screen): void {
  * whose answer is "whatever the caller was holding" would add a row to that
  * table that describes nothing.
  *
- * `setupEnteredFrom` is null on first run and after "Change credentials…", and
+ * `setupEnteredFrom` is null on first run and after "Clear all credentials…", and
  * the button is not rendered in either case (screens/setup.ts). The guard is
  * belt and braces for a click that arrives anyway.
  */

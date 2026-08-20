@@ -50,7 +50,7 @@ export interface SigninProps {
    *
    * Without it the per-site settings Setup now collects -- which collection's
    * schema to check against, where the attachment uuid is written, whether
-   * this is a live site -- would be reachable only by "Change credentials…",
+   * this is a live site -- would be reachable only by "Clear all credentials…",
    * which wipes every saved site first. A setting an operator can only change
    * by destroying their credentials is a setting they will not change.
    */
@@ -131,7 +131,7 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
 
       <p class="reset-row">
         <button id="site-settings-btn" type="button" class="link-button">Settings for ${escapeHtml(label)}…</button>
-        <button id="reset-settings-btn" type="button" class="link-button">Change credentials…</button>
+        <button id="reset-settings-btn" type="button" class="link-button">Clear all credentials…</button>
       </p>
     </section>
   `;
