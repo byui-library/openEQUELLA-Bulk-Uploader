@@ -29,6 +29,7 @@ const SITE: InstanceChoice = {
   authMode: 'password',
   attachmentUuidPath: '',
   live: false,
+  collectionUuid: '',
   schemaUuid: 'schema-1',
 };
 
@@ -43,6 +44,7 @@ interface Harness {
     clearSettings: number;
     confirm: number;
     saveInstance: number;
+    savedInstance: Record<string, unknown> | null;
     /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
     forgetOAuth: string[];
     /** Every instance id `window.oeq.signIn` was called with, in order.
@@ -149,6 +151,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     clearSettings: 0,
     confirm: 0,
     saveInstance: 0,
+    savedInstance: null as Record<string, unknown> | null,
     signOut: [] as string[],
     forgetOAuth: [] as string[],
     listCollections: [] as string[],
@@ -225,9 +228,12 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     clearSettings: async () => {
       calls.clearSettings += 1;
     },
-    saveInstance: async (instance: { label: string; baseUrl: string }) => {
+    saveInstance: async (instance: Record<string, unknown>) => {
       calls.saveInstance += 1;
-      stored = { ...stored, ...instance };
+      // The WHOLE payload, not a count: what reached the store is the question
+      // when a setting comes back missing.
+      calls.savedInstance = instance;
+      stored = { ...stored, ...(instance as Partial<InstanceChoice>) };
       return stored;
     },
     signOut: async (instanceId: string) => {
@@ -1814,6 +1820,7 @@ describe('Setup signs in to the site it is pointed at', () => {
     authMode: 'code',
     attachmentUuidPath: '',
     live: false,
+    collectionUuid: '',
     schemaUuid: 'schema-2',
   };
 
@@ -1881,5 +1888,44 @@ describe('saving an OAuth site that already has a secret', () => {
     await openSetupAndSave();
 
     expect(harness.app.innerHTML).toMatch(/Enter the client ID/i);
+  });
+});
+
+/**
+ * ## Setup remembers which collection it read the schema from
+ *
+ * REPORTED BY THE OPERATOR: choose a collection on Site settings, save, come
+ * back, and nothing is selected. The choice was genuinely not kept.
+ *
+ * It is not the batch collection -- that is chosen on Choose, per batch,
+ * because it decides where real items land. This is the collection whose SCHEMA
+ * the attachment field was checked against, and a screen that cannot show which
+ * one it read leaves a saved setting looking exactly like a lost one. This app
+ * has had enough of the latter for that to matter.
+ */
+describe('the collection a site was set up against', () => {
+  it('is sent when the site is saved', async () => {
+    harness = await boot({ site: { authMode: 'password' } });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    harness.app.fire('#setup-collection', 'change', { target: { value: 'coll-2' } });
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(harness.calls.savedInstance?.collectionUuid).toBe('coll-2');
+  });
+
+  it('comes back selected when Setup is reopened', async () => {
+    harness = await boot({ site: { authMode: 'password', collectionUuid: 'coll-2' } });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const select = /<select[^>]*id="setup-collection"[^>]*>([\s\S]*?)<\/select>/.exec(harness.app.innerHTML)?.[1] ?? '';
+    const selected = /<option value="([^"]*)"[^>]*selected/.exec(select)?.[1];
+    expect(selected).toBe('coll-2');
   });
 });

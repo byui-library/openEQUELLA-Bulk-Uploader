@@ -23,6 +23,7 @@ const instance = (over: Partial<InstanceChoice> = {}): InstanceChoice => ({
   authMode: 'password',
   attachmentUuidPath: '',
   live: true,
+  collectionUuid: '',
   schemaUuid: '',
   ...over,
 });

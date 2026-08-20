@@ -568,6 +568,10 @@ function seedSetupForm(id: string): void {
     // one does, this fixes the radio and not the boxes beside it.
     authMode: selected?.authMode ?? 'password',
     live: selected?.live ?? true,
+    // Which collection this site was set up against. Seeded so the screen can
+    // show what its schema answer was based on -- it was stored and unreadable,
+    // which made a kept setting look lost.
+    collectionUuid: selected?.collectionUuid ?? '',
     // Sensible starting point for a field non-technical staff cannot fill in
     // from nothing: the site's own address. Pre-filled into the form, where
     // the operator can see and correct it before saving -- never substituted
@@ -998,6 +1002,7 @@ async function handleSaveSettings(
     attachmentUuidPath: string;
     live: boolean;
     schemaUuid: string;
+    collectionUuid: string;
   },
   settings: Settings,
   /**

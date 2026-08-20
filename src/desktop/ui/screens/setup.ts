@@ -262,6 +262,7 @@ export interface SetupProps {
       attachmentUuidPath: string;
       live: boolean;
       schemaUuid: string;
+      collectionUuid: string;
     },
     settings: Settings,
     /**
@@ -1300,6 +1301,7 @@ export function instanceFrom(props: SetupProps): {
   attachmentUuidPath: string;
   live: boolean;
   schemaUuid: string;
+  collectionUuid: string;
 } {
   const chosen = props.collections?.find((c) => c.uuid === props.fields.collectionUuid);
   return {
@@ -1308,6 +1310,9 @@ export function instanceFrom(props: SetupProps): {
     attachmentUuidPath: props.fields.attachmentUuidPath.trim(),
     live: props.fields.live,
     schemaUuid: chosen?.schemaUuid ?? '',
+    // Stored beside the schema so the screen can show WHICH collection it read
+    // it from. Without it a saved setting looks exactly like a lost one.
+    collectionUuid: props.fields.collectionUuid,
   };
 }
 
