@@ -45,6 +45,10 @@ interface Harness {
     saveInstance: number;
     /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
     forgetOAuth: string[];
+    /** Every instance id `window.oeq.signIn` was called with, in order.
+     *  Setup edits `setupInstanceId`, which is NOT the action flow's
+     *  `instanceId` -- signing in to the wrong site would be silent. */
+    signIn: string[];
     /** Every instance id the collection list was asked for, in order. */
     listCollections: string[];
     /** Every endpoint `window.oeq.listModels` was asked about, in order. */
@@ -117,6 +121,15 @@ interface BootOptions {
   /** Whether a usable OAuth token is stored for the site. Only a code-mode
    *  site can lack one; password mode signs in on every call. */
   hasToken?: boolean;
+  /**
+   * A SECOND saved site, so Setup can be pointed somewhere other than the site
+   * the action flow is using. With one site those two ids are equal and a test
+   * cannot tell them apart -- a mutation that signed in to the wrong one passed
+   * every assertion until this existed.
+   */
+  secondSite?: InstanceChoice;
+  /** Make the sign-in reject, as a closed window or a timeout does. */
+  signInFails?: string;
   /** What the model endpoint reports it can run. */
   models?: string[];
   /** Make the ask fail, as an endpoint without a model list does. */
@@ -139,10 +152,13 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     signOut: [] as string[],
     forgetOAuth: [] as string[],
     listCollections: [] as string[],
+    signIn: [] as string[],
     listModels: [] as { baseUrl: string; apiKey: string }[],
     modelSaves: [] as Harness['calls']['modelSaves'],
   };
   let stored: InstanceChoice = { ...SITE, ...options.site };
+  /** Sites signed in to during this run. See the `signIn` fake below. */
+  const tokenHolders = new Set<string>();
   let releaseRun: () => void = () => {};
 
   const USER = {
@@ -155,16 +171,26 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
 
   const oeq = {
     onProgress: () => {},
-    listInstances: async () => (options.fresh === true ? [] : [stored]),
+    listInstances: async () =>
+      options.fresh === true ? [] : [stored, ...(options.secondSite ? [options.secondSite] : [])],
     credentialsDropped: async () => false,
     hasSettings: async () => true,
     currentUser: async () => USER,
-    signIn: async () => USER,
+    signIn: async (instanceId: string) => {
+      calls.signIn.push(instanceId);
+      if (options.signInFails !== undefined) throw new Error(options.signInFails);
+      // A SUCCESSFUL SIGN-IN LEAVES A TOKEN. exchangeCode writes token.enc, so
+      // hasToken starts answering true from here on. A fake that stayed false
+      // would have forced the screen to clear its own notice by assumption
+      // instead of re-asking -- which is the bug this whole plan is about.
+      tokenHolders.add(instanceId);
+      return USER;
+    },
     listCollections: async (instanceId: string) => {
       calls.listCollections.push(instanceId);
       return { collections: COLLECTIONS, withheld: false };
     },
-    hasToken: async () => options.hasToken ?? true,
+    hasToken: async (instanceId: string) => (options.hasToken ?? true) || tokenHolders.has(instanceId),
     fetchSchema: async () => {
       if (options.schemaUnreadable === true) throw new Error('schema unreadable');
       return { uuid: 'schema-1', name: 'Schema', paths: options.schemaPaths ?? ['MWDL/title'] };
@@ -1680,5 +1706,136 @@ describe('a site that cannot list collections yet', () => {
 
     expect(asked).toBeGreaterThan(0);
     expect(harness.app.innerHTML).not.toMatch(/sign in to this site/i);
+  });
+});
+
+/**
+ * ## Signing in from where the operator is standing
+ *
+ * Task 1 made Setup SAY that an OAuth site needs signing in. Saying it is only
+ * half the job: the operator is on Site settings, the sign-in button is on the
+ * screen before it, and being told to go back is worse than being able to act.
+ *
+ * THE SITE SETUP IS EDITING IS NOT NECESSARILY THE ONE THE APP IS USING.
+ * `state.instanceId` belongs to the action flow; Setup edits
+ * `state.setupInstanceId`, and the operator can point it at another site. A
+ * button that signed in to the wrong one would do so silently and look like it
+ * had worked, which is why the id is asserted rather than the call count.
+ */
+describe('signing in to a site from Setup', () => {
+  const OAUTH_SITE = {
+    site: { authMode: 'code' as const },
+    storedPassword: null,
+    storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+  };
+
+  const openSetup = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+  };
+
+  it('offers the button for an OAuth site with no token', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: false });
+    await openSetup();
+    expect(harness.app.has('#setup-sign-in')).toBe(true);
+  });
+
+  it('offers it for nothing else', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: true });
+    await openSetup();
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+
+    harness = await boot({ site: { authMode: 'password' }, hasToken: false });
+    await openSetup();
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+  });
+
+  it('signs in to the site Setup is editing', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: false });
+    await openSetup();
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.calls.signIn).toEqual(['library-example-test']);
+  });
+
+  /** The whole point: the list appears without leaving the screen. */
+  it('lists the collections once the sign-in returns', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: false });
+    await openSetup();
+    const before = harness.calls.listCollections.length;
+
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.calls.listCollections.length).toBeGreaterThan(before);
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+    expect(harness.app.has('#setup-form')).toBe(true);
+  });
+
+  /**
+   * A sign-in window that was closed, or timed out, is a documented failure
+   * (signin.ts). It must be reported on the screen the operator is standing on,
+   * and must not throw them out of Setup.
+   */
+  it('stays on Setup and says why when the sign-in fails', async () => {
+    harness = await boot({
+      ...OAUTH_SITE,
+      hasToken: false,
+      signInFails: 'Sign-in window was closed before completing.',
+    });
+    await openSetup();
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.app.has('#setup-form')).toBe(true);
+    expect(harness.app.innerHTML).toContain('closed before completing');
+  });
+});
+
+/**
+ * ## The site Setup is editing is not always the site the app is using
+ *
+ * `state.instanceId` belongs to the action flow; `state.setupInstanceId` is
+ * whatever Setup is pointed at, and the operator can change it with the "These
+ * credentials are for" selector.
+ *
+ * THIS EXISTS BECAUSE A MUTATION SURVIVED. Reading `state.instanceId` in the
+ * Setup sign-in handler passed every test in the block above, because the
+ * harness had a single site and the two ids were equal. The assertion claimed
+ * to guard against signing in to the wrong site and could not.
+ */
+describe('Setup signs in to the site it is pointed at', () => {
+  const OTHER: InstanceChoice = {
+    id: 'other-example-test',
+    label: 'Other',
+    baseUrl: 'https://other.example.test',
+    authMode: 'code',
+    attachmentUuidPath: '',
+    live: false,
+    schemaUuid: 'schema-2',
+  };
+
+  it('signs in to the site chosen on Setup, not the one the app is signed in to', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+      hasToken: false,
+      secondSite: OTHER,
+    });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    // Point Setup at the other site, which is NOT the action flow's.
+    harness.app.fire('#setup-instance', 'change', { target: { value: OTHER.id } });
+    await flush();
+
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.calls.signIn).toEqual([OTHER.id]);
   });
 });

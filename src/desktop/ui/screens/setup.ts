@@ -143,6 +143,10 @@ export interface SetupProps {
    * has not been signed in to yet, and the operator has done nothing wrong.
    */
   needsSignIn: boolean;
+  /** True while a sign-in started from this screen is in flight. */
+  signingIn: boolean;
+  /** Sign in to the site Setup is editing -- NOT the action flow's site. */
+  onSignIn(): void;
   modelList: { models: string[] } | { error: string } | null;
   onListModels(): void;
   onForgetOAuth(): void;
@@ -796,12 +800,18 @@ function collectionSection(props: SetupProps): string {
     // "The list of collections could not be read: No cached OAuth token...",
     // which names the wrong thing and offers nothing to do about it.
     if (props.needsSignIn) {
-      return `<p class="notice">
-        <strong>Sign in to this site first.</strong> This site signs in with OAuth, so the
-        list of collections is only available once you have signed in &mdash; go back to
-        Sign in, use the sign-in button, then return here to choose a collection.
-        (A site that signs in with a username and password needs no such step.)
-      </p>`;
+      // The button, rather than directions to another screen: being told to go
+      // back is worse than being able to act, and the operator is standing here.
+      return `<div class="notice">
+        <p><strong>Sign in to this site first.</strong> This site signs in with OAuth, so its
+        list of collections is only available once you have signed in. A site that signs in
+        with a username and password needs no such step.</p>
+        <div class="button-row">
+          <button id="setup-sign-in" type="button" ${props.signingIn ? 'disabled' : ''}>
+            ${props.signingIn ? 'Signing in&hellip;' : 'Sign in to this site'}
+          </button>
+        </div>
+      </div>`;
     }
     if (props.collectionsError !== null) {
       return `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`;
@@ -1481,6 +1491,9 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   field('#setup-label', 'label');
   field('#setup-username', 'username');
   field('#setup-password', 'password');
+  root.querySelector<HTMLButtonElement>('#setup-sign-in')?.addEventListener('click', () => {
+    props.onSignIn();
+  });
   root.querySelector<HTMLButtonElement>('#setup-forget-oauth')?.addEventListener('click', () => {
     props.onForgetOAuth();
   });
