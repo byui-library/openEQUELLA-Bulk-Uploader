@@ -43,6 +43,9 @@ interface Harness {
   calls: {
     clearSettings: number;
     confirm: number;
+    /** What `window.confirm` was last asked. A count cannot see a warning
+     *  that understates what it is warning about. */
+    confirmedWith: string | null;
     saveInstance: number;
     savedInstance: Record<string, unknown> | null;
     /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
@@ -155,6 +158,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
   const calls = {
     clearSettings: 0,
     confirm: 0,
+    confirmedWith: null as string | null,
     saveInstance: 0,
     savedInstance: null as Record<string, unknown> | null,
     signOut: [] as string[],
@@ -265,8 +269,9 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
   globals['document'] = dom.document;
   globals['window'] = {
     oeq,
-    confirm: () => {
+    confirm: (message?: string) => {
       calls.confirm += 1;
+      calls.confirmedWith = message ?? null;
       return true;
     },
   };
@@ -2137,5 +2142,92 @@ describe('the refusal when OAuth credentials are missing', () => {
     harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
     await openSetupAndSave();
     expect(harness.calls.saveInstance).toBe(0);
+  });
+});
+
+/**
+ * ## The most destructive control in the app must say what it destroys
+ *
+ * Row 14. `clearSettings` unlinks `settings.enc` outright and clears the token
+ * store: every site the operator added, their addresses and labels, every
+ * password, every OAuth client, every chosen collection and attachment path,
+ * and every model endpoint. Nothing survives it.
+ *
+ * The warning described one site's OAuth credential -- "the saved client ID and
+ * secret for this Windows user". An operator signed in with a username and
+ * password would read that as describing something they do not even have, and
+ * agree to it. A confirm that understates what it is confirming is worse than
+ * no confirm: it collects consent for something other than what happens.
+ *
+ * These assert the CLAIMS the warning must make, not its phrasing. Each names a
+ * distinct thing the operator loses and would not otherwise expect.
+ */
+describe('the warning before every saved site is wiped', () => {
+  const warning = async (): Promise<string> => {
+    harness.app.fire('#reset-settings-btn');
+    await flush();
+    return harness.calls.confirmedWith ?? '';
+  };
+
+  /** Every site, not the one on screen. */
+  it('says it clears every site rather than this one', async () => {
+    expect(await warning()).toMatch(/every|all/i);
+  });
+
+  /** A password-mode operator has no client secret to lose, and lost one anyway. */
+  it('says passwords go too', async () => {
+    expect(await warning()).toMatch(/password/i);
+  });
+
+  /**
+   * The site LIST goes, which is the surprise: the addresses were typed by the
+   * operator and are not a credential, so nothing about "credentials" warns
+   * that they will have to be entered again.
+   */
+  it('says the sites themselves have to be added again', async () => {
+    expect(await warning()).toMatch(/site/i);
+  });
+
+  /** And still confirms, and still clears. */
+  it('remains a confirm before a wipe', async () => {
+    harness.app.fire('#reset-settings-btn');
+    await flush();
+    expect(harness.calls.confirm).toBe(1);
+    expect(harness.calls.clearSettings).toBe(1);
+  });
+});
+
+/**
+ * ## Forgetting must leave the screen agreeing with the store
+ *
+ * Row 11. `secrets.ts#forgetOAuth` clears all three OAuth fields, the redirect
+ * URL included. The screen cleared two of them and left the redirect URL in its
+ * box, so the form showed a value the store no longer held -- and this is
+ * exactly the class of disagreement that produced the "Enter the client ID,
+ * client secret, and redirect URL" refusal on a fully configured site: the
+ * screen and the store holding different opinions about the same credential.
+ */
+describe('forgetting an OAuth credential', () => {
+  const forget = async (): Promise<void> => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c-1', redirectUri: 'https://oeq.example.test/', hasSecret: true },
+    });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-forget-oauth');
+    await flush();
+  };
+
+  it('empties the redirect URL box, as the store empties the stored one', async () => {
+    await forget();
+    expect(harness.app.innerHTML).not.toContain('https://oeq.example.test/');
+  });
+
+  it('asks the store to forget it', async () => {
+    await forget();
+    expect(harness.calls.forgetOAuth).toEqual([SITE.id]);
   });
 });
