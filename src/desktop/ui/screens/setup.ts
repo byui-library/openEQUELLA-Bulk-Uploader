@@ -130,13 +130,6 @@ export interface SetupProps {
    */
   storage: { path: string; appName: string; packaged: boolean } | null;
   /**
-   * What the model endpoint last said it could run, or the reason it could
-   * not be asked. Null before anyone has asked.
-   *
-   * ADVISORY. Nothing here gates a save: endpoints that serve completions
-   * without a model list are common, and the typed name stays usable.
-   */
-  /**
    * Whether this site must be signed in to before its collections can be read.
    *
    * A STATEMENT, NOT AN ERROR. It is the ordinary state of an OAuth site that
@@ -147,6 +140,13 @@ export interface SetupProps {
   signingIn: boolean;
   /** Sign in to the site Setup is editing -- NOT the action flow's site. */
   onSignIn(): void;
+  /**
+   * What the model endpoint last said it could run, or the reason it could
+   * not be asked. Null before anyone has asked.
+   *
+   * ADVISORY. Nothing here gates a save: endpoints that serve completions
+   * without a model list are common, and the typed name stays usable.
+   */
   modelList: { models: string[] } | { error: string } | null;
   onListModels(): void;
   onForgetOAuth(): void;
