@@ -123,6 +123,14 @@ export interface ModelSettings {
  */
 export type InstanceId = string;
 
+/** What Setup is allowed to know about a stored OAuth credential. Never the secret. */
+export interface StoredOAuth {
+  clientId: string;
+  redirectUri: string;
+  /** Whether a client secret is stored, so Setup can say so and offer to forget it. */
+  hasSecret: boolean;
+}
+
 /**
  * An openEQUELLA site the operator has added, as everything outside this
  * module sees it.
@@ -132,14 +140,6 @@ export type InstanceId = string;
  * production-or-not status and its site address are facts about the SITE, true
  * whether it is reached with a password or with an OAuth client.
  */
-/** What Setup is allowed to know about a stored OAuth credential. Never the secret. */
-export interface StoredOAuth {
-  clientId: string;
-  redirectUri: string;
-  /** Whether a client secret is stored, so Setup can say so and offer to forget it. */
-  hasSecret: boolean;
-}
-
 export interface Instance {
   id: InstanceId;
   /** What the operator calls it. Defaults to the address's host. */
@@ -176,17 +176,6 @@ export interface Instance {
    */
   live: boolean;
   /**
-   * The schema of the collection the operator picked on Setup, or '' if none
-   * has been picked.
-   *
-   * Stored because it is the ADDRESS OF THE CACHED SCHEMA: `SchemaCache`
-   * (core/schemaCache.ts) is keyed on (instance url, schema uuid), and
-   * extraction -- which never touches the network -- has no other way to find
-   * the schema it should validate its columns against. Derived from the chosen
-   * collection's own `schema.uuid` (discovery.ts#parseCollections), never
-   * typed by the operator.
-   */
-  /**
    * The collection this site was set up against, or '' for none.
    *
    * STORED BESIDE `schemaUuid` RATHER THAN DERIVED FROM IT. The schema is what
@@ -199,6 +188,17 @@ export interface Instance {
    * Choose, because it decides where real items land.
    */
   collectionUuid: string;
+  /**
+   * The schema of the collection the operator picked on Setup, or '' if none
+   * has been picked.
+   *
+   * Stored because it is the ADDRESS OF THE CACHED SCHEMA: `SchemaCache`
+   * (core/schemaCache.ts) is keyed on (instance url, schema uuid), and
+   * extraction -- which never touches the network -- has no other way to find
+   * the schema it should validate its columns against. Derived from the chosen
+   * collection's own `schema.uuid` (discovery.ts#parseCollections), never
+   * typed by the operator.
+   */
   schemaUuid: string;
 }
 
