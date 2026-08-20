@@ -103,6 +103,9 @@ interface AppState extends BatchState {
    * every call and needs nothing first.
    */
   setupNeedsSignIn: boolean;
+  /** True while a sign-in started from Setup is in flight. Separate from
+   *  `signingIn`, which belongs to the Sign-in screen. */
+  setupSigningIn: boolean;
   /** The last answer from asking the model endpoint what it offers. */
   modelList: { models: string[] } | { error: string } | null;
   // The model endpoint stored for `setupInstanceId`, or null when there is
@@ -230,6 +233,7 @@ function initialState(): AppState {
     setupStoredOAuth: null,
     storage: null,
     setupNeedsSignIn: false,
+    setupSigningIn: false,
     modelList: null,
     setupStoredModel: null,
     modelSectionOpen: false,
@@ -328,6 +332,8 @@ function render(): void {
         storedOAuth: state.setupStoredOAuth,
         storage: state.storage,
         needsSignIn: state.setupNeedsSignIn,
+        signingIn: state.setupSigningIn,
+        onSignIn: handleSetupSignIn,
         modelList: state.modelList,
         onListModels: handleListModels,
         storedModel: state.setupStoredModel,
@@ -1290,6 +1296,40 @@ function handleSetupBack(): void {
   state.setupError = null;
   state.screen = back;
   render();
+}
+
+/**
+ * Sign in to the site SETUP is editing.
+ *
+ * NOT `handleSignIn`, and the difference is the whole reason this exists:
+ * that one signs in to `state.instanceId`, the site the action flow is using.
+ * Setup edits `state.setupInstanceId` and the operator can point it at
+ * another site entirely. Signing in to the wrong one would be silent and
+ * would look like it had worked.
+ *
+ * On success the collection list is refreshed, which is the point: the list
+ * appears without the operator leaving the screen. On failure -- a window
+ * closed before completing, or a timeout, both documented in signin.ts -- the
+ * reason is shown HERE and they stay where they are.
+ */
+async function handleSetupSignIn(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') return;
+  state.setupSigningIn = true;
+  state.setupError = null;
+  render();
+  try {
+    await window.oeq.signIn(instanceId);
+  } catch (err) {
+    state.setupSigningIn = false;
+    state.setupError = errorMessage(err);
+    render();
+    return;
+  }
+  state.setupSigningIn = false;
+  // Re-asks `hasToken` on its way through, so the notice clears itself rather
+  // than being cleared here from an assumption about what the sign-in did.
+  await refreshSetupCollections();
 }
 
 async function handleSignIn(): Promise<void> {
