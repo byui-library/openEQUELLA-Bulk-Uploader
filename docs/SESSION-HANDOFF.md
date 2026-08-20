@@ -1,22 +1,99 @@
-# Session handoff — updated 2026-08-18 (end of session)
+# Session handoff — updated 2026-08-20 (end of session)
 
 Read this first.
 
 ## Where things stand
 
-**v1.2.0 is released, and the repository is now PRIVATE.**
+**v1.2.1 is released. `main` carries everything and NO branch is open.**
 
-- **Released:** tag `v1.2.0` on `main`, built by CI, both Windows installers
-  attached to the GitHub Release. The first release since 13 August; it carries
-  58 commits — the whole language-model feature, the security hardening, the
-  privacy scrub, and a day of defects found by using the app.
-- **Private:** the operator made it private after the release completed.
-  Anonymous access returns 404. There were **0 forks, 0 stars, 0 watchers**, so
-  nothing was split off and left public. A public-facing version is a later
-  decision, to be discussed with Edalex.
-- **The operator tested the packaged build and reported everything working.**
+- **Released:** tag `v1.2.1` on `main`, built by CI, both Windows installers
+  attached to the GitHub Release. It carries the whole sign-in state plan —
+  five tasks, rows 1 to 14 of the credential state table — plus the dependency
+  upgrade that was held back from v1.2.0.
+- **Private, still.** Anonymous access returns 404. A public-facing version
+  remains a later decision, to be discussed with Edalex.
+- **2275 tests across 106 files.** Typecheck and `build:desktop` clean.
 
-### The one number that matters for the public-facing decision
+### What the sign-in plan actually found
+
+All five tasks are done and the operator confirmed each on screen. The value was
+not in the tasks — it was in what testing the STATES turned up, none of which
+the 2221-test suite could see:
+
+- **A refused token had no way out.** `hasToken` reads the STORE, so a token the
+  server rejects is indistinguishable from a good one: no warning, no sign-in
+  button, and a collection list that keeps failing. That is the state the
+  operator was stranded in for two sessions. The signal is now
+  `currentUser(instanceId)` returning null — typed, not the prose of the error,
+  because a 403 here carries an empty body.
+- **A server fault is deliberately NOT that signal.** A 500 with the session
+  intact offers nothing: a browser flow that cannot help is worse than an error.
+- **The fix for the first point broke password sites**, and only hand-reasoning
+  about row 10 caught it. The offer is the OAuth browser flow and the notice
+  beside it says so, so a password site whose credentials were refused would
+  have been told something false about how it signs in.
+- **Switching a site to a password silently destroyed its client secret.** The
+  store says in two places that `forgetOAuth` is the ONLY way to remove one, and
+  a mode switch broke that rule at the moment the operator was least likely to
+  notice. A password entry now carries the OAuth record DORMANT — kept, never
+  read to sign in — and `forgetOAuth` clears it whichever mode the site is in.
+- **The wipe understated itself.** `clearSettings` unlinks `settings.enc`
+  outright, and the confirm described *"the saved client ID and secret"* — one
+  site, one credential, and one a password-mode operator does not even have.
+  **A confirm that understates what it confirms is worse than no confirm: it
+  collects consent for something other than what happens.** The button is
+  renamed **"Clear all credentials…"** at the operator's decision.
+
+### Two changes to behaviour, both the operator's call
+
+- **Choose starts on the collection the site was set up against.** This was
+  deliberately not remembered, because the collection decides where real items
+  land and the target collection has no moderation workflow. The operator
+  weighed that and asked for it. Two conditions keep it honest: only if the
+  server listed the collection, and only when nothing is chosen yet. It is
+  pre-selected, **never written back** — `Instance.collectionUuid` is what Setup
+  read the schema from and what filled the attachment field in.
+- **The OAuth refusal names the other way in.** *"Enter the client ID, client
+  secret, and redirect URL"* was true and useless to somebody who has none. It
+  now points at username and password AND says what OAuth is for, because "use
+  the other one instead" is wrong at exactly the institutions that cannot.
+
+### RESUME HERE — nothing is in flight
+
+There is no half-finished task. The plan
+([sign-in states](superpowers/plans/2026-08-18-sign-in-states.md)) is complete
+and records what each task found.
+
+**Open, and deliberately not started:**
+
+- **A malformed client ID is not warned about.** The operator's own was a
+  permutation of a valid uuid with one group moved, and the only symptom was
+  openEQUELLA's `client_id (null)`. Setup could check the 8-4-4-4-12 shape and
+  warn — overridably, never a refusal, since nothing guarantees an institution's
+  client id is a uuid. Raised with the operator, not yet decided.
+- **A collection LIST entry with no `schema`** yields `schema: ''` from
+  `parseCollections`, and everything downstream — the attachment-field autofill,
+  the schema-derived title path — has nothing to read. Measured on
+  `content-test.byui.edu` (2026-08-17), where all 29 entries lack it with and
+  without `full=true`, while production carries it. **Not handled in code.**
+
+## No branches are open
+
+`chore/dependency-advisories` and `feature/sign-in-states` were both merged on
+2026-08-20 and each was checked for stranded commits first (`git log
+main..<branch>` empty). This repository has lost work twice by trusting
+`git branch --merged`, which reports ancestry rather than whether the work
+arrived.
+
+**The uuid advisory is NOT fixable and that is settled**: it arrives through
+`exceljs`, `exceljs@4.4.0` is already the latest release, and
+`npm audit fix --force` "resolves" it by installing `exceljs@3.4.0` — a
+downgrade in the library that writes every spreadsheet this tool produces. The
+advisory needs a `buf` argument; exceljs calls `uuidv4()` with none, so the path
+is not reachable. `SECURITY.md` records this so nobody force-upgrades on a red
+audit line.
+
+## What the fifteen public days cost, unchanged
 
 Traffic for the fifteen days the repository was public:
 
@@ -26,10 +103,9 @@ views  :  76 total,  1 unique
 ```
 
 **56 unique cloners against a single unique human viewer is the signature of
-automated clients** — mirroring services, scanners, crawlers. Who they were is
-not knowable; GitHub does not say. The practical reading is that the repository
-was copied off-platform while it was public, so **going private stops future
-access without retracting what was already taken.** The operator's real name and
+automated clients** — mirroring services, scanners, crawlers. The repository was
+copied off-platform while it was public, so **going private stops future access
+without retracting what was already taken.** The operator's real name and
 institutional email are in that published history.
 
 **Consequence for the public-facing version:** "we scrubbed it before
@@ -37,41 +113,7 @@ publishing" will be true of the current tree and NOT of the history. The honest
 routes are a fresh repository with clean history, or rewriting history before
 republishing. Do not let a future reader assume the scrub covered both.
 
-## RESUME HERE — Task 2 of the sign-in plan
-
-[The sign-in plan](superpowers/plans/2026-08-18-sign-in-states.md) has fifteen
-credential states, five tasks, and a marked STOP after each where the operator
-tests before the next begins.
-
-**Task 1 is done and confirmed on screen by the operator.** Next is **Task 2**:
-a **Sign in to this site** button on Setup, so an OAuth site can be signed in to
-from where the operator is standing rather than a screen away. Then Tasks 3
-(an unusable token says which kind of unusable), 4 (switching a site between
-password and OAuth), and 5 (the three Forgets).
-
-## The one branch still open
-
-`chore/dependency-advisories` — **one commit, not in `main`**: fast-xml-parser
-4.5.7 → 5.11.0. Verified when it was written (full suite green, and the schema
-export still parsed to exactly 158 paths, 98 under `BYUI_extended`, with the
-`@attr` case `item/oai/id` present). It was deliberately not merged before the
-release, so `main` still carries 4.5.7.
-
-**The uuid advisory beside it is NOT fixable and that is settled**: it arrives
-through `exceljs`, `exceljs@4.4.0` is already the latest release, and
-`npm audit fix --force` "resolves" it by installing `exceljs@3.4.0` — a
-downgrade in the library that writes every spreadsheet this tool produces. The
-advisory needs a `buf` argument; exceljs calls `uuidv4()` with none, so the
-path is not reachable. `SECURITY.md` records this so nobody force-upgrades on a
-red audit line.
-
-Every other branch has been deleted: `feature/llm-provider`,
-`fix/scrub-operator-identity` and `fix/scrub-real-dates` were each confirmed to
-have **zero commits not in `main`** before removal — this repository has lost
-work twice by trusting `git branch --merged`, which reports ancestry rather than
-whether the work arrived.
-
-## Two things the next session must not assume
+## Three things the next session must not assume
 
 - **The dev build and the installed app do NOT share a settings store.**
   Electron derives `userData` from the app name, and `electron dist-desktop/...`
@@ -87,6 +129,13 @@ whether the work arrived.
   `X-Authorization: access_token=<invalid|empty>` returns 403 with zero bytes.
   That measurement is what found the auth-mode defect, and it is the fastest
   way to tell "not signed in" from "signed in and refused".
+- **`ELECTRON_RUN_AS_NODE=1` may be set in an agent's shell**, which makes
+  `electron.exe` run as plain Node: no window, and `import { app } from
+  'electron'` fails with an opaque `Cannot read properties of undefined (reading
+  'exports')` from the ESM loader. It looks exactly like a broken install or a
+  broken build. Unset it before launching. Diagnosed 2026-08-20 after chasing
+  the electron install instead.
+
 
 ## OAuth on content-test WORKS — superseded 2026-08-19
 
@@ -115,7 +164,7 @@ succeeded anyway, so this client is registered without one. Row 15 of the
 state table remains unexercised — it is a real hazard recorded from a live
 probe elsewhere, and it is not this client’s configuration.
 
-## Today, in detail (kept as the record)
+## Historical: 2026-08-19, in detail (kept as the record)
 
 ### What was fixed today, all confirmed by the operator in the app
 
@@ -272,9 +321,10 @@ The operator's sign-in completed, which means **the OAuth `state` check added
 this session works against the live server** — openEQUELLA echoes `state` back
 and the new code accepted it. That path had never been exercised outside tests.
 
-## Branches open at the end of this session
+## Historical: branches open on 2026-08-18 — ALL SINCE MERGED OR DELETED
 
-Three, none merged, all pushed:
+Kept as the record of that session. As of 2026-08-20 no branch is open; see
+"No branches are open" above. At the time there were three, none merged:
 
 | Branch | Head | What it holds |
 | --- | --- | --- |
@@ -301,7 +351,7 @@ the scrub last means re-doing it.
   unaffected (staging precedes expansion); restored with `npm ci`. **Write
   commit messages to a file and use `git commit -F`.**
 
-## The language-model work — where it stood before tonight
+## Historical: the language-model work, as it stood on 2026-08-18
 
 **Branch `feature/llm-provider`, NOT merged.** `npm test` → **2156 across 104
 files**, typecheck, `build` and `build:desktop` all clean, working tree clean.
@@ -573,7 +623,7 @@ give the description an `{ "ai": true }` source alone. **That scratch profile is
 for evaluation and must never ship**, and the eligibility rule must not be
 loosened to make an evaluation easier.
 
-## START HERE
+## Historical: "START HERE" as it read on 2026-08-14
 
 1. `npm install && npm test` — expect **2149 passing across 104 files**.
    `npm run typecheck`, `npm run build` and `npm run build:desktop` are all

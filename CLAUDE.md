@@ -40,6 +40,41 @@ instance list, nothing BYU-Idaho-specific read at runtime, and `check` grown
 into a compatibility probe. Typecheck clean, `build:desktop` clean. `main`
 carries everything and no PR is open.
 
+**The sign-in state plan is COMPLETE — rows 1 to 14, five tasks, merged as
+PR #15 and released in v1.2.1.** Its value was not the tasks; it was what
+testing the STATES turned up, none of which 2221 tests could see:
+
+- **A refused token had no way out.** `hasToken` reads the STORE, so a token the
+  server rejects is indistinguishable from a good one — no warning, no sign-in
+  button, and a collection list that keeps failing. `currentUser(instanceId)`
+  returning null is the signal, TYPED rather than matched in the prose of the
+  error, because a 403 here carries an empty body. **A server fault is
+  deliberately not that signal**: a browser flow that cannot help is worse than
+  an error.
+- **That fix then broke password sites**, and only reasoning about the next row
+  of the table caught it — the offer IS the OAuth browser flow and the notice
+  beside it says so, so a password site would have been told something false
+  about how it signs in.
+- **Switching a site to a password silently destroyed its client secret**, in
+  contradiction of the store's own rule, written in two places, that
+  `forgetOAuth` is the ONLY thing that removes one. A password entry now carries
+  the OAuth record **dormant** — kept, never read to sign in — and `forgetOAuth`
+  clears it whichever mode the site is in today.
+- **The wipe understated itself.** `clearSettings` unlinks `settings.enc`
+  outright; the confirm described *"the saved client ID and secret"* — one site,
+  one credential, and one a password-mode operator does not even have. **A
+  confirm that understates what it confirms is worse than no confirm: it
+  collects consent for something other than what happens.** The control is now
+  labelled **"Clear all credentials…"**.
+
+**Choose starts on the collection the site was set up against** (operator's
+decision, 2026-08-20). This was deliberately NOT remembered — the collection
+decides where real items land and the target collection has no moderation
+workflow — so two conditions keep it honest: only if the server listed it, and
+only when nothing is chosen yet. It is pre-selected and **never written back**,
+because `Instance.collectionUuid` is what Setup read the schema from and what
+filled the attachment field in.
+
 **Every screen but Progress now has a way off it.** Choose and Results both
 carry "Site settings for {site}…" and "Sign out of {site}…", and Setup has a
 Back that saves nothing, offered only when it was opened from somewhere.
@@ -53,7 +88,7 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **2221 tests across 106 files** on `main`, which now carries everything.
+exists to remove. **2275 tests across 106 files** on `main`, which now carries everything.
 
 That was spec 1 of two. **Spec 2 — publishing the repository — happened, and
 has since been REVERSED.** It was public from 2026-08-03 to 2026-08-18 and is
@@ -85,7 +120,9 @@ history**; removing it from there is a separate decision nobody has taken.
 Do not re-introduce a real name to describe the incident — this paragraph
 used to quote the surname it was warning about.
 
-**v1.1.1 is released and tagged**; `package.json` carries it. Two things staff
+**v1.2.1 is released and tagged**; `package.json` carries it. (v1.1.1 is the
+release the two paragraphs below describe, and both still apply to anyone
+upgrading from it.) Two things staff
 must be told about that release: **they will
 re-enter their credentials once** (deliberate — the store version changed and
 Setup explains it), and **they must choose their collection on Setup**, which is
