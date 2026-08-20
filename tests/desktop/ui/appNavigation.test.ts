@@ -2254,3 +2254,89 @@ describe('the label on the destructive route', () => {
     expect(harness.app.innerHTML).not.toMatch(/Change credentials/i);
   });
 });
+
+/**
+ * ## Choose starts on the collection the site was set up against
+ *
+ * DECIDED BY THE OPERATOR, 2026-08-20. The collection was deliberately NOT
+ * remembered here: it decides where real items land, and this collection has no
+ * moderation workflow, so a wrong one publishes live with no queue to catch it.
+ * Picking it every time was the safeguard.
+ *
+ * What that cost in practice is a site set up against one collection, used for
+ * one collection, and a dropdown that started empty on every batch. The
+ * operator has weighed it and asked for the remembered value.
+ *
+ * TWO THINGS KEEP THE SAFEGUARD MEANINGFUL. The pick is still visible on Choose
+ * and still named on Confirm before anything uploads -- a default is not a
+ * decision taken away, it is one already made and shown. And it is only ever
+ * PRE-SELECTED, never written back: `Instance.collectionUuid` is what Setup read
+ * the schema from and what filled the attachment field in, so a batch sent
+ * elsewhere must not silently redefine it.
+ */
+describe('the collection Choose starts on', () => {
+  /** Choose, WITHOUT picking a collection -- the pick is what is under test. */
+  const landOnChoose = async (): Promise<void> => {
+    harness.app.fire('#continue-btn');
+    await flush();
+  };
+
+  it('pre-selects the one the site was set up against', async () => {
+    harness = await boot({ site: { collectionUuid: 'coll-2' } });
+    await landOnChoose();
+
+    expect(harness.app.innerHTML).toContain('value="coll-2" selected');
+  });
+
+  it('starts on nothing when the site was set up against nothing', async () => {
+    harness = await boot({ site: { collectionUuid: '' } });
+    await landOnChoose();
+
+    expect(harness.app.innerHTML).not.toContain(' selected');
+  });
+
+  /**
+   * A remembered collection the account can no longer contribute to must not be
+   * pre-selected: the operator would be shown a choice the server will refuse,
+   * and "it was already filled in" is the worst possible reason to believe a
+   * destination is right.
+   */
+  it('ignores a remembered collection the server did not list', async () => {
+    harness = await boot({ site: { collectionUuid: 'coll-gone' } });
+    await landOnChoose();
+    harness.app.fire('#choose-sheet');
+    await flush();
+    harness.app.fire('#choose-folder');
+    await flush();
+
+    // The hazard is not the markup -- the dropdown renders only what the server
+    // listed, so a stale uuid never appears there either way. It is that the app
+    // would BELIEVE a collection was chosen while showing none selected, and
+    // with the spreadsheet and folder picked, Continue would be live to a
+    // destination the server will refuse.
+    expect(harness.app.innerHTML).toMatch(/choose-continue-btn[^>]*disabled/);
+  });
+
+  /**
+   * And a pick already made outranks the remembered one.
+   *
+   * SAVING Setup is the route that matters: it re-reads the collection list on
+   * the way back (app.ts), because the address or the account may have changed
+   * under it. Back is not -- it saves nothing and reloads nothing. Overwriting
+   * the selection on that return would silently move a batch the operator had
+   * already aimed.
+   */
+  it('does not overwrite a collection already chosen', async () => {
+    harness = await boot({ site: { collectionUuid: 'coll-2' } });
+    await landOnChoose();
+    harness.app.fire('#collection-select', 'change', { target: { value: 'coll-1' } });
+    await flush();
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(harness.app.innerHTML).toContain('value="coll-1" selected');
+    expect(harness.app.innerHTML).not.toContain('value="coll-2" selected');
+  });
+});
