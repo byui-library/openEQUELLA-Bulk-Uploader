@@ -842,11 +842,17 @@ function collectionSection(props: SetupProps): string {
       ),
     ].join('');
     return `
-      <label for="setup-collection">Collection you contribute to</label>
+      <label for="setup-collection">Collection to read the schema from</label>
       <select id="setup-collection">${options}</select>
       <p class="hint">
-        Used to read that collection’s schema, so the field below can be
-        checked for you. You still pick a collection for each batch later.
+        <strong>This is not where your files go.</strong> It names a collection whose
+        schema describes your spreadsheet columns, so the field below can be checked
+        and your columns validated later without signing in. You choose where each
+        batch is uploaded on the next screen.
+      </p>
+      <p class="hint">
+        Collections that share a schema only need setting up once — pick any one of
+        them here, and upload to any of them later.
       </p>`;
   })();
 

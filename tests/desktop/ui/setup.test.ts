@@ -131,7 +131,7 @@ describe('the Setup screen', () => {
    * operator having to find it.
    */
   it('offers the username and password fields by default', () => {
-    const html = setupMarkup(props());
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
     expect(html).toContain('id="setup-username"');
     expect(html).toContain('id="setup-password"');
     expect(disclosure(html)).not.toContain('id="setup-username"');
@@ -395,7 +395,7 @@ describe('the attachment-uuid path', () => {
    * holds the attachment ID") concluded the attachment itself depended on it.
    */
   it('says what the field is, and that the file is attached either way', () => {
-    const html = setupMarkup(props());
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
     const label = /<label for="setup-attachment-path">([\s\S]*?)<\/label>/.exec(html)?.[1];
     expect(label).toBeDefined();
     const text = (label ?? '').replace(/\s+/g, ' ').trim();
@@ -1254,8 +1254,44 @@ describe('modelEntryProblem', () => {
 
   /** The names it uses are the names the screen renders, not a second copy. */
   it('uses labels the screen actually shows', () => {
-    const html = setupMarkup(props());
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
     expect(html).toContain(MODEL_ADDRESS_LABEL);
     expect(html).toContain(MODEL_NAME_LABEL);
+  });
+});
+
+/**
+ * ## The Setup collection is not the upload target, and must not claim to be
+ *
+ * REPORTED BY THE OPERATOR: "I'm not totally clear on how the collections drop
+ * down on the settings page would be different than the selected collection on
+ * the choose what to upload screen."
+ *
+ * The screen contradicted itself. The label read "Collection you contribute
+ * to" -- a plain statement that this is where files go -- while the hint under
+ * it said the opposite. A label beats a hint, because that is what people read.
+ *
+ * The two are genuinely different: this one resolves to a schemaUuid and is
+ * used to check the attachment field and validate columns offline; the one on
+ * Choose is passed to buildConfig and decides where items are actually created.
+ * They come apart when collections share a schema -- BYU-Idaho has 29
+ * collections across 2 -- and look redundant when they do not.
+ */
+describe('the collection field on Setup', () => {
+  it('does not describe itself as the collection files are uploaded to', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
+    expect(html).not.toMatch(/Collection you contribute to/i);
+  });
+
+  it('says what it is actually for', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
+    expect(html).toMatch(/schema/i);
+  });
+
+  /** The sentence that answers the operator's question: they are separate, and
+   *  one is about where files go. */
+  it('says plainly that it is not where files go', () => {
+    const html = setupMarkup(props({ collections: COLLECTIONS }));
+    expect(html).toMatch(/not where your files (go|are)/i);
   });
 });
