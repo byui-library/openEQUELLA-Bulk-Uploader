@@ -27,7 +27,7 @@ export interface ResultsProps {
   onAnotherBatch(): void;
   /**
    * Setup for this site, clearing nothing -- app.ts's `handleSiteSettings`,
-   * never the destructive "Change credentials…" route.
+   * never the destructive "Clear all credentials…" route.
    */
   onSiteSettings(): void;
   /**

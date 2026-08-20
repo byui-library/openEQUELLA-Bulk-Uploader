@@ -220,7 +220,7 @@ export interface SetupProps {
   /**
    * The screen Setup was opened from, or null when there is nowhere to go back
    * to -- which is the case on first run, where Setup IS the launch screen, and
-   * after "Change credentials…", which wipes every saved site and leaves a
+   * after "Clear all credentials…", which wipes every saved site and leaves a
    * Sign-in screen listing none.
    *
    * A Back offered in either of those states would do nothing or invent a
@@ -239,7 +239,7 @@ export interface SetupProps {
    *
    * MUST CLEAR NOTHING. Not the store, not the form, not the stored password.
    * The destructive route stays where it is, on Sign-in, labelled
-   * "Change credentials…" and behind a confirm.
+   * "Clear all credentials…" and behind a confirm.
    */
   onBack(): void;
   onInstanceChange(id: string): void;

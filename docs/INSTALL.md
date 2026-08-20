@@ -166,7 +166,7 @@ screen where you choose a collection or the one that reports a finished batch.
 Saving from there puts you straight back where you were, with your collection,
 spreadsheet and folder still chosen — and if you only came to look, the
 **Back to …** button leaves without saving anything. None of those routes
-touches your saved password. (**Change credentials…**, beside the first of
+touches your saved password. (**Clear all credentials…**, beside the first of
 them, is the one that does: it clears every site you have added.)
 
 **Pointed at the wrong site?** The bar across the top names the site you are
