@@ -1839,3 +1839,47 @@ describe('Setup signs in to the site it is pointed at', () => {
     expect(harness.calls.signIn).toEqual([OTHER.id]);
   });
 });
+
+/**
+ * ## Saving an OAuth site whose secret is already stored
+ *
+ * REPORTED BY THE OPERATOR: client ID filled, secret shown as stored, redirect
+ * URL filled, collections listed — and "Enter the client ID, client secret, and
+ * redirect URL." refusing the save.
+ *
+ * Introduced by the stored-secret card itself. The secret is never rendered
+ * back into a field, so `settingsFrom` reports it as empty, and the OAuth
+ * branch read an empty secret as "not entered". The PASSWORD branch has carried
+ * the exception for this all along -- an empty password is allowed when one is
+ * stored -- and the OAuth branch was written without it.
+ *
+ * The store already does the right thing: a blank secret on save means keep the
+ * one that is there (secrets.ts#saveInstance). Only the screen disagreed.
+ */
+describe('saving an OAuth site that already has a secret', () => {
+  const OAUTH = { clientId: 'c', redirectUri: 'https://x/', hasSecret: true };
+
+  const openSetupAndSave = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+  };
+
+  it('saves without asking for a secret it is deliberately not showing', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    await openSetupAndSave();
+
+    expect(harness.app.innerHTML).not.toMatch(/Enter the client ID/i);
+    expect(harness.calls.saveInstance).toBeGreaterThan(0);
+  });
+
+  /** Nothing stored means it really has not been entered, and the refusal stands. */
+  it('still refuses when no secret is stored and none was typed', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    await openSetupAndSave();
+
+    expect(harness.app.innerHTML).toMatch(/Enter the client ID/i);
+  });
+});

@@ -1025,7 +1025,22 @@ async function handleSaveSettings(
       render();
       return;
     }
-  } else if (settings.clientId === '' || settings.clientSecret === '' || settings.redirectUri === '') {
+    // A BLANK CLIENT SECRET IS ALLOWED WHEN ONE IS STORED, exactly as a blank
+    // password is above. Setup deliberately never renders a stored secret back
+    // into a field -- it shows a "stored" card and a Forget button -- so the
+    // form an operator submits after changing their attachment path or picking
+    // a collection carries an empty one. Reading that as "not entered" refused
+    // to save a site that was completely configured, which is what the operator
+    // hit: client id present, secret stored, redirect URL present, collections
+    // listed, and a red line asking for all three.
+    //
+    // secrets.ts#saveInstance already keeps the stored secret on a blank one.
+    // This was the screen disagreeing with the store about the same rule.
+  } else if (
+    settings.clientId === '' ||
+    settings.redirectUri === '' ||
+    (settings.clientSecret === '' && state.setupStoredOAuth?.hasSecret !== true)
+  ) {
     state.setupError = 'Enter the client ID, client secret, and redirect URL.';
     render();
     return;
