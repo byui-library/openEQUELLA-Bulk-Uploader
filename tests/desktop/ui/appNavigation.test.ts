@@ -2071,3 +2071,71 @@ describe('a password site whose session is refused', () => {
     expect(harness.app.innerHTML).toContain('401');
   });
 });
+
+/**
+ * ## A refusal that names only one way out is a dead end
+ *
+ * REPORTED BY THE OPERATOR, 2026-08-20: open Advanced, leave the client ID and
+ * secret empty, save, and the screen asks for three values. True, and no help
+ * to somebody who does not have them and never needed them -- the operator who
+ * opened Advanced to look, or who read OAuth as the more thorough choice.
+ *
+ * Username and password is the DEFAULT for the reason this refusal should say:
+ * it is what an institution can use on the day it installs this tool, with
+ * nothing to request from an administrator. OAuth exists for the sites where
+ * sign-in goes through single sign-on and a client ID is the only way in.
+ *
+ * So the message names the other control as well -- and says what OAuth is FOR,
+ * because "use the other one instead" is wrong at exactly the institutions that
+ * cannot.
+ */
+describe('the refusal when OAuth credentials are missing', () => {
+  const openSetupAndSave = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+  };
+
+  /**
+   * THE ERROR LINE, NOT THE WHOLE SCREEN. Every assertion below passed against
+   * `innerHTML` before a word of the message changed: "username and password"
+   * labels the radio a few lines up, and "single sign-on" appears in the
+   * Advanced section's own explanation. A test that cannot fail is worse than
+   * no test, and this project has been caught by that exact shape before.
+   */
+  const refusal = async (): Promise<string> => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    await openSetupAndSave();
+    const errors = harness.app.innerHTML.match(/<p class="error"[\s\S]*?<\/p>/g) ?? [];
+    return errors.join(' ');
+  };
+
+  it('still names the three values it is asking for', async () => {
+    const text = await refusal();
+    expect(text).toMatch(/client ID/i);
+    expect(text).toMatch(/client secret/i);
+    expect(text).toMatch(/redirect URL/i);
+  });
+
+  it('names the other way in as well', async () => {
+    expect(await refusal()).toMatch(/username and password/i);
+  });
+
+  /**
+   * And does not tell an SSO institution to do something it cannot. The offer
+   * carries its condition, or it is advice that fails precisely where OAuth was
+   * the right choice all along.
+   */
+  it('says what OAuth is for, rather than presenting the other as simply better', async () => {
+    expect(await refusal()).toMatch(/single sign-on/i);
+  });
+
+  /** The save is still refused. Nothing here relaxes the requirement. */
+  it('refuses the save', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    await openSetupAndSave();
+    expect(harness.calls.saveInstance).toBe(0);
+  });
+});

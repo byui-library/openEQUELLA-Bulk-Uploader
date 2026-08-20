@@ -1077,7 +1077,19 @@ async function handleSaveSettings(
     settings.redirectUri === '' ||
     (settings.clientSecret === '' && state.setupStoredOAuth?.hasSecret !== true)
   ) {
-    state.setupError = 'Enter the client ID, client secret, and redirect URL.';
+    // NAMES THE OTHER WAY IN, not only the three empty boxes. Asking for
+    // values the operator may not have and never needed is a dead end: they
+    // may have opened Advanced to look, or read OAuth as the more thorough
+    // choice. Username and password is the default precisely because it needs
+    // nothing from an administrator.
+    //
+    // AND SAYS WHAT OAUTH IS FOR. "Use the other one instead" would be wrong
+    // at exactly the institutions that cannot -- BYU-Idaho among them, where
+    // sign-in goes through SSO and a client ID is the only way in. The offer
+    // has to carry its condition or it is advice that fails where OAuth was
+    // the right choice all along.
+    state.setupError =
+      'Enter the client ID, client secret, and redirect URL. If you do not have them, choose "Username and password" instead -- OAuth is only needed where your institution signs in through single sign-on.';
     render();
     return;
   }
