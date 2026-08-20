@@ -150,7 +150,20 @@ Tell me which happened, and paste the message if it failed.
 
 ---
 
-## Task 3: An unusable token says which kind of unusable
+## Task 3: An unusable token says which kind of unusable, and a refused one offers a way out
+
+**Widened 2026-08-19 by the case that worked.** `hasToken` reads the STORE, so
+a token that exists and is REFUSED by the server is indistinguishable from a
+good one. That state gets no sign-in button (Task 2 hides it when a token
+exists) AND a failing collection list — the worst pairing available, and
+unrecoverable without leaving the screen. It is what the operator hit for two
+sessions. So this task must also:
+
+- [ ] Offer the **Sign in to this site** button when the collection list fails
+      with an authentication error, not only when no token is stored. A token
+      the server refuses is a reason to sign in again, and the screen should
+      say so rather than leaving the operator with an error and no control.
+
 
 **Files:** `src/core/authCode.ts` (messages only), `tests/authCode.test.ts`
 
