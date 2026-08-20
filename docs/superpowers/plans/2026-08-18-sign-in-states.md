@@ -159,10 +159,29 @@ exists) AND a failing collection list — the worst pairing available, and
 unrecoverable without leaving the screen. It is what the operator hit for two
 sessions. So this task must also:
 
-- [ ] Offer the **Sign in to this site** button when the collection list fails
+- [x] Offer the **Sign in to this site** button when the collection list fails
       with an authentication error, not only when no token is stored. A token
       the server refuses is a reason to sign in again, and the screen should
       say so rather than leaving the operator with an error and no control.
+
+**Done 2026-08-20.** The signal is `currentUser(instanceId)` returning `null`,
+which is what a refused or guest session answers -- TYPED, not the prose of the
+error, because a 403 from this server carries an empty body and there is no
+prose to match. `refreshSetupCollections` asks only after a list has already
+failed, so the ordinary path costs nothing.
+
+**A server fault is deliberately NOT an offer.** A 500 with the session intact
+leaves the button hidden: sending the operator through a browser flow that
+cannot help is worse than leaving them with the error. That discrimination is
+the test that matters, and a mutation making every failure offer sign-in is
+caught by it.
+
+The error is rendered BESIDE the offer rather than replaced by it. Showing only
+the button would drop the reason, and the reason is what tells the two
+recoveries apart.
+
+**Files:** `src/desktop/ui/app.ts`, `src/desktop/ui/screens/setup.ts`,
+`tests/desktop/ui/appNavigation.test.ts`
 
 
 **Files:** `src/core/authCode.ts` (messages only), `tests/authCode.test.ts`
@@ -172,9 +191,15 @@ and the desktop now substitutes a front-end-appropriate instruction. What it
 does not do is make the DIFFERENCE actionable: expired means "sign in again",
 cross-instance means "this token belongs to another site".
 
-- [ ] **Step 1:** Tests pinning that all three reasons survive into the message
+- [x] **Step 1:** Tests pinning that all three reasons survive into the message
       the desktop shows, and that they differ from one another.
-- [ ] **Step 2:** Watch them fail; implement; re-run; commit.
+- [x] **Step 2:** Watch them fail; implement; re-run; commit.
+
+**Already correct, and now pinned.** All three reasons passed on first run --
+`getToken` builds a distinct sentence for each and the substitution rewrites
+only the hint. So this half changed no behaviour, which is the honest thing to
+record rather than inventing a fix for it. The guard is real: flattening
+`errorMessage` to a single sentence fails four of the four new tests.
 
 ### STOP — TEST 3 (operator)
 
