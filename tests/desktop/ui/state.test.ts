@@ -88,7 +88,7 @@ describe('reaching Setup from a task screen', () => {
   });
 
   // The distinction the whole change rests on: 'editSettings' is the
-  // destructive "Change credentials…" route (app.ts clears every saved site
+  // destructive "Clear all credentials…" route (app.ts clears every saved site
   // before firing it) and must stay a separate event, not a synonym.
   it('is a different event from the destructive editSettings route', () => {
     const events: { type: string }[] = [{ type: 'siteSettings' }, { type: 'editSettings' }];

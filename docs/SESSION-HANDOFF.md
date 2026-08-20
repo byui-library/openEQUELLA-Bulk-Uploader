@@ -88,17 +88,32 @@ whether the work arrived.
   That measurement is what found the auth-mode defect, and it is the fastest
   way to tell "not signed in" from "signed in and refused".
 
-## OAuth on content-test has never worked end to end
+## OAuth on content-test WORKS — superseded 2026-08-19
 
-Worth stating plainly, because two sessions have now been spent near it.
-Password mode is the configuration that has listed collections and uploaded a
-real batch to `content-test.byui.edu` (2026-08-13). OAuth there has produced a
-rejected token (403, empty body) and a sign-in that was never completed. The
-stored redirect URL is `https://content-test.byui.edu` with **no trailing
-slash**, and this project has recorded from a live probe that the no-slash form
-is refused against a client registered with one — unverified for this client,
-and the first thing to try if OAuth is picked up again.
+This section used to say OAuth had never worked end to end here. It does.
+Measured live from the running app on 2026-08-19, against
+`https://content-test.byui.edu` with the operator’s own OAuth client:
 
+```text
+authMode    : code
+hasToken    : true
+collections : 29        (no error)
+```
+
+The operator completed the browser sign-in on 2026-08-18; `token.enc` was
+written at 12:41 and the token is accepted. **Both sign-in modes now work**
+against this instance: password was proven on 2026-08-13, OAuth on 2026-08-18.
+
+**The 403 that cost two sessions was never the OAuth design.** It was an
+access token openEQUELLA refused, sent because Setup could not show which
+mode a site was stored with — see the auth-mode defect. Once a real sign-in
+produced a real token, the same path worked first time.
+
+**The redirect-slash trap was never triggered.** The stored redirect URL is
+`https://content-test.byui.edu` with no trailing slash and the sign-in
+succeeded anyway, so this client is registered without one. Row 15 of the
+state table remains unexercised — it is a real hazard recorded from a live
+probe elsewhere, and it is not this client’s configuration.
 
 ## Today, in detail (kept as the record)
 

@@ -48,7 +48,7 @@ export interface ChooseProps {
    * the screen the operator had to leave to produce it.
    *
    * Must be wired to the NON-DESTRUCTIVE route (app.ts's handleSiteSettings),
-   * never to "Change credentials…", which wipes every saved site.
+   * never to "Clear all credentials…", which wipes every saved site.
    */
   onSiteSettings(): void;
   /**

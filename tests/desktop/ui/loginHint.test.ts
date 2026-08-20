@@ -48,3 +48,46 @@ describe('the login instruction a desktop operator is given', () => {
     expect(shown).not.toContain('oeq-upload');
   });
 });
+
+/**
+ * ## The three ways a token is unusable are different problems
+ *
+ * `getToken` already tells them apart -- absent, expired, issued for another
+ * site -- and each carries the CLI hint that the desktop substitutes. What must
+ * not happen is the substitution flattening them into one sentence: "sign in
+ * again" is right for an expired token, and misleading for one that belongs to
+ * a different site, where the real fault is the address or the stored token.
+ */
+describe('an unusable token says which kind of unusable', () => {
+  const shown = (reason: string): string => errorMessage(new Error(`${reason}\n${DEFAULT_LOGIN_HINT}`));
+
+  it('keeps "no token" distinct', () => {
+    const m = shown('No cached OAuth token for https://oeq.example.edu.');
+    expect(m).toContain('No cached OAuth token');
+    expect(m).toMatch(/sign in/i);
+  });
+
+  it('keeps "expired", with when', () => {
+    const m = shown('Cached OAuth token for https://oeq.example.edu expired at 2026-01-01T00:00:00.000Z.');
+    expect(m).toContain('expired at 2026-01-01T00:00:00.000Z');
+  });
+
+  it('keeps "issued for another site", naming both', () => {
+    const m = shown(
+      'Cached OAuth token was issued for https://other.example.edu, not https://oeq.example.edu -- refusing to reuse it across instances.',
+    );
+    expect(m).toContain('https://other.example.edu');
+    expect(m).toContain('https://oeq.example.edu');
+    expect(m).toMatch(/refusing to reuse/i);
+  });
+
+  /** The point of the block: three inputs, three different sentences. */
+  it('does not flatten them into one message', () => {
+    const messages = new Set([
+      shown('No cached OAuth token for https://x.edu.'),
+      shown('Cached OAuth token for https://x.edu expired at 2026-01-01T00:00:00.000Z.'),
+      shown('Cached OAuth token was issued for https://y.edu, not https://x.edu -- refusing to reuse it across instances.'),
+    ]);
+    expect(messages.size).toBe(3);
+  });
+});

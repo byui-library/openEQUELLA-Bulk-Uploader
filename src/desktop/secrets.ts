@@ -123,6 +123,14 @@ export interface ModelSettings {
  */
 export type InstanceId = string;
 
+/** What Setup is allowed to know about a stored OAuth credential. Never the secret. */
+export interface StoredOAuth {
+  clientId: string;
+  redirectUri: string;
+  /** Whether a client secret is stored, so Setup can say so and offer to forget it. */
+  hasSecret: boolean;
+}
+
 /**
  * An openEQUELLA site the operator has added, as everything outside this
  * module sees it.
@@ -132,14 +140,6 @@ export type InstanceId = string;
  * production-or-not status and its site address are facts about the SITE, true
  * whether it is reached with a password or with an OAuth client.
  */
-/** What Setup is allowed to know about a stored OAuth credential. Never the secret. */
-export interface StoredOAuth {
-  clientId: string;
-  redirectUri: string;
-  /** Whether a client secret is stored, so Setup can say so and offer to forget it. */
-  hasSecret: boolean;
-}
-
 export interface Instance {
   id: InstanceId;
   /** What the operator calls it. Defaults to the address's host. */
@@ -176,6 +176,19 @@ export interface Instance {
    */
   live: boolean;
   /**
+   * The collection this site was set up against, or '' for none.
+   *
+   * STORED BESIDE `schemaUuid` RATHER THAN DERIVED FROM IT. The schema is what
+   * the attachment field is checked against; without the collection, Setup
+   * could not show which collection it had read, so a saved setting was
+   * indistinguishable from one that was never kept. Reported by the operator,
+   * who chose a collection, saved, came back and found nothing selected.
+   *
+   * NOT the collection a batch is uploaded to -- that is chosen per batch on
+   * Choose, because it decides where real items land.
+   */
+  collectionUuid: string;
+  /**
    * The schema of the collection the operator picked on Setup, or '' if none
    * has been picked.
    *
@@ -204,10 +217,44 @@ type StoredEntry = {
   baseUrl: string;
   attachmentUuidPath: string;
   live: boolean;
+  /**
+   * The collection this site was set up against, or '' for none.
+   *
+   * STORED BESIDE `schemaUuid` RATHER THAN DERIVED FROM IT. The schema is what
+   * the attachment field is checked against; without the collection, Setup
+   * could not show which collection it had read, so a saved setting was
+   * indistinguishable from one that was never kept. Reported by the operator,
+   * who chose a collection, saved, came back and found nothing selected.
+   *
+   * NOT the collection a batch is uploaded to -- that is chosen per batch on
+   * Choose, because it decides where real items land.
+   */
+  collectionUuid: string;
   schemaUuid: string;
 } & (
   | { authMode: 'code'; clientId: string; clientSecret: string; redirectUri: string }
-  | { authMode: 'password' }
+  | {
+      authMode: 'password';
+      /**
+       * DORMANT, NEVER READ TO SIGN IN. An OAuth credential this site had
+       * before it was switched to a password, kept so that switching back
+       * costs nothing -- exactly what `StoredShapeV3.passwords` already does
+       * for a password across the mirror-image switch.
+       *
+       * Kept because the store says, in `saveInstance` and in `forgetOAuth`,
+       * that Forget is the ONLY way to remove a client secret. A mode switch
+       * that quietly destroyed one broke that rule at the one moment the
+       * operator was least likely to notice, and left them retyping a secret
+       * they can only get from an administrator.
+       *
+       * `loadSettings` branches on `authMode` before reading any credential,
+       * so this is unreachable while the site signs in with a password. That
+       * is the property rows 9 and 10 turn on and it is asserted directly.
+       */
+      clientId?: string;
+      clientSecret?: string;
+      redirectUri?: string;
+    }
 );
 
 /** One instance's openEQUELLA account, as stored. */
@@ -289,9 +336,21 @@ function parseStoredEntry(v: unknown): StoredEntry | null {
     attachmentUuidPath: typeof e.attachmentUuidPath === 'string' ? e.attachmentUuidPath : '',
     live: typeof e.live === 'boolean' ? e.live : true,
     schemaUuid: typeof e.schemaUuid === 'string' ? e.schemaUuid : '',
+    collectionUuid: typeof e.collectionUuid === 'string' ? e.collectionUuid : '',
   };
 
-  if (e.authMode === 'password') return { ...base, authMode: 'password' };
+  if (e.authMode === 'password') {
+    // The dormant record, carried through only when it is whole. A partial
+    // one is not a credential and would come back as a half-filled OAuth form
+    // on a switch, which is worse than an empty one.
+    const dormant =
+      typeof e.clientId === 'string' &&
+      typeof e.clientSecret === 'string' &&
+      typeof e.redirectUri === 'string'
+        ? { clientId: e.clientId, clientSecret: e.clientSecret, redirectUri: e.redirectUri }
+        : {};
+    return { ...base, authMode: 'password', ...dormant };
+  }
   if (e.authMode !== undefined && e.authMode !== 'code') return null;
   if (
     typeof e.clientId !== 'string' ||
@@ -328,6 +387,7 @@ function toInstance(id: InstanceId, stored: StoredEntry): Instance {
     attachmentUuidPath: stored.attachmentUuidPath,
     live: stored.live,
     schemaUuid: stored.schemaUuid,
+    collectionUuid: stored.collectionUuid,
   };
 }
 
@@ -496,6 +556,7 @@ export class SecretStore {
       attachmentUuidPath?: string;
       live?: boolean;
       schemaUuid?: string;
+      collectionUuid?: string;
     },
     settings: Settings,
   ): Promise<Instance> {
@@ -510,8 +571,7 @@ export class SecretStore {
     const previous = shape.instances[id];
     // Read before the branch below: a site can be edited without its secret
     // ever being rendered, so the save has to be able to keep what is there.
-    const previousSecret =
-      previous !== undefined && previous.authMode !== 'password' ? previous.clientSecret : undefined;
+    const previousSecret = previous?.clientSecret;
     const site = {
       label,
       baseUrl,
@@ -522,9 +582,27 @@ export class SecretStore {
       // to when nothing at all is known.
       live: instance.live ?? previous?.live ?? true,
       schemaUuid: instance.schemaUuid ?? previous?.schemaUuid ?? '',
+      // Omitted keeps what is stored, like every other per-site field: saving
+      // after only renaming the site must not forget which collection it was
+      // set up against.
+      collectionUuid: instance.collectionUuid ?? previous?.collectionUuid ?? '',
     };
     if (settings.authMode === 'password') {
-      shape.instances[id] = { ...site, authMode: 'password' };
+      // The OAuth credential rides along, dormant. Switching to a password
+      // is not a request to destroy one -- `forgetOAuth` is, and it is the
+      // only thing that does.
+      const dormant =
+        previous !== undefined &&
+        previous.clientId !== undefined &&
+        previous.clientSecret !== undefined &&
+        previous.redirectUri !== undefined
+          ? {
+              clientId: previous.clientId,
+              clientSecret: previous.clientSecret,
+              redirectUri: previous.redirectUri,
+            }
+          : {};
+      shape.instances[id] = { ...site, authMode: 'password', ...dormant };
       // A BLANK password means "leave the stored one alone", not "clear it".
       // Setup never renders a stored password back into a field, so the form
       // submitted by an operator who only renamed the site carries an empty
@@ -652,7 +730,12 @@ export class SecretStore {
   async forgetOAuth(instanceId: InstanceId): Promise<void> {
     const { shape } = await this.loadAll();
     const stored = shape.instances[instanceId];
-    if (!stored || stored.authMode === 'password') return;
+    if (!stored) return;
+    // WHICHEVER MODE THE SITE IS IN TODAY. A password-mode site may still
+    // carry the dormant credential it had before the switch, and a Forget
+    // that skipped it would leave a client secret on disk with nothing able
+    // to remove it -- the opposite of what keeping it was for. This used to
+    // return early here, back when a password entry could not hold one.
     shape.instances[instanceId] = { ...stored, clientId: '', clientSecret: '', redirectUri: '' };
     await this.write(shape);
   }

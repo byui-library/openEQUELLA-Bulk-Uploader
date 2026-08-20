@@ -130,19 +130,23 @@ export interface SetupProps {
    */
   storage: { path: string; appName: string; packaged: boolean } | null;
   /**
-   * What the model endpoint last said it could run, or the reason it could
-   * not be asked. Null before anyone has asked.
-   *
-   * ADVISORY. Nothing here gates a save: endpoints that serve completions
-   * without a model list are common, and the typed name stays usable.
-   */
-  /**
    * Whether this site must be signed in to before its collections can be read.
    *
    * A STATEMENT, NOT AN ERROR. It is the ordinary state of an OAuth site that
    * has not been signed in to yet, and the operator has done nothing wrong.
    */
   needsSignIn: boolean;
+  /** True while a sign-in started from this screen is in flight. */
+  signingIn: boolean;
+  /** Sign in to the site Setup is editing -- NOT the action flow's site. */
+  onSignIn(): void;
+  /**
+   * What the model endpoint last said it could run, or the reason it could
+   * not be asked. Null before anyone has asked.
+   *
+   * ADVISORY. Nothing here gates a save: endpoints that serve completions
+   * without a model list are common, and the typed name stays usable.
+   */
   modelList: { models: string[] } | { error: string } | null;
   onListModels(): void;
   onForgetOAuth(): void;
@@ -216,7 +220,7 @@ export interface SetupProps {
   /**
    * The screen Setup was opened from, or null when there is nowhere to go back
    * to -- which is the case on first run, where Setup IS the launch screen, and
-   * after "Change credentials…", which wipes every saved site and leaves a
+   * after "Clear all credentials…", which wipes every saved site and leaves a
    * Sign-in screen listing none.
    *
    * A Back offered in either of those states would do nothing or invent a
@@ -235,7 +239,7 @@ export interface SetupProps {
    *
    * MUST CLEAR NOTHING. Not the store, not the form, not the stored password.
    * The destructive route stays where it is, on Sign-in, labelled
-   * "Change credentials…" and behind a confirm.
+   * "Clear all credentials…" and behind a confirm.
    */
   onBack(): void;
   onInstanceChange(id: string): void;
@@ -258,6 +262,7 @@ export interface SetupProps {
       attachmentUuidPath: string;
       live: boolean;
       schemaUuid: string;
+      collectionUuid: string;
     },
     settings: Settings,
     /**
@@ -796,12 +801,26 @@ function collectionSection(props: SetupProps): string {
     // "The list of collections could not be read: No cached OAuth token...",
     // which names the wrong thing and offers nothing to do about it.
     if (props.needsSignIn) {
-      return `<p class="notice">
-        <strong>Sign in to this site first.</strong> This site signs in with OAuth, so the
-        list of collections is only available once you have signed in &mdash; go back to
-        Sign in, use the sign-in button, then return here to choose a collection.
-        (A site that signs in with a username and password needs no such step.)
-      </p>`;
+      // The button, rather than directions to another screen: being told to go
+      // back is worse than being able to act, and the operator is standing here.
+      return `<div class="notice">
+        <p><strong>Sign in to this site first.</strong> This site signs in with OAuth, so its
+        list of collections is only available once you have signed in. A site that signs in
+        with a username and password needs no such step.</p>
+        <div class="button-row">
+          <button id="setup-sign-in" type="button" ${props.signingIn ? 'disabled' : ''}>
+            ${props.signingIn ? 'Signing in&hellip;' : 'Sign in to this site'}
+          </button>
+        </div>
+      </div>
+      ${
+        // ALONGSIDE the offer, never instead of it. A refused token reaches this
+        // branch with a real failure behind it, and the operator needs both the
+        // reason and something they can do.
+        props.collectionsError === null
+          ? ''
+          : `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`
+      }`;
     }
     if (props.collectionsError !== null) {
       return `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`;
@@ -831,11 +850,17 @@ function collectionSection(props: SetupProps): string {
       ),
     ].join('');
     return `
-      <label for="setup-collection">Collection you contribute to</label>
+      <label for="setup-collection">Collection to read the schema from</label>
       <select id="setup-collection">${options}</select>
       <p class="hint">
-        Used to read that collection’s schema, so the field below can be
-        checked for you. You still pick a collection for each batch later.
+        <strong>This is not where your files go.</strong> It names a collection whose
+        schema describes your spreadsheet columns, so the field below can be checked
+        and your columns validated later without signing in. You choose where each
+        batch is uploaded on the next screen.
+      </p>
+      <p class="hint">
+        Collections that share a schema only need setting up once — pick any one of
+        them here, and upload to any of them later.
       </p>`;
   })();
 
@@ -1290,6 +1315,7 @@ export function instanceFrom(props: SetupProps): {
   attachmentUuidPath: string;
   live: boolean;
   schemaUuid: string;
+  collectionUuid: string;
 } {
   const chosen = props.collections?.find((c) => c.uuid === props.fields.collectionUuid);
   return {
@@ -1298,6 +1324,9 @@ export function instanceFrom(props: SetupProps): {
     attachmentUuidPath: props.fields.attachmentUuidPath.trim(),
     live: props.fields.live,
     schemaUuid: chosen?.schemaUuid ?? '',
+    // Stored beside the schema so the screen can show WHICH collection it read
+    // it from. Without it a saved setting looks exactly like a lost one.
+    collectionUuid: props.fields.collectionUuid,
   };
 }
 
@@ -1481,6 +1510,9 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   field('#setup-label', 'label');
   field('#setup-username', 'username');
   field('#setup-password', 'password');
+  root.querySelector<HTMLButtonElement>('#setup-sign-in')?.addEventListener('click', () => {
+    props.onSignIn();
+  });
   root.querySelector<HTMLButtonElement>('#setup-forget-oauth')?.addEventListener('click', () => {
     props.onForgetOAuth();
   });
