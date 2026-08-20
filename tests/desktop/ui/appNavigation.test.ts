@@ -14,7 +14,7 @@ import type { InstanceChoice } from '../../../src/desktop/ipc.js';
  * WHY THIS TEST EXISTS AT THE APP LEVEL AND NOT AS MARKUP. There are two ways
  * into Setup and only one of them is safe here: `handleSiteSettings` clears
  * nothing, while `handleResetSettings` -- offered a few pixels away on Sign-in
- * as "Change credentials…" -- wipes every saved site, blanks the form and
+ * as "Clear all credentials…" -- wipes every saved site, blanks the form and
  * un-selects the instance. Which of the two a link is wired to is invisible to
  * a markup assertion, and it is the whole difference between "change one
  * setting" and "lose your credentials". Nothing in this repo had ever
@@ -29,6 +29,7 @@ const SITE: InstanceChoice = {
   authMode: 'password',
   attachmentUuidPath: '',
   live: false,
+  collectionUuid: '',
   schemaUuid: 'schema-1',
 };
 
@@ -42,9 +43,17 @@ interface Harness {
   calls: {
     clearSettings: number;
     confirm: number;
+    /** What `window.confirm` was last asked. A count cannot see a warning
+     *  that understates what it is warning about. */
+    confirmedWith: string | null;
     saveInstance: number;
+    savedInstance: Record<string, unknown> | null;
     /** Every instance id `window.oeq.forgetOAuth` was called with, in order. */
     forgetOAuth: string[];
+    /** Every instance id `window.oeq.signIn` was called with, in order.
+     *  Setup edits `setupInstanceId`, which is NOT the action flow's
+     *  `instanceId` -- signing in to the wrong site would be silent. */
+    signIn: string[];
     /** Every instance id the collection list was asked for, in order. */
     listCollections: string[];
     /** Every endpoint `window.oeq.listModels` was asked about, in order. */
@@ -117,6 +126,20 @@ interface BootOptions {
   /** Whether a usable OAuth token is stored for the site. Only a code-mode
    *  site can lack one; password mode signs in on every call. */
   hasToken?: boolean;
+  /**
+   * A SECOND saved site, so Setup can be pointed somewhere other than the site
+   * the action flow is using. With one site those two ids are equal and a test
+   * cannot tell them apart -- a mutation that signed in to the wrong one passed
+   * every assertion until this existed.
+   */
+  secondSite?: InstanceChoice;
+  /** Make the collection list fail, as a refused token or a server fault does. */
+  listCollectionsFails?: string;
+  /** What `currentUser` reports. `null` means no usable session -- which is
+   *  what a REFUSED token looks like, and what a server fault does not. */
+  signedIn?: boolean;
+  /** Make the sign-in reject, as a closed window or a timeout does. */
+  signInFails?: string;
   /** What the model endpoint reports it can run. */
   models?: string[];
   /** Make the ask fail, as an endpoint without a model list does. */
@@ -135,14 +158,19 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
   const calls = {
     clearSettings: 0,
     confirm: 0,
+    confirmedWith: null as string | null,
     saveInstance: 0,
+    savedInstance: null as Record<string, unknown> | null,
     signOut: [] as string[],
     forgetOAuth: [] as string[],
     listCollections: [] as string[],
+    signIn: [] as string[],
     listModels: [] as { baseUrl: string; apiKey: string }[],
     modelSaves: [] as Harness['calls']['modelSaves'],
   };
   let stored: InstanceChoice = { ...SITE, ...options.site };
+  /** Sites signed in to during this run. See the `signIn` fake below. */
+  const tokenHolders = new Set<string>();
   let releaseRun: () => void = () => {};
 
   const USER = {
@@ -155,16 +183,27 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
 
   const oeq = {
     onProgress: () => {},
-    listInstances: async () => (options.fresh === true ? [] : [stored]),
+    listInstances: async () =>
+      options.fresh === true ? [] : [stored, ...(options.secondSite ? [options.secondSite] : [])],
     credentialsDropped: async () => false,
     hasSettings: async () => true,
-    currentUser: async () => USER,
-    signIn: async () => USER,
+    currentUser: async () => (options.signedIn === false ? null : USER),
+    signIn: async (instanceId: string) => {
+      calls.signIn.push(instanceId);
+      if (options.signInFails !== undefined) throw new Error(options.signInFails);
+      // A SUCCESSFUL SIGN-IN LEAVES A TOKEN. exchangeCode writes token.enc, so
+      // hasToken starts answering true from here on. A fake that stayed false
+      // would have forced the screen to clear its own notice by assumption
+      // instead of re-asking -- which is the bug this whole plan is about.
+      tokenHolders.add(instanceId);
+      return USER;
+    },
     listCollections: async (instanceId: string) => {
       calls.listCollections.push(instanceId);
+      if (options.listCollectionsFails !== undefined) throw new Error(options.listCollectionsFails);
       return { collections: COLLECTIONS, withheld: false };
     },
-    hasToken: async () => options.hasToken ?? true,
+    hasToken: async (instanceId: string) => (options.hasToken ?? true) || tokenHolders.has(instanceId),
     fetchSchema: async () => {
       if (options.schemaUnreadable === true) throw new Error('schema unreadable');
       return { uuid: 'schema-1', name: 'Schema', paths: options.schemaPaths ?? ['MWDL/title'] };
@@ -199,9 +238,12 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     clearSettings: async () => {
       calls.clearSettings += 1;
     },
-    saveInstance: async (instance: { label: string; baseUrl: string }) => {
+    saveInstance: async (instance: Record<string, unknown>) => {
       calls.saveInstance += 1;
-      stored = { ...stored, ...instance };
+      // The WHOLE payload, not a count: what reached the store is the question
+      // when a setting comes back missing.
+      calls.savedInstance = instance;
+      stored = { ...stored, ...(instance as Partial<InstanceChoice>) };
       return stored;
     },
     signOut: async (instanceId: string) => {
@@ -227,8 +269,9 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
   globals['document'] = dom.document;
   globals['window'] = {
     oeq,
-    confirm: () => {
+    confirm: (message?: string) => {
       calls.confirm += 1;
+      calls.confirmedWith = message ?? null;
       return true;
     },
   };
@@ -369,7 +412,7 @@ describe('Setup -> back where the operator came from', () => {
  * the only way out of a mistyped address, and confirming it is what stops a
  * misplaced click from costing an administrator-issued secret.
  */
-describe('Change credentials… (the destructive route)', () => {
+describe('Clear all credentials… (the destructive route)', () => {
   it('still confirms and still clears', async () => {
     harness.app.fire('#reset-settings-btn');
     await flush();
@@ -405,7 +448,7 @@ describe('Choose -> Sign-in', () => {
     expect(harness.app.innerHTML).not.toContain('Choose what to upload');
   });
 
-  it('destroys no credentials on the way -- this is not "Change credentials…"', async () => {
+  it('destroys no credentials on the way -- this is not "Clear all credentials…"', async () => {
     await reachChoose(harness.app);
     harness.app.fire('#choose-sign-out');
     await flush();
@@ -507,7 +550,7 @@ describe('Setup -> Back', () => {
   });
 
   /**
-   * ...and absent after "Change credentials…" too, which wipes every saved site
+   * ...and absent after "Clear all credentials…" too, which wipes every saved site
    * and puts the operator in the same position as a fresh install. Sending them
    * "back" to a Sign-in screen listing no sites would be a route to nowhere.
    */
@@ -1680,5 +1723,620 @@ describe('a site that cannot list collections yet', () => {
 
     expect(asked).toBeGreaterThan(0);
     expect(harness.app.innerHTML).not.toMatch(/sign in to this site/i);
+  });
+});
+
+/**
+ * ## Signing in from where the operator is standing
+ *
+ * Task 1 made Setup SAY that an OAuth site needs signing in. Saying it is only
+ * half the job: the operator is on Site settings, the sign-in button is on the
+ * screen before it, and being told to go back is worse than being able to act.
+ *
+ * THE SITE SETUP IS EDITING IS NOT NECESSARILY THE ONE THE APP IS USING.
+ * `state.instanceId` belongs to the action flow; Setup edits
+ * `state.setupInstanceId`, and the operator can point it at another site. A
+ * button that signed in to the wrong one would do so silently and look like it
+ * had worked, which is why the id is asserted rather than the call count.
+ */
+describe('signing in to a site from Setup', () => {
+  const OAUTH_SITE = {
+    site: { authMode: 'code' as const },
+    storedPassword: null,
+    storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+  };
+
+  const openSetup = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+  };
+
+  it('offers the button for an OAuth site with no token', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: false });
+    await openSetup();
+    expect(harness.app.has('#setup-sign-in')).toBe(true);
+  });
+
+  it('offers it for nothing else', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: true });
+    await openSetup();
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+
+    harness = await boot({ site: { authMode: 'password' }, hasToken: false });
+    await openSetup();
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+  });
+
+  it('signs in to the site Setup is editing', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: false });
+    await openSetup();
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.calls.signIn).toEqual(['library-example-test']);
+  });
+
+  /** The whole point: the list appears without leaving the screen. */
+  it('lists the collections once the sign-in returns', async () => {
+    harness = await boot({ ...OAUTH_SITE, hasToken: false });
+    await openSetup();
+    const before = harness.calls.listCollections.length;
+
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.calls.listCollections.length).toBeGreaterThan(before);
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+    expect(harness.app.has('#setup-form')).toBe(true);
+  });
+
+  /**
+   * A sign-in window that was closed, or timed out, is a documented failure
+   * (signin.ts). It must be reported on the screen the operator is standing on,
+   * and must not throw them out of Setup.
+   */
+  it('stays on Setup and says why when the sign-in fails', async () => {
+    harness = await boot({
+      ...OAUTH_SITE,
+      hasToken: false,
+      signInFails: 'Sign-in window was closed before completing.',
+    });
+    await openSetup();
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.app.has('#setup-form')).toBe(true);
+    expect(harness.app.innerHTML).toContain('closed before completing');
+  });
+});
+
+/**
+ * ## The site Setup is editing is not always the site the app is using
+ *
+ * `state.instanceId` belongs to the action flow; `state.setupInstanceId` is
+ * whatever Setup is pointed at, and the operator can change it with the "These
+ * credentials are for" selector.
+ *
+ * THIS EXISTS BECAUSE A MUTATION SURVIVED. Reading `state.instanceId` in the
+ * Setup sign-in handler passed every test in the block above, because the
+ * harness had a single site and the two ids were equal. The assertion claimed
+ * to guard against signing in to the wrong site and could not.
+ */
+describe('Setup signs in to the site it is pointed at', () => {
+  const OTHER: InstanceChoice = {
+    id: 'other-example-test',
+    label: 'Other',
+    baseUrl: 'https://other.example.test',
+    authMode: 'code',
+    attachmentUuidPath: '',
+    live: false,
+    collectionUuid: '',
+    schemaUuid: 'schema-2',
+  };
+
+  it('signs in to the site chosen on Setup, not the one the app is signed in to', async () => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+      hasToken: false,
+      secondSite: OTHER,
+    });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    // Point Setup at the other site, which is NOT the action flow's.
+    harness.app.fire('#setup-instance', 'change', { target: { value: OTHER.id } });
+    await flush();
+
+    harness.app.fire('#setup-sign-in');
+    await flush();
+
+    expect(harness.calls.signIn).toEqual([OTHER.id]);
+  });
+});
+
+/**
+ * ## Saving an OAuth site whose secret is already stored
+ *
+ * REPORTED BY THE OPERATOR: client ID filled, secret shown as stored, redirect
+ * URL filled, collections listed — and "Enter the client ID, client secret, and
+ * redirect URL." refusing the save.
+ *
+ * Introduced by the stored-secret card itself. The secret is never rendered
+ * back into a field, so `settingsFrom` reports it as empty, and the OAuth
+ * branch read an empty secret as "not entered". The PASSWORD branch has carried
+ * the exception for this all along -- an empty password is allowed when one is
+ * stored -- and the OAuth branch was written without it.
+ *
+ * The store already does the right thing: a blank secret on save means keep the
+ * one that is there (secrets.ts#saveInstance). Only the screen disagreed.
+ */
+describe('saving an OAuth site that already has a secret', () => {
+  const OAUTH = { clientId: 'c', redirectUri: 'https://x/', hasSecret: true };
+
+  const openSetupAndSave = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+  };
+
+  it('saves without asking for a secret it is deliberately not showing', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: OAUTH });
+    await openSetupAndSave();
+
+    expect(harness.app.innerHTML).not.toMatch(/Enter the client ID/i);
+    expect(harness.calls.saveInstance).toBeGreaterThan(0);
+  });
+
+  /** Nothing stored means it really has not been entered, and the refusal stands. */
+  it('still refuses when no secret is stored and none was typed', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    await openSetupAndSave();
+
+    expect(harness.app.innerHTML).toMatch(/Enter the client ID/i);
+  });
+});
+
+/**
+ * ## Setup remembers which collection it read the schema from
+ *
+ * REPORTED BY THE OPERATOR: choose a collection on Site settings, save, come
+ * back, and nothing is selected. The choice was genuinely not kept.
+ *
+ * It is not the batch collection -- that is chosen on Choose, per batch,
+ * because it decides where real items land. This is the collection whose SCHEMA
+ * the attachment field was checked against, and a screen that cannot show which
+ * one it read leaves a saved setting looking exactly like a lost one. This app
+ * has had enough of the latter for that to matter.
+ */
+describe('the collection a site was set up against', () => {
+  it('is sent when the site is saved', async () => {
+    harness = await boot({ site: { authMode: 'password' } });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    harness.app.fire('#setup-collection', 'change', { target: { value: 'coll-2' } });
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(harness.calls.savedInstance?.collectionUuid).toBe('coll-2');
+  });
+
+  it('comes back selected when Setup is reopened', async () => {
+    harness = await boot({ site: { authMode: 'password', collectionUuid: 'coll-2' } });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+
+    const select = /<select[^>]*id="setup-collection"[^>]*>([\s\S]*?)<\/select>/.exec(harness.app.innerHTML)?.[1] ?? '';
+    const selected = /<option value="([^"]*)"[^>]*selected/.exec(select)?.[1];
+    expect(selected).toBe('coll-2');
+  });
+});
+
+/**
+ * ## A token the server refuses must offer a way out
+ *
+ * `hasToken` reads the STORE. A token that exists and is REFUSED looks exactly
+ * like a good one to it, so Task 1 saw no reason to warn and Task 2 hid the
+ * sign-in button -- leaving a failing collection list and no control that could
+ * fix it. That is the state the operator was stranded in for two sessions.
+ *
+ * The signal is `currentUser`, which answers null for a session openEQUELLA
+ * will not honour. TYPED, not the prose of an error: this codebase has been
+ * bitten by matching message text, and a 403 with an empty body has no prose to
+ * match anyway.
+ *
+ * The discrimination that matters is the second test. A server fault is not a
+ * reason to sign in again, and offering it would send the operator through a
+ * browser flow that cannot help.
+ */
+describe('a collection list that fails because the session is not honoured', () => {
+  const OAUTH = {
+    site: { authMode: 'code' as const },
+    storedPassword: null,
+    storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+    hasToken: true,
+  };
+
+  /**
+   * Reached from SIGN-IN, not from Choose. Choose cannot be reached in these
+   * states -- the collection list it needs is the thing that is failing, and a
+   * session that is not honoured never gets that far. Site settings is offered
+   * on Sign-in for exactly this.
+   */
+  const openSetup = async (): Promise<void> => {
+    harness.app.fire('#site-settings-btn');
+    await flush();
+  };
+
+  it('offers the sign-in button even though a token is stored', async () => {
+    harness = await boot({
+      ...OAUTH,
+      listCollectionsFails: 'GET /api/collection failed: 403',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.has('#setup-sign-in')).toBe(true);
+  });
+
+  it('still says what went wrong, rather than replacing it with the offer', async () => {
+    harness = await boot({
+      ...OAUTH,
+      listCollectionsFails: 'GET /api/collection failed: 403',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.innerHTML).toContain('403');
+  });
+
+  /** A server fault is not a reason to sign in again. */
+  it('offers nothing when the session is fine and the server is not', async () => {
+    harness = await boot({
+      ...OAUTH,
+      listCollectionsFails: 'GET /api/collection failed: 500 Internal Server Error',
+      signedIn: true,
+    });
+    await openSetup();
+
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+    expect(harness.app.innerHTML).toContain('500');
+  });
+});
+
+/**
+ * ## A password site is never sent through the browser flow
+ *
+ * Rows 9 and 10 of the state table: a site that has been switched between the
+ * two modes leaves the other mode's artefacts behind, and what matters is that
+ * they are IGNORED rather than acted on.
+ *
+ * The live case is one this branch introduced. Offering "Sign in to this site"
+ * whenever the session is refused is right under OAuth and wrong under a
+ * password: the notice beside that button says, in as many words, that the site
+ * signs in with OAuth, and the button drives a browser flow a password site has
+ * no use for. A password site whose credentials the server refuses would have
+ * been told something false about how it signs in and handed a control that
+ * cannot help -- the same shape of dead end the button exists to remove.
+ *
+ * What a password site needs is the error, which it already gets: the fields
+ * that would fix it are on this screen.
+ */
+describe('a password site whose session is refused', () => {
+  const PASSWORD = {
+    site: { authMode: 'password' as const },
+    hasToken: false,
+  };
+
+  const openSetup = async (): Promise<void> => {
+    harness.app.fire('#site-settings-btn');
+    await flush();
+  };
+
+  it('is not offered the OAuth sign-in button', async () => {
+    harness = await boot({
+      ...PASSWORD,
+      listCollectionsFails: 'POST /api/auth/login failed: 401 Unauthorized',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+  });
+
+  /** And is not told the wrong thing about how it signs in. */
+  it('is not told that the site signs in with OAuth', async () => {
+    harness = await boot({
+      ...PASSWORD,
+      listCollectionsFails: 'POST /api/auth/login failed: 401 Unauthorized',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.innerHTML).not.toContain('Sign in to this site first.');
+  });
+
+  it('still says what went wrong', async () => {
+    harness = await boot({
+      ...PASSWORD,
+      listCollectionsFails: 'POST /api/auth/login failed: 401 Unauthorized',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.innerHTML).toContain('401');
+  });
+});
+
+/**
+ * ## A refusal that names only one way out is a dead end
+ *
+ * REPORTED BY THE OPERATOR, 2026-08-20: open Advanced, leave the client ID and
+ * secret empty, save, and the screen asks for three values. True, and no help
+ * to somebody who does not have them and never needed them -- the operator who
+ * opened Advanced to look, or who read OAuth as the more thorough choice.
+ *
+ * Username and password is the DEFAULT for the reason this refusal should say:
+ * it is what an institution can use on the day it installs this tool, with
+ * nothing to request from an administrator. OAuth exists for the sites where
+ * sign-in goes through single sign-on and a client ID is the only way in.
+ *
+ * So the message names the other control as well -- and says what OAuth is FOR,
+ * because "use the other one instead" is wrong at exactly the institutions that
+ * cannot.
+ */
+describe('the refusal when OAuth credentials are missing', () => {
+  const openSetupAndSave = async (): Promise<void> => {
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+  };
+
+  /**
+   * THE ERROR LINE, NOT THE WHOLE SCREEN. Every assertion below passed against
+   * `innerHTML` before a word of the message changed: "username and password"
+   * labels the radio a few lines up, and "single sign-on" appears in the
+   * Advanced section's own explanation. A test that cannot fail is worse than
+   * no test, and this project has been caught by that exact shape before.
+   */
+  const refusal = async (): Promise<string> => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    await openSetupAndSave();
+    const errors = harness.app.innerHTML.match(/<p class="error"[\s\S]*?<\/p>/g) ?? [];
+    return errors.join(' ');
+  };
+
+  it('still names the three values it is asking for', async () => {
+    const text = await refusal();
+    expect(text).toMatch(/client ID/i);
+    expect(text).toMatch(/client secret/i);
+    expect(text).toMatch(/redirect URL/i);
+  });
+
+  it('names the other way in as well', async () => {
+    expect(await refusal()).toMatch(/username and password/i);
+  });
+
+  /**
+   * And does not tell an SSO institution to do something it cannot. The offer
+   * carries its condition, or it is advice that fails precisely where OAuth was
+   * the right choice all along.
+   */
+  it('says what OAuth is for, rather than presenting the other as simply better', async () => {
+    expect(await refusal()).toMatch(/single sign-on/i);
+  });
+
+  /** The save is still refused. Nothing here relaxes the requirement. */
+  it('refuses the save', async () => {
+    harness = await boot({ site: { authMode: 'code' }, storedPassword: null, storedOAuth: null });
+    await openSetupAndSave();
+    expect(harness.calls.saveInstance).toBe(0);
+  });
+});
+
+/**
+ * ## The most destructive control in the app must say what it destroys
+ *
+ * Row 14. `clearSettings` unlinks `settings.enc` outright and clears the token
+ * store: every site the operator added, their addresses and labels, every
+ * password, every OAuth client, every chosen collection and attachment path,
+ * and every model endpoint. Nothing survives it.
+ *
+ * The warning described one site's OAuth credential -- "the saved client ID and
+ * secret for this Windows user". An operator signed in with a username and
+ * password would read that as describing something they do not even have, and
+ * agree to it. A confirm that understates what it is confirming is worse than
+ * no confirm: it collects consent for something other than what happens.
+ *
+ * These assert the CLAIMS the warning must make, not its phrasing. Each names a
+ * distinct thing the operator loses and would not otherwise expect.
+ */
+describe('the warning before every saved site is wiped', () => {
+  const warning = async (): Promise<string> => {
+    harness.app.fire('#reset-settings-btn');
+    await flush();
+    return harness.calls.confirmedWith ?? '';
+  };
+
+  /** Every site, not the one on screen. */
+  it('says it clears every site rather than this one', async () => {
+    expect(await warning()).toMatch(/every|all/i);
+  });
+
+  /** A password-mode operator has no client secret to lose, and lost one anyway. */
+  it('says passwords go too', async () => {
+    expect(await warning()).toMatch(/password/i);
+  });
+
+  /**
+   * The site LIST goes, which is the surprise: the addresses were typed by the
+   * operator and are not a credential, so nothing about "credentials" warns
+   * that they will have to be entered again.
+   */
+  it('says the sites themselves have to be added again', async () => {
+    expect(await warning()).toMatch(/site/i);
+  });
+
+  /** And still confirms, and still clears. */
+  it('remains a confirm before a wipe', async () => {
+    harness.app.fire('#reset-settings-btn');
+    await flush();
+    expect(harness.calls.confirm).toBe(1);
+    expect(harness.calls.clearSettings).toBe(1);
+  });
+});
+
+/**
+ * ## Forgetting must leave the screen agreeing with the store
+ *
+ * Row 11. `secrets.ts#forgetOAuth` clears all three OAuth fields, the redirect
+ * URL included. The screen cleared two of them and left the redirect URL in its
+ * box, so the form showed a value the store no longer held -- and this is
+ * exactly the class of disagreement that produced the "Enter the client ID,
+ * client secret, and redirect URL" refusal on a fully configured site: the
+ * screen and the store holding different opinions about the same credential.
+ */
+describe('forgetting an OAuth credential', () => {
+  const forget = async (): Promise<void> => {
+    harness = await boot({
+      site: { authMode: 'code' },
+      storedPassword: null,
+      storedOAuth: { clientId: 'c-1', redirectUri: 'https://oeq.example.test/', hasSecret: true },
+    });
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-forget-oauth');
+    await flush();
+  };
+
+  it('empties the redirect URL box, as the store empties the stored one', async () => {
+    await forget();
+    expect(harness.app.innerHTML).not.toContain('https://oeq.example.test/');
+  });
+
+  it('asks the store to forget it', async () => {
+    await forget();
+    expect(harness.calls.forgetOAuth).toEqual([SITE.id]);
+  });
+});
+
+/**
+ * ## The label has to carry the warning too
+ *
+ * DECIDED BY THE OPERATOR, 2026-08-20. "Clear all credentials…" reads like an
+ * edit — you click it expecting a form — and what it does is unlink the whole
+ * store. The confirm now discloses that before anything happens, but a label is
+ * what somebody clicks and a dialog is what they skim, so the disclosure should
+ * not depend entirely on the second one being read.
+ *
+ * "Clear" says destruction and "all" says the reach. It still does not say the
+ * SITES go as well as the credentials; the confirm carries that, and a button
+ * long enough to say it would not be a button.
+ */
+describe('the label on the destructive route', () => {
+  it('says it clears, rather than changes', async () => {
+    expect(harness.app.innerHTML).toMatch(/Clear all credentials/i);
+  });
+
+  it('no longer offers to "change" them', async () => {
+    expect(harness.app.innerHTML).not.toMatch(/Change credentials/i);
+  });
+});
+
+/**
+ * ## Choose starts on the collection the site was set up against
+ *
+ * DECIDED BY THE OPERATOR, 2026-08-20. The collection was deliberately NOT
+ * remembered here: it decides where real items land, and this collection has no
+ * moderation workflow, so a wrong one publishes live with no queue to catch it.
+ * Picking it every time was the safeguard.
+ *
+ * What that cost in practice is a site set up against one collection, used for
+ * one collection, and a dropdown that started empty on every batch. The
+ * operator has weighed it and asked for the remembered value.
+ *
+ * TWO THINGS KEEP THE SAFEGUARD MEANINGFUL. The pick is still visible on Choose
+ * and still named on Confirm before anything uploads -- a default is not a
+ * decision taken away, it is one already made and shown. And it is only ever
+ * PRE-SELECTED, never written back: `Instance.collectionUuid` is what Setup read
+ * the schema from and what filled the attachment field in, so a batch sent
+ * elsewhere must not silently redefine it.
+ */
+describe('the collection Choose starts on', () => {
+  /** Choose, WITHOUT picking a collection -- the pick is what is under test. */
+  const landOnChoose = async (): Promise<void> => {
+    harness.app.fire('#continue-btn');
+    await flush();
+  };
+
+  it('pre-selects the one the site was set up against', async () => {
+    harness = await boot({ site: { collectionUuid: 'coll-2' } });
+    await landOnChoose();
+
+    expect(harness.app.innerHTML).toContain('value="coll-2" selected');
+  });
+
+  it('starts on nothing when the site was set up against nothing', async () => {
+    harness = await boot({ site: { collectionUuid: '' } });
+    await landOnChoose();
+
+    expect(harness.app.innerHTML).not.toContain(' selected');
+  });
+
+  /**
+   * A remembered collection the account can no longer contribute to must not be
+   * pre-selected: the operator would be shown a choice the server will refuse,
+   * and "it was already filled in" is the worst possible reason to believe a
+   * destination is right.
+   */
+  it('ignores a remembered collection the server did not list', async () => {
+    harness = await boot({ site: { collectionUuid: 'coll-gone' } });
+    await landOnChoose();
+    harness.app.fire('#choose-sheet');
+    await flush();
+    harness.app.fire('#choose-folder');
+    await flush();
+
+    // The hazard is not the markup -- the dropdown renders only what the server
+    // listed, so a stale uuid never appears there either way. It is that the app
+    // would BELIEVE a collection was chosen while showing none selected, and
+    // with the spreadsheet and folder picked, Continue would be live to a
+    // destination the server will refuse.
+    expect(harness.app.innerHTML).toMatch(/choose-continue-btn[^>]*disabled/);
+  });
+
+  /**
+   * And a pick already made outranks the remembered one.
+   *
+   * SAVING Setup is the route that matters: it re-reads the collection list on
+   * the way back (app.ts), because the address or the account may have changed
+   * under it. Back is not -- it saves nothing and reloads nothing. Overwriting
+   * the selection on that return would silently move a batch the operator had
+   * already aimed.
+   */
+  it('does not overwrite a collection already chosen', async () => {
+    harness = await boot({ site: { collectionUuid: 'coll-2' } });
+    await landOnChoose();
+    harness.app.fire('#collection-select', 'change', { target: { value: 'coll-1' } });
+    await flush();
+    harness.app.fire('#choose-site-settings');
+    await flush();
+    harness.app.fire('#setup-form', 'submit');
+    await flush();
+
+    expect(harness.app.innerHTML).toContain('value="coll-1" selected');
+    expect(harness.app.innerHTML).not.toContain('value="coll-2" selected');
   });
 });

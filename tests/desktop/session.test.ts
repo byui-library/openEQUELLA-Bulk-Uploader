@@ -27,6 +27,7 @@ const instance = (over: Partial<Instance> & Pick<Instance, 'id' | 'label' | 'bas
   // node. See Instance.attachmentUuidPath.
   attachmentUuidPath: '',
   live: true,
+  collectionUuid: '',
   schemaUuid: '',
   ...over,
 });

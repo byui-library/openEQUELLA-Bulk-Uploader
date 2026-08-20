@@ -103,6 +103,9 @@ interface AppState extends BatchState {
    * every call and needs nothing first.
    */
   setupNeedsSignIn: boolean;
+  /** True while a sign-in started from Setup is in flight. Separate from
+   *  `signingIn`, which belongs to the Sign-in screen. */
+  setupSigningIn: boolean;
   /** The last answer from asking the model endpoint what it offers. */
   modelList: { models: string[] } | { error: string } | null;
   // The model endpoint stored for `setupInstanceId`, or null when there is
@@ -230,6 +233,7 @@ function initialState(): AppState {
     setupStoredOAuth: null,
     storage: null,
     setupNeedsSignIn: false,
+    setupSigningIn: false,
     modelList: null,
     setupStoredModel: null,
     modelSectionOpen: false,
@@ -328,6 +332,8 @@ function render(): void {
         storedOAuth: state.setupStoredOAuth,
         storage: state.storage,
         needsSignIn: state.setupNeedsSignIn,
+        signingIn: state.setupSigningIn,
+        onSignIn: handleSetupSignIn,
         modelList: state.modelList,
         onListModels: handleListModels,
         storedModel: state.setupStoredModel,
@@ -339,7 +345,7 @@ function render(): void {
         attachmentPathFilled: state.setupAttachmentPathFilled,
         error: state.setupError,
         saving: state.setupSaving,
-        // Null on first run and after "Change credentials…", where there is
+        // Null on first run and after "Clear all credentials…", where there is
         // nowhere behind Setup and no Back is rendered at all.
         returnTo: state.setupEnteredFrom,
         onBack: handleSetupBack,
@@ -562,6 +568,10 @@ function seedSetupForm(id: string): void {
     // one does, this fixes the radio and not the boxes beside it.
     authMode: selected?.authMode ?? 'password',
     live: selected?.live ?? true,
+    // Which collection this site was set up against. Seeded so the screen can
+    // show what its schema answer was based on -- it was stored and unreadable,
+    // which made a kept setting look lost.
+    collectionUuid: selected?.collectionUuid ?? '',
     // Sensible starting point for a field non-technical staff cannot fill in
     // from nothing: the site's own address. Pre-filled into the form, where
     // the operator can see and correct it before saving -- never substituted
@@ -641,12 +651,40 @@ async function refreshSetupCollections(): Promise<void> {
   let collections: CollectionSummary[] | null = null;
   let withheld = false;
   let error: string | null = null;
+  let refusedSession = false;
   try {
     const list = await window.oeq.listCollections(instanceId);
     collections = list.collections;
     withheld = list.withheld;
   } catch (err) {
     error = errorMessage(err);
+    // A TOKEN THE SERVER REFUSES LOOKS EXACTLY LIKE A GOOD ONE TO `hasToken`,
+    // which reads the store. So a refused session got no warning and no
+    // sign-in button -- a failing list and no control that could fix it, which
+    // is the state the operator was stranded in for two sessions.
+    //
+    // `currentUser` is the signal: it answers null for a session openEQUELLA
+    // will not honour. TYPED, not the prose of the error -- this codebase has
+    // been bitten by matching message text, and a 403 from this server carries
+    // an empty body with no prose to match.
+    //
+    // A SERVER FAULT IS NOT A REASON TO SIGN IN AGAIN. Where the session is
+    // fine, no offer is made: sending somebody through a browser flow that
+    // cannot help is worse than leaving them with the error.
+    //
+    // AND NEITHER IS A PASSWORD SITE. The offer is the OAuth browser flow and
+    // the notice beside it says so in as many words, so making it on a
+    // password site would state something false about how that site signs in
+    // and hand over a control that cannot help -- the same dead end this
+    // offer exists to remove. A password site gets the error, which is the
+    // right answer: the fields that would fix it are on this screen.
+    if (instance?.authMode === 'code') {
+      try {
+        refusedSession = (await window.oeq.currentUser(instanceId)) === null;
+      } catch {
+        refusedSession = false;
+      }
+    }
   }
   // The operator may have switched sites while this was in flight; another
   // site's collections must never be attributed to the one now on screen.
@@ -654,6 +692,9 @@ async function refreshSetupCollections(): Promise<void> {
   state.setupCollections = collections;
   state.setupCollectionsError = error;
   state.setupCollectionsWithheld = withheld;
+  // Offered alongside the error, not instead of it: the operator needs both
+  // the reason and something to do about it.
+  if (refusedSession) state.setupNeedsSignIn = true;
   render();
 }
 
@@ -833,14 +874,6 @@ async function refreshStoredUsername(): Promise<void> {
  * Distinct from "Reset settings", which wipes every site the app knows.
  */
 /**
- * "Forget these OAuth credentials". The twin of `handleForgetPassword`, and
- * the only way to clear a stored client secret: a blank secret on a save means
- * "keep what is stored" (secrets.ts#saveInstance), because Setup never renders
- * one back into a field.
- *
- * The boxes are emptied too, so what is on screen matches what is stored.
- */
-/**
  * Ask the address in the box which models it offers.
  *
  * THE ADDRESS IN THE BOX, not the stored one: the operator is usually asking
@@ -867,6 +900,14 @@ async function handleListModels(): Promise<void> {
   render();
 }
 
+/**
+ * "Forget these OAuth credentials". The twin of `handleForgetPassword`, and
+ * the only way to clear a stored client secret: a blank secret on a save means
+ * "keep what is stored" (secrets.ts#saveInstance), because Setup never renders
+ * one back into a field.
+ *
+ * The boxes are emptied too, so what is on screen matches what is stored.
+ */
 async function handleForgetOAuth(): Promise<void> {
   try {
     await window.oeq.forgetOAuth(state.setupInstanceId);
@@ -876,7 +917,12 @@ async function handleForgetOAuth(): Promise<void> {
     return;
   }
   state.setupStoredOAuth = null;
-  state.setupFields = { ...state.setupFields, clientId: '', clientSecret: '' };
+  // ALL THREE, because secrets.ts#forgetOAuth clears all three. Leaving the
+  // redirect URL in its box showed a value the store no longer held -- the same
+  // class of screen-disagrees-with-store defect that produced the "Enter the
+  // client ID, client secret, and redirect URL" refusal on a site that was
+  // completely configured.
+  state.setupFields = { ...state.setupFields, clientId: '', clientSecret: '', redirectUri: '' };
   state.setupError = null;
   render();
 }
@@ -992,6 +1038,7 @@ async function handleSaveSettings(
     attachmentUuidPath: string;
     live: boolean;
     schemaUuid: string;
+    collectionUuid: string;
   },
   settings: Settings,
   /**
@@ -1019,8 +1066,35 @@ async function handleSaveSettings(
       render();
       return;
     }
-  } else if (settings.clientId === '' || settings.clientSecret === '' || settings.redirectUri === '') {
-    state.setupError = 'Enter the client ID, client secret, and redirect URL.';
+    // A BLANK CLIENT SECRET IS ALLOWED WHEN ONE IS STORED, exactly as a blank
+    // password is above. Setup deliberately never renders a stored secret back
+    // into a field -- it shows a "stored" card and a Forget button -- so the
+    // form an operator submits after changing their attachment path or picking
+    // a collection carries an empty one. Reading that as "not entered" refused
+    // to save a site that was completely configured, which is what the operator
+    // hit: client id present, secret stored, redirect URL present, collections
+    // listed, and a red line asking for all three.
+    //
+    // secrets.ts#saveInstance already keeps the stored secret on a blank one.
+    // This was the screen disagreeing with the store about the same rule.
+  } else if (
+    settings.clientId === '' ||
+    settings.redirectUri === '' ||
+    (settings.clientSecret === '' && state.setupStoredOAuth?.hasSecret !== true)
+  ) {
+    // NAMES THE OTHER WAY IN, not only the three empty boxes. Asking for
+    // values the operator may not have and never needed is a dead end: they
+    // may have opened Advanced to look, or read OAuth as the more thorough
+    // choice. Username and password is the default precisely because it needs
+    // nothing from an administrator.
+    //
+    // AND SAYS WHAT OAUTH IS FOR. "Use the other one instead" would be wrong
+    // at exactly the institutions that cannot -- BYU-Idaho among them, where
+    // sign-in goes through SSO and a client ID is the only way in. The offer
+    // has to carry its condition or it is advice that fails where OAuth was
+    // the right choice all along.
+    state.setupError =
+      'Enter the client ID, client secret, and redirect URL. If you do not have them, choose "Username and password" instead -- OAuth is only needed where your institution signs in through single sign-on.';
     render();
     return;
   }
@@ -1227,7 +1301,7 @@ function handleAddCredentials(): void {
  * NON-DESTRUCTIVE, and that is the whole point of it existing separately from
  * `handleResetSettings` below: the per-site settings (which collection's
  * schema, where the attachment uuid goes, whether it is live) live on Setup,
- * and the only other route there was "Change credentials…", which wipes every
+ * and the only other route there was "Clear all credentials…", which wipes every
  * saved site first. A setting an operator can only change by destroying their
  * credentials is a setting they will not change.
  *
@@ -1278,7 +1352,7 @@ function handleSiteSettings(from: Screen): void {
  * whose answer is "whatever the caller was holding" would add a row to that
  * table that describes nothing.
  *
- * `setupEnteredFrom` is null on first run and after "Change credentials…", and
+ * `setupEnteredFrom` is null on first run and after "Clear all credentials…", and
  * the button is not rendered in either case (screens/setup.ts). The guard is
  * belt and braces for a click that arrives anyway.
  */
@@ -1290,6 +1364,40 @@ function handleSetupBack(): void {
   state.setupError = null;
   state.screen = back;
   render();
+}
+
+/**
+ * Sign in to the site SETUP is editing.
+ *
+ * NOT `handleSignIn`, and the difference is the whole reason this exists:
+ * that one signs in to `state.instanceId`, the site the action flow is using.
+ * Setup edits `state.setupInstanceId` and the operator can point it at
+ * another site entirely. Signing in to the wrong one would be silent and
+ * would look like it had worked.
+ *
+ * On success the collection list is refreshed, which is the point: the list
+ * appears without the operator leaving the screen. On failure -- a window
+ * closed before completing, or a timeout, both documented in signin.ts -- the
+ * reason is shown HERE and they stay where they are.
+ */
+async function handleSetupSignIn(): Promise<void> {
+  const instanceId = state.setupInstanceId;
+  if (instanceId === '') return;
+  state.setupSigningIn = true;
+  state.setupError = null;
+  render();
+  try {
+    await window.oeq.signIn(instanceId);
+  } catch (err) {
+    state.setupSigningIn = false;
+    state.setupError = errorMessage(err);
+    render();
+    return;
+  }
+  state.setupSigningIn = false;
+  // Re-asks `hasToken` on its way through, so the notice clears itself rather
+  // than being cleared here from an assumption about what the sign-in did.
+  await refreshSetupCollections();
 }
 
 async function handleSignIn(): Promise<void> {
@@ -1372,16 +1480,28 @@ async function handleSignOut(): Promise<void> {
  * credentials") -- distinct from Sign out, which only clears the token.
  * Reachable from the Sign-in screen regardless of sign-in state, since the
  * scenario it exists for is a mistyped client ID/secret that never gets far
- * enough to produce a signed-in state at all. Confirmed via window.confirm
- * before clearing -- it discards the secret the administrator supplied, and
- * getting it again is a support request, so a click that can't be undone
- * needs a deliberate second step, not just a click that happens to land on
- * the wrong button.
+ * enough to produce a signed-in state at all.
+ *
+ * IT WIPES THE WHOLE STORE, and the confirm has to say so. `clearSettings`
+ * unlinks settings.enc outright: every site the operator added, its address and
+ * label, every password, every OAuth client, every chosen collection and
+ * attachment path, and every model endpoint. The warning used to describe "the
+ * saved client ID and secret" -- one site, one credential, and one an operator
+ * signed in with a username and password does not even have. They would have
+ * read it as describing something that did not apply to them and agreed to it.
+ * A confirm that understates what it confirms is worse than no confirm, because
+ * it collects consent for something other than what happens.
+ *
+ * The site LIST is the part worth naming explicitly: the addresses were typed
+ * by the operator and are not credentials, so nothing about "credentials" warns
+ * that they go too.
  */
 async function handleResetSettings(): Promise<void> {
   const confirmed = window.confirm(
-    'This clears the saved client ID and secret for this Windows user. ' +
-      "You'll need to enter them again -- ask your administrator if you no longer have them. Continue?",
+    'This removes EVERY site you have added, along with its password or client ' +
+      'credentials, the collection it was set up against, and any language-model ' +
+      'settings. You will have to add your sites again from scratch. ' +
+      'Ask your administrator if you no longer have a client ID and secret. Continue?',
   );
   if (!confirmed) return;
   try {
@@ -1439,6 +1559,32 @@ async function loadCollections(): Promise<void> {
     // dropdown used to read "showing 0 of 0 -- No collections match" for a
     // session that was not signed in at all (screens/choose.ts).
     state.collectionsWithheld = list.withheld;
+    // PRE-SELECT THE ONE THIS SITE WAS SET UP AGAINST. The collection was
+    // deliberately not remembered here -- it decides where real items land,
+    // and the target collection has no moderation workflow, so a wrong one
+    // publishes live with no queue to catch it. Picking it every time was the
+    // safeguard. What that cost was a dropdown that started empty on every
+    // batch for a site used with one collection, and the operator has weighed
+    // that and asked for the remembered value (2026-08-20).
+    //
+    // A DEFAULT IS NOT A DECISION TAKEN AWAY. The pick stays visible here and
+    // is named again on Confirm before anything uploads.
+    //
+    // ONLY IF THE SERVER LISTED IT. A remembered collection the account can no
+    // longer contribute to must not be filled in: the operator would be shown a
+    // destination the server will refuse, and "it was already there" is the
+    // worst possible reason to believe a destination is right.
+    //
+    // AND ONLY WHEN NOTHING IS CHOSEN YET, so returning to Choose mid-session
+    // cannot overwrite a pick the operator just made.
+    const remembered = currentInstance()?.collectionUuid ?? '';
+    if (state.collectionUuid === null && remembered !== '') {
+      const match = list.collections.find((c) => c.uuid === remembered);
+      if (match) {
+        state.collectionUuid = match.uuid;
+        state.collectionName = match.name;
+      }
+    }
   } catch (err) {
     state.collections = [];
     state.collectionsError = errorMessage(err);

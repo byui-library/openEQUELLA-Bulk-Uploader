@@ -39,7 +39,7 @@ error the operator can only understand by reading the source.**
 | 11 | Forget OAuth credentials | Site remains; treated as having no credential |
 | 12 | Forget password | Same |
 | 13 | Sign out | Token cleared; back to needs-signin |
-| 14 | Change credentials | Every site wiped, after a confirm |
+| 14 | Clear all credentials | Every site wiped, after a confirm |
 | 15 | Redirect URL without trailing slash | openEQUELLA's own reason is surfaced |
 
 **Rows 5 and 7 are the known gaps.** The other thirteen are in this table to be
@@ -150,7 +150,39 @@ Tell me which happened, and paste the message if it failed.
 
 ---
 
-## Task 3: An unusable token says which kind of unusable
+## Task 3: An unusable token says which kind of unusable, and a refused one offers a way out
+
+**Widened 2026-08-19 by the case that worked.** `hasToken` reads the STORE, so
+a token that exists and is REFUSED by the server is indistinguishable from a
+good one. That state gets no sign-in button (Task 2 hides it when a token
+exists) AND a failing collection list — the worst pairing available, and
+unrecoverable without leaving the screen. It is what the operator hit for two
+sessions. So this task must also:
+
+- [x] Offer the **Sign in to this site** button when the collection list fails
+      with an authentication error, not only when no token is stored. A token
+      the server refuses is a reason to sign in again, and the screen should
+      say so rather than leaving the operator with an error and no control.
+
+**Done 2026-08-20.** The signal is `currentUser(instanceId)` returning `null`,
+which is what a refused or guest session answers -- TYPED, not the prose of the
+error, because a 403 from this server carries an empty body and there is no
+prose to match. `refreshSetupCollections` asks only after a list has already
+failed, so the ordinary path costs nothing.
+
+**A server fault is deliberately NOT an offer.** A 500 with the session intact
+leaves the button hidden: sending the operator through a browser flow that
+cannot help is worse than leaving them with the error. That discrimination is
+the test that matters, and a mutation making every failure offer sign-in is
+caught by it.
+
+The error is rendered BESIDE the offer rather than replaced by it. Showing only
+the button would drop the reason, and the reason is what tells the two
+recoveries apart.
+
+**Files:** `src/desktop/ui/app.ts`, `src/desktop/ui/screens/setup.ts`,
+`tests/desktop/ui/appNavigation.test.ts`
+
 
 **Files:** `src/core/authCode.ts` (messages only), `tests/authCode.test.ts`
 
@@ -159,9 +191,15 @@ and the desktop now substitutes a front-end-appropriate instruction. What it
 does not do is make the DIFFERENCE actionable: expired means "sign in again",
 cross-instance means "this token belongs to another site".
 
-- [ ] **Step 1:** Tests pinning that all three reasons survive into the message
+- [x] **Step 1:** Tests pinning that all three reasons survive into the message
       the desktop shows, and that they differ from one another.
-- [ ] **Step 2:** Watch them fail; implement; re-run; commit.
+- [x] **Step 2:** Watch them fail; implement; re-run; commit.
+
+**Already correct, and now pinned.** All three reasons passed on first run --
+`getToken` builds a distinct sentence for each and the substitution rewrites
+only the hint. So this half changed no behaviour, which is the honest thing to
+record rather than inventing a fix for it. The guard is real: flattening
+`errorMessage` to a single sentence fails four of the four new tests.
 
 ### STOP — TEST 3 (operator)
 
@@ -178,10 +216,42 @@ Rows 9 and 10. Both are believed correct after today's `authMode` fix, and both
 leave something behind that must be ignored rather than acted on: a password
 entry left by a switch to OAuth, and a `token.enc` left by a switch back.
 
-- [ ] **Step 1:** Tests — a site stored as `code` that still has a password entry
+- [x] **Step 1:** Tests — a site stored as `code` that still has a password entry
       uses OAuth; a site stored as `password` that still has a token uses the
       password.
-- [ ] **Step 2:** If either fails, fix it. Commit either way.
+- [x] **Step 2:** If either fails, fix it. Commit either way.
+
+**Done 2026-08-20. Rows 9 and 10 were correct; three other things were not.**
+`loadSettings` branches on the stored `authMode` before reading any credential,
+so neither leftover is ever reached. That held on the first run and is now
+asserted directly rather than believed.
+
+**1. Task 3's own change was wrong for password sites.** Offering *Sign in to
+this site* whenever the session is refused is right under OAuth and false under
+a password: the notice beside that button says the site signs in with OAuth,
+and the button drives a browser flow a password site has no use for. So a
+password site with a rejected password would have been told something untrue
+about how it signs in and handed a control that cannot help — the same dead
+end the button exists to remove. Now gated on `authMode === 'code'`; a password
+site gets the error, which is the right answer, because the fields that would
+fix it are on that screen.
+
+**2. Switching to a password silently destroyed the client secret.** The store
+says in two places that `forgetOAuth` is the ONLY way to remove one — a blank
+field on a save means *keep what is stored* — but a mode switch replaced the
+entry with a password-shaped one that had nowhere to put it. The password
+survives the mirror-image switch, because passwords live in their own map. So
+the asymmetry cost an operator a secret they can only get back from an
+administrator, at the moment they were least likely to notice. A password entry
+may now carry the OAuth record **dormant**: kept, never read to sign in.
+
+**3. And then `forgetOAuth` could not remove it**, because it returned early
+for a password-mode site — back when such an entry could not hold one. Keeping
+a credential that no control can remove is the opposite of why it was kept, so
+Forget now clears it whichever mode the site is in today.
+
+**Files:** `src/desktop/ui/app.ts`, `src/desktop/secrets.ts`,
+`tests/desktop/ui/appNavigation.test.ts`, `tests/desktop/secrets.test.ts`
 
 ### STOP — TEST 4 (operator)
 
@@ -197,12 +267,50 @@ boxes match it, and the collection list behaves per rows 3 and 5.
 
 Rows 11 to 14. There are now three destructive controls and they differ sharply:
 **Forget this password** (one site's account), **Forget these OAuth credentials**
-(one site's client), and **Change credentials** (every site, after a confirm —
+(one site's client), and **Clear all credentials** (every site, after a confirm —
 it deleted the whole dev store this morning).
 
-- [ ] **Step 1:** Tests that each removes only what it names, and that a site
+- [x] **Step 1:** Tests that each removes only what it names, and that a site
       whose credential has been forgotten reports `missing-credentials`.
-- [ ] **Step 2:** Fix anything that removes more than it says. Commit.
+- [x] **Step 2:** Fix anything that removes more than it says. Commit.
+
+**Done 2026-08-20. The three Forgets were correct; the WARNING was not.**
+
+Each Forget reaches only what it names — asserted as what SURVIVES rather than
+only what goes, because a test that checks the named thing is gone passes just
+as happily when everything else went too. Two overreaching mutations are caught
+(forgetPassword also dropping the model; forgetOAuth reaching every site).
+
+**The wipe understated itself, and that is the serious one.** `clearSettings`
+unlinks `settings.enc` outright and clears the token store: every site, its
+address and label, every password, every OAuth client, every chosen collection
+and attachment path, every model endpoint. The confirm said it cleared *"the
+saved client ID and secret for this Windows user"* — one site, one credential,
+and one an operator signed in with a username and password does not even have.
+They would have read it as describing something that did not apply to them and
+agreed to it. **A confirm that understates what it confirms is worse than no
+confirm: it collects consent for something other than what happens.** The site
+LIST is the part worth naming, because the addresses are not credentials, so
+nothing about "credentials" warned that they go too.
+
+**Forget left the screen disagreeing with the store.** `secrets.ts#forgetOAuth`
+clears all three OAuth fields; the screen cleared two and left the redirect URL
+in its box. That is the same class of defect as the "Enter the client ID,
+client secret, and redirect URL" refusal on a fully configured site — the
+screen and the store holding different opinions about one credential.
+
+Also re-attached `handleForgetOAuth`'s docblock, which had drifted above a
+different function's.
+
+**Files:** `src/desktop/ui/app.ts`, `tests/desktop/ui/appNavigation.test.ts`,
+`tests/desktop/secrets.test.ts`
+
+**The button is renamed, at the operator's decision.** "Change credentials…"
+read like an edit -- you click it expecting a form -- and what it does is unlink
+the whole store. It is now **"Clear all credentials…"**: "Clear" says
+destruction, "all" says the reach. It still does not say the SITES go as well as
+the credentials, which the confirm carries; a button long enough to say it would
+not be a button. Sentence case to match every other control on the screen.
 
 ### STOP — TEST 5 (operator)
 
@@ -211,7 +319,7 @@ it deleted the whole dev store this morning).
 1. **Forget these OAuth credentials.** Expect: the site stays in the list, its
    boxes empty, and Sign-in reports missing credentials.
 2. Re-enter them and save.
-3. Read the wording on **Change credentials** and tell me whether it is clear
+3. Read the wording on **Clear all credentials** and tell me whether it is clear
    that it wipes *every* site rather than just this one.
 
 ---

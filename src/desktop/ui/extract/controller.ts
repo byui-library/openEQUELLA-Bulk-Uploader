@@ -26,7 +26,7 @@ export interface ExtractControllerOptions {
    *
    * INJECTED so `save()` can be tested without a DOM -- this project has no
    * jsdom, deliberately -- and defaulted to `window.confirm`, which is the
-   * pattern app.ts's "Change credentials…" already uses for a click that cannot
+   * pattern app.ts's "Clear all credentials…" already uses for a click that cannot
    * be undone.
    *
    * NOT THE PUBLISH GATE, and the difference is deliberate. Confirm's typed
