@@ -651,12 +651,31 @@ async function refreshSetupCollections(): Promise<void> {
   let collections: CollectionSummary[] | null = null;
   let withheld = false;
   let error: string | null = null;
+  let refusedSession = false;
   try {
     const list = await window.oeq.listCollections(instanceId);
     collections = list.collections;
     withheld = list.withheld;
   } catch (err) {
     error = errorMessage(err);
+    // A TOKEN THE SERVER REFUSES LOOKS EXACTLY LIKE A GOOD ONE TO `hasToken`,
+    // which reads the store. So a refused session got no warning and no
+    // sign-in button -- a failing list and no control that could fix it, which
+    // is the state the operator was stranded in for two sessions.
+    //
+    // `currentUser` is the signal: it answers null for a session openEQUELLA
+    // will not honour. TYPED, not the prose of the error -- this codebase has
+    // been bitten by matching message text, and a 403 from this server carries
+    // an empty body with no prose to match.
+    //
+    // A SERVER FAULT IS NOT A REASON TO SIGN IN AGAIN. Where the session is
+    // fine, no offer is made: sending somebody through a browser flow that
+    // cannot help is worse than leaving them with the error.
+    try {
+      refusedSession = (await window.oeq.currentUser(instanceId)) === null;
+    } catch {
+      refusedSession = false;
+    }
   }
   // The operator may have switched sites while this was in flight; another
   // site's collections must never be attributed to the one now on screen.
@@ -664,6 +683,9 @@ async function refreshSetupCollections(): Promise<void> {
   state.setupCollections = collections;
   state.setupCollectionsError = error;
   state.setupCollectionsWithheld = withheld;
+  // Offered alongside the error, not instead of it: the operator needs both
+  // the reason and something to do about it.
+  if (refusedSession) state.setupNeedsSignIn = true;
   render();
 }
 

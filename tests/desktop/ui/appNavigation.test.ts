@@ -130,6 +130,11 @@ interface BootOptions {
    * every assertion until this existed.
    */
   secondSite?: InstanceChoice;
+  /** Make the collection list fail, as a refused token or a server fault does. */
+  listCollectionsFails?: string;
+  /** What `currentUser` reports. `null` means no usable session -- which is
+   *  what a REFUSED token looks like, and what a server fault does not. */
+  signedIn?: boolean;
   /** Make the sign-in reject, as a closed window or a timeout does. */
   signInFails?: string;
   /** What the model endpoint reports it can run. */
@@ -178,7 +183,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
       options.fresh === true ? [] : [stored, ...(options.secondSite ? [options.secondSite] : [])],
     credentialsDropped: async () => false,
     hasSettings: async () => true,
-    currentUser: async () => USER,
+    currentUser: async () => (options.signedIn === false ? null : USER),
     signIn: async (instanceId: string) => {
       calls.signIn.push(instanceId);
       if (options.signInFails !== undefined) throw new Error(options.signInFails);
@@ -191,6 +196,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     },
     listCollections: async (instanceId: string) => {
       calls.listCollections.push(instanceId);
+      if (options.listCollectionsFails !== undefined) throw new Error(options.listCollectionsFails);
       return { collections: COLLECTIONS, withheld: false };
     },
     hasToken: async (instanceId: string) => (options.hasToken ?? true) || tokenHolders.has(instanceId),
@@ -1927,5 +1933,77 @@ describe('the collection a site was set up against', () => {
     const select = /<select[^>]*id="setup-collection"[^>]*>([\s\S]*?)<\/select>/.exec(harness.app.innerHTML)?.[1] ?? '';
     const selected = /<option value="([^"]*)"[^>]*selected/.exec(select)?.[1];
     expect(selected).toBe('coll-2');
+  });
+});
+
+/**
+ * ## A token the server refuses must offer a way out
+ *
+ * `hasToken` reads the STORE. A token that exists and is REFUSED looks exactly
+ * like a good one to it, so Task 1 saw no reason to warn and Task 2 hid the
+ * sign-in button -- leaving a failing collection list and no control that could
+ * fix it. That is the state the operator was stranded in for two sessions.
+ *
+ * The signal is `currentUser`, which answers null for a session openEQUELLA
+ * will not honour. TYPED, not the prose of an error: this codebase has been
+ * bitten by matching message text, and a 403 with an empty body has no prose to
+ * match anyway.
+ *
+ * The discrimination that matters is the second test. A server fault is not a
+ * reason to sign in again, and offering it would send the operator through a
+ * browser flow that cannot help.
+ */
+describe('a collection list that fails because the session is not honoured', () => {
+  const OAUTH = {
+    site: { authMode: 'code' as const },
+    storedPassword: null,
+    storedOAuth: { clientId: 'c', redirectUri: 'https://x/', hasSecret: true },
+    hasToken: true,
+  };
+
+  /**
+   * Reached from SIGN-IN, not from Choose. Choose cannot be reached in these
+   * states -- the collection list it needs is the thing that is failing, and a
+   * session that is not honoured never gets that far. Site settings is offered
+   * on Sign-in for exactly this.
+   */
+  const openSetup = async (): Promise<void> => {
+    harness.app.fire('#site-settings-btn');
+    await flush();
+  };
+
+  it('offers the sign-in button even though a token is stored', async () => {
+    harness = await boot({
+      ...OAUTH,
+      listCollectionsFails: 'GET /api/collection failed: 403',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.has('#setup-sign-in')).toBe(true);
+  });
+
+  it('still says what went wrong, rather than replacing it with the offer', async () => {
+    harness = await boot({
+      ...OAUTH,
+      listCollectionsFails: 'GET /api/collection failed: 403',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.innerHTML).toContain('403');
+  });
+
+  /** A server fault is not a reason to sign in again. */
+  it('offers nothing when the session is fine and the server is not', async () => {
+    harness = await boot({
+      ...OAUTH,
+      listCollectionsFails: 'GET /api/collection failed: 500 Internal Server Error',
+      signedIn: true,
+    });
+    await openSetup();
+
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+    expect(harness.app.innerHTML).toContain('500');
   });
 });

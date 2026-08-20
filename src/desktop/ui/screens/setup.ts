@@ -812,7 +812,15 @@ function collectionSection(props: SetupProps): string {
             ${props.signingIn ? 'Signing in&hellip;' : 'Sign in to this site'}
           </button>
         </div>
-      </div>`;
+      </div>
+      ${
+        // ALONGSIDE the offer, never instead of it. A refused token reaches this
+        // branch with a real failure behind it, and the operator needs both the
+        // reason and something they can do.
+        props.collectionsError === null
+          ? ''
+          : `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`
+      }`;
     }
     if (props.collectionsError !== null) {
       return `<p class="error" role="alert">The list of collections could not be read: ${escapeHtml(props.collectionsError)}</p>`;
