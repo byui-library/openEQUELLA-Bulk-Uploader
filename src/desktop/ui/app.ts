@@ -874,14 +874,6 @@ async function refreshStoredUsername(): Promise<void> {
  * Distinct from "Reset settings", which wipes every site the app knows.
  */
 /**
- * "Forget these OAuth credentials". The twin of `handleForgetPassword`, and
- * the only way to clear a stored client secret: a blank secret on a save means
- * "keep what is stored" (secrets.ts#saveInstance), because Setup never renders
- * one back into a field.
- *
- * The boxes are emptied too, so what is on screen matches what is stored.
- */
-/**
  * Ask the address in the box which models it offers.
  *
  * THE ADDRESS IN THE BOX, not the stored one: the operator is usually asking
@@ -908,6 +900,14 @@ async function handleListModels(): Promise<void> {
   render();
 }
 
+/**
+ * "Forget these OAuth credentials". The twin of `handleForgetPassword`, and
+ * the only way to clear a stored client secret: a blank secret on a save means
+ * "keep what is stored" (secrets.ts#saveInstance), because Setup never renders
+ * one back into a field.
+ *
+ * The boxes are emptied too, so what is on screen matches what is stored.
+ */
 async function handleForgetOAuth(): Promise<void> {
   try {
     await window.oeq.forgetOAuth(state.setupInstanceId);
@@ -917,7 +917,12 @@ async function handleForgetOAuth(): Promise<void> {
     return;
   }
   state.setupStoredOAuth = null;
-  state.setupFields = { ...state.setupFields, clientId: '', clientSecret: '' };
+  // ALL THREE, because secrets.ts#forgetOAuth clears all three. Leaving the
+  // redirect URL in its box showed a value the store no longer held -- the same
+  // class of screen-disagrees-with-store defect that produced the "Enter the
+  // client ID, client secret, and redirect URL" refusal on a site that was
+  // completely configured.
+  state.setupFields = { ...state.setupFields, clientId: '', clientSecret: '', redirectUri: '' };
   state.setupError = null;
   render();
 }
@@ -1475,16 +1480,28 @@ async function handleSignOut(): Promise<void> {
  * credentials") -- distinct from Sign out, which only clears the token.
  * Reachable from the Sign-in screen regardless of sign-in state, since the
  * scenario it exists for is a mistyped client ID/secret that never gets far
- * enough to produce a signed-in state at all. Confirmed via window.confirm
- * before clearing -- it discards the secret the administrator supplied, and
- * getting it again is a support request, so a click that can't be undone
- * needs a deliberate second step, not just a click that happens to land on
- * the wrong button.
+ * enough to produce a signed-in state at all.
+ *
+ * IT WIPES THE WHOLE STORE, and the confirm has to say so. `clearSettings`
+ * unlinks settings.enc outright: every site the operator added, its address and
+ * label, every password, every OAuth client, every chosen collection and
+ * attachment path, and every model endpoint. The warning used to describe "the
+ * saved client ID and secret" -- one site, one credential, and one an operator
+ * signed in with a username and password does not even have. They would have
+ * read it as describing something that did not apply to them and agreed to it.
+ * A confirm that understates what it confirms is worse than no confirm, because
+ * it collects consent for something other than what happens.
+ *
+ * The site LIST is the part worth naming explicitly: the addresses were typed
+ * by the operator and are not credentials, so nothing about "credentials" warns
+ * that they go too.
  */
 async function handleResetSettings(): Promise<void> {
   const confirmed = window.confirm(
-    'This clears the saved client ID and secret for this Windows user. ' +
-      "You'll need to enter them again -- ask your administrator if you no longer have them. Continue?",
+    'This removes EVERY site you have added, along with its password or client ' +
+      'credentials, the collection it was set up against, and any language-model ' +
+      'settings. You will have to add your sites again from scratch. ' +
+      'Ask your administrator if you no longer have a client ID and secret. Continue?',
   );
   if (!confirmed) return;
   try {

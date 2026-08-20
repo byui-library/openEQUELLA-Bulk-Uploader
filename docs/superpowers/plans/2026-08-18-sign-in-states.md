@@ -270,9 +270,45 @@ Rows 11 to 14. There are now three destructive controls and they differ sharply:
 (one site's client), and **Change credentials** (every site, after a confirm —
 it deleted the whole dev store this morning).
 
-- [ ] **Step 1:** Tests that each removes only what it names, and that a site
+- [x] **Step 1:** Tests that each removes only what it names, and that a site
       whose credential has been forgotten reports `missing-credentials`.
-- [ ] **Step 2:** Fix anything that removes more than it says. Commit.
+- [x] **Step 2:** Fix anything that removes more than it says. Commit.
+
+**Done 2026-08-20. The three Forgets were correct; the WARNING was not.**
+
+Each Forget reaches only what it names — asserted as what SURVIVES rather than
+only what goes, because a test that checks the named thing is gone passes just
+as happily when everything else went too. Two overreaching mutations are caught
+(forgetPassword also dropping the model; forgetOAuth reaching every site).
+
+**The wipe understated itself, and that is the serious one.** `clearSettings`
+unlinks `settings.enc` outright and clears the token store: every site, its
+address and label, every password, every OAuth client, every chosen collection
+and attachment path, every model endpoint. The confirm said it cleared *"the
+saved client ID and secret for this Windows user"* — one site, one credential,
+and one an operator signed in with a username and password does not even have.
+They would have read it as describing something that did not apply to them and
+agreed to it. **A confirm that understates what it confirms is worse than no
+confirm: it collects consent for something other than what happens.** The site
+LIST is the part worth naming, because the addresses are not credentials, so
+nothing about "credentials" warned that they go too.
+
+**Forget left the screen disagreeing with the store.** `secrets.ts#forgetOAuth`
+clears all three OAuth fields; the screen cleared two and left the redirect URL
+in its box. That is the same class of defect as the "Enter the client ID,
+client secret, and redirect URL" refusal on a fully configured site — the
+screen and the store holding different opinions about one credential.
+
+Also re-attached `handleForgetOAuth`'s docblock, which had drifted above a
+different function's.
+
+**Files:** `src/desktop/ui/app.ts`, `tests/desktop/ui/appNavigation.test.ts`,
+`tests/desktop/secrets.test.ts`
+
+**Open for the operator:** the BUTTON still says "Change credentials…", which
+reads like an edit rather than a wipe. The confirm now discloses the reach
+before anything happens, so this is a question of vocabulary for the staff who
+will use it, not a correctness gap.
 
 ### STOP — TEST 5 (operator)
 
