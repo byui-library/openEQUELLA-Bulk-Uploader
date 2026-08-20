@@ -2007,3 +2007,67 @@ describe('a collection list that fails because the session is not honoured', () 
     expect(harness.app.innerHTML).toContain('500');
   });
 });
+
+/**
+ * ## A password site is never sent through the browser flow
+ *
+ * Rows 9 and 10 of the state table: a site that has been switched between the
+ * two modes leaves the other mode's artefacts behind, and what matters is that
+ * they are IGNORED rather than acted on.
+ *
+ * The live case is one this branch introduced. Offering "Sign in to this site"
+ * whenever the session is refused is right under OAuth and wrong under a
+ * password: the notice beside that button says, in as many words, that the site
+ * signs in with OAuth, and the button drives a browser flow a password site has
+ * no use for. A password site whose credentials the server refuses would have
+ * been told something false about how it signs in and handed a control that
+ * cannot help -- the same shape of dead end the button exists to remove.
+ *
+ * What a password site needs is the error, which it already gets: the fields
+ * that would fix it are on this screen.
+ */
+describe('a password site whose session is refused', () => {
+  const PASSWORD = {
+    site: { authMode: 'password' as const },
+    hasToken: false,
+  };
+
+  const openSetup = async (): Promise<void> => {
+    harness.app.fire('#site-settings-btn');
+    await flush();
+  };
+
+  it('is not offered the OAuth sign-in button', async () => {
+    harness = await boot({
+      ...PASSWORD,
+      listCollectionsFails: 'POST /api/auth/login failed: 401 Unauthorized',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.has('#setup-sign-in')).toBe(false);
+  });
+
+  /** And is not told the wrong thing about how it signs in. */
+  it('is not told that the site signs in with OAuth', async () => {
+    harness = await boot({
+      ...PASSWORD,
+      listCollectionsFails: 'POST /api/auth/login failed: 401 Unauthorized',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.innerHTML).not.toContain('Sign in to this site first.');
+  });
+
+  it('still says what went wrong', async () => {
+    harness = await boot({
+      ...PASSWORD,
+      listCollectionsFails: 'POST /api/auth/login failed: 401 Unauthorized',
+      signedIn: false,
+    });
+    await openSetup();
+
+    expect(harness.app.innerHTML).toContain('401');
+  });
+});

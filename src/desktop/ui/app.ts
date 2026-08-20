@@ -671,10 +671,19 @@ async function refreshSetupCollections(): Promise<void> {
     // A SERVER FAULT IS NOT A REASON TO SIGN IN AGAIN. Where the session is
     // fine, no offer is made: sending somebody through a browser flow that
     // cannot help is worse than leaving them with the error.
-    try {
-      refusedSession = (await window.oeq.currentUser(instanceId)) === null;
-    } catch {
-      refusedSession = false;
+    //
+    // AND NEITHER IS A PASSWORD SITE. The offer is the OAuth browser flow and
+    // the notice beside it says so in as many words, so making it on a
+    // password site would state something false about how that site signs in
+    // and hand over a control that cannot help -- the same dead end this
+    // offer exists to remove. A password site gets the error, which is the
+    // right answer: the fields that would fix it are on this screen.
+    if (instance?.authMode === 'code') {
+      try {
+        refusedSession = (await window.oeq.currentUser(instanceId)) === null;
+      } catch {
+        refusedSession = false;
+      }
     }
   }
   // The operator may have switched sites while this was in flight; another

@@ -1343,3 +1343,132 @@ describe('SecretStore — the collection a site was set up against', () => {
     expect((await s.loadInstance(instanceKey(LIVE)))?.collectionUuid).toBe('coll-1');
   });
 });
+
+/**
+ * ## Switching a site between the two modes leaves the other one's artefacts behind
+ *
+ * Rows 9 and 10 of the sign-in state table. Neither is cleaned up on the way
+ * through, deliberately: an operator who switches to OAuth to try it and
+ * switches straight back would otherwise have to type their password again,
+ * having changed nothing. So what has to hold is that the leftover is IGNORED
+ * rather than acted on -- read the wrong one and a site signs in as somebody
+ * the operator did not choose, or fails with an empty client id and
+ * openEQUELLA's misleading "client_id (null)".
+ *
+ * `loadSettings` is where that is decided: it branches on the site's stored
+ * `authMode` and reads only the matching credential.
+ */
+describe('a site switched between password and OAuth', () => {
+  const OAUTH = {
+    authMode: 'code' as const,
+    clientId: 'c-1',
+    clientSecret: 's-1',
+    redirectUri: 'https://oeq.example.edu/',
+  };
+  const ACCOUNT = { authMode: 'password' as const, username: 'm.rowan', password: 'hunter2' };
+
+  it('uses OAuth, and ignores the password left behind (row 9)', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, ACCOUNT);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, OAUTH);
+
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual(OAUTH);
+  });
+
+  it('uses the password, and ignores the OAuth client left behind (row 10)', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, OAUTH);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, ACCOUNT);
+
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual(ACCOUNT);
+  });
+
+  /**
+   * The leftover survives the round trip, which is what makes switching back
+   * cost nothing. Asserted so that a later "tidy up on switch" cannot be added
+   * without meeting the decision it reverses.
+   */
+  it('keeps the password through a switch to OAuth and back', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, ACCOUNT);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, OAUTH);
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      // As Setup submits it: the password field is never rendered back, so an
+      // operator switching modes sends a blank one.
+      { authMode: 'password', username: 'm.rowan', password: '' },
+    );
+
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual(ACCOUNT);
+  });
+
+  /**
+   * And the client secret does too, by the same rule -- Setup renders it back
+   * no more than it renders a password.
+   */
+  it('keeps the client secret through a switch to a password and back', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, OAUTH);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, ACCOUNT);
+    await s.saveInstance({ label: 'Live', baseUrl: LIVE }, { ...OAUTH, clientSecret: '' });
+
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual(OAUTH);
+  });
+});
+
+/**
+ * Forgetting must mean forgetting, whichever mode the site is in today.
+ *
+ * The dormant record above is kept because the store's rule is that Forget is
+ * the only thing that removes a client secret. That rule has to hold in both
+ * directions: a credential kept across a switch and then unreachable by the
+ * control that exists to remove it would be a secret on disk with no way to
+ * take it off, which is the opposite of what keeping it was for.
+ */
+describe('forgetting an OAuth credential a site no longer signs in with', () => {
+  it('removes the dormant record from a password-mode site', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { authMode: 'code', clientId: 'c-1', clientSecret: 's-1', redirectUri: 'https://oeq.example.edu/' },
+    );
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { authMode: 'password', username: 'm.rowan', password: 'hunter2' },
+    );
+    await s.forgetOAuth(instanceKey(LIVE));
+    // Switching back must now find nothing to restore, rather than the secret
+    // the operator just asked to be rid of.
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { authMode: 'code', clientId: 'c-1', clientSecret: '', redirectUri: 'https://oeq.example.edu/' },
+    );
+
+    expect(await s.getOAuth(instanceKey(LIVE))).toEqual({
+      clientId: 'c-1',
+      redirectUri: 'https://oeq.example.edu/',
+      hasSecret: false,
+    });
+  });
+
+  /** And leaves the site, and the credential it does sign in with, alone. */
+  it('leaves the site and its password where they are', async () => {
+    const s = new SecretStore(join(dir, 'settings.enc'), fakeCipher);
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { authMode: 'code', clientId: 'c-1', clientSecret: 's-1', redirectUri: 'https://oeq.example.edu/' },
+    );
+    await s.saveInstance(
+      { label: 'Live', baseUrl: LIVE },
+      { authMode: 'password', username: 'm.rowan', password: 'hunter2' },
+    );
+    await s.forgetOAuth(instanceKey(LIVE));
+
+    expect(await s.loadSettings(instanceKey(LIVE))).toEqual({
+      authMode: 'password',
+      username: 'm.rowan',
+      password: 'hunter2',
+    });
+    expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Live');
+  });
+});

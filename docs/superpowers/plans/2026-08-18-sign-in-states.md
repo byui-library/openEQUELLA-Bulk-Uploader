@@ -216,10 +216,42 @@ Rows 9 and 10. Both are believed correct after today's `authMode` fix, and both
 leave something behind that must be ignored rather than acted on: a password
 entry left by a switch to OAuth, and a `token.enc` left by a switch back.
 
-- [ ] **Step 1:** Tests — a site stored as `code` that still has a password entry
+- [x] **Step 1:** Tests — a site stored as `code` that still has a password entry
       uses OAuth; a site stored as `password` that still has a token uses the
       password.
-- [ ] **Step 2:** If either fails, fix it. Commit either way.
+- [x] **Step 2:** If either fails, fix it. Commit either way.
+
+**Done 2026-08-20. Rows 9 and 10 were correct; three other things were not.**
+`loadSettings` branches on the stored `authMode` before reading any credential,
+so neither leftover is ever reached. That held on the first run and is now
+asserted directly rather than believed.
+
+**1. Task 3's own change was wrong for password sites.** Offering *Sign in to
+this site* whenever the session is refused is right under OAuth and false under
+a password: the notice beside that button says the site signs in with OAuth,
+and the button drives a browser flow a password site has no use for. So a
+password site with a rejected password would have been told something untrue
+about how it signs in and handed a control that cannot help — the same dead
+end the button exists to remove. Now gated on `authMode === 'code'`; a password
+site gets the error, which is the right answer, because the fields that would
+fix it are on that screen.
+
+**2. Switching to a password silently destroyed the client secret.** The store
+says in two places that `forgetOAuth` is the ONLY way to remove one — a blank
+field on a save means *keep what is stored* — but a mode switch replaced the
+entry with a password-shaped one that had nowhere to put it. The password
+survives the mirror-image switch, because passwords live in their own map. So
+the asymmetry cost an operator a secret they can only get back from an
+administrator, at the moment they were least likely to notice. A password entry
+may now carry the OAuth record **dormant**: kept, never read to sign in.
+
+**3. And then `forgetOAuth` could not remove it**, because it returned early
+for a password-mode site — back when such an entry could not hold one. Keeping
+a credential that no control can remove is the opposite of why it was kept, so
+Forget now clears it whichever mode the site is in today.
+
+**Files:** `src/desktop/ui/app.ts`, `src/desktop/secrets.ts`,
+`tests/desktop/ui/appNavigation.test.ts`, `tests/desktop/secrets.test.ts`
 
 ### STOP — TEST 4 (operator)
 
