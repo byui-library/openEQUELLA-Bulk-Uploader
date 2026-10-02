@@ -8,14 +8,40 @@ The operator is stepping away from the project and asked what must be dealt
 with before sharing it. The tool has since been shared with a member of the
 openEQUELLA users group, who will be reading the source.
 
-### RESUME HERE
+### RESUME HERE — session ended 2026-10-02
 
-- **Open PR: `chore/electron-upgrade`** — Electron 33 → 44, electron-builder
-  25 → 26. Merge it, then release (bump `package.json`, tag `vX.Y.Z`, push the
-  tag) so staff get the new runtime, the client-ID warning and the dependency
-  fixes. v1.2.1, the current release, has none of them.
-- **Schema-less collections** (below) — deferred by the operator.
-- **`vitest` major upgrade** — clears the last dev-only advisories. Not started.
+**State at the end of the session:** `main` is clean and carries the rewritten
+history. One PR is open, nothing else is in flight, no uncommitted work.
+
+**In order:**
+
+1. **Finish PR #17 (`chore/electron-upgrade`).** Its one unchecked item is the
+   operator's: install the Setup .exe from `npm run dist` on a staff machine and
+   sign in to a real site. Read the PR's review comments before merging (see
+   Process in CLAUDE.md), merge, then diff the branch against `main` before
+   deleting it.
+2. **Release.** Bump `package.json` (1.2.1 → 1.3.0 suggested — a new runtime
+   and a new Setup warning), tag `v1.3.0`, push the tag; CI builds both
+   installers. Then copy the installer to the network share. Staff currently run
+   v1.2.1, which has none of the 2026-10-02 work.
+3. **Deferred by the operator:** collections listed with no `schema` (below —
+   measure the single-entity response on content-test first).
+4. **Not started:** `vitest` major upgrade (dev-only advisories).
+
+**Operator to-do, outside the code:** two rows of the local obituary batch
+(`tests/obits/extracted.csv`, gitignored) have blank descriptions, refused by
+the verifier correctly. Drafts were given in the session: one has both dates
+and no college mention; the other states no dates at all, its filename
+misspells the surname the document uses, and it reads like an obituary-farm
+page, so its provenance should be checked before it is catalogued.
+
+**How the app was checked, for next time:** launch `electron.exe
+dist-desktop/desktop/main.js --remote-debugging-port=9333
+--user-data-dir=<temp dir>` with `ELECTRON_RUN_AS_NODE` **unset**, read
+`http://127.0.0.1:9333/json`, and use CDP over a WebSocket (`Runtime.evaluate`,
+`Page.captureScreenshot`) — Node 24 has `WebSocket` built in, no Playwright
+needed. For the packaged build, run `release/win-unpacked/openEQUELLA Bulk
+Uploader.exe` the same way.
 
 ### Done
 
@@ -122,7 +148,7 @@ the 2221-test suite could see:
   now points at username and password AND says what OAuth is for, because "use
   the other one instead" is wrong at exactly the institutions that cannot.
 
-### RESUME HERE — nothing is in flight
+### Historical: the resume point as of 2026-08-20
 
 There is no half-finished task. The plan
 ([sign-in states](superpowers/plans/2026-08-18-sign-in-states.md)) is complete
