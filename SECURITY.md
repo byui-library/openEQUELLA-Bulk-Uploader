@@ -103,18 +103,19 @@ checked against how this code actually calls the library:
 | `uuid` (via `exceljs`) | Missing bounds check when a `buf` argument is passed | **Not reachable, and not fixable by upgrading.** `exceljs` calls `uuidv4()` with no arguments, and `exceljs@4.4.0` is already the latest release. |
 | `brace-expansion`, `fast-uri`, `hono`, `ip-address`, `qs` (transitive) | Denial of service, SSRF and parser differentials | **Fixed in range** by `npm audit fix`, 2026-10-02. |
 
-**Electron is the one that matters, and it is NOT fixed.** `npm audit` lists
-`electron` under the full tree only because it is a devDependency, but it is
-the runtime packaged into every installer staff run. **`electron@33` is out of
-support**, and advisories against it include a context-isolation bypass
-(fixed in 39.8.9) and several use-after-free bugs. Moving to a supported major is
-a breaking change that needs the desktop app driven by hand afterwards — the
-renderer is sandboxed and its failure mode is a silent blank window — so it is
-its own piece of work, not an audit fix.
+**Electron is the one that matters, because it is the runtime packaged into
+every installer staff run** — `npm audit` files it under devDependencies, which
+undersells it. `electron@33` was out of support with advisories including a
+context-isolation bypass. **Upgraded to `electron@44` and `electron-builder@26`
+on 2026-10-02**, which clears every Electron, builder and `tar` advisory. Checked
+beyond the suite, because the renderer is sandboxed and its failure mode is a
+silent blank window: the dev build and the packaged `win-unpacked` build were
+both launched with a disposable profile and inspected over CDP — Setup
+rendered, `window.oeq` was bridged, no console errors.
 
-The remaining development-only advisories (`vitest`, `electron-builder` and its
-`tar`) are reachable only on a developer's machine running the test UI or
-packaging a build, and clear with the same major upgrades.
+The remaining development-only advisories are `vitest` and its `vite`/`esbuild`
+tree, reachable only on a developer's machine running the test UI. They clear
+with a `vitest` major upgrade, not yet done.
 
 **Do not run `npm audit fix --force`.** Its remedy for the `uuid` line is
 `exceljs@3.4.0` — a downgrade across a major version, to older code, in the
