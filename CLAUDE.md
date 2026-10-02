@@ -102,22 +102,24 @@ by whom, is not recorded. `LICENSE` is present and `package.json` declares
 spreadsheet, no institutional detail. The "every person is invented" convention
 below is a hard rule, not a tidiness preference.
 
-**The published history is NOT clean, and that is outstanding.** In the first
-fifteen public days GitHub recorded **240 clones from 56 unique sources against
-1 unique human viewer** — the signature of automated clients — so whatever was
-in history then has been copied off-platform and cannot be retracted. Two
-different things are in it:
+**History was REWRITTEN on 2026-10-02 and force-pushed** — `main` and every
+tag. The real names, birth and death dates, towns, causes of death and quoted
+document text from the obituary batch were replaced throughout all 360 commits
+and their messages with the pseudonyms the tree already used. Verified: the
+current tree came through byte-identical, and no real token survives in any
+commit or message. **Every commit hash before that date changed**; hashes
+quoted in older notes, PR descriptions and review comments refer to the old
+history and will not resolve locally. Two things the rewrite did not do, both
+by the operator's decision:
 
-- **The operator's own identity** — real name, institutional email, and the
-  `schema/sample.xml` identity block below. The operator chose to publish; the
-  author line of every commit carries the same name and email regardless.
-- **Third parties' personal data.** The real names of deceased people from the
-  obituary batch were in commits on `main` dated 2026-08-07 to 2026-08-13
-  (removed from the tree by `d8a80da`), and remain browsable commit by commit
-  on GitHub today. This is the item that needs a decision: rewriting history
-  and asking GitHub Support to purge cached views and pull-request refs, or
-  starting a fresh repository. The scrub covers the current tree and not the
-  past.
+- **The operator's own identity stays** — real name, institutional email, and
+  the `schema/sample.xml` identity block below remain in history, and on the
+  author line of every commit regardless.
+- **No GitHub Support purge was requested.** Pull requests #1–#16 still
+  reference the old commits, which GitHub keeps reachable by hash. The
+  operator judged the data not sensitive enough to pursue it. Copies cloned
+  while it was public (240 clones from 56 unique sources in the first fifteen
+  days) are beyond reach either way.
 
 **That violation happened once, and is now fixed.** The operator’s real
 surname reached 48 places — test fixtures, two docs, a comment recording a
@@ -125,9 +127,14 @@ live cookie measurement — and `schema/sample.xml` carried a whole identity
 block: username, given name, surname and institutional email, from a real
 contributed item kept as the golden output target. All of it is scrubbed, on
 its own branch, reviewed as a change of its own. **It is still in published
-history**; removing it from there is a separate decision nobody has taken.
+history**, deliberately: the 2026-10-02 rewrite covered third parties only.
 Do not re-introduce a real name to describe the incident — this paragraph
 used to quote the surname it was warning about.
+
+**Electron 44 is on an open PR, `chore/electron-upgrade`** (2026-10-02),
+replacing an out-of-support Electron 33 that ships in every installer. Checked
+by launching the dev and packaged builds over CDP, not only by the suite. Not
+yet in any release.
 
 **v1.2.1 is released and tagged**; `package.json` carries it. (v1.1.1 is the
 release the two paragraphs below describe, and both still apply to anyone
@@ -466,12 +473,14 @@ shape, never as a value the code may assume.
   Bracken, Teasel, Sorrel, Alder, Clover, Willow and Hawthorn. **They are
   pseudonyms and must stay that way, and so must the dates, towns and causes of
   death beside them** — a real death date under an invented name still
-  identifies someone. This rule is written here because it was broken once: the
-  real names of ten deceased people, with birth and death dates, towns and
-  causes of death, reached the tests, the README, the specs and the source
-  comments during the obituary work. They were scrubbed from the tree in
-  `d8a80da`, **but the repository was already public when they were committed,
-  so they are in published history** (see Status). Working from a real batch is
+  identifies someone. This rule is written here because it was broken — not
+  once but repeatedly: the real names of ten deceased people, with birth and
+  death dates, towns and causes of death, reached the tests, the README, the
+  specs and the source comments during the obituary work. Three scrubs
+  (`84edbef`, `c9dd956`, and the dates one after them) each missed something,
+  and a fourth on 2026-10-02 still found two real birth-and-death date pairs in
+  the tree. The repository was public throughout, so history had to be
+  rewritten (see Status). Working from a real batch is
   fine; typing what you saw into the repository is not.
 - **Nothing reachable from `src/desktop/ui/` may import `node:*` or `electron`.**
   The renderer is sandboxed. Such an import does not fail loudly — it kills the
