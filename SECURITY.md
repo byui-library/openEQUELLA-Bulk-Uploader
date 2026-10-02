@@ -5,7 +5,7 @@ credentials an operator supplies. This page states what it does with those
 credentials, what leaves the machine, and what an adopting institution should
 check on their own site.
 
-Last reviewed 2026-08-17.
+Last reviewed 2026-10-02.
 
 ## Reporting a vulnerability
 
@@ -92,13 +92,29 @@ client's registration allows it, and paste whole URLs where it does not.
 
 ## Dependency advisories
 
-`npm audit` currently reports three moderate advisories. Both underlying issues
-were checked against how this code actually calls the libraries:
+Re-checked 2026-10-02. `npm audit --omit=dev` — the code that ships — reports
+two moderate advisories, both the same `uuid` issue below. Every advisory was
+checked against how this code actually calls the library:
 
 | Package | Advisory | Status |
 | --- | --- | --- |
 | `fast-xml-parser` | Comment/CDATA injection in `XMLBuilder` | **Upgraded to 5.x.** The advisory never applied — only `XMLParser` is used, and item XML is built by hand with its own escaper in `src/core/metadata.ts` — but the upgrade was available and verified. |
+| `csv-parse` | Prototype replacement reachable through the `columns` path | **Upgraded to 7.x** (2026-10-02). It reads operator-supplied spreadsheets, whose header row is outside this tool's control, so it was treated as reachable. Full suite and `build:desktop` clean on the upgrade. |
 | `uuid` (via `exceljs`) | Missing bounds check when a `buf` argument is passed | **Not reachable, and not fixable by upgrading.** `exceljs` calls `uuidv4()` with no arguments, and `exceljs@4.4.0` is already the latest release. |
+| `brace-expansion`, `fast-uri`, `hono`, `ip-address`, `qs` (transitive) | Denial of service, SSRF and parser differentials | **Fixed in range** by `npm audit fix`, 2026-10-02. |
+
+**Electron is the one that matters, and it is NOT fixed.** `npm audit` lists
+`electron` under the full tree only because it is a devDependency, but it is
+the runtime packaged into every installer staff run. **`electron@33` is out of
+support**, and advisories against it include a context-isolation bypass
+(fixed in 39.8.9) and several use-after-free bugs. Moving to a supported major is
+a breaking change that needs the desktop app driven by hand afterwards — the
+renderer is sandboxed and its failure mode is a silent blank window — so it is
+its own piece of work, not an audit fix.
+
+The remaining development-only advisories (`vitest`, `electron-builder` and its
+`tar`) are reachable only on a developer's machine running the test UI or
+packaging a build, and clear with the same major upgrades.
 
 **Do not run `npm audit fix --force`.** Its remedy for the `uuid` line is
 `exceljs@3.4.0` — a downgrade across a major version, to older code, in the

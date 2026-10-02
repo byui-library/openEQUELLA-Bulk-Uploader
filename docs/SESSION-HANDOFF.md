@@ -1,8 +1,44 @@
-# Session handoff — updated 2026-08-20 (end of session)
+# Session handoff — updated 2026-10-02
 
 Read this first.
 
-## Where things stand
+## 2026-10-02: readiness check before sharing with colleagues
+
+The operator is stepping away from the project and asked what must be dealt
+with before sharing it. Done on branch `chore/public-docs-and-deps`:
+
+- **The repository is PUBLIC, and stays public — the operator's decision.** It
+  had been recorded here as private since 2026-08-18; on 2026-10-02 `gh repo
+  view` reported `PUBLIC` and an anonymous request returned 200. When it was
+  reopened is not recorded. CLAUDE.md is corrected.
+- **Real names of deceased people are in PUBLISHED history.** Commits on `main`
+  dated 2026-08-07 to 2026-08-13 carry them (removed from the tree by
+  `d8a80da`). CLAUDE.md used to say they were scrubbed "before the repository
+  could be opened"; they were not — it was already public. Undecided: rewrite
+  history plus a GitHub Support purge, or a fresh repository.
+- **Setup now warns about a client ID that is not uuid-shaped** —
+  `screens/setup.ts#clientIdNote`. A warning, never a refusal; it says the
+  value may still be right and saves it as typed.
+- **Dependencies:** `npm audit fix` and `npm update` (in range), and
+  `csv-parse` 5 → 7 for a prototype-replacement advisory reachable through the
+  spreadsheet header row. Production advisories went from 8 (2 high) to the
+  one known, unreachable `uuid`/`exceljs` pair. **`electron@33` is NOT
+  upgraded** and is the remaining real risk — it ships in every installer and
+  is out of support. That upgrade needs the GUI driven by hand afterwards.
+  `SECURITY.md` records all of it.
+- **2283 tests across 106 files**, typecheck and `build:desktop` clean.
+
+**Found, not fixed:** when a collection's list entry carries no `schema`
+(`content-test.byui.edu`), `app.ts#handleSetupCollectionChange` returns
+silently, and the attachment verdict then reads "no collection is chosen" —
+false, one is. The suggested fix: fall back to `GET /api/collection/{uuid}`
+(`client.getCollection` already exists and reads `schema.uuid`) in the main
+process, and where that is also empty say "this site does not say which schema
+this collection uses", never "no collection is chosen". **Measure first**
+whether the single-entity response carries `schema` on content-test — paste
+the URL into a signed-in browser — because the list's answer does not predict it.
+
+## Where things stood on 2026-08-20
 
 **v1.2.1 is released. `main` carries everything and NO branch is open.**
 
@@ -10,8 +46,8 @@ Read this first.
   attached to the GitHub Release. It carries the whole sign-in state plan —
   five tasks, rows 1 to 14 of the credential state table — plus the dependency
   upgrade that was held back from v1.2.0.
-- **Private, still.** Anonymous access returns 404. A public-facing version
-  remains a later decision, to be discussed with Edalex.
+- ~~**Private, still.**~~ Superseded 2026-10-02: the repository is public, by
+  the operator's decision. See the section above.
 - **2275 tests across 106 files.** Typecheck and `build:desktop` clean.
 
 ### What the sign-in plan actually found
@@ -66,11 +102,8 @@ and records what each task found.
 
 **Open, and deliberately not started:**
 
-- **A malformed client ID is not warned about.** The operator's own was a
-  permutation of a valid uuid with one group moved, and the only symptom was
-  openEQUELLA's `client_id (null)`. Setup could check the 8-4-4-4-12 shape and
-  warn — overridably, never a refusal, since nothing guarantees an institution's
-  client id is a uuid. Raised with the operator, not yet decided.
+- ~~**A malformed client ID is not warned about.**~~ Done 2026-10-02 at the
+  operator's decision: Setup warns, overridably.
 - **A collection LIST entry with no `schema`** yields `schema: ''` from
   `parseCollections`, and everything downstream — the attachment-field autofill,
   the schema-derived title path — has nothing to read. Measured on
