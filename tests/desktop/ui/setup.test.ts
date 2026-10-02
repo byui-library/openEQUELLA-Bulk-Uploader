@@ -5,6 +5,7 @@ import {
   attachmentPathToFill,
   attachmentPathVerdict,
   backLabel,
+  clientIdNote,
   instanceFrom,
   modelEntryProblem,
   modelFrom,
@@ -475,6 +476,64 @@ describe('attachmentPathVerdict', () => {
     );
     expect(html).toContain('verdict--undeclared');
     expect(html).toContain('2 valid paths');
+  });
+});
+
+/**
+ * A client ID with one group of a valid uuid moved elsewhere was entered for
+ * real, and the only symptom was openEQUELLA's `client_id (null)` -- which
+ * names neither the field nor the mistake. The shape is worth checking; it is
+ * NOT worth refusing, because nothing guarantees an institution's client id
+ * is a uuid at all.
+ */
+describe('the client ID shape', () => {
+  const UUID = '3f2a9c10-7b4e-4d21-9a6f-0c8e5b1d2a47';
+  // The same five groups, the 4-hex group moved first: every character is
+  // valid, the shape is not.
+  const PERMUTED = '7b4e-3f2a9c10-4d21-9a6f-0c8e5b1d2a47';
+  const code = (clientId: string): string =>
+    setupMarkup(props({ fields: fields({ authMode: 'code', clientId }) }));
+
+  it('says nothing about a blank field', () => {
+    expect(clientIdNote('')).toBeNull();
+    expect(clientIdNote('   ')).toBeNull();
+  });
+
+  it('says nothing about a uuid, in either case, with stray whitespace', () => {
+    expect(clientIdNote(UUID)).toBeNull();
+    expect(clientIdNote(UUID.toUpperCase())).toBeNull();
+    expect(clientIdNote(`  ${UUID}\t`)).toBeNull();
+  });
+
+  it('warns about a permuted uuid, naming the shape it expected', () => {
+    const note = clientIdNote(PERMUTED);
+    expect(note).not.toBeNull();
+    expect(note).toContain('8-4-4-4-12');
+  });
+
+  it('warns about one character too many or too few', () => {
+    expect(clientIdNote(`${UUID}0`)).not.toBeNull();
+    expect(clientIdNote(UUID.slice(1))).not.toBeNull();
+  });
+
+  // Overridable: the operator may know better, so the warning must say so.
+  it('says the value may still be right', () => {
+    expect(clientIdNote(PERMUTED)).toMatch(/may still be right/i);
+  });
+
+  it('shows the warning under the field in OAuth mode', () => {
+    const html = code(PERMUTED);
+    expect(html).toContain('id="setup-client-id-note"');
+    expect(html.indexOf('id="setup-client-id-note"')).toBeGreaterThan(html.indexOf('id="setup-client-id"'));
+  });
+
+  it('shows no warning for a uuid', () => {
+    expect(code(UUID)).not.toContain('id="setup-client-id-note"');
+  });
+
+  it('never refuses: the typed value is saved exactly as entered', () => {
+    const settings = settingsFrom(props({ fields: fields({ authMode: 'code', clientId: PERMUTED }) }));
+    expect(settings).toMatchObject({ authMode: 'code', clientId: PERMUTED });
   });
 });
 
