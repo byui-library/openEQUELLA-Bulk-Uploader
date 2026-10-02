@@ -5,28 +5,56 @@ Read this first.
 ## 2026-10-02: readiness check before sharing with colleagues
 
 The operator is stepping away from the project and asked what must be dealt
-with before sharing it. Done on branch `chore/public-docs-and-deps`:
+with before sharing it. The tool has since been shared with a member of the
+openEQUELLA users group, who will be reading the source.
+
+### RESUME HERE
+
+- **Open PR: `chore/electron-upgrade`** — Electron 33 → 44, electron-builder
+  25 → 26. Merge it, then release (bump `package.json`, tag `vX.Y.Z`, push the
+  tag) so staff get the new runtime, the client-ID warning and the dependency
+  fixes. v1.2.1, the current release, has none of them.
+- **Schema-less collections** (below) — deferred by the operator.
+- **`vitest` major upgrade** — clears the last dev-only advisories. Not started.
+
+### Done
 
 - **The repository is PUBLIC, and stays public — the operator's decision.** It
   had been recorded here as private since 2026-08-18; on 2026-10-02 `gh repo
   view` reported `PUBLIC` and an anonymous request returned 200. When it was
-  reopened is not recorded. CLAUDE.md is corrected.
-- **Real names of deceased people are in PUBLISHED history.** Commits on `main`
-  dated 2026-08-07 to 2026-08-13 carry them (removed from the tree by
-  `d8a80da`). CLAUDE.md used to say they were scrubbed "before the repository
-  could be opened"; they were not — it was already public. Undecided: rewrite
-  history plus a GitHub Support purge, or a fresh repository.
+  reopened is not recorded.
+- **History was rewritten and force-pushed** (`main` and all six tags).
+  Real names of deceased people, and the dates, towns and causes of death beside
+  them, had been in published commits since 2026-08-07; CLAUDE.md wrongly said
+  they were scrubbed before publishing. `git filter-repo --replace-text` with
+  line rules derived from the three earlier scrub commits (`84edbef`,
+  `c9dd956`, and the dates scrub), applied in order so they chain, plus a name
+  and birth-date backstop; `--replace-message` for commit messages.
+  **Two checks, both passed:** the current tree came through byte-identical, and
+  no real token survives in any commit or message. Two lessons from getting
+  there: a line rule from a hunk with unequal `-`/`+` counts mispairs and
+  corrupts text, and a rule whose replacement contains its original (a re-wrap)
+  duplicates words — both were dropped. **Every hash before 2026-10-02 changed.**
+  The operator's own identity was deliberately left in history, and no GitHub
+  Support purge was requested — PRs #1–#16 still reach the old commits by hash.
+- **The tree itself still held real data**, which four scrubs had missed: two
+  real birth-and-death date pairs in two tests, the handoff, a plan and a spec.
+  Fixed in `59aee8f` before the rewrite. Bare `2024-01-06` remains as a generic
+  example in the verifier tests — a death date alone, under an invented name,
+  identifies no one, and changing it would mean rewriting the date-format cases
+  those tests exist for.
 - **Setup now warns about a client ID that is not uuid-shaped** —
-  `screens/setup.ts#clientIdNote`. A warning, never a refusal; it says the
-  value may still be right and saves it as typed.
-- **Dependencies:** `npm audit fix` and `npm update` (in range), and
-  `csv-parse` 5 → 7 for a prototype-replacement advisory reachable through the
-  spreadsheet header row. Production advisories went from 8 (2 high) to the
-  one known, unreachable `uuid`/`exceljs` pair. **`electron@33` is NOT
-  upgraded** and is the remaining real risk — it ships in every installer and
-  is out of support. That upgrade needs the GUI driven by hand afterwards.
-  `SECURITY.md` records all of it.
+  `screens/setup.ts#clientIdNote`. A warning, never a refusal. Driven in the
+  live app over CDP: renders under the field, styled, no CSP errors.
+- **Dependencies:** `npm audit fix`, `npm update`, `csv-parse` 5 → 7 (merged,
+  PR #16), and Electron 44 (open PR). Production advisories are down to the
+  known, unreachable `uuid`/`exceljs` pair. The Electron upgrade was checked by
+  launching both the dev build and the packaged `win-unpacked` build with a
+  disposable profile over CDP: Setup rendered, `window.oeq` bridged, no errors.
+  Installers build; they are ~26 MB larger.
 - **2283 tests across 106 files**, typecheck and `build:desktop` clean.
+- **Markdown:** the operator confirmed the spreadsheet (CSV/XLSX) stays the
+  standard. Nothing to build.
 
 **Found, not fixed:** when a collection's list entry carries no `schema`
 (`content-test.byui.edu`), `app.ts#handleSetupCollectionChange` returns
@@ -127,6 +155,10 @@ is not reachable. `SECURITY.md` records this so nobody force-upgrades on a red
 audit line.
 
 ## What the fifteen public days cost, unchanged
+
+> **Superseded 2026-10-02:** the repository is public again by decision, and
+> history was rewritten to remove the third-party data — see the top of this
+> file. The traffic figures below still stand; copies taken then are unaffected.
 
 Traffic for the fifteen days the repository was public:
 
@@ -501,7 +533,7 @@ which that is already true, and this project's record on GUI changes verified
 only by tests is unambiguous — see *What is genuinely outstanding* below.
 
 **The nine review findings this block used to list as a queue are CLOSED**
-(`29061f9`). Every one has a test, and eight mutations — including all four the
+(`5cabab9`). Every one has a test, and eight mutations — including all four the
 review found surviving — were run and confirmed red. Do not go looking for them;
 the record of what was wrong is under *What the hardening established* below,
 kept as history rather than as work.
@@ -520,7 +552,7 @@ outputs follow the house style, the same 2 were refused, and nothing ungrounded
 reached the spreadsheet.** The sample is still ten documents, one collection,
 one language.
 
-### What the hardening established — closed, `29061f9`
+### What the hardening established — closed, `5cabab9`
 
 Read this as the record, not as a queue.
 
@@ -629,11 +661,11 @@ this are in the README and `docs/INSTALL.md`.
   can be reviewed on its own.
 - **Real document text is in published history.** The phrase *"in the early
   hours of Saturday morning"*, quoted from a real scanned obituary, reached
-  `verify.ts` and two fixtures during this session and was removed in `a238858`
+  `verify.ts` and two fixtures during this session and was removed in `c9dd956`
   — **but it was already on `origin/main`** in three commits from the
-  collection-templates work (`7897136`, `4156bfe`, `7f8ad6d`). Removing it from
+  collection-templates work (`7b07ff5`, `46189dd`, `79e3399`). Removing it from
   published history is a separate decision, not a code change.
-- `tests/obits/` and a bare `obits/` are now gitignored (`481cf1a`). They
+- `tests/obits/` and a bare `obits/` are now gitignored (`bcf6464`). They
   arrived **untracked and not ignored**, one `git add -A` from publishing ten
   scanned obituaries naming real people with their dates.
 
@@ -719,7 +751,7 @@ flagged, `_source` read `ai`, the note told the operator to check. **A flag is
 not a guard**: in a collection with no moderation workflow, a fabricated date a
 reviewer skims past is permanent and indistinguishable from a real one.
 
-**What was built in response: `src/core/ai/verify.ts`**, commit `8224934`. Every
+**What was built in response: `src/core/ai/verify.ts`**, commit `3845a44`. Every
 generated value is checked against the whole document before it is written, and
 `fill.ts` refuses the **whole** value if any checkable claim is unsupported —
 never a repaired one, because this tool does not edit generated prose. Built from
