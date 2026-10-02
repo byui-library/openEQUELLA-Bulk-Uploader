@@ -88,27 +88,36 @@ last segment is `attachment(s)` -- BYUI_MWDL declares exactly one,
 line says it was. Never over what the operator typed, never on a re-render (a
 cleared field has to stay cleared), and never when the schema declares two:
 picking between them would be the institution-specific assumption this branch
-exists to remove. **2275 tests across 106 files** on `main`, which now carries everything.
+exists to remove. **2283 tests across 106 files** (2026-10-02).
 
 That was spec 1 of two. **Spec 2 — publishing the repository — happened, and
-has since been REVERSED.** It was public from 2026-08-03 to 2026-08-18 and is
-private again as of 2026-08-18, verified: `gh repo view` reports
-`"isPrivate": true`, and an anonymous request returns 404. `LICENSE` is still
-present and `package.json` still declares `"license": "Apache-2.0"`; a
-public-facing version is a later decision, to be discussed with Edalex.
+the repository is PUBLIC, by the operator's decision (confirmed 2026-10-02).**
+Verified that day: `gh repo view` reports `"visibility": "PUBLIC"` and an
+anonymous request returns 200. It was first public 2026-08-03 to 2026-08-18,
+was made private on 2026-08-18, and was public again by 2026-10-02 — when, and
+by whom, is not recorded. `LICENSE` is present and `package.json` declares
+`"license": "Apache-2.0"`. Every release and its installers are world-readable.
 
-**Do not read "private" as "nothing got out."** In those fifteen days GitHub
-recorded **240 clones from 56 unique sources against 1 unique human viewer** —
-the signature of automated clients, not people. The repository was copied
-off-platform, so going private stops future access and retracts nothing. The
-operator’s real name and institutional email are in the published history.
-**A public-facing version therefore needs clean history or a fresh
-repository** — the scrub covers the current tree and not the past.
+**Everything committed here IS public.** No credential, no real name, no real
+spreadsheet, no institutional detail. The "every person is invented" convention
+below is a hard rule, not a tidiness preference.
 
-**Treat everything committed here as though it may become public.** No
-credential, no real name, no real spreadsheet, no institutional detail. The
-"every person is invented" convention below is a hard rule, not a tidiness
-preference, and being private again does not soften it.
+**The published history is NOT clean, and that is outstanding.** In the first
+fifteen public days GitHub recorded **240 clones from 56 unique sources against
+1 unique human viewer** — the signature of automated clients — so whatever was
+in history then has been copied off-platform and cannot be retracted. Two
+different things are in it:
+
+- **The operator's own identity** — real name, institutional email, and the
+  `schema/sample.xml` identity block below. The operator chose to publish; the
+  author line of every commit carries the same name and email regardless.
+- **Third parties' personal data.** The real names of deceased people from the
+  obituary batch were in commits on `main` dated 2026-08-07 to 2026-08-13
+  (removed from the tree by `d8a80da`), and remain browsable commit by commit
+  on GitHub today. This is the item that needs a decision: rewriting history
+  and asking GitHub Support to purge cached views and pull-request refs, or
+  starting a fresh repository. The scrub covers the current tree and not the
+  past.
 
 **That violation happened once, and is now fixed.** The operator’s real
 surname reached 48 places — test fixtures, two docs, a comment recording a
@@ -148,7 +157,7 @@ Description extraction is tiered — a stated field, then a named section
 language model. **Tiers 1–3 are built.** Anything from tier 3, and any section
 that ran to the length cap, is always flagged in `_notes`.
 
-**Tier 4 — the language model — is BUILT, on `feature/llm-provider`.** It was
+**Tier 4 — the language model — is BUILT and merged.** It was
 deferred by the operator on 2026-08-10 ("hold off on the ai piece for now") and
 taken up again on 2026-08-14. `src/core/ai/` holds it; either front end can run
 it; the shipped obituary template enables it on `MWDL/description` and on
@@ -173,12 +182,11 @@ which configures no endpoint sends nothing anywhere.
 **Released as v1.0.0** on 2026-08-07. Packaging is tag-driven: bump the version
 in package.json, tag `vX.Y.Z`, push the tag, and .github/workflows/release.yml
 builds both Windows installers and creates the GitHub Release. **The repo is
-PUBLIC** -- this sentence used to say "private, so the Release is the version
-archive, not the delivery channel", and it is the worst sentence in this file to
-leave wrong, because it is what a next reader consults when deciding what may
-safely be committed. Staff still get the executable from the network share, so
-the Release remains the version archive in practice; it is now also world-
-readable, along with every artifact attached to it.
+PUBLIC** (see Status above) -- this is the sentence a next reader consults when
+deciding what may safely be committed, so it is the worst one in this file to
+leave wrong. Staff still get the executable from the network share, so the
+Release remains the version archive in practice; it is also world-readable,
+along with every artifact attached to it.
 
 The wire format is settled — the `{ type: 'file', filename, description, uuid }`
 attachment payload was confirmed by the production run, not just by
@@ -461,9 +469,10 @@ shape, never as a value the code may assume.
   identifies someone. This rule is written here because it was broken once: the
   real names of ten deceased people, with birth and death dates, towns and
   causes of death, reached the tests, the README, the specs and the source
-  comments during the obituary work and had to be scrubbed before the repository
-  could be opened. Working from a real batch is fine; typing what you saw into
-  the repository is not.
+  comments during the obituary work. They were scrubbed from the tree in
+  `d8a80da`, **but the repository was already public when they were committed,
+  so they are in published history** (see Status). Working from a real batch is
+  fine; typing what you saw into the repository is not.
 - **Nothing reachable from `src/desktop/ui/` may import `node:*` or `electron`.**
   The renderer is sandboxed. Such an import does not fail loudly — it kills the
   whole module graph and the window renders blank, with nothing on the terminal.

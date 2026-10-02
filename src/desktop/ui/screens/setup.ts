@@ -632,6 +632,36 @@ export function modelListNote(props: SetupProps): string {
     </div>`;
 }
 
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A warning for a client ID that is not shaped like a uuid, or null.
+ *
+ * A WARNING, NEVER A REFUSAL. A client ID with one group of a valid uuid moved
+ * elsewhere was entered for real, and the only symptom was openEQUELLA's
+ * `No OAuth client can be found with the supplied client_id (null)` -- which
+ * names neither the field nor the mistake. But nothing guarantees an
+ * institution's client id is a uuid, so the value is saved as typed and the
+ * wording says it may still be right.
+ */
+export function clientIdNote(clientId: string): string | null {
+  const trimmed = clientId.trim();
+  if (trimmed === '' || UUID_SHAPE.test(trimmed)) return null;
+  return (
+    'This does not look like the usual client ID: those are five groups of letters and ' +
+    'digits shaped 8-4-4-4-12, such as 3f2a9c10-7b4e-4d21-9a6f-0c8e5b1d2a47. Check it ' +
+    'against what your administrator gave you, character for character. It may still be ' +
+    'right — some sites issue other shapes — so it will be saved as typed.'
+  );
+}
+
+function clientIdMarkup(clientId: string): string {
+  const note = clientIdNote(clientId);
+  return note === null
+    ? ''
+    : `<p id="setup-client-id-note" class="hint verdict verdict--unusual">${escapeHtml(note)}</p>`;
+}
+
 function authSection(props: SetupProps, forWhat: string): string {
   const f = props.fields;
   const account =
@@ -712,6 +742,7 @@ function authSection(props: SetupProps, forWhat: string): string {
             spellcheck="false"
             value="${escapeHtml(f.clientId)}"
           />
+          ${clientIdMarkup(f.clientId)}
 
           ${
             props.storedOAuth?.hasSecret === true
