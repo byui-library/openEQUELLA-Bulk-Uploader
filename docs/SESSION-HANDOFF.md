@@ -564,7 +564,7 @@ Same ten scanned obituaries, `llama3.1:8b` on a GPU, where the first run was
 `llama3.2:3b` on CPU. 140 seconds for ten documents.
 
 - **8 of 8 written outputs follow the house style**
-  (`Died 2024-01-09; Born 1938-07-22; Attended Ricks College.`). With the 3B
+  (`Died 1911-05-17; Born 1842-09-30; Attended Ricks College.`). With the 3B
   model about three of eight did — the rest prepended names, gave an age where a
   death date belongs, or wrote prose sentences naming a hospital. **The house-style
   failures were model capability, not prompt wording. Do not elaborate the

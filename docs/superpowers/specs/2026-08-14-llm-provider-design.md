@@ -142,8 +142,8 @@ on the argument that a model competing against a blank cell has no fact to
 contradict. That argument is right and is kept for stated values.
 
 **The amendment is deliberate.** The batch that prompted this work is scanned
-obituaries, where the target description is a synthesis — *"Died 2024-01-06;
-Born 1954-04-05; Attended Ricks College"* — and the August design itself notes
+obituaries, where the target description is a synthesis — *"Died 1913-08-02;
+Born 1840-12-11; Attended Ricks College"* — and the August design itself notes
 that "no section-finding produces that from a clipping". On those documents
 tier 3 yields a flagged opening paragraph: worse than a blank, because "blanks
 only" would let the junk block the model precisely where the model is most

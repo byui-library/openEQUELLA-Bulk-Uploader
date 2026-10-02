@@ -180,9 +180,9 @@ describe('formula injection', () => {
 
   it('leaves ordinary text exactly as it was', async () => {
     const records = await writeAndRead([
-      row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': 'Died 2024-01-09; Born 1938-07-22' }),
+      row({ [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/title': 'Died 1911-05-17; Born 1842-09-30' }),
     ]);
-    expect(records[1]?.[1]).toBe('Died 2024-01-09; Born 1938-07-22');
+    expect(records[1]?.[1]).toBe('Died 1911-05-17; Born 1842-09-30');
   });
 
   /**

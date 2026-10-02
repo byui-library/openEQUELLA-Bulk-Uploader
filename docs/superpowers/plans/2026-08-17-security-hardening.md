@@ -69,7 +69,7 @@ describe('guardFormula', () => {
   );
 
   it('leaves ordinary text alone', () => {
-    expect(guardFormula('Died 2024-01-09; Born 1938-07-22')).toBe('Died 2024-01-09; Born 1938-07-22');
+    expect(guardFormula('Died 1911-05-17; Born 1842-09-30')).toBe('Died 1911-05-17; Born 1842-09-30');
     expect(guardFormula('')).toBe('');
     expect(guardFormula('Fennel, Marcus')).toBe('Fennel, Marcus');
   });
