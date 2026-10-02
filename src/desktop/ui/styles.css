@@ -415,6 +415,12 @@ button.link-button:hover:not(:disabled) {
   font-weight: 600;
 }
 
+/* Under the client ID: an unusual shape is a reason to look again, not an
+   error -- the value is saved as typed (screens/setup.ts#clientIdNote). */
+.verdict--unusual {
+  color: var(--error-text);
+}
+
 .reset-row .link-button + .link-button {
   margin-left: 1rem;
 }
