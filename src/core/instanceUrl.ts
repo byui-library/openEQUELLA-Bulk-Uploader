@@ -3,10 +3,10 @@ import { OeqError } from './errors.js';
 /**
  * Validate and normalise an openEQUELLA address typed by an operator.
  *
- * HTTPS is required, not preferred. openEQUELLA's `/api/auth/login` takes the
- * password as a query parameter (confirmed in schema/swagger.json), so over
- * http it would travel in clear text in the request line. There is no
- * degraded mode worth offering, so this throws rather than warning.
+ * HTTPS is required, not preferred. Password sign-in sends the password to
+ * openEQUELLA's `/api/auth/login` (a JSON body since late 2026; a query
+ * parameter before that), so over http it would travel in clear text. There is
+ * no degraded mode worth offering, so this throws rather than warning.
  */
 export function normaliseInstanceUrl(raw: string): string {
   const trimmed = raw.trim();

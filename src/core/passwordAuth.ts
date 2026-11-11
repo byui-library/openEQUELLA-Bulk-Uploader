@@ -41,10 +41,15 @@ import { SingleFlight } from './singleFlight.js';
  * batch (see duplicates.ts#findDuplicates). See the long comment in auth.ts
  * for why expiry is reactive rather than on a timer.
  *
- * THE PASSWORD TRAVELS IN THE QUERY STRING. That is openEQUELLA's API, not a
- * choice made here. It means the password reaches server access logs, so:
- * https is required (enforced in the constructor), and nothing in this class
- * ever puts a full URL into an error, a message or a log line.
+ * THE PASSWORD TRAVELS IN A JSON BODY: `{ "username", "password" }`, with
+ * `content-type: application/json`. It used to travel in the query string, as
+ * schema/swagger.json still documents; measured 2026-11-11 against both
+ * content.byui.edu and content-test.byui.edu, that form is now answered 415
+ * ("Cannot consume content type") and only JSON is accepted. There is NO
+ * fallback to the old form, by the operator's decision -- nobody has asked for
+ * one. https is still required (enforced in the constructor): the body is a
+ * password in clear text without TLS. Nothing in this class puts the request
+ * body into an error, and anything the server echoes back is redacted.
  */
 /** Shared by the request and by safeEndpoint(), so an error can never name an
  *  endpoint the code did not actually call. */
@@ -134,13 +139,15 @@ export class UsernamePasswordAuth implements AuthProvider {
 
   private async login(): Promise<Session> {
     const url = instanceEndpoint(this.baseUrl, LOGIN_PATH);
-    url.searchParams.set('username', this.username);
-    url.searchParams.set('password', this.password);
 
     let res: Response;
     let body: string;
     try {
-      res = await this.fetchImpl(url, { method: 'POST' });
+      res = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: this.username, password: this.password }),
+      });
       body = await res.text();
     } catch {
       // Never include the request URL: it carries the password, and some

@@ -48,11 +48,14 @@ if (!base || !username || !password) {
  */
 const endpoint = (path) => new URL(path.replace(/^\/+/, ''), `${base.replace(/\/+$/, '')}/`);
 
+// A JSON body, not query parameters: openEQUELLA answers the query form 415
+// since late 2026. See src/core/passwordAuth.ts.
 const loginUrl = endpoint('/api/auth/login');
-loginUrl.searchParams.set('username', username);
-loginUrl.searchParams.set('password', password);
-
-const login = await fetch(loginUrl, { method: 'POST' });
+const login = await fetch(loginUrl, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ username, password }),
+});
 console.log('login ->', login.status, login.ok ? '' : '(sign-in itself failed; nothing below is meaningful)');
 
 const setCookies = login.headers.getSetCookie();

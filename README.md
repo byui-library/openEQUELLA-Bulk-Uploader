@@ -67,8 +67,8 @@ be found with the supplied client_id (null)`, naming neither the variables you
 set nor the one you didn't. `check` detects exactly that case and says so.
 
 **`OEQ_BASE_URL` must be https**, and this is refused rather than warned about.
-openEQUELLA's `/api/auth/login` takes the password as a *query parameter*, so
-over plain http it travels in clear text in the request line. A loopback
+The password-mode sign-in sends the password to openEQUELLA's
+`/api/auth/login`, so over plain http it travels in clear text. A loopback
 address (`localhost`, `127.0.0.1`) is the one exemption, because its traffic
 never leaves the machine — and `check` says so out loud rather than printing a
 bare `ok`, so nobody reads it as license to use http against a real host.
@@ -183,13 +183,13 @@ special handling — a lapsed session produces a 401, which the client already
 answers by invalidating and retrying exactly once, the same machinery OAuth
 expiry has always used.
 
-**The credentials go in the query string** (`POST /api/auth/login?username=…&password=…`).
-That is openEQUELLA's API and cannot be changed from here, and it has two
-consequences the tool acts on rather than warns about:
+**The credentials go in a JSON body** (`POST /api/auth/login` with
+`{"username", "password"}`). openEQUELLA used to take them as query
+parameters. Since late 2026 it refuses that form with a 415, and this tool has
+no fallback to it. Two consequences the tool acts on rather than warns about:
 
 - **https is required**, enforced in the provider's constructor and reported
-  by `check`. Over http the password would be in clear text in the request
-  line.
+  by `check`. Over http the password would be in clear text in the request.
 - **No URL carrying credentials is ever logged, printed, or written to the
   manifest.** `tests/passwordAuth.test.ts` walks every string reachable from a
   thrown error — message, stack, the `ApiError` body, anything nested — for the

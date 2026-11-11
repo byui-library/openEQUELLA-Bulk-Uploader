@@ -29,6 +29,19 @@ describe('secretWireForms', () => {
   it('is empty for an empty secret, so nothing redacts everything', () => {
     expect(secretWireForms('')).toEqual(new Set());
   });
+
+  /**
+   * The password now travels in a JSON BODY (openEQUELLA refuses the query
+   * form with 415 since late 2026), and JSON escapes `"` and `\`. A server
+   * echoing the body back sends that escaped form, which none of the three URL
+   * encodings matches.
+   */
+  it('includes the JSON-string form, which escapes quote and backslash', () => {
+    const secret = 'pa"ss\\w';
+    // Written out literally, not computed with JSON.stringify, so a bug in the
+    // implementation's use of it cannot be mirrored here.
+    expect(secretWireForms(secret).has('pa\\"ss\\\\w')).toBe(true);
+  });
 });
 
 describe('redactSecret', () => {
@@ -63,6 +76,12 @@ describe('redactSecret', () => {
     expect(redactSecret('a Summer2026%21 b Summer2026! c', 'Summer2026!')).toBe(
       'a [REDACTED] b [REDACTED] c',
     );
+  });
+
+  it('redacts a JSON request body echoed back verbatim', () => {
+    const secret = 'pa"ss\\w';
+    const echoed = `rejected: {"username":"jsmith","password":"pa\\"ss\\\\w"}`;
+    expect(redactSecret(echoed, secret)).toBe('rejected: {"username":"jsmith","password":"[REDACTED]"}');
   });
 
   it('leaves text alone when the secret is empty', () => {

@@ -13,25 +13,29 @@ Open a GitHub issue for anything already public. For anything that is not,
 use GitHub's **Report a vulnerability** button on the Security tab, which
 opens a private advisory rather than a public issue.
 
-## Your password is in the URL, and URLs get logged
+## Your password travels in the request body
 
-openEQUELLA's sign-in API is `POST /api/auth/login?username=…&password=…`.
-Both are query-string parameters; the API declares no request-body form. That
-is openEQUELLA's design and this tool cannot change it.
+The tool signs in with `POST /api/auth/login` and a JSON body,
+`{"username": …, "password": …}`. That is all it sends.
+
+**This used to be a warning about URLs.** openEQUELLA's sign-in took the
+credentials as query-string parameters, as its published API description
+still says, and web servers, proxies and load balancers routinely log the full
+request line. Measured on 2026-11-11, openEQUELLA now refuses that form
+(`415 Unsupported Media Type`) and accepts only the JSON body. The tool has
+followed it, and **it has no fallback to the old form.** An openEQUELLA server
+that still accepts only the query form will refuse the tool's password sign-in.
+Use OAuth there, or ask for the fallback.
 
 - **In transit it is protected.** HTTPS is required before any request is
-  built, and plain `http` is refused outright — including to `localhost` —
-  precisely because the password rides in the URL.
-- **At rest on the server it may not be.** Web servers, reverse proxies and
-  load balancers routinely record the full request line, query string included.
-  An AWS load balancer's access logs do.
+  built, and plain `http` is refused outright, including to `localhost`. A
+  request body is just as readable as a URL without TLS.
+- **The tool never logs it.** Nothing puts the request body into an error, and
+  anything the server echoes back is redacted, in every form it can take on the
+  wire, including a JSON-escaped one.
 
-**What to check on your own instance:** whether access logging captures query
-strings, how long those logs are kept, and who can read them. Where your site
-supports OAuth, prefer it — the password never leaves the browser in that flow.
-
-This is worth raising with the openEQUELLA project itself. A login that took
-its credentials in the request body would close it for every institution.
+Where your site supports OAuth, prefer it: the password never leaves the
+browser in that flow.
 
 ## What leaves your machine
 

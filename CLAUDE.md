@@ -367,10 +367,19 @@ shape, never as a value the code may assume.
   variables they set nor the one they didn't. `runPreflight` detects exactly
   that combination and says so; do not describe password mode as "the default"
   without saying which surface.
-- **The password travels in the query string.** `POST /api/auth/login?username=&password=`
-  is openEQUELLA's API and cannot be changed from here. So plain http is
-  *refused* rather than warned about, and nothing may put a login URL into a
-  log, a message or the manifest. **`normaliseInstanceUrl` rejects loopback over
+- **The password travels in a JSON body, and the query form is DEAD.**
+  `POST /api/auth/login` with `{"username","password"}` and
+  `content-type: application/json`. Until late 2026 openEQUELLA took them as
+  query parameters (`?username=&password=`, which `schema/swagger.json` still
+  documents). Measured 2026-11-11 with a made-up account against BOTH
+  `content.byui.edu` and `content-test.byui.edu`: the query form now answers
+  **415** "RESTEASY003065: Cannot consume content type" whatever content type
+  is sent, and a JSON body is the only form accepted. **v1.2.1 and earlier
+  cannot sign in with a password at either site.** No fallback to the query
+  form, by the operator's decision (2026-11-11): nobody has asked for one. The
+  swagger file disagreeing with the server is now the sixth time. Plain http
+  is still *refused* rather than warned about, and nothing may put the request
+  body into a log, a message or the manifest. **`normaliseInstanceUrl` rejects loopback over
   http too** -- this file used to say "(loopback exempted)" here, and that is
   wrong about the rule. The exemption is `preflight.ts#httpsCheck`'s alone: it
   *reports* a loopback base URL as passing, and per its own docblock that verdict
@@ -379,8 +388,9 @@ shape, never as a value the code may assume.
   before any report is built. Note this is the OPPOSITE of the model endpoint
   rule below, and deliberately: there the reason to refuse http is a bearer key,
   which loopback genuinely removes. `tests/passwordAuth.test.ts` walks
-  every string reachable from a thrown error for the password in literal and
-  percent-encoded form; that guard exists because a debug line added later
+  every string reachable from a thrown error for the password in literal,
+  percent-encoded and JSON-escaped form (`redact.ts#secretWireForms` knows all
+  four, and the JSON one is mutation-checked); that guard exists because a debug line added later
   would leak passwords into a file the operator emails around asking for help.
 - **BYU-Idaho's OAuth client cannot do the client-credentials grant.** Probed
   2026-08-12: it answers `invalid_client` — *"To use the Client Credentials
