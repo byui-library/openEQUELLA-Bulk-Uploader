@@ -99,12 +99,14 @@ titled "PROBE multi-attachment order test - safe to delete":
 - `createItem` got a Location-only response, so `attachmentUuids` was `[]` and
   the runner's uuid check had nothing to compare. A read-back is the only way to
   see what the server stored.
-- **Still to do:** the operator opens the item in openEQUELLA's own interface
-  and confirms the display order matches and that each PDF opens.
+- **CONFIRMED by the operator in openEQUELLA's own interface (2026-11-11):**
+  all three attachments are present and displayed in the order sent, and each
+  one opens when clicked. Several files on one contribution, in a chosen
+  order, is proven end to end. The probe item can be deleted.
 
 ### FOUND WHILE PROBING: password sign-in is broken on content-test
 
-> **FIXED on branch `fix/password-login-json`** (commit `412607f`, off `main`),
+> **FIXED on branch `fix/password-login-json`, PR #18, as v1.2.2** (off `main`),
 > no fallback by the operator's decision. **Production has moved too**: both
 > instances answer the query form 415. The fix was verified live with the app's
 > own provider. Not yet merged or released. The text below is the record of
