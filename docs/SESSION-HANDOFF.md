@@ -598,7 +598,7 @@ Read this as the record, not as a queue.
   parts the text actually stated — with one rule, `entails`: every part the
   claim states must be stated, and equal, in the document's. `new Date` is gone
   from the path; month names resolve through a stem table, so every reading is
-  calendar-validated and `2024-02-30` is not a date.
+  calendar-validated and `1916-02-30` is not a date.
 - **Twelve classes of false rejection fixed**: `.`-separated dates, two-digit
   years, `the 6th of January`, thousands separators, spelled numbers above
   ninety-nine, ordinal words, `a dozen`, `three and a half`.
