@@ -124,17 +124,49 @@ describe('the sign-in request', () => {
    * correct. A site still on the old API would answer this tool's JSON body
    * the same way, so both shapes must name the API, not the credentials.
    */
-  it.each([
-    [415, '{"code":415,"error":"Unsupported Media Type","error_description":"RESTEASY003065: Cannot consume content type"}'],
-    [400, '{"code":400,"error":"Bad Request","error_description":"Missing required field username"}'],
-  ])('says the sign-in API does not match on %i, not that the password is wrong', async (status, body) => {
-    const impl = vi.fn(async () => new Response(body, { status })) as unknown as typeof fetch;
+  it('says the sign-in API does not match on 415, not that the password is wrong', async () => {
+    const body =
+      '{"code":415,"error":"Unsupported Media Type","error_description":"RESTEASY003065: Cannot consume content type"}';
+    const impl = vi.fn(async () => new Response(body, { status: 415 })) as unknown as typeof fetch;
     const err = await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl)
       .authHeader()
       .catch((e: unknown) => e as Error);
-    expect(err.message).toMatch(/sign-in.*(does not match|not one this version)/i);
+    expect(err.message).toMatch(/sign-in does not match/i);
     expect(err.message).not.toMatch(/check the username and password/i);
   });
+
+  /**
+   * Only the MEASURED shape refusal (415) gets the API-mismatch message. A 400
+   * was never measured on a real sign-in, and "Missing required field" is
+   * also what a blank username gets, so matching its prose would send an
+   * operator who left a field empty off to change how they sign in.
+   */
+  it('does not guess from the prose of a 400', async () => {
+    const body = '{"code":400,"error":"Bad Request","error_description":"Missing required field username"}';
+    const impl = vi.fn(async () => new Response(body, { status: 400 })) as unknown as typeof fetch;
+    const err = await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl)
+      .authHeader()
+      .catch((e: unknown) => e as Error);
+    expect(err.message).not.toMatch(/does not match/i);
+  });
+
+  /**
+   * The message is a constant the code wrote; it carries no secret. Running
+   * the redactor over it can only DAMAGE it -- and, worse, a weak password
+   * that is also a word in the message ("password", "tool", "site", or a
+   * status number) leaves a [REDACTED] marker whose position gives the
+   * password away to anyone reading the emailed error.
+   */
+  it.each(['password', 'tool', 'site', '415'])(
+    'never redacts its own wording, which would reveal a password %j',
+    async (weak) => {
+      const impl = vi.fn(async () => new Response('', { status: 415 })) as unknown as typeof fetch;
+      const err = await new UsernamePasswordAuth(BASE, 'jsmith', weak, impl)
+        .authHeader()
+        .catch((e: unknown) => e as Error);
+      expect(err.message).not.toContain('[REDACTED]');
+    },
+  );
 
   it('still blames the credentials on a 401', async () => {
     const impl = vi.fn(

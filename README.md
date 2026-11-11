@@ -68,9 +68,10 @@ set nor the one you didn't. `check` detects exactly that case and says so.
 
 **`OEQ_BASE_URL` must be https**, and this is refused rather than warned about.
 The password-mode sign-in sends the password to openEQUELLA's
-`/api/auth/login`, so over plain http it travels in clear text. In password
-mode that refusal covers `localhost` too. In the OAuth modes a loopback
-address (`localhost`, `127.0.0.1`) is the one exemption, because its traffic
+`/api/auth/login`, so over plain http it travels in clear text. The desktop
+app refuses http for every site, `localhost` included, whatever its sign-in
+method, and so does the CLI in password mode. Only the CLI in the OAuth modes
+accepts a loopback address (`localhost`, `127.0.0.1`), because its traffic
 never leaves the machine — and `check` says so out loud rather than printing a
 bare `ok`, so nobody reads it as license to use http against a real host.
 

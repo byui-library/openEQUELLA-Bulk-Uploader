@@ -21,13 +21,17 @@
  * institutional password policies, so `Summer2026!` -- echoed on the wire as
  * `Summer2026%21` -- would pass into an error body verbatim.
  *
- * Redacted: literal, `encodeURIComponent`, `URLSearchParams`, and the
- * JSON-string escape in each spelling a server's serialiser may choose (see
- * `jsonForms`). These are the forms this module KNOWS; an echo in some other
- * encoding is not caught, and nothing here claims otherwise.
+ * Redacted: the literal secret, its two URL encodings, and ANY JSON-string
+ * spelling of it (see `jsonSpelling`). An echo in some other encoding --
+ * base64, HTML entities -- is not caught, and nothing here claims otherwise.
  */
 
-/** Every form a secret can take on the wire. Empty for an empty secret. */
+/**
+ * The fixed forms a secret takes on the wire: literal, `encodeURIComponent`,
+ * `URLSearchParams`, and `JSON.stringify`'s spelling. Empty for an empty
+ * secret. `redactSecret` ALSO matches every other JSON spelling, which cannot
+ * be listed -- see `jsonSpelling`.
+ */
 export function secretWireForms(secret: string): Set<string> {
   if (!secret) return new Set();
   return new Set([
@@ -36,33 +40,51 @@ export function secretWireForms(secret: string): Set<string> {
     // `p=` prefix then sliced off: the only way to get URLSearchParams' own
     // encoder to serialise a bare value.
     new URLSearchParams({ p: secret }).toString().slice(2),
-    ...jsonForms(secret),
+    JSON.stringify(secret).slice(1, -1),
   ]);
 }
 
+/** JSON's two-character escapes. `\/` is optional in JSON and some use it. */
+const SHORT_ESCAPES: Record<string, string> = {
+  '"': '\\"',
+  '\\': '\\\\',
+  '/': '\\/',
+  '\b': '\\b',
+  '\f': '\\f',
+  '\n': '\\n',
+  '\r': '\\r',
+  '\t': '\\t',
+};
+
+const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
- * The JSON-string forms, quotes stripped. The password travels in a JSON body
- * (passwordAuth.ts), and JSON escapes `"` and `\`, so a server echoing that
- * body back sends a form no URL encoding matches.
+ * A pattern matching EVERY JSON-string spelling of `secret`, in any mix.
  *
- * NOT ONLY `JSON.stringify`'s spelling. openEQUELLA is Java, and serialisers
- * there may also escape `/` as `\/` and non-ASCII as `\uXXXX`, in either hex
- * case. Each choice is independent, so every combination is listed: six
- * strings at most, fewer once the Set collapses the ones a secret without
- * `/` or non-ASCII makes identical.
+ * The password travels in a JSON body (passwordAuth.ts), and a server echoing
+ * that body back serialises it its own way. A list of spellings cannot keep
+ * up: openEQUELLA is Java, Jackson writes `\u001F` where JavaScript writes
+ * `\u001f`, Gson escapes `<`, `>`, `&`, `=` and `'` as `<` and the rest by
+ * default, and any serialiser may escape `/` or any other character it likes.
+ * So each UTF-16 code unit of the secret matches itself, its `\uXXXX` escape
+ * in either hex case, or its short escape where JSON has one.
+ *
+ * Hex digits are case-insensitive ONE AT A TIME (`[dD]`), not via the `i`
+ * flag, which would also make the secret's own letters match their other case.
  */
-function jsonForms(secret: string): string[] {
-  const base = JSON.stringify(secret).slice(1, -1);
-  const unicode = (s: string, upper: boolean) =>
-    s.replace(/[\u0080-￿]/g, (c) => {
-      const hex = c.charCodeAt(0).toString(16).padStart(4, '0');
-      return `\\u${upper ? hex.toUpperCase() : hex}`;
-    });
-  const forms: string[] = [];
-  for (const s of [base, base.replace(/\//g, '\\/')]) {
-    forms.push(s, unicode(s, false), unicode(s, true));
+function jsonSpelling(secret: string): RegExp {
+  let source = '';
+  for (let i = 0; i < secret.length; i++) {
+    const unit = secret[i]!;
+    const hex = secret.charCodeAt(i).toString(16).padStart(4, '0');
+    const unicode =
+      '\\\\u' + [...hex].map((d) => (/[a-f]/.test(d) ? `[${d}${d.toUpperCase()}]` : d)).join('');
+    const alternatives = [reEscape(unit), unicode];
+    const short = SHORT_ESCAPES[unit];
+    if (short) alternatives.push(reEscape(short));
+    source += `(?:${alternatives.join('|')})`;
   }
-  return forms;
+  return new RegExp(source, 'g');
 }
 
 /**
@@ -81,5 +103,6 @@ export function redactSecret(text: string, secret: string): string {
   for (const form of forms) {
     result = result.split(form).join('[REDACTED]');
   }
+  if (secret) result = result.replace(jsonSpelling(secret), '[REDACTED]');
   return result;
 }

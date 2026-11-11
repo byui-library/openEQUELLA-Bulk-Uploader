@@ -64,20 +64,31 @@ const CURRENT_USER_PATH = '/api/content/currentuser';
 /**
  * The message for a refused sign-in, which depends on WHAT was refused.
  *
- * A 415, or a 400 saying a field is missing, is the server refusing the
- * request's SHAPE, not the credentials in it. That is exactly the failure
- * v1.2.1 hit when openEQUELLA dropped the query form, and it told operators to
- * "check the username and password" about credentials that were correct. A
- * site still on the old API would refuse this tool's JSON body the same way.
- * Sending the operator to re-type a correct password is worse than no advice,
- * so those two say the API does not match and name the way out.
+ * A 415 is the server refusing the request's SHAPE, not the credentials in
+ * it -- measured live, and exactly the failure v1.2.1 hit when openEQUELLA
+ * dropped the query form, which it reported as "check the username and
+ * password" about credentials that were correct. Sending the operator to
+ * re-type a correct password is worse than no advice, so 415 says the API does
+ * not match and names the way out.
+ *
+ * ONLY 415, because only 415 was measured. A 400 "Missing required field" is
+ * also what a blank username gets, and matching an error's prose would break
+ * the day the server rewords it. And what a server still on the OLD
+ * query-string API does with this tool's JSON body is NOT KNOWN: it may well
+ * see no credentials and answer 401, in which case its operator is told to
+ * check a correct password. That is the accepted cost of having no fallback
+ * (the operator's decision), not something this function can detect.
  *
  * Every other failure keeps the credential advice: 401 is the server's
  * answer to a wrong password, measured live.
+ *
+ * THE RESULT IS A CONSTANT AND IS NEVER REDACTED. It contains no secret, and
+ * redacting it could only damage it -- a weak password that is also a word
+ * here ("password", "tool", "site", a status code) would leave a marker whose
+ * position gives the password away. Only the server's BODY is redacted.
  */
-function signInFailure(status: number, body: string): string {
-  const shapeRefused = status === 415 || (status === 400 && /missing required field/i.test(body));
-  if (shapeRefused) {
+function signInFailure(status: number): string {
+  if (status === 415) {
     return (
       `Sign-in failed (${status}): this site's sign-in does not match the way this version of ` +
       `the tool signs in, so the username and password were never checked. Make sure the tool ` +
@@ -191,7 +202,7 @@ export class UsernamePasswordAuth implements AuthProvider {
 
     if (!res.ok) {
       throw new ApiError(
-        this.redact(signInFailure(res.status, body)),
+        signInFailure(res.status),
         res.status,
         this.redact(body),
       );

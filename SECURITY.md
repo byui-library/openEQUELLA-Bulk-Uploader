@@ -24,17 +24,20 @@ still says, and web servers, proxies and load balancers routinely log the full
 request line. Measured on 2026-11-11, openEQUELLA now refuses that form
 (`415 Unsupported Media Type`) and accepts only the JSON body. The tool has
 followed it, and **it has no fallback to the old form.** An openEQUELLA server
-that still accepts only the query form will refuse the tool's password sign-in.
-Use OAuth there, or ask for the fallback.
+that still accepts only the query form will refuse the tool's password sign-in,
+and may do so with an ordinary "wrong password" answer, so the tool cannot tell
+you that is the reason. If a password that works in the browser is refused
+here, use OAuth, or ask for the fallback.
 
 - **In transit it is protected.** HTTPS is required before any request is
   built, and plain `http` is refused outright, including to `localhost`. A
   request body is just as readable as a URL without TLS.
 - **The tool never logs it.** Nothing puts the request body into an error, and
   anything the server echoes back is redacted in every form the tool knows: the
-  literal password, its two URL encodings, and its JSON-escaped spellings,
-  including Java's `\/` and `\uXXXX`. An echo in some other encoding would not
-  be caught.
+  literal password, its two URL encodings, and any JSON spelling of it (any
+  character written as itself, as `\uXXXX` in either case, or as its short
+  escape, in any mix). An echo in some other encoding, such as base64 or HTML
+  entities, would not be caught.
 
 Where your site supports OAuth, prefer it: the password never leaves the
 browser in that flow.

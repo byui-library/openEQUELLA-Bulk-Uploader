@@ -395,8 +395,12 @@ shape, never as a value the code may assume.
   rule below, and deliberately: there the reason to refuse http is a bearer key,
   which loopback genuinely removes. `tests/passwordAuth.test.ts` walks
   every string reachable from a thrown error for the password in literal,
-  percent-encoded and JSON-escaped form (`redact.ts#secretWireForms` knows all
-  four, and the JSON one is mutation-checked); that guard exists because a debug line added later
+  percent-encoded and JSON-escaped form. `redact.ts` matches the URL forms
+  as fixed strings and ANY JSON spelling (each character literal, `\uXXXX` in
+  either hex case, or its short escape) by one pattern, because a list of
+  serialiser spellings cannot keep up; both are mutation-checked. **A constant
+  message the code wrote is never redacted**: a weak password that is also a
+  word in it would leave a marker whose position reveals it. That guard exists because a debug line added later
   would leak passwords into a file the operator emails around asking for help.
 - **BYU-Idaho's OAuth client cannot do the client-credentials grant.** Probed
   2026-08-12: it answers `invalid_client` — *"To use the Client Credentials
@@ -682,9 +686,9 @@ shape, never as a value the code may assume.
 - **A bearer key does not cross plain http unless the host is this machine.**
   Exactly that one combination is refused — http, plus a key, plus a non-loopback
   host. `normaliseInstanceUrl` is deliberately NOT reused for a model address:
-  it refuses all http because openEQUELLA's sign-in carries the password in the
-  QUERY STRING, and that is a fact about openEQUELLA's API which does not
-  transfer. Reusing it would ban `http://localhost:11434/v1`, which is what every
+  it refuses all http, loopback included, because openEQUELLA's sign-in sends
+  the password (a JSON body since late 2026, the query string before), and that
+  is a rule about openEQUELLA which does not transfer. Reusing it would ban `http://localhost:11434/v1`, which is what every
   local runtime serves and what the local half of this design rests on.
 - **`_notes` never reaches openEQUELLA** — `plan.ts` skips every column
   `schema.ts#isAnnotationHeader` recognises (any header starting with `_`)
