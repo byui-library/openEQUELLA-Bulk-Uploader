@@ -30,7 +30,7 @@ export function normaliseInstanceUrl(raw: string): string {
     // real downgrade the operator might otherwise argue with.
     throw new OeqError(
       'The address must start with https, not http. ' +
-        'Your password is sent as part of the web address when signing in to openEQUELLA, ' +
+        'Your password is sent to openEQUELLA when signing in, ' +
         'so an unencrypted connection would expose it.',
     );
   }

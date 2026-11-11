@@ -68,7 +68,8 @@ set nor the one you didn't. `check` detects exactly that case and says so.
 
 **`OEQ_BASE_URL` must be https**, and this is refused rather than warned about.
 The password-mode sign-in sends the password to openEQUELLA's
-`/api/auth/login`, so over plain http it travels in clear text. A loopback
+`/api/auth/login`, so over plain http it travels in clear text. In password
+mode that refusal covers `localhost` too. In the OAuth modes a loopback
 address (`localhost`, `127.0.0.1`) is the one exemption, because its traffic
 never leaves the machine — and `check` says so out loud rather than printing a
 bare `ok`, so nobody reads it as license to use http against a real host.
@@ -190,11 +191,11 @@ no fallback to it. Two consequences the tool acts on rather than warns about:
 
 - **https is required**, enforced in the provider's constructor and reported
   by `check`. Over http the password would be in clear text in the request.
-- **No URL carrying credentials is ever logged, printed, or written to the
-  manifest.** `tests/passwordAuth.test.ts` walks every string reachable from a
+- **The request body is never logged, printed, or written to the manifest,
+  and anything the server echoes back is redacted.** `tests/passwordAuth.test.ts` walks every string reachable from a
   thrown error — message, stack, the `ApiError` body, anything nested — for the
-  password in both literal and percent-encoded form, including on the path
-  where a server echoes the request line back at us. That test exists because a
+  password in literal, percent-encoded and JSON-escaped form, with a server
+  that echoes the whole request, URL and body, back at us. That test exists because a
   debug line added later would otherwise put a password in a file the operator
   emails around when asking for help.
 
@@ -423,7 +424,7 @@ oeq-upload logout
   OEQ_BASE_URL: https://oeq.yourschool.edu
   OEQ_COLLECTION_UUID: 0f3a1c2e-5d84-4b0e-9a71-6c2e8f4d1b33
 
-  [PASS] HTTPS: OEQ_BASE_URL is 'https://oeq.yourschool.edu', which uses https. openEQUELLA takes your password as part of the web address when signing in, so this is what keeps it from travelling in clear text.
+  [PASS] HTTPS: OEQ_BASE_URL is 'https://oeq.yourschool.edu', which uses https. Your password or client secret is sent to openEQUELLA when signing in, so this is what keeps it from travelling in clear text.
   [PASS] Token: present and usable.
   [PASS] Sign-in method: signed in with OEQ_AUTH_MODE=password, i.e. a username and password, from OEQ_USERNAME and OEQ_PASSWORD.
   [PASS] Identity: logged in as jsmith (Jane Smith). Created items will be owned by this user.

@@ -84,6 +84,20 @@ describe('redactSecret', () => {
     expect(redactSecret(echoed, secret)).toBe('rejected: {"username":"jsmith","password":"[REDACTED]"}');
   });
 
+  /**
+   * openEQUELLA is Java. JSON serialisers other than JavaScript's may escape
+   * `/` as `\/` and non-ASCII as `\uXXXX`, in either hex case, so an echoed
+   * body can carry a form `JSON.stringify` never produces.
+   */
+  it.each([
+    ['caf\\u00e9/2026!', 'non-ASCII as lowercase \\u'],
+    ['caf\\u00E9/2026!', 'non-ASCII as uppercase \\u'],
+    ['café\\/2026!', 'slash as \\/'],
+    ['caf\\u00e9\\/2026!', 'both'],
+  ])('redacts the server-escaped form %j (%s)', (onWire) => {
+    expect(redactSecret(`echo: ${onWire} end`, 'café/2026!')).toBe('echo: [REDACTED] end');
+  });
+
   it('leaves text alone when the secret is empty', () => {
     expect(redactSecret('nothing to hide', '')).toBe('nothing to hide');
   });

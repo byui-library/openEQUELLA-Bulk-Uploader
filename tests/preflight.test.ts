@@ -306,8 +306,8 @@ describe('runPreflight', () => {
       });
 
       /**
-       * openEQUELLA takes the password as a query parameter, so over http it
-       * travels in clear text in the request line. A site must learn that
+       * Password sign-in sends the password to openEQUELLA, so over http it
+       * travels in clear text. A site must learn that
        * from this report rather than from a packet capture.
        */
       it('fails for a plain-http address, naming the variable and the exposure', async () => {

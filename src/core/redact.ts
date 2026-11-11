@@ -21,8 +21,10 @@
  * institutional password policies, so `Summer2026!` -- echoed on the wire as
  * `Summer2026%21` -- would pass into an error body verbatim.
  *
- * All four forms are redacted: literal, `encodeURIComponent`,
- * `URLSearchParams`, and the JSON-string escape.
+ * Redacted: literal, `encodeURIComponent`, `URLSearchParams`, and the
+ * JSON-string escape in each spelling a server's serialiser may choose (see
+ * `jsonForms`). These are the forms this module KNOWS; an echo in some other
+ * encoding is not caught, and nothing here claims otherwise.
  */
 
 /** Every form a secret can take on the wire. Empty for an empty secret. */
@@ -34,11 +36,33 @@ export function secretWireForms(secret: string): Set<string> {
     // `p=` prefix then sliced off: the only way to get URLSearchParams' own
     // encoder to serialise a bare value.
     new URLSearchParams({ p: secret }).toString().slice(2),
-    // The JSON-string form, quotes stripped: the password now travels in a
-    // JSON body (passwordAuth.ts), and JSON escapes `"` and `\`, so a server
-    // echoing that body back sends a form no URL encoding matches.
-    JSON.stringify(secret).slice(1, -1),
+    ...jsonForms(secret),
   ]);
+}
+
+/**
+ * The JSON-string forms, quotes stripped. The password travels in a JSON body
+ * (passwordAuth.ts), and JSON escapes `"` and `\`, so a server echoing that
+ * body back sends a form no URL encoding matches.
+ *
+ * NOT ONLY `JSON.stringify`'s spelling. openEQUELLA is Java, and serialisers
+ * there may also escape `/` as `\/` and non-ASCII as `\uXXXX`, in either hex
+ * case. Each choice is independent, so every combination is listed: six
+ * strings at most, fewer once the Set collapses the ones a secret without
+ * `/` or non-ASCII makes identical.
+ */
+function jsonForms(secret: string): string[] {
+  const base = JSON.stringify(secret).slice(1, -1);
+  const unicode = (s: string, upper: boolean) =>
+    s.replace(/[\u0080-￿]/g, (c) => {
+      const hex = c.charCodeAt(0).toString(16).padStart(4, '0');
+      return `\\u${upper ? hex.toUpperCase() : hex}`;
+    });
+  const forms: string[] = [];
+  for (const s of [base, base.replace(/\//g, '\\/')]) {
+    forms.push(s, unicode(s, false), unicode(s, true));
+  }
+  return forms;
 }
 
 /**

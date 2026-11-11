@@ -129,7 +129,13 @@ history**; removing it from there is a separate decision nobody has taken.
 Do not re-introduce a real name to describe the incident — this paragraph
 used to quote the surname it was warning about.
 
-**v1.2.1 is released and tagged**; `package.json` carries it. (v1.1.1 is the
+**v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
+both BYU-Idaho sites**, because openEQUELLA now refuses the old query-string
+login (see the password bullet under Key domain facts). `package.json` carries
+1.2.2 from PR #18; it is released once that PR merges and `v1.2.2` is tagged.
+Staff who sign in with a password need it. OAuth users are unaffected.
+
+**v1.2.1 was released and tagged before that.** (v1.1.1 is the
 release the two paragraphs below describe, and both still apply to anyone
 upgrading from it.) Two things staff
 must be told about that release: **they will

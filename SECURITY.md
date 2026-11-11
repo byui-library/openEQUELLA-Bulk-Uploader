@@ -31,8 +31,10 @@ Use OAuth there, or ask for the fallback.
   built, and plain `http` is refused outright, including to `localhost`. A
   request body is just as readable as a URL without TLS.
 - **The tool never logs it.** Nothing puts the request body into an error, and
-  anything the server echoes back is redacted, in every form it can take on the
-  wire, including a JSON-escaped one.
+  anything the server echoes back is redacted in every form the tool knows: the
+  literal password, its two URL encodings, and its JSON-escaped spellings,
+  including Java's `\/` and `\uXXXX`. An echo in some other encoding would not
+  be caught.
 
 Where your site supports OAuth, prefer it: the password never leaves the
 browser in that flow.

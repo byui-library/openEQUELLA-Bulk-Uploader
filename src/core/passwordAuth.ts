@@ -62,6 +62,32 @@ const LOGOUT_PATH = '/api/auth/logout';
 const CURRENT_USER_PATH = '/api/content/currentuser';
 
 /**
+ * The message for a refused sign-in, which depends on WHAT was refused.
+ *
+ * A 415, or a 400 saying a field is missing, is the server refusing the
+ * request's SHAPE, not the credentials in it. That is exactly the failure
+ * v1.2.1 hit when openEQUELLA dropped the query form, and it told operators to
+ * "check the username and password" about credentials that were correct. A
+ * site still on the old API would refuse this tool's JSON body the same way.
+ * Sending the operator to re-type a correct password is worse than no advice,
+ * so those two say the API does not match and name the way out.
+ *
+ * Every other failure keeps the credential advice: 401 is the server's
+ * answer to a wrong password, measured live.
+ */
+function signInFailure(status: number, body: string): string {
+  const shapeRefused = status === 415 || (status === 400 && /missing required field/i.test(body));
+  if (shapeRefused) {
+    return (
+      `Sign-in failed (${status}): this site's sign-in does not match the way this version of ` +
+      `the tool signs in, so the username and password were never checked. Make sure the tool ` +
+      `is up to date; if it is, this site may need OAuth sign-in instead.`
+    );
+  }
+  return `Sign-in failed (${status}). Check the username and password.`;
+}
+
+/**
  * What a logout established -- reported, never thrown.
  *
  * A STRING UNION, not a boolean and not a thrown error. Three states have to
@@ -150,8 +176,9 @@ export class UsernamePasswordAuth implements AuthProvider {
       });
       body = await res.text();
     } catch {
-      // Never include the request URL: it carries the password, and some
-      // runtimes fold the failing URL into the error's message or cause.
+      // Never include the failing request, or the runtime's error: the BODY
+      // carries the password, and some runtimes fold the failing request into
+      // the error's message or cause. Nothing here may log `init.body`.
       // Deliberately vague about WHERE this failed -- it covers both the
       // fetch and the res.text() that follows it, and "check the address and
       // your network" is the same advice either way.
@@ -164,7 +191,7 @@ export class UsernamePasswordAuth implements AuthProvider {
 
     if (!res.ok) {
       throw new ApiError(
-        this.redact(`Sign-in failed (${res.status}). Check the username and password.`),
+        this.redact(signInFailure(res.status, body)),
         res.status,
         this.redact(body),
       );
@@ -268,7 +295,8 @@ export class UsernamePasswordAuth implements AuthProvider {
     }
   }
 
-  /** Origin + path only — never the query string, which carries the password.
+  /** Origin + path only. The password is in the request body, never here, and
+   *  this must stay free of anything request-shaped beyond the address.
    *  `pathname` (not `origin` alone) is what keeps a hosting prefix here: this
    *  must name the endpoint the code actually called. */
   private safeEndpoint(): string {
