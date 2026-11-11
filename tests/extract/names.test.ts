@@ -74,16 +74,16 @@ describe('missingFilenameWords', () => {
    */
   it('does not count a word found only inside a longer word', () => {
     expect(
-      missingFilenameWords('Ann Palmer.pdf', 'The Palmer family 50th Anniversary', []),
+      missingFilenameWords('Ann Sorrel.pdf', 'The Sorrel family 50th Anniversary', []),
     ).toEqual(['Ann']);
   });
 
   it('does not count a word found only as the tail of a longer word', () => {
-    expect(missingFilenameWords('Ann Palmer.pdf', 'Leann Palmer was born', [])).toEqual(['Ann']);
+    expect(missingFilenameWords('Ann Sorrel.pdf', 'Leann Sorrel was born', [])).toEqual(['Ann']);
   });
 
   it('still matches a word standing on its own next to punctuation', () => {
-    expect(missingFilenameWords('Ann Palmer.pdf', 'Palmer, Ann -- 1932-2024', [])).toEqual([]);
+    expect(missingFilenameWords('Ann Sorrel.pdf', 'Sorrel, Ann -- 1871-1934', [])).toEqual([]);
   });
 
   /**

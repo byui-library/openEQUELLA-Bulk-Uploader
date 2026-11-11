@@ -60,13 +60,13 @@ describe('a date the document does not state', () => {
    */
   it('is refused', () => {
     const claims = unsupportedClaims(
-      'Alder Hawthorn died on 2024-01-06.',
+      'Alder Hawthorn died on 1916-01-06.',
       'Alder Hawthorn died at home, quietly and with his family beside him, on an afternoon at the end of the harvest.',
       withoutPresence,
     );
     expect(claims).toHaveLength(1);
     expect(claims[0]!.kind).toBe('date');
-    expect(claims[0]!.claim).toBe('2024-01-06');
+    expect(claims[0]!.claim).toBe('1916-01-06');
   });
 
   /**
@@ -81,8 +81,8 @@ describe('a date the document does not state', () => {
   it('is accepted when the document states the same day in another format', () => {
     expect(
       unsupportedClaims(
-        'Alder Hawthorn died on 2024-01-06.',
-        'Alder Hawthorn passed away on January 6, 2024, at home in Marrowfield.',
+        'Alder Hawthorn died on 1916-01-06.',
+        'Alder Hawthorn passed away on January 6, 1916, at home in Marrowfield.',
         withoutPresence,
       ),
     ).toEqual([]);
@@ -90,16 +90,16 @@ describe('a date the document does not state', () => {
 
   it('is accepted for every spelling of the day the same recogniser reads', () => {
     for (const stated of [
-      'January 6, 2024',
-      'January 6 2024',
-      'January 6th, 2024',
-      '6 January 2024',
-      'Jan. 6, 2024',
-      '2024-01-06',
-      '1/6/2024',
+      'January 6, 1916',
+      'January 6 1916',
+      'January 6th, 1916',
+      '6 January 1916',
+      'Jan. 6, 1916',
+      '1916-01-06',
+      '1/6/1916',
     ]) {
       expect(
-        kinds('Died 2024-01-06.', `Alder Hawthorn passed away on ${stated} at home.`),
+        kinds('Died 1916-01-06.', `Alder Hawthorn passed away on ${stated} at home.`),
       ).toEqual([]);
     }
   });
@@ -111,8 +111,8 @@ describe('a date the document does not state', () => {
    */
   it('is refused at day precision where the document gives only a year', () => {
     const claims = unsupportedClaims(
-      'Alder Hawthorn died on 2024-01-06.',
-      'Alder Hawthorn, of Marrowfield, died in 2024 after a long illness.',
+      'Alder Hawthorn died on 1916-01-06.',
+      'Alder Hawthorn, of Marrowfield, died in 1916 after a long illness.',
       withoutPresence,
     );
     expect(claims.map((c) => c.kind)).toEqual(['date']);
@@ -122,8 +122,8 @@ describe('a date the document does not state', () => {
   it('is refused at day precision where the document gives only a month', () => {
     expect(
       kinds(
-        'Died 2024-01-06.',
-        'Alder Hawthorn died in January 2024 after a long illness.',
+        'Died 1916-01-06.',
+        'Alder Hawthorn died in January 1916 after a long illness.',
       ),
     ).toEqual(['date']);
   });
@@ -133,7 +133,7 @@ describe('a date the document does not state', () => {
   it('is accepted at a precision the document actually reaches', () => {
     expect(kinds('Born in 1907.', 'Alder Hawthorn was born in 1907 in Thistledown.')).toEqual([]);
     expect(kinds('Born in 1907.', 'Alder Hawthorn was born on November 13, 1907.')).toEqual([]);
-    expect(kinds('Died 2024-01.', 'Alder Hawthorn died on January 6, 2024.')).toEqual([]);
+    expect(kinds('Died 1916-01.', 'Alder Hawthorn died on January 6, 1916.')).toEqual([]);
   });
 
   it('is refused when the year alone is one the document never gives', () => {
@@ -143,7 +143,7 @@ describe('a date the document does not state', () => {
   /** Two invented dates are two claims, so the note can name both. */
   it('reports every unsupported date, not just the first', () => {
     expect(
-      kinds('Died 2024-01-06; born 1907-11-13.', 'Alder Hawthorn lived his whole life in Marrowfield.'),
+      kinds('Died 1916-01-06; born 1907-11-13.', 'Alder Hawthorn lived his whole life in Marrowfield.'),
     ).toEqual(['date', 'date']);
   });
 });
@@ -202,12 +202,12 @@ describe('a number the document does not give', () => {
 
   /**
    * A NUMBER THAT IS PART OF A DATE HAS ALREADY BEEN CHECKED AS A DATE. Without
-   * this the `01` and `06` of an accepted `2024-01-06` are hunted for as
-   * numbers, found nowhere in a document that wrote "January 6, 2024", and a
+   * this the `01` and `06` of an accepted `1916-01-06` are hunted for as
+   * numbers, found nowhere in a document that wrote "January 6, 1916", and a
    * supported date is refused through the other check.
    */
   it('is not counted twice when it belongs to a date already checked', () => {
-    expect(kinds('Died 2024-01-06.', 'Alder Hawthorn passed away on January 6, 2024.')).toEqual([]);
+    expect(kinds('Died 1916-01-06.', 'Alder Hawthorn passed away on January 6, 1916.')).toEqual([]);
   });
 
   /** Spelled-out in the OUTPUT is not a claim this check reads: paraphrase is
@@ -323,7 +323,7 @@ describe('free prose', () => {
 describe('what a claim carries', () => {
   it('names what the model said and gives one clause saying why', () => {
     const claims = unsupportedClaims(
-      'Died 2024-01-06 after 47 years at Larkspur Academy.',
+      'Died 1916-01-06 after 47 years at Larkspur Academy.',
       'Alder Hawthorn lived in Marrowfield.',
       withPresence,
     );
@@ -339,7 +339,7 @@ describe('what a claim carries', () => {
 
   it('does not report the same claim twice', () => {
     expect(
-      kinds('Died 2024-01-06, and 2024-01-06 is recorded elsewhere.', 'He died at home.'),
+      kinds('Died 1916-01-06, and 1916-01-06 is recorded elsewhere.', 'He died at home.'),
     ).toEqual(['date']);
   });
 });
@@ -372,7 +372,7 @@ describe('a date with no year', () => {
   it('is accepted where the document does state that day', () => {
     for (const generated of ['He died on January 6.', 'He died 1/6.', 'He died on the 6th of January.']) {
       expect(
-        kinds(generated, 'Alder Hawthorn died on January 6, 2024, at home in Marrowfield.'),
+        kinds(generated, 'Alder Hawthorn died on January 6, 1916, at home in Marrowfield.'),
         generated,
       ).toEqual([]);
     }
@@ -385,7 +385,7 @@ describe('a date with no year', () => {
    */
   it('is refused where the document gives only the year, however plausible the rest', () => {
     expect(
-      kinds('He died on January 6, aged 87.', 'He died in 2024 aged eighty-seven.'),
+      kinds('He died on January 6, aged 87.', 'He died in 1916 aged eighty-seven.'),
     ).toEqual(['date']);
   });
 
@@ -411,20 +411,20 @@ describe('a date with no year', () => {
 /**
  * THE SAME GAP LAUNDERING FABRICATED PRECISION. Each of these states a day over
  * a document that gives only the year, and each used to be written because the
- * only part the recogniser could see was the `2024` the document does support.
+ * only part the recogniser could see was the `1916` the document does support.
  */
 describe('a day-precision claim on a year-only document', () => {
-  const YEAR_ONLY = 'Alder Hawthorn, of Marrowfield, died in 2024 after a long illness.';
+  const YEAR_ONLY = 'Alder Hawthorn, of Marrowfield, died in 1916 after a long illness.';
 
   it('is refused however the model formatted it', () => {
     for (const generated of [
-      'Died 2024-01-06.',
-      'Died 2024-01-06T00:00:00Z.',
-      'Died 2024-01-06 12:30.',
-      'Died in January of 2024.',
-      'Died January the 6th, 2024.',
-      'Died the 6th of January 2024.',
-      'Died 6.1.2024.',
+      'Died 1916-01-06.',
+      'Died 1916-01-06T00:00:00Z.',
+      'Died 1916-01-06 12:30.',
+      'Died in January of 1916.',
+      'Died January the 6th, 1916.',
+      'Died the 6th of January 1916.',
+      'Died 6.1.1916.',
     ]) {
       expect(kinds(generated, YEAR_ONLY), generated).toEqual(['date']);
     }
@@ -432,20 +432,20 @@ describe('a day-precision claim on a year-only document', () => {
 
   /** A timestamp is a date, and the whole of it is quoted back so the operator
    *  can find it in the reply. The `T` is a word character, which is the entire
-   *  reason the old `\b`-terminated pattern saw a bare `2024` here. */
+   *  reason the old `\b`-terminated pattern saw a bare `1916` here. */
   it('names the timestamp the model actually wrote', () => {
-    const claims = unsupportedClaims('Died 2024-01-06T00:00:00Z.', YEAR_ONLY, withoutPresence);
+    const claims = unsupportedClaims('Died 1916-01-06T00:00:00Z.', YEAR_ONLY, withoutPresence);
     expect(claims).toHaveLength(1);
-    expect(claims[0]!.claim).toBe('2024-01-06T00:00:00Z');
+    expect(claims[0]!.claim).toBe('1916-01-06T00:00:00Z');
   });
 
   it('is accepted when the document does reach that day', () => {
     for (const generated of [
-      'Died 2024-01-06T00:00:00Z.',
-      'Died in January of 2024.',
-      'Died January the 6th, 2024.',
+      'Died 1916-01-06T00:00:00Z.',
+      'Died in January of 1916.',
+      'Died January the 6th, 1916.',
     ]) {
-      expect(kinds(generated, 'He died on 6 January 2024 at home.'), generated).toEqual([]);
+      expect(kinds(generated, 'He died on 6 January 1916 at home.'), generated).toEqual([]);
     }
   });
 });
@@ -458,12 +458,12 @@ describe('a day-precision claim on a year-only document', () => {
  */
 describe('a correct description that used to be refused', () => {
   it('is accepted across the date formats a document really uses', () => {
-    expect(kinds('Died 2024-01-06.', 'He died 6.1.2024.')).toEqual([]);
-    expect(kinds('Died 2024-01-06.', 'He died 6-1-2024.')).toEqual([]);
+    expect(kinds('Died 1916-01-06.', 'He died 6.1.1916.')).toEqual([]);
+    expect(kinds('Died 1916-01-06.', 'He died 6-1-1916.')).toEqual([]);
     expect(kinds('Died 1998-04-02.', 'He died 4/2/98.')).toEqual([]);
     expect(kinds('Died 1998-04-02.', 'He died 2.4.98.')).toEqual([]);
-    expect(kinds('Died 2024-01-06.', 'He died the 6th of January 2024.')).toEqual([]);
-    expect(kinds('Died 2024-01-06.', 'He died January the 6th, 2024.')).toEqual([]);
+    expect(kinds('Died 1916-01-06.', 'He died the 6th of January 1916.')).toEqual([]);
+    expect(kinds('Died 1916-01-06.', 'He died January the 6th, 1916.')).toEqual([]);
   });
 
   it('is accepted where the document spells a number out above ninety-nine', () => {
@@ -514,17 +514,17 @@ describe('a correct description that used to be refused', () => {
  * READ supports it.
  */
 describe('a document in a language the tool cannot read', () => {
-  const SPANISH = 'Falleció el 6 de enero de 2024 en Marrowfield.';
-  const GERMAN = 'Er starb am 6. Januar 2024 in Marrowfield.';
+  const SPANISH = 'Falleció el 6 de enero de 1916 en Marrowfield.';
+  const GERMAN = 'Er starb am 6. Januar 1916 in Marrowfield.';
 
   it('still refuses a day-precision claim, which is the safe direction', () => {
-    expect(kinds('Died 2024-01-06.', SPANISH)).toEqual(['date']);
-    expect(kinds('Died 2024-01-06.', GERMAN)).toEqual(['date']);
+    expect(kinds('Died 1916-01-06.', SPANISH)).toEqual(['date']);
+    expect(kinds('Died 1916-01-06.', GERMAN)).toEqual(['date']);
   });
 
   it('never claims the document states no such date', () => {
     for (const document of [SPANISH, GERMAN, 'He lived his whole life in Marrowfield.']) {
-      for (const claim of unsupportedClaims('Died 2024-01-06 in January.', document, withoutPresence)) {
+      for (const claim of unsupportedClaims('Died 1916-01-06 in January.', document, withoutPresence)) {
         expect(claim.why, claim.claim).not.toMatch(/document states no such date/i);
         expect(claim.why, claim.claim).toMatch(/this tool can read/i);
       }
@@ -551,12 +551,12 @@ describe('what the refusal is reported as', () => {
     expect(four!.why).toMatch(/neither a date nor a number/i);
   });
 
-  /** `06.01.2024` is a date, and reporting `06.01` as an invented NUMBER was the
+  /** `06.01.1916` is a date, and reporting `06.01` as an invented NUMBER was the
    *  same misdirection from the other side. */
   it('reports a dotted date as the date the model wrote', () => {
-    const claims = unsupportedClaims('Died 06.01.2024.', 'He died at home.', withoutPresence);
+    const claims = unsupportedClaims('Died 06.01.1916.', 'He died at home.', withoutPresence);
     expect(claims.map((c) => c.kind)).toEqual(['date']);
-    expect(claims[0]!.claim).toBe('06.01.2024');
+    expect(claims[0]!.claim).toBe('06.01.1916');
   });
 
   /** THE CLAIM MUST BE FINDABLE VERBATIM IN THE REPLY. `-40` was reported as
@@ -612,8 +612,8 @@ describe('a reply containing astral characters', () => {
   /** Ten of them shift the mask far enough to swallow a fabricated number. */
   it('does not let a shifted mask hide an invented number', () => {
     const claims = unsupportedClaims(
-      `${SEEDLING.repeat(10)} Died 2024-01-06 after 47 years.`,
-      'Alder Hawthorn died on January 6, 2024.',
+      `${SEEDLING.repeat(10)} Died 1916-01-06 after 47 years.`,
+      'Alder Hawthorn died on January 6, 1916.',
       withoutPresence,
     );
     expect(claims.map((c) => c.kind)).toEqual(['number']);
@@ -624,7 +624,7 @@ describe('a reply containing astral characters', () => {
    *  the exposed `20` is then refused as a number that appears nowhere. */
   it('does not expose part of an accepted date to the number check', () => {
     expect(
-      kinds(`${SEEDLING.repeat(2)} Died 2024-01-06.`, 'Alder Hawthorn died on January 6, 2024.'),
+      kinds(`${SEEDLING.repeat(2)} Died 1916-01-06.`, 'Alder Hawthorn died on January 6, 1916.'),
     ).toEqual([]);
   });
 });
@@ -656,16 +656,16 @@ describe('the thresholds and guards nothing used to pin', () => {
   });
 
   /**
-   * A DATE-SHAPED STRING THAT IS NOT A DATE MUST RELEASE ITS SPAN. `45/67/2024`
+   * A DATE-SHAPED STRING THAT IS NOT A DATE MUST RELEASE ITS SPAN. `45/67/1916`
    * has no reading, so its digits belong to the number check; keeping the span
    * would excuse them as "part of a date" -- a check reporting success over
    * something it never examined.
    */
   it('gives the digits of an impossible date back to the number check', () => {
-    expect(kinds('Died 45/67/2024.', 'He died at home.')).toEqual(['date', 'number', 'number']);
+    expect(kinds('Died 45/67/1916.', 'He died at home.')).toEqual(['date', 'number', 'number']);
     // `02` is below the threshold and exempt; `30` is not, and it only reaches
     // the number check because February has no thirtieth and the span was let go.
-    expect(kinds('Died 2024-02-30.', 'He died at home.')).toEqual(['date', 'number']);
+    expect(kinds('Died 1916-02-30.', 'He died at home.')).toEqual(['date', 'number']);
   });
 
   /**
@@ -797,11 +797,11 @@ describe('a journal-article collection, which is not an obituary collection', ()
  */
 describe('evidence prepared once for a whole row', () => {
   it('answers identically however the document is passed', () => {
-    const document = 'Alder Hawthorn died on January 6, 2024, leaving 47 years of work behind him.';
+    const document = 'Alder Hawthorn died on January 6, 1916, leaving 47 years of work behind him.';
     const evidence = documentEvidence(document);
     for (const generated of [
-      'Died 2024-01-06 after 47 years.',
-      'Died 2024-01-07 after 48 years.',
+      'Died 1916-01-06 after 47 years.',
+      'Died 1916-01-07 after 48 years.',
       'A bookbinder of Marrowfield.',
     ]) {
       expect(
@@ -812,9 +812,9 @@ describe('evidence prepared once for a whole row', () => {
   });
 
   it('gives the same answer when the same evidence is reused', () => {
-    const evidence = documentEvidence('He died in 2024.');
-    const first = unsupportedClaims('Died 2024-01-06.', evidence, withoutPresence);
-    const second = unsupportedClaims('Died 2024-01-06.', evidence, withoutPresence);
+    const evidence = documentEvidence('He died in 1916.');
+    const first = unsupportedClaims('Died 1916-01-06.', evidence, withoutPresence);
+    const second = unsupportedClaims('Died 1916-01-06.', evidence, withoutPresence);
     expect(second).toEqual(first);
   });
 });

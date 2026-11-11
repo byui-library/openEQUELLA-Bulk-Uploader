@@ -858,7 +858,7 @@ Treat the table as a sample of ten documents from one collection in one
 language, not as a benchmark. The 8B figures were measured on `llama3.1:8b`
 running on an integrated GPU — not on specialist hardware — and the 3B figures
 on the same machine before that GPU worked at all. One more thing to know if you
-compare your own results: the larger model happened to answer with `2024-01-06`
+compare your own results: the larger model happened to answer with `1916-01-06`
 style dates, which is the easiest shape for the tool's own check to read.
 
 #### A local model, from nothing (Ollama)
@@ -1040,19 +1040,19 @@ The note names the claim in the model's own words and says why it failed:
 
 ```text
 MWDL/description: left blank -- the model's answer was refused, because it
-stated things this document does not support. "2024-01-06": no date this tool
+stated things this document does not support. "1916-01-06": no date this tool
 can read in the document supports it -- it recognises English month names and
 numeric date forms only. The model did answer and the call succeeded -- this
 tool discarded the answer -- so there is nothing to retry; read the document
 and fill this cell in by hand. What it said, which was not used: "Died
-2024-01-06; Born 1907-11-13"
+1916-01-06; Born 1907-11-13"
 ```
 
 There is nothing to retry, because nothing went wrong at the endpoint: the call
 succeeded and the model answered. Read the document and fill the cell in by hand.
 
 **A date is a claim whether or not a year sits beside it.** `He died on January
-6.`, `He died 1/6.` and `Died 2024-01-06T00:00:00Z.` are all checked against the
+6.`, `He died 1/6.` and `Died 1916-01-06T00:00:00Z.` are all checked against the
 document, and all three used to be written out unchecked because no pattern
 matched them and "no form matched" was read as "no claim was made". That gap was
 the difference between this layer working and not working: the first model it was
@@ -1063,8 +1063,8 @@ January 6` would have walked straight past it.
 
 > **If your collection is catalogued in another language, read this before
 > turning the model on.** The date recogniser knows English month names and the
-> numeric forms (`2024-01-06`, `6.1.2024`, `4/2/98`, `the 6th of January 2024`).
-> `Falleció el 6 de enero de 2024` states a day; this tool sees only the year in
+> numeric forms (`1916-01-06`, `6.1.1916`, `4/2/98`, `the 6th of January 1916`).
+> `Falleció el 6 de enero de 1916` states a day; this tool sees only the year in
 > it. So a **correct** description of that document, giving the day, is refused
 > and discarded.
 

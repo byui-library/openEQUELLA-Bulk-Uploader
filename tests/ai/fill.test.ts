@@ -1071,7 +1071,7 @@ describe('a reply the document does not support', () => {
   };
 
   it('leaves the cell exactly as it was', async () => {
-    const result = await refused('Alder Hawthorn died on 2024-01-06.');
+    const result = await refused('Alder Hawthorn died on 1916-01-06.');
     expect(result.cells['MWDL/description']).toBe('');
   });
 
@@ -1085,7 +1085,7 @@ describe('a reply the document does not support', () => {
         doc: doc(SILENT),
       },
     ];
-    await fillWithModel(rows, profile, provider('Alder Hawthorn died on 2024-01-06.'), options());
+    await fillWithModel(rows, profile, provider('Alder Hawthorn died on 1916-01-06.'), options());
     expect(rows[0]!.row.cells['MWDL/description']).toBe('Opening paragraph the extractor guessed.');
     // The source's doubt has NOT been acted on, so the flag must survive -- the
     // cell is still a candidate for a better value.
@@ -1093,7 +1093,7 @@ describe('a reply the document does not support', () => {
   });
 
   it('records no source for a cell it did not write', async () => {
-    const result = await refused('Alder Hawthorn died on 2024-01-06.');
+    const result = await refused('Alder Hawthorn died on 1916-01-06.');
     expect(result.sources['MWDL/description']).toBeUndefined();
   });
 
@@ -1105,7 +1105,7 @@ describe('a reply the document does not support', () => {
    */
   it('records nothing in aiWritten, so the row still counts as needing review', async () => {
     const rows = [{ row: row(), doc: doc(SILENT) }];
-    await fillWithModel(rows, profile, provider('Alder Hawthorn died on 2024-01-06.'), options());
+    await fillWithModel(rows, profile, provider('Alder Hawthorn died on 1916-01-06.'), options());
     expect(rows[0]!.row.aiWritten).toEqual({});
     expect(needsReview(rows[0]!.row)).toBe(true);
   });
@@ -1122,10 +1122,10 @@ describe('a reply the document does not support', () => {
    * `verify.test.ts` because this is the surface the wording is READ on.
    */
   it('names the claim that failed and why, and quotes what it threw away', async () => {
-    const result = await refused('Alder Hawthorn died on 2024-01-06.');
+    const result = await refused('Alder Hawthorn died on 1916-01-06.');
     const note = result.notes.join(' ');
     expect(note).toContain('MWDL/description:');
-    expect(note).toContain('2024-01-06');
+    expect(note).toContain('1916-01-06');
     expect(note).toMatch(/no date this tool can read/i);
     expect(note).not.toMatch(/the document states no such date/i);
     expect(note).toContain('What it said, which was not used:');
@@ -1138,16 +1138,16 @@ describe('a reply the document does not support', () => {
    * An operator told "the model gave no answer" would go and look at the model.
    */
   it('reads as a refusal, not as an empty answer and not as a failed call', async () => {
-    const note = (await refused('Alder Hawthorn died on 2024-01-06.')).notes.join(' ');
+    const note = (await refused('Alder Hawthorn died on 1916-01-06.')).notes.join(' ');
     expect(note).toMatch(/refused/i);
     expect(note).not.toMatch(/gave no answer|no text that could be used|declined to write/i);
   });
 
   it('names every failed claim, not just the first', async () => {
     const note = (
-      await refused('Alder Hawthorn died on 2024-01-06 after 47 years in the trade.')
+      await refused('Alder Hawthorn died on 1916-01-06 after 47 years in the trade.')
     ).notes.join(' ');
-    expect(note).toContain('2024-01-06');
+    expect(note).toContain('1916-01-06');
     expect(note).toContain('47');
   });
 
@@ -1163,7 +1163,7 @@ describe('a reply the document does not support', () => {
       ],
       aiProvenance: { path: 'MWDL/conversionSpecifications', append: 'Written by {model}' },
     };
-    const result = await refused('Alder Hawthorn died on 2024-01-06.', SILENT, withProvenance);
+    const result = await refused('Alder Hawthorn died on 1916-01-06.', SILENT, withProvenance);
     expect(result.cells['MWDL/conversionSpecifications']).toBeUndefined();
   });
 
@@ -1175,17 +1175,17 @@ describe('a reply the document does not support', () => {
     const rows = [
       {
         row: row(),
-        doc: doc('Alder Hawthorn passed away on January 6, 2024, after 47 years in the trade.'),
+        doc: doc('Alder Hawthorn passed away on January 6, 1916, after 47 years in the trade.'),
       },
     ];
     await fillWithModel(
       rows,
       profile,
-      provider('A bookbinder of Marrowfield. Died 2024-01-06, after 47 years in the trade.'),
+      provider('A bookbinder of Marrowfield. Died 1916-01-06, after 47 years in the trade.'),
       options(),
     );
     expect(rows[0]!.row.cells['MWDL/description']).toBe(
-      'A bookbinder of Marrowfield. Died 2024-01-06, after 47 years in the trade.',
+      'A bookbinder of Marrowfield. Died 1916-01-06, after 47 years in the trade.',
     );
     expect(rows[0]!.row.aiWritten['MWDL/description']).toBeDefined();
   });
@@ -1201,11 +1201,11 @@ describe('a reply the document does not support', () => {
     const rows = [
       {
         row: row(),
-        doc: doc(`${PROSE.repeat(8)}\nHe passed away on January 6, 2024, at home.`),
+        doc: doc(`${PROSE.repeat(8)}\nHe passed away on January 6, 1916, at home.`),
       },
     ];
-    await fillWithModel(rows, profile, provider('Died 2024-01-06.'), options({ budget: 200 }));
-    expect(rows[0]!.row.cells['MWDL/description']).toBe('Died 2024-01-06.');
+    await fillWithModel(rows, profile, provider('Died 1916-01-06.'), options({ budget: 200 }));
+    expect(rows[0]!.row.cells['MWDL/description']).toBe('Died 1916-01-06.');
   });
 
   /**
@@ -1292,7 +1292,7 @@ describe('fillWithModel progress', () => {
     await fillWithModel(
       rows,
       profile,
-      provider('He died on 6 January 2024 at Ricks College.'),
+      provider('He died on 6 January 1916 at Ricks College.'),
       options({ onProgress: t.onProgress }),
     );
     expect(t.seen.map((e) => e.stage)).toEqual(['asking', 'refused']);

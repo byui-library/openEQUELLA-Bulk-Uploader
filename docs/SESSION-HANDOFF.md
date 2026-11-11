@@ -531,13 +531,13 @@ Read this as the record, not as a queue.
   claim whether or not a year sits beside it.** Now refused where it was written
   before: `He died on January 6.`, `Jan. 6`, `the 6th of January`, `1/6`,
   `January 6, aged 87` over a year-only document, `in January`,
-  `2024-01-06T00:00:00Z`, `2024-01-06 12:30`, `in January of 2024`,
-  `January the 6th, 2024`, `6.1.2024`.
+  `1916-01-06T00:00:00Z`, `1916-01-06 12:30`, `in January of 1916`,
+  `January the 6th, 1916`, `6.1.1916`.
 - **Precision ranking was replaced by a `Reading`** — a date decomposed into the
   parts the text actually stated — with one rule, `entails`: every part the
   claim states must be stated, and equal, in the document's. `new Date` is gone
   from the path; month names resolve through a stem table, so every reading is
-  calendar-validated and `2024-02-30` is not a date.
+  calendar-validated and `1916-02-30` is not a date.
 - **Twelve classes of false rejection fixed**: `.`-separated dates, two-digit
   years, `the 6th of January`, thousands separators, spelled numbers above
   ninety-nine, ordinal words, `a dozen`, `three and a half`.

@@ -468,7 +468,7 @@ unsupported and quotes back what the model said:
 
 ```text
 MWDL/description: left blank -- the model's answer was refused, because it
-stated things this document does not support. "2024-01-06": no date this tool
+stated things this document does not support. "1916-01-06": no date this tool
 can read in the document supports it -- it recognises English month names and
 numeric date forms only. The model did answer and the call succeeded -- this
 tool discarded the answer -- so there is nothing to retry; read the document and
@@ -486,9 +486,9 @@ a language other than English; see the next section.
 #### It reads dates in English only
 
 The check that catches invented dates knows **English month names** and the
-numeric forms (`2024-01-06`, `6.1.2024`, `4/2/98`, `the 6th of January 2024`).
-A document written in another language — `Falleció el 6 de enero de 2024`,
-`Er starb am 6. Januar 2024` — states a day, and the program sees only the year
+numeric forms (`1916-01-06`, `6.1.1916`, `4/2/98`, `the 6th of January 1916`).
+A document written in another language — `Falleció el 6 de enero de 1916`,
+`Er starb am 6. Januar 1916` — states a day, and the program sees only the year
 in it.
 
 **What that means in practice:** if your documents are not in English, a
