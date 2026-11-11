@@ -21,6 +21,30 @@ item just to find something. The index page is not this repository's job.
 
 At present, this tool would create 103 items, one per PDF.
 
+### The operator's stated shape for the feature (2026-11-11)
+
+> "Ideally this new functionality can look at a list of subfolders and create a
+> new contribution for each subfolder and the subfolder's contents."
+
+**One subfolder = one contribution; its files = that item's attachments.** That
+is the primary input model, and it supersedes the repeated-`attachment name`-
+columns idea below as the main route. A spreadsheet row names a FOLDER rather
+than listing its files. Questions to settle with the operator in design
+(brainstorming), not to decide alone:
+
+- **How a row is tied to a subfolder.** A `folder` column naming it, or one row
+  per subfolder found, with metadata filled in afterwards?
+- **Attachment order within a folder.** "Issue order" has to come from
+  somewhere: natural sort of filenames (`Issue 2` before `Issue 10`), or an
+  explicit order? Whichever is chosen, show the operator the order before upload.
+- **What counts as contents.** Nested folders, hidden and system files
+  (`Thumbs.db`, `.DS_Store`), non-PDF files, an empty folder (refuse the row).
+- **Does the extractor build the sheet from the folders?** It already builds
+  rows from files, so one row per subfolder is the natural extension.
+- Note that `upload.ts`'s "missing file refuses the row" rule becomes "the
+  folder's contents changed since planning". The plan should record the file
+  list and sizes, and the run should refuse a row whose folder no longer matches.
+
 ### What is already true (checked by reading the code, 2026-11-11)
 
 - **The 1:1 rule is this tool's bookkeeping, not openEQUELLA's.** The README
@@ -79,6 +103,12 @@ titled "PROBE multi-attachment order test - safe to delete":
   and confirms the display order matches and that each PDF opens.
 
 ### FOUND WHILE PROBING: password sign-in is broken on content-test
+
+> **FIXED on branch `fix/password-login-json`** (commit `412607f`, off `main`),
+> no fallback by the operator's decision. **Production has moved too**: both
+> instances answer the query form 415. The fix was verified live with the app's
+> own provider. Not yet merged or released. The text below is the record of
+> how it was found.
 
 **`POST /api/auth/login?username=&password=` now answers 415** ("RESTEASY003065:
 Cannot consume content type"), whatever the content type, except JSON. It
