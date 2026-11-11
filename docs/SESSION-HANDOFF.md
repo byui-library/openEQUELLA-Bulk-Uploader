@@ -1,6 +1,114 @@
-# Session handoff — updated 2026-10-02
+# Session handoff — updated 2026-11-11
 
 Read this first.
+
+## 2026-11-11: RESUME HERE — several files on one contribution
+
+**The operator asked for this feature, and it has not been started.** Everything
+below the next heading is earlier history. The 2026-10-02 to-do list (PR #17,
+the v1.3.0 release) was still open when this was written. Check `gh pr list`
+before assuming it is done.
+
+### Why
+
+The operator is publishing *Snake River Echoes*, a historical journal: 103 issue
+PDFs, 1.8 GB in all, 38 volumes, one folder per volume, 1971 to 2015. The
+largest file is 51 MB and the largest volume about 88 MB. They want **one
+contribution per volume**, holding that volume's issues **in issue order**.
+That means 38 items, not 103 and not one. A separate small item will hold an
+HTML index page linking to each volume and issue, so a reader never opens a big
+item just to find something. The index page is not this repository's job.
+
+At present, this tool would create 103 items, one per PDF.
+
+### What is already true (checked by reading the code, 2026-11-11)
+
+- **The 1:1 rule is this tool's bookkeeping, not openEQUELLA's.** The README
+  states it outright. `runner.ts#processEntry` sends
+  `attachments: [{ filename: entry.fileName, ... }]`, and `upload.ts` creates a
+  fresh staging area per file.
+- **The client already takes a list.** `CreateItemRequest` in `client.ts` has
+  `stagingUuid` + `attachments: AttachmentSpec[]`, and
+  `uploadToStaging(stagingUuid, filename, body)` names the file within the area.
+  So several files can share one staging area as far as the client is concerned.
+- **Repeated column headers already collapse into lists** for metadata (see
+  `ManifestEntry.metadata`). Repeated `attachment name` columns would follow an
+  existing convention instead of inventing syntax.
+
+### What has to change
+
+| Where | Change |
+| --- | --- |
+| `types.ts` | `ManifestEntry` holds a list of files instead of `filePath`/`fileName`. **The manifest format version goes up, and a v1 manifest must still load and resume**, because interrupted jobs exist on operators' machines. |
+| `plan.ts` | Resolve every file in a row. **If any is missing, the whole row is refused**, never uploaded with fewer files than the spreadsheet names. |
+| `upload.ts` | N files into one staging area. The 401-mid-upload recovery currently deletes and recreates the area. With N files that means restarting the row, not one file, and the code must say so. Keep the 0-byte refusal per file. |
+| `runner.ts` | N attachments in spreadsheet order. The attachment-uuid check compares **every** returned uuid, not `[0]`. With `attachmentUuidPath` set, the field receives N values. |
+| `duplicates.ts` | Verdicts compare every file in the row. Decide what a row means when one of its three files is already in the collection, and **ask the operator rather than choosing**. |
+| CLI, MCP, desktop progress and results screens | Show "3 files" where a single filename is shown now. `rowContext` in `runner.ts` too. |
+
+**Unchanged by design:** the interrupted-row rule. A row found `'uploading'` at
+load is skipped unless forced, whether it holds one file or three.
+
+### Do this first
+
+**Prove it live before building on it.** Against `content-test.byui.edu`, upload
+two files into one staging area and create one item with two attachments. Then
+confirm in openEQUELLA's own interface that both attachments exist, **in the order
+sent**, and that both open. This project's record is that the server refutes the
+swagger file. Order matters here, because the operator wants issues in order on
+each volume's item, and nobody has checked whether openEQUELLA keeps it.
+
+### Probe result, 2026-11-11 (API side DONE; operator's visual check pending)
+
+Branch `feature/multi-file-items` is cut from `main`. Ran against content-test
+through the installed app's stored password credential, using the app's own
+`OeqClient`. Created **one draft item** in Special Collections (`7b6aea89…`),
+titled "PROBE multi-attachment order test - safe to delete":
+`https://content-test.byui.edu/items/4528fe19-39ab-4608-b700-ab571ad80ef6/1/`.
+
+- One staging area, three `PUT`s, one `POST /api/item` with three attachments:
+  **accepted.**
+- **Order is kept as sent, not sorted.** Sent `c-…`, `a-…`, `b-…`; the read-back
+  of `GET /api/item/{uuid}/1` lists them in that order.
+- **Client-supplied attachment uuids are honoured for all three**, and sizes
+  match.
+- `createItem` got a Location-only response, so `attachmentUuids` was `[]` and
+  the runner's uuid check had nothing to compare. A read-back is the only way to
+  see what the server stored.
+- **Still to do:** the operator opens the item in openEQUELLA's own interface
+  and confirms the display order matches and that each PDF opens.
+
+### FOUND WHILE PROBING: password sign-in is broken on content-test
+
+**`POST /api/auth/login?username=&password=` now answers 415** ("RESTEASY003065:
+Cannot consume content type"), whatever the content type, except JSON. It
+worked on 2026-08-13. Measured with a made-up username so the real account was
+never at risk:
+
+```text
+no body / form / text  -> 415
+JSON {} + query creds  -> 400  "Missing required field username"
+JSON {username,password} body, no query -> 401 for a bad account, 200 for a real one
+```
+
+The server now wants a JSON `LoginRequest` body. **The released v1.2.1 cannot
+sign in to content-test with a password.** OAuth does not use this endpoint.
+Whether production has changed too is not known. The new form also takes the
+password OUT of the query string, which retires the "password in the query
+string" caveat in CLAUDE.md and SECURITY.md **for servers that accept it**. Fix
+`passwordAuth.ts` before or alongside this feature. Note: decide whether to
+fall back to the query form for older servers, and measure, do not assume,
+whether production accepts the JSON form.
+
+### Process
+
+- **Branch from `main`**, not from `chore/electron-upgrade`, which was checked out
+  when this was written.
+- TDD, as everywhere in this repository. Then drive it through the desktop app
+  before calling it done. Every serious fault here has been found by someone
+  using the app, not by the tests.
+- Bump the version and add a changelog entry. A strict 1:1 relationship is a
+  headline claim in the README, so the README changes too.
 
 ## 2026-10-02: readiness check before sharing with colleagues
 
