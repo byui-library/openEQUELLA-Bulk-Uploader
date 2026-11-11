@@ -65,10 +65,13 @@ Uploader.exe` the same way.
   Support purge was requested — PRs #1–#16 still reach the old commits by hash.
 - **The tree itself still held real data**, which four scrubs had missed: two
   real birth-and-death date pairs in two tests, the handoff, a plan and a spec.
-  Fixed in `59aee8f` before the rewrite. Bare `2024-01-06` remains as a generic
-  example in the verifier tests — a death date alone, under an invented name,
-  identifies no one, and changing it would mean rewriting the date-format cases
-  those tests exist for.
+  Fixed in `59aee8f` before the rewrite. **That fix was incomplete, and this
+  line used to excuse it**: one of those death dates stayed on as the
+  verifier's standard example, and the other in a formula-guard test, on the
+  reasoning that a date alone under an invented name identifies no one.
+  CLAUDE.md says the opposite, and it is right. Both, plus a likely real name
+  in `tests/extract/names.test.ts`, are replaced in PR #19; a year swap kept
+  every date-format case intact. Caught by review of this PR.
 - **Setup now warns about a client ID that is not uuid-shaped** —
   `screens/setup.ts#clientIdNote`. A warning, never a refusal. Driven in the
   live app over CDP: renders under the field, styled, no CSP errors.
@@ -589,8 +592,8 @@ Read this as the record, not as a queue.
   claim whether or not a year sits beside it.** Now refused where it was written
   before: `He died on January 6.`, `Jan. 6`, `the 6th of January`, `1/6`,
   `January 6, aged 87` over a year-only document, `in January`,
-  `2024-01-06T00:00:00Z`, `2024-01-06 12:30`, `in January of 2024`,
-  `January the 6th, 2024`, `6.1.2024`.
+  `1916-01-06T00:00:00Z`, `1916-01-06 12:30`, `in January of 1916`,
+  `January the 6th, 1916`, `6.1.1916`.
 - **Precision ranking was replaced by a `Reading`** — a date decomposed into the
   parts the text actually stated — with one rule, `entails`: every part the
   claim states must be stated, and equal, in the document's. `new Date` is gone
