@@ -65,6 +65,128 @@ function sequentialLoginStub() {
   return { impl: impl as unknown as typeof fetch, calls };
 }
 
+/**
+ * THE SIGN-IN REQUEST'S SHAPE. openEQUELLA used to take the credentials as
+ * query parameters (`?username=&password=`, as schema/swagger.json still
+ * documents). Measured 2026-11-11 against BOTH content.byui.edu and
+ * content-test.byui.edu with a made-up account: that form is now answered 415
+ * "RESTEASY003065: Cannot consume content type" whatever content type is sent,
+ * and only a JSON body is accepted --
+ *
+ *   JSON {}                         + query creds -> 400 "Missing required field username"
+ *   JSON {username, password} body, no query      -> 401 for a bad account
+ *
+ * -- so the released tool could not sign in with a password at all. No
+ * fallback to the old form, by the operator's decision: nobody has asked for
+ * it, and every site this has run against has already moved.
+ */
+describe('the sign-in request', () => {
+  function capture() {
+    const seen: { url: string; method?: string; headers: Headers; body: unknown }[] = [];
+    const impl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      seen.push({
+        url: String(input),
+        method: init?.method,
+        headers: new Headers(init?.headers),
+        body: init?.body,
+      });
+      if (isVerify(String(input))) return userResponse();
+      return new Response('', {
+        status: 200,
+        headers: { 'set-cookie': 'JSESSIONID=abc123; Path=/; HttpOnly' },
+      });
+    });
+    return { impl: impl as unknown as typeof fetch, seen };
+  }
+
+  it('POSTs the credentials as a JSON body', async () => {
+    const { impl, seen } = capture();
+    await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl).authHeader();
+    const login = seen.find((s) => isLogin(s.url))!;
+    expect(login.method).toBe('POST');
+    expect(login.headers.get('content-type')).toMatch(/^application\/json\b/);
+    expect(JSON.parse(String(login.body))).toEqual({ username: 'jsmith', password: 'hunter2' });
+  });
+
+  /** The one improvement the new form buys: the password leaves the URL, and
+   *  with it the server's and the load balancer's access logs. */
+  it('puts nothing in the URL: no query string at all', async () => {
+    const { impl, seen } = capture();
+    await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl).authHeader();
+    const login = seen.find((s) => isLogin(s.url))!;
+    expect(new URL(login.url).search).toBe('');
+  });
+
+  /**
+   * A refusal of the request's SHAPE is not a wrong password. This exact
+   * failure -- 415 for the dead query form -- is what v1.2.1 operators were
+   * shown as "Check the username and password", about credentials that were
+   * correct. A site still on the old API would answer this tool's JSON body
+   * the same way, so both shapes must name the API, not the credentials.
+   */
+  it('says the sign-in API does not match on 415, not that the password is wrong', async () => {
+    const body =
+      '{"code":415,"error":"Unsupported Media Type","error_description":"RESTEASY003065: Cannot consume content type"}';
+    const impl = vi.fn(async () => new Response(body, { status: 415 })) as unknown as typeof fetch;
+    const err = await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl)
+      .authHeader()
+      .catch((e: unknown) => e as Error);
+    expect(err.message).toMatch(/sign-in does not match/i);
+    expect(err.message).not.toMatch(/check the username and password/i);
+  });
+
+  /**
+   * Only the MEASURED shape refusal (415) gets the API-mismatch message. A 400
+   * was never measured on a real sign-in, and "Missing required field" is
+   * also what a blank username gets, so matching its prose would send an
+   * operator who left a field empty off to change how they sign in.
+   */
+  it('does not guess from the prose of a 400', async () => {
+    const body = '{"code":400,"error":"Bad Request","error_description":"Missing required field username"}';
+    const impl = vi.fn(async () => new Response(body, { status: 400 })) as unknown as typeof fetch;
+    const err = await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl)
+      .authHeader()
+      .catch((e: unknown) => e as Error);
+    expect(err.message).not.toMatch(/does not match/i);
+  });
+
+  /**
+   * The message is a constant the code wrote; it carries no secret. Running
+   * the redactor over it can only DAMAGE it -- and, worse, a weak password
+   * that is also a word in the message ("password", "tool", "site", or a
+   * status number) leaves a [REDACTED] marker whose position gives the
+   * password away to anyone reading the emailed error.
+   */
+  it.each(['password', 'tool', 'site', '415'])(
+    'never redacts its own wording, which would reveal a password %j',
+    async (weak) => {
+      const impl = vi.fn(async () => new Response('', { status: 415 })) as unknown as typeof fetch;
+      const err = await new UsernamePasswordAuth(BASE, 'jsmith', weak, impl)
+        .authHeader()
+        .catch((e: unknown) => e as Error);
+      expect(err.message).not.toContain('[REDACTED]');
+    },
+  );
+
+  it('still blames the credentials on a 401', async () => {
+    const impl = vi.fn(
+      async () => new Response('Sorry, the details you supplied were invalid.', { status: 401 }),
+    ) as unknown as typeof fetch;
+    const err = await new UsernamePasswordAuth(BASE, 'jsmith', 'hunter2', impl)
+      .authHeader()
+      .catch((e: unknown) => e as Error);
+    expect(err.message).toMatch(/check the username and password/i);
+  });
+
+  /** JSON-escaping characters reach the server as the operator typed them. */
+  it('sends a password containing quote and backslash intact', async () => {
+    const { impl, seen } = capture();
+    await new UsernamePasswordAuth(BASE, 'jsmith', 'pa"ss\\w', impl).authHeader();
+    const login = seen.find((s) => isLogin(s.url))!;
+    expect((JSON.parse(String(login.body)) as { password: string }).password).toBe('pa"ss\\w');
+  });
+});
+
 describe('UsernamePasswordAuth', () => {
   it('signs in and presents the session as a Cookie header', async () => {
     const { impl } = loginStub();
@@ -655,25 +777,28 @@ describe('the password never escapes', () => {
    * `correct-horse-battery-staple`) encodes to itself under every encoder, so
    * it cannot tell a working redactor from a broken one.
    */
-  const SECRET = 'Summer2026!pa ss';
+  /** Carries `"` so its JSON-escaped form -- the sign-in body's -- is distinct. */
+  const SECRET = 'Summer"2026!pa ss';
 
   /**
-   * The three forms the password can appear in, written out literally rather
+   * The four forms the password can appear in, written out literally rather
    * than computed with the same helper the implementation uses -- otherwise a
    * bug in that helper would be mirrored here and the test would agree with
    * the defect instead of catching it.
    */
   const SECRET_FORMS = [
-    'Summer2026!pa ss', // literal
-    'Summer2026!pa%20ss', // encodeURIComponent
-    'Summer2026%21pa+ss', // URLSearchParams, i.e. what actually goes on the wire
+    'Summer"2026!pa ss', // literal
+    'Summer%222026!pa%20ss', // encodeURIComponent
+    'Summer%222026%21pa+ss', // URLSearchParams
+    'Summer\\"2026!pa ss', // JSON string escape, i.e. what the sign-in body carries
   ];
 
   /**
    * Walks every string reachable from a thrown error -- message, stack,
    * ApiError's body field, and anything nested -- looking for the password in
-   * any of its wire forms. It travels in a query string, so a URL echoed back
-   * by the server carries an encoded form, not the literal one.
+   * any of its wire forms. A server echoing a request back may carry an
+   * encoded form rather than the literal one: percent-encoded from a URL, or
+   * JSON-escaped from the sign-in body.
    */
   const findsSecret = (value: unknown): boolean => {
     const seen = new Set<unknown>();
@@ -706,32 +831,57 @@ describe('the password never escapes', () => {
    * encoders actually produce, every test in this block silently starts
    * looking for a string that can never appear.
    */
-  it('has honest fixtures: the three forms really are distinct and correct', () => {
+  it('has honest fixtures: the four forms really are distinct and correct', () => {
     const url = new URL('https://oeq.example.edu/api/auth/login');
     url.searchParams.set('password', SECRET);
     expect(SECRET_FORMS).toEqual([
       SECRET,
       encodeURIComponent(SECRET),
       url.searchParams.toString().replace('password=', ''),
+      JSON.stringify(SECRET).slice(1, -1),
     ]);
-    expect(new Set(SECRET_FORMS).size).toBe(3);
+    expect(new Set(SECRET_FORMS).size).toBe(4);
   });
 
-  it('is absent from a rejected sign-in, including the echoed body', async () => {
+  /**
+   * The echo carries the request BODY as well as the URL: the body is where
+   * the password lives, so echoing only the URL -- as this test used to --
+   * leaves nothing for redaction to remove, and the test passes with
+   * redaction switched off.
+   */
+  it('is absent from a rejected sign-in, including the echoed request', async () => {
     const impl = vi.fn(
-      async (input: string | URL) =>
-        // A server echoing the request line back is exactly how the encoded
-        // form leaks.
-        new Response(`Rejected request: ${String(input)}`, { status: 401 }),
+      async (input: string | URL, init?: RequestInit) =>
+        new Response(`Rejected request: ${String(input)} ${String(init?.body)}`, { status: 401 }),
     ) as unknown as typeof fetch;
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', SECRET, impl);
     const error = await auth.authHeader().catch((e: unknown) => e);
     expect(findsSecret(error)).toBe(false);
   });
 
+  /**
+   * The body is where the password lives now, so a server echoing the BODY
+   * back is the new way it leaks -- and JSON escapes `"` and `\`, a form none
+   * of the URL encodings above matches.
+   */
+  it('is absent from a rejected sign-in that echoes the JSON body', async () => {
+    const tricky = 'Wint"er\\2026!';
+    const impl = vi.fn(
+      async (_input: string | URL, init?: RequestInit) =>
+        new Response(`Rejected request body: ${String(init?.body)}`, { status: 401 }),
+    ) as unknown as typeof fetch;
+    const auth = new UsernamePasswordAuth(BASE, 'jsmith', tricky, impl);
+    const error = await auth.authHeader().catch((e: unknown) => e);
+    const leaked = JSON.stringify(tricky).slice(1, -1);
+    expect(leaked).toBe('Wint\\"er\\\\2026!'); // the fixture is honest
+    const text = JSON.stringify(error, Object.getOwnPropertyNames(error as object));
+    expect(text).not.toContain('Wint');
+  });
+
   it('is absent when the network fails before a response', async () => {
-    const impl = vi.fn(async (input: string | URL) => {
-      throw new Error(`connect ECONNREFUSED for ${String(input)}`);
+    const impl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      // A runtime that folds the failing request into its error, body and all.
+      throw new Error(`connect ECONNREFUSED for ${String(input)} ${String(init?.body)}`);
     }) as unknown as typeof fetch;
     const auth = new UsernamePasswordAuth(BASE, 'jsmith', SECRET, impl);
     const error = await auth.authHeader().catch((e: unknown) => e);
@@ -745,9 +895,8 @@ describe('the password never escapes', () => {
   });
 
   /**
-   * Sign-in genuinely carries the password in the query string -- that is
-   * openEQUELLA's API, not a choice made here, and it is why nothing else may.
-   * Logging out identifies the session by its cookie and has no reason to name
+   * Sign-in carries the password in its body, and nothing else may carry it
+   * anywhere. Logging out identifies the session by its cookie and has no reason to name
    * a credential, so a URL built the same way as the sign-in one would put the
    * password in a second set of server access logs for nothing.
    */

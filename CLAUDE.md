@@ -129,7 +129,13 @@ history**; removing it from there is a separate decision nobody has taken.
 Do not re-introduce a real name to describe the incident — this paragraph
 used to quote the surname it was warning about.
 
-**v1.2.1 is released and tagged**; `package.json` carries it. (v1.1.1 is the
+**v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
+both BYU-Idaho sites**, because openEQUELLA now refuses the old query-string
+login (see the password bullet under Key domain facts). `package.json` carries
+1.2.2 from PR #18; it is released once that PR merges and `v1.2.2` is tagged.
+Staff who sign in with a password need it. OAuth users are unaffected.
+
+**v1.2.1 was released and tagged before that.** (v1.1.1 is the
 release the two paragraphs below describe, and both still apply to anyone
 upgrading from it.) Two things staff
 must be told about that release: **they will
@@ -367,10 +373,19 @@ shape, never as a value the code may assume.
   variables they set nor the one they didn't. `runPreflight` detects exactly
   that combination and says so; do not describe password mode as "the default"
   without saying which surface.
-- **The password travels in the query string.** `POST /api/auth/login?username=&password=`
-  is openEQUELLA's API and cannot be changed from here. So plain http is
-  *refused* rather than warned about, and nothing may put a login URL into a
-  log, a message or the manifest. **`normaliseInstanceUrl` rejects loopback over
+- **The password travels in a JSON body, and the query form is DEAD.**
+  `POST /api/auth/login` with `{"username","password"}` and
+  `content-type: application/json`. Until late 2026 openEQUELLA took them as
+  query parameters (`?username=&password=`, which `schema/swagger.json` still
+  documents). Measured 2026-11-11 with a made-up account against BOTH
+  `content.byui.edu` and `content-test.byui.edu`: the query form now answers
+  **415** "RESTEASY003065: Cannot consume content type" whatever content type
+  is sent, and a JSON body is the only form accepted. **v1.2.1 and earlier
+  cannot sign in with a password at either site.** No fallback to the query
+  form, by the operator's decision (2026-11-11): nobody has asked for one. The
+  swagger file disagreeing with the server is now the sixth time. Plain http
+  is still *refused* rather than warned about, and nothing may put the request
+  body into a log, a message or the manifest. **`normaliseInstanceUrl` rejects loopback over
   http too** -- this file used to say "(loopback exempted)" here, and that is
   wrong about the rule. The exemption is `preflight.ts#httpsCheck`'s alone: it
   *reports* a loopback base URL as passing, and per its own docblock that verdict
@@ -379,8 +394,13 @@ shape, never as a value the code may assume.
   before any report is built. Note this is the OPPOSITE of the model endpoint
   rule below, and deliberately: there the reason to refuse http is a bearer key,
   which loopback genuinely removes. `tests/passwordAuth.test.ts` walks
-  every string reachable from a thrown error for the password in literal and
-  percent-encoded form; that guard exists because a debug line added later
+  every string reachable from a thrown error for the password in literal,
+  percent-encoded and JSON-escaped form. `redact.ts` matches the URL forms
+  as fixed strings and ANY JSON spelling (each character literal, `\uXXXX` in
+  either hex case, or its short escape) by one pattern, because a list of
+  serialiser spellings cannot keep up; both are mutation-checked. **A constant
+  message the code wrote is never redacted**: a weak password that is also a
+  word in it would leave a marker whose position reveals it. That guard exists because a debug line added later
   would leak passwords into a file the operator emails around asking for help.
 - **BYU-Idaho's OAuth client cannot do the client-credentials grant.** Probed
   2026-08-12: it answers `invalid_client` — *"To use the Client Credentials
@@ -666,9 +686,9 @@ shape, never as a value the code may assume.
 - **A bearer key does not cross plain http unless the host is this machine.**
   Exactly that one combination is refused — http, plus a key, plus a non-loopback
   host. `normaliseInstanceUrl` is deliberately NOT reused for a model address:
-  it refuses all http because openEQUELLA's sign-in carries the password in the
-  QUERY STRING, and that is a fact about openEQUELLA's API which does not
-  transfer. Reusing it would ban `http://localhost:11434/v1`, which is what every
+  it refuses all http, loopback included, because openEQUELLA's sign-in sends
+  the password (a JSON body since late 2026, the query string before), and that
+  is a rule about openEQUELLA which does not transfer. Reusing it would ban `http://localhost:11434/v1`, which is what every
   local runtime serves and what the local half of this design rests on.
 - **`_notes` never reaches openEQUELLA** — `plan.ts` skips every column
   `schema.ts#isAnnotationHeader` recognises (any header starting with `_`)

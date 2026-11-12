@@ -8,7 +8,7 @@ describe('normaliseInstanceUrl', () => {
   });
 
   /**
-   * openEQUELLA takes the password as a QUERY PARAMETER on /api/auth/login.
+   * Password sign-in sends the password to /api/auth/login (in a JSON body).
    * Over plaintext that puts it in the clear on the wire, so this is refused
    * rather than warned about -- there is no safe way to proceed.
    */
