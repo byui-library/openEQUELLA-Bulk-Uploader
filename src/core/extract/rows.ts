@@ -8,6 +8,7 @@ import { composeValue } from './compose.js';
 import { missingFilenameWords } from './names.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Source } from './types.js';
 import { ATTACHMENT_COLUMN } from './types.js';
+import { VALUE_SEPARATOR } from '../metadata.js';
 
 /**
  * An ISO date, optionally followed by a time and offset. The date part is
@@ -302,12 +303,12 @@ function resolve(source: Source, context: Context): Resolved {
  * one of those would overwrite a value the document supplied and no source
  * questioned.
  */
-function fill(
+function trySources(
   column: Column,
   context: Context,
   notes: string[],
   flagged: Record<string, string>,
-): { value: string; source?: string } {
+): { value: string; source: string } | null {
   for (const source of column.sources) {
     const resolved = resolve(source, context);
     const raw = resolved.value.trim();
@@ -342,8 +343,74 @@ function fill(
     return { value: raw, source: sourceKind(source) };
   }
 
+  return null;
+}
+
+/** A column's default, or empty -- what a cell holds when no source answered. */
+function fallback(column: Column): { value: string; source?: string } {
   if (column.default !== undefined) return { value: column.default, source: 'default' };
   return { value: '' };
+}
+
+/** One file of a row, with the context its sources read. */
+interface FileContext {
+  file: string;
+  context: Context;
+}
+
+/**
+ * Fill one column from a row's files, in attachment order.
+ *
+ * With ONE file and no `each` this is exactly what a file row has always done:
+ * try the sources in order, then the default.
+ *
+ * With several, each file is tried in turn and the first that answers wins --
+ * every source on one file before moving to the next, because the sources are
+ * an order of preference and the files are an order of attachment. A value
+ * from any file but the first is noted, because the operator reading the row
+ * would otherwise assume it describes the first issue.
+ *
+ * With `each`, every file is asked and every value kept: in order,
+ * de-duplicated ignoring case, joined with plan's repeated-value separator.
+ */
+function fillAcross(
+  column: Column,
+  contexts: readonly FileContext[],
+  notes: string[],
+  flagged: Record<string, string>,
+): { value: string; source?: string } {
+  if (column.each === true && contexts.length > 1) {
+    const seen = new Set<string>();
+    const values: string[] = [];
+    let source: string | undefined;
+    let answered = 0;
+    for (const { context } of contexts) {
+      const found = trySources(column, context, notes, flagged);
+      if (found === null) continue;
+      answered += 1;
+      source ??= found.source;
+      const key = found.value.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        values.push(found.value);
+      }
+    }
+    if (values.length > 0) {
+      notes.push(`${column.path}: collected from ${answered} of ${contexts.length} files`);
+      return { value: values.join(`${VALUE_SEPARATOR} `), source };
+    }
+    return fallback(column);
+  }
+
+  for (const [i, { file, context }] of contexts.entries()) {
+    const found = trySources(column, context, notes, flagged);
+    if (found === null) continue;
+    if (i > 0) {
+      notes.push(`${column.path}: taken from '${file}' -- the earlier files in this folder gave nothing`);
+    }
+    return found;
+  }
+  return fallback(column);
 }
 
 /**
@@ -371,6 +438,15 @@ export function expectedButEmptyNote(path: string): string {
   );
 }
 
+/** One file of a folder row, in attachment order. */
+export interface FolderDoc {
+  name: string;
+  doc: DocumentData;
+}
+
+/** What a folder row's files are read as when none of them could be read. */
+const NOTHING_READ: DocumentData = { text: '', hasTextLayer: true, properties: {}, tables: [] };
+
 /**
  * Build one output row. Never throws and never omits a column: a file that
  * yields nothing usable still produces a row, flagged in `notes`. A file
@@ -378,9 +454,41 @@ export function expectedButEmptyNote(path: string): string {
  * never in the folder -- so it never is.
  */
 export function buildRow(profile: Profile, filename: string, doc: DocumentData): ExtractedRow {
+  return build(profile, filename, [{ name: filename, doc }], false);
+}
+
+/**
+ * One row for a folder whose files become ONE item's attachments.
+ *
+ * `docs` are the files that could be read, in attachment order
+ * (folderFiles.ts#orderFiles). Every filename-reading source -- `filename`,
+ * `filenameStem`, a pattern placeholder -- reads the FOLDER name, which is
+ * what `attachment name` holds and what the row uploads. Document sources try
+ * each file in turn and the first that answers wins, unless the column says
+ * `each`. See fillAcross.
+ */
+export function buildFolderRow(
+  profile: Profile,
+  folderName: string,
+  docs: readonly FolderDoc[],
+): ExtractedRow {
+  return build(profile, folderName, docs, true);
+}
+
+/**
+ * The one builder behind both. `name` is what the row uploads -- a filename,
+ * or a folder name -- and `files` are what its sources read. A file row is
+ * exactly a folder row of one file, except in how its notes are worded.
+ */
+function build(
+  profile: Profile,
+  name: string,
+  files: readonly FolderDoc[],
+  folder: boolean,
+): ExtractedRow {
   const notes: string[] = [];
 
-  const parts = applyPattern(profile.pattern, filename);
+  const parts = applyPattern(profile.pattern, name);
   // Only worth saying if a column actually reads a piece of the filename. A
   // mixed folder gets one pattern carrying one extension, so a folder of 18
   // Word files and 12 PDFs flagged all twelve PDFs for not matching a `.docx`
@@ -389,19 +497,33 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
     column.sources.some((source) => 'placeholder' in source || 'join' in source),
   );
   if (parts === null && usesParts) {
-    notes.push(`filename does not match the pattern '${profile.pattern}'`);
-  }
-  if (!doc.hasTextLayer) {
-    notes.push('no text layer -- nothing could be read from inside this file');
+    notes.push(`${folder ? 'folder name' : 'filename'} does not match the pattern '${profile.pattern}'`);
   }
 
-  const context: Context = {
-    filename,
-    parts,
-    labels: findLabels(doc.text),
-    doc,
-    composed: {},
-  };
+  // A folder none of whose files could be read still becomes a row -- its
+  // files are still uploaded -- built from the folder name alone, and says so.
+  if (folder && files.length === 0) {
+    notes.push('no file in this folder could be read -- the row was built from the folder name alone');
+  }
+  const effective = files.length > 0 ? files : [{ name, doc: NOTHING_READ }];
+  for (const f of effective) {
+    if (f.doc.hasTextLayer) continue;
+    notes.push(
+      folder
+        ? `no text layer in '${f.name}' -- nothing could be read from inside it`
+        : 'no text layer -- nothing could be read from inside this file',
+    );
+  }
+
+  // ONE `composed` object shared by every file's context, so the second pass
+  // reads the first pass's finished values whichever context it is handed.
+  const composed: Record<string, string> = {};
+  const contexts: FileContext[] = effective.map((f) => ({
+    file: f.name,
+    // `filename` is the ROW's name -- the folder's, for a folder row -- so
+    // every filename-reading source reads it, whichever file is in use.
+    context: { filename: name, parts, labels: findLabels(f.doc.text), doc: f.doc, composed },
+  }));
 
   const cells: Record<string, string> = {};
   const sources: Record<string, string> = {};
@@ -414,9 +536,9 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   const isComposed = (c: Column) => c.sources.some((s) => 'compose' in s);
 
   for (const column of profile.columns.filter((c) => !isComposed(c))) {
-    const { value, source } = fill(column, context, notes, flagged);
-    const finished = column.path === ATTACHMENT_COLUMN ? filename : value;
-    if (column.as !== undefined) context.composed[column.as] = finished;
+    const { value, source } = fillAcross(column, contexts, notes, flagged);
+    const finished = column.path === ATTACHMENT_COLUMN ? name : value;
+    if (column.as !== undefined) composed[column.as] = finished;
 
     // A composeOnly column is extracted only so a compose template can read it.
     // It is named above and then dropped: giving it a cell would write the value
@@ -428,12 +550,14 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
   }
 
   for (const column of profile.columns.filter(isComposed)) {
-    const { value, source } = fill(column, context, notes, flagged);
+    // A compose reads `composed`, not a document, so ONE context is enough and
+    // asking every file would only repeat the same answer.
+    const { value, source } = fillAcross(column, contexts.slice(0, 1), notes, flagged);
     // The same override as the first pass. profile.ts rejects a composed
     // attachment column, but the two passes applying different rules is how
-    // that got through review at all -- a row naming something that is not a
-    // file breaks the one-file-one-item relationship the whole tool rests on.
-    cells[column.path] = column.path === ATTACHMENT_COLUMN ? filename : value;
+    // that got through review at all -- a row naming something that is not
+    // what it uploads breaks the row-to-item relationship the tool rests on.
+    cells[column.path] = column.path === ATTACHMENT_COLUMN ? name : value;
     if (source !== undefined && value !== '') sources[column.path] = source;
   }
 
@@ -449,8 +573,10 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
 
   if (profile.checks?.filenameWordsInText) {
     const missing = missingFilenameWords(
-      filename,
-      doc.text,
+      name,
+      // A folder's name is checked against ALL of its files: a word naming
+      // the volume need only appear somewhere in it.
+      effective.map((f) => f.doc.text).join('\n'),
       profile.checks.filenameWordsInText.ignore ?? [],
     );
     if (missing.length > 0) {
@@ -458,11 +584,14 @@ export function buildRow(profile: Profile, filename: string, doc: DocumentData):
       // filename becomes this item's name in openEQUELLA, so a misspelling
       // here is catalogued permanently -- and the document, not the filename,
       // is the authority on how the person's name is spelled.
+      const quoted = missing.map((w) => `'${w}'`).join(', ');
       notes.push(
-        `check this filename: the document does not contain ` +
-          `${missing.map((w) => `'${w}'`).join(', ')}, so '${filename}' may be misspelled. ` +
-          `The filename becomes this item's title, so correct it before uploading if the ` +
-          `document is right.`,
+        folder
+          ? `check this folder name: none of its files contains ${quoted}, so '${name}' may be ` +
+              `misspelled. Correct it before uploading if the documents are right.`
+          : `check this filename: the document does not contain ${quoted}, so '${name}' may be ` +
+              `misspelled. The filename becomes this item's title, so correct it before ` +
+              `uploading if the document is right.`,
       );
     }
   }

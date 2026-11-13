@@ -1,7 +1,13 @@
 // tests/extract/rows.test.ts
 import { describe, it, expect } from 'vitest';
-import { buildRow, normaliseDate, normaliseDateWithFormat, splitPeople } from '../../src/core/extract/rows.js';
-import { ATTACHMENT_COLUMN, type DocumentData, type Profile } from '../../src/core/extract/types.js';
+import {
+  buildRow,
+  buildFolderRow,
+  normaliseDate,
+  normaliseDateWithFormat,
+  splitPeople,
+} from '../../src/core/extract/rows.js';
+import { ATTACHMENT_COLUMN, type Column, type DocumentData, type Profile } from '../../src/core/extract/types.js';
 
 const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {}, tables: [] };
 
@@ -867,5 +873,163 @@ describe('an ai source resolves to nothing', () => {
     const row = buildRow(profile, 'a.pdf', EMPTY_DOC);
     expect(row.cells['MWDL/title']).toBe('a');
     expect(row.sources['MWDL/title']).toBe('filename');
+  });
+});
+
+describe('buildFolderRow', () => {
+  const doc = (text: string, title = ''): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: title ? { title } : {},
+    tables: [],
+  });
+  const profile = (columns: Column[], pattern = 'Gazette_V{volume}'): Profile => ({
+    version: 1,
+    pattern,
+    columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }, ...columns],
+  });
+
+  it('names the folder in attachment name; placeholders and filenameStem read the folder name', () => {
+    const row = buildFolderRow(
+      profile([
+        { path: 'MWDL/title', sources: [{ join: 'Gazette, Volume {volume}' }] },
+        { path: 'MWDL/identifier', sources: [{ filenameStem: true }] },
+      ]),
+      'Gazette_V2',
+      [{ name: 'G_No1.pdf', doc: doc('x') }],
+    );
+    expect(row.cells['attachment name']).toBe('Gazette_V2');
+    expect(row.cells['MWDL/title']).toBe('Gazette, Volume 2');
+    expect(row.cells['MWDL/identifier']).toBe('Gazette_V2');
+    expect(row.notes).toEqual([]);
+  });
+
+  it('takes the first value found in attachment order, noting a later file', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/description', sources: [{ property: 'title' }] }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('a') },
+        { name: 'G_No2.pdf', doc: doc('b', 'Spring issue') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Spring issue');
+    expect(row.notes).toContain(
+      "MWDL/description: taken from 'G_No2.pdf' -- the earlier files in this folder gave nothing",
+    );
+  });
+
+  it('adds no note when the first file answers', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/description', sources: [{ property: 'title' }] }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('a', 'Winter issue') },
+        { name: 'G_No2.pdf', doc: doc('b', 'Spring issue') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Winter issue');
+    expect(row.notes).toEqual([]);
+  });
+
+  it('tries every source on one file before moving to the next file', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/description', sources: [{ property: 'subject' }, { property: 'title' }] }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('a', 'Winter issue') },
+        { name: 'G_No2.pdf', doc: { ...doc('b'), properties: { subject: 'Spring subject' } } },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Winter issue');
+  });
+
+  it("each: collects every file's value in order, de-duplicated ignoring case, and notes it", () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/subjects/subject', sources: [{ property: 'title' }], each: true }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('', 'Winter') },
+        { name: 'G_No2.pdf', doc: doc('', '') },
+        { name: 'G_No3.pdf', doc: doc('', 'winter') },
+        { name: 'G_No4.pdf', doc: doc('', 'Spring') },
+      ],
+    );
+    expect(row.cells['MWDL/subjects/subject']).toBe('Winter; Spring');
+    expect(row.notes).toContain('MWDL/subjects/subject: collected from 3 of 4 files');
+  });
+
+  it('each: falls to the default when no file answers', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/subjects/subject', sources: [{ property: 'title' }], each: true, default: 'None' }]),
+      'Gazette_V2',
+      [{ name: 'G_No1.pdf', doc: doc('') }],
+    );
+    expect(row.cells['MWDL/subjects/subject']).toBe('None');
+  });
+
+  it('falls back to the default only when no file answers', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/genre', sources: [{ property: 'subject' }], default: 'Periodical' }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('') },
+        { name: 'G_No2.pdf', doc: doc('') },
+      ],
+    );
+    expect(row.cells['MWDL/genre']).toBe('Periodical');
+  });
+
+  it('composes from the finished values of the first pass', () => {
+    const row = buildFolderRow(
+      profile([
+        { path: 'MWDL/coverage', as: 'issue', composeOnly: true, sources: [{ property: 'title' }] },
+        { path: 'MWDL/description', sources: [{ compose: 'First issue: {issue}' }] },
+      ]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('') },
+        { name: 'G_No2.pdf', doc: doc('', 'Spring') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('First issue: Spring');
+  });
+
+  it('names each file with no text layer', () => {
+    const row = buildFolderRow(profile([]), 'Gazette_V2', [
+      { name: 'G_No1.pdf', doc: { ...doc(''), hasTextLayer: false } },
+    ]);
+    expect(row.notes).toContain("no text layer in 'G_No1.pdf' -- nothing could be read from inside it");
+  });
+
+  it('says so when no file in the folder could be read, and still builds the row', () => {
+    const row = buildFolderRow(profile([]), 'Gazette_V2', []);
+    expect(row.cells['attachment name']).toBe('Gazette_V2');
+    expect(row.notes).toEqual([
+      'no file in this folder could be read -- the row was built from the folder name alone',
+    ]);
+  });
+
+  it('says folder name, not filename, when the pattern does not match', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/title', sources: [{ placeholder: 'volume' }] }]),
+      'Other',
+      [{ name: 'a.pdf', doc: doc('') }],
+    );
+    expect(row.notes).toContain("folder name does not match the pattern 'Gazette_V{volume}'");
+  });
+
+  it('checks folder-name words against the text of every file', () => {
+    const p: Profile = {
+      ...profile([], '{name}'),
+      checks: { filenameWordsInText: {} },
+    };
+    const clean = buildFolderRow(p, 'Larkwood Gazette', [
+      { name: 'a.pdf', doc: doc('the Larkwood region') },
+      { name: 'b.pdf', doc: doc('a Gazette of note') },
+    ]);
+    expect(clean.notes).toEqual([]);
+    const flagged = buildFolderRow(p, 'Larkwod Gazette', [{ name: 'a.pdf', doc: doc('the Larkwood Gazette') }]);
+    expect(flagged.notes.join(' ')).toMatch(/check this folder name/);
   });
 });
