@@ -1,13 +1,24 @@
-# Session handoff — updated 2026-11-11
+# Session handoff — updated 2026-11-13
 
 Read this first.
 
+## State on 2026-11-13
+
+- **v1.2.2 is released** (PR #18, tagged 2026-11-12, Electron 33): password
+  sign-in by JSON body. Operator to-do: copy the installer to the network
+  share, and sign in with a password through it on a staff machine.
+- **Electron 44 is merged** (PR #17) **but in no release yet.** The next
+  release is the first to ship it; install that one on a staff machine, signing
+  in with a password, before it reaches the share.
+- **PR #19 is merged:** two real death dates and a likely real name left in the
+  tree after `59aee8f`, found through review of #17. Still in published history.
+- **No PR is open.** `main` is merged into this branch.
+
 ## 2026-11-11: RESUME HERE — several files on one contribution
 
-**The operator asked for this feature, and it has not been started.** Everything
-below the next heading is earlier history. The 2026-10-02 to-do list (PR #17,
-the v1.3.0 release) was still open when this was written. Check `gh pr list`
-before assuming it is done.
+**The operator asked for this feature. It is proven against the live server and
+NOT BUILT** — the tool is still strictly one file per contribution. Everything
+below the next heading is earlier history.
 
 ### Why
 
@@ -106,11 +117,10 @@ titled "PROBE multi-attachment order test - safe to delete":
 
 ### FOUND WHILE PROBING: password sign-in is broken on content-test
 
-> **FIXED on branch `fix/password-login-json`, PR #18, as v1.2.2** (off `main`),
-> no fallback by the operator's decision. **Production has moved too**: both
-> instances answer the query form 415. The fix was verified live with the app's
-> own provider. Not yet merged or released. The text below is the record of
-> how it was found.
+> **FIXED and RELEASED as v1.2.2** (PR #18, 2026-11-12), no fallback by the
+> operator's decision. **Production has moved too**: both instances answer the
+> query form 415. The fix was verified live with the app's own provider. The
+> text below is the record of how it was found.
 
 **`POST /api/auth/login?username=&password=` now answers 415** ("RESTEASY003065:
 Cannot consume content type"), whatever the content type, except JSON. It
