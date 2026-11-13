@@ -2,110 +2,166 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { ApiError, ValidationError } from './errors.js';
+import { listFolderFiles } from './folderFiles.js';
 import type { OeqClient } from './client.js';
+import type { ManifestFile } from './types.js';
 
 /**
- * Upload one file into a fresh staging area and return that area's uuid.
+ * What a row uploads. Structurally a subset of `ManifestEntry`, so the runner
+ * passes an entry straight in.
+ */
+export interface UploadUnit {
+  source: string;
+  /** Set for a folder row: re-listed before anything is created. */
+  folderPath?: string;
+  /** In upload order. One for a file row. */
+  files: ManifestFile[];
+}
+
+/**
+ * Upload a row's files into ONE fresh staging area, in order, and return that
+ * area's uuid. `createItem` then attaches every file in it to one item --
+ * proven live on 2026-11-11: one staging area, several PUTs, one item, with
+ * the attachments kept in the order sent.
  *
- * The file is streamed rather than buffered: at ~150 MB per file, buffering
- * would cost heap for no gain. On failure the staging area is removed so a
- * retry does not leak a partial upload server-side.
+ * Nothing is created until `checkUnchanged` has passed. Each file is streamed
+ * rather than buffered: at ~150 MB per file, buffering would cost heap for no
+ * gain. On failure the staging area is removed so a retry does not leak a
+ * partial upload server-side.
  *
  * ---- The 401-mid-upload gap ----
  * `OeqClient.request()` retries once on 401 after invalidating the token,
  * but it deliberately refuses to do so when the body is a stream: a drained
  * stream re-sent as-is would silently become a 0-byte upload. Instead it
  * invalidates the token and throws `ApiError(401)`, which `ApiError.retryable`
- * reports as `false` -- the runner (Task 10) will not retry it either.
+ * reports as `false` -- the runner will not retry it either.
  *
  * That would permanently fail a row every time its token happens to expire
  * mid-upload, even though the token has already been invalidated by the
  * time the error reaches here and an immediate retry would succeed. This
  * module is the layer that owns "how do I get a fresh body" (it's the one
- * that opened the file in the first place), so it is responsible for
- * closing that gap: on a 401, delete the now-orphaned staging area, create
- * a new one, open a brand-new read stream from disk, and try exactly once
- * more. If the retry also 401s, that's let propagate -- two expiries in a
- * row within a single upload is treated as a genuine auth problem, not
- * something to hammer forever.
+ * that opened the files in the first place), so it is responsible for
+ * closing that gap: on a 401, delete the now-orphaned staging area and
+ * restart THE WHOLE ROW -- a new area, a brand-new read stream for every
+ * file -- exactly once more. Not just the file that failed: the area holding
+ * the earlier files is gone, and an item must never be created from a
+ * partial set. If the retry also 401s, that's let propagate -- two expiries
+ * within a single row is treated as a genuine auth problem, not something to
+ * hammer forever.
  */
-export async function uploadFile(
-  client: OeqClient,
-  filePath: string,
-  fileName: string,
-): Promise<string> {
-  // Checked before creating any staging area: a missing or 0-byte file is
-  // already known to be doomed without ever talking to the server, so
-  // there's no reason to spend a POST (and then a compensating DELETE) on
-  // it. This does NOT make the later stream open infallible -- the file
-  // can still vanish or become unreadable in the window between this check
-  // and uploadOnce() actually opening it (createStagingArea() below is a
-  // network round trip, which gives that window real time to matter). That
-  // residual case is handled inside uploadOnce()'s try/catch, which is
-  // exercised by the "vanishes after the size check" test in
-  // upload.test.ts.
-  //
-  // A 1 media file : 1 attachment contract makes a 0-byte source file a
-  // real hazard in its own right, distinct from a missing one: it would
-  // "succeed" and silently create an empty attachment on the item rather
-  // than surfacing as a problem. A 0-byte file is essentially always
-  // evidence of a broken export/copy upstream, never an intentional empty
-  // attachment, so this rejects loudly instead of producing a
-  // silently-broken item.
-  const stats = await stat(filePath);
-  if (stats.size === 0) {
-    throw new ValidationError(`Refusing to upload '${filePath}': the file is 0 bytes.`);
+export async function uploadFiles(client: OeqClient, unit: UploadUnit): Promise<string> {
+  await checkUnchanged(unit);
+  return uploadOnce(client, unit.files, false);
+}
+
+/**
+ * The row's files are still the ones that were planned, or a ValidationError
+ * -- not retryable -- saying what changed.
+ *
+ * The plan the operator read IS the thing they approved. A file added,
+ * removed or replaced since then makes a contribution nobody looked at, in a
+ * collection that may have no moderation queue to catch it, so the row fails
+ * and says to plan again rather than uploading whatever is there now.
+ *
+ * Checked before creating any staging area: a doomed row costs no POST and
+ * no compensating DELETE. This does NOT make the later stream opens
+ * infallible -- a file can still vanish in the window before uploadOnce()
+ * opens it (createStagingArea() is a network round trip, which gives that
+ * window real time to matter). That residual case is handled inside
+ * uploadOnce()'s try/catch.
+ */
+export async function checkUnchanged(unit: UploadUnit): Promise<void> {
+  if (unit.folderPath !== undefined) {
+    const listing = await listFolderFiles(unit.folderPath);
+    const now = new Map(listing.files.map((f) => [f.name, f.size]));
+    const planned = new Set(unit.files.map((f) => f.name));
+    const problems: string[] = [];
+    // An emptied folder is reported below file by file ("is missing"), which
+    // names what went; the refusal sentence would only repeat it vaguely.
+    if (listing.refusal !== undefined && listing.files.length > 0) problems.push(listing.refusal);
+    for (const f of unit.files) {
+      const size = now.get(f.name);
+      if (size === undefined) {
+        problems.push(`'${f.name}' is missing`);
+      } else if (f.size !== undefined && size !== f.size) {
+        // f.size absent means a version that did not record sizes planned
+        // this row (manifest v1); only presence can be checked for it. See
+        // ManifestFile.size.
+        problems.push(`'${f.name}' changed size (${f.size} bytes when planned, ${size} now)`);
+      }
+    }
+    for (const name of now.keys()) {
+      if (!planned.has(name)) problems.push(`'${name}' was added`);
+    }
+    if (problems.length > 0) {
+      throw new ValidationError(
+        `the folder changed since planning (${problems.join('; ')}); plan again`,
+      );
+    }
   }
 
-  return uploadOnce(client, filePath, fileName, false);
+  for (const f of unit.files) {
+    const { size } = await stat(f.path);
+    if (unit.folderPath === undefined && f.size !== undefined && size !== f.size) {
+      throw new ValidationError(
+        `'${f.name}' changed since planning (${f.size} bytes when planned, ${size} now); plan again`,
+      );
+    }
+    // A 0-byte source file is a hazard distinct from a missing one: it would
+    // "succeed" and silently create an empty attachment rather than surfacing
+    // as a problem. It is essentially always evidence of a broken export or
+    // copy upstream, never an intentional empty attachment, so this rejects
+    // loudly instead of producing a silently-broken item.
+    if (size === 0) {
+      throw new ValidationError(`Refusing to upload '${f.path}': the file is 0 bytes.`);
+    }
+  }
 }
 
 async function uploadOnce(
   client: OeqClient,
-  filePath: string,
-  fileName: string,
+  files: readonly ManifestFile[],
   isRetry: boolean,
 ): Promise<string> {
   const stagingUuid = await client.createStagingArea();
-  // Captured as a named handle (rather than inlining `createReadStream(...)`
-  // straight into the call below) specifically so the catch block can force
-  // it closed on failure -- see the comment there. `createReadStream` never
-  // throws synchronously for a missing/unreadable file; that failure only
-  // surfaces later as an 'error' event on the stream, discovered when
-  // `fetch` tries to pump it, which rejects `uploadToStaging`'s promise
-  // asynchronously and is caught below same as any other upload failure.
-  const nodeStream = createReadStream(filePath);
-  try {
-    // `Readable.toWeb()` returns a `ReadableStream` from `node:stream/web`.
-    // The global `ReadableStream` that `fetch`'s `BodyInit` is declared
-    // against (via lib.dom.d.ts) is a *structurally* near-identical but
-    // nominally distinct type -- they diverge only in the generic variance
-    // of a couple of reader-related method signatures, not in anything
-    // that affects what's actually sent over the wire. Both describe the
-    // same WHATWG Streams object at runtime; the mismatch is purely a
-    // TypeScript ambient-lib artifact of this project having no "dom" lib.
-    // A direct cast (not `as any`/`as unknown as ...`) still keeps the
-    // rest of the object shape checked, so it's an accurate, narrow
-    // correction rather than an escape hatch.
-    const body = Readable.toWeb(nodeStream) as ReadableStream;
-    await client.uploadToStaging(stagingUuid, fileName, body);
-    return stagingUuid;
-  } catch (err) {
-    // `client.request()` throws on a non-ok response (or a network
-    // failure) without draining or closing whatever body it was given --
-    // it has no way to know the body was backed by a file handle that
-    // needs releasing. Left alone, a failed multi-hundred-MB upload leaks
-    // that fd for the rest of the process's life; at ~150 MB per file
-    // across a batch of dozens, that adds up fast. `.destroy()` is safe to
-    // call even if the stream already ended or errored out on its own.
-    nodeStream.destroy();
-    await client.deleteStagingArea(stagingUuid);
-    // Only recover once: the client has already invalidated the token by
-    // the time it throws this, so a fresh attempt gets a new one. A second
-    // 401 in a row is treated as a real auth failure and propagates.
-    if (!isRetry && err instanceof ApiError && err.status === 401) {
-      return uploadOnce(client, filePath, fileName, true);
+  for (const f of files) {
+    // Captured as a named handle (rather than inlining `createReadStream(...)`
+    // straight into the call below) specifically so the catch block can force
+    // it closed on failure -- see the comment there. `createReadStream` never
+    // throws synchronously for a missing/unreadable file; that failure only
+    // surfaces later as an 'error' event on the stream, discovered when
+    // `fetch` tries to pump it, which rejects `uploadToStaging`'s promise
+    // asynchronously and is caught below same as any other upload failure.
+    const nodeStream = createReadStream(f.path);
+    try {
+      // `Readable.toWeb()` returns a `ReadableStream` from `node:stream/web`.
+      // The global `ReadableStream` that `fetch`'s `BodyInit` is declared
+      // against (via lib.dom.d.ts) is a *structurally* near-identical but
+      // nominally distinct type -- they diverge only in the generic variance
+      // of a couple of reader-related method signatures, not in anything
+      // that affects what's actually sent over the wire. A direct cast (not
+      // `as any`/`as unknown as ...`) still keeps the rest of the object
+      // shape checked, so it's an accurate, narrow correction rather than an
+      // escape hatch.
+      const body = Readable.toWeb(nodeStream) as ReadableStream;
+      await client.uploadToStaging(stagingUuid, f.name, body);
+    } catch (err) {
+      // `client.request()` throws on a non-ok response (or a network
+      // failure) without draining or closing whatever body it was given --
+      // it has no way to know the body was backed by a file handle that
+      // needs releasing. Left alone, a failed multi-hundred-MB upload leaks
+      // that fd for the rest of the process's life. `.destroy()` is safe to
+      // call even if the stream already ended or errored out on its own.
+      nodeStream.destroy();
+      await client.deleteStagingArea(stagingUuid);
+      // Only recover once, and recover the WHOLE row: see uploadFiles. The
+      // client has already invalidated the token by the time it throws this,
+      // so a fresh attempt gets a new one.
+      if (!isRetry && err instanceof ApiError && err.status === 401) {
+        return uploadOnce(client, files, true);
+      }
+      throw err;
     }
-    throw err;
   }
+  return stagingUuid;
 }

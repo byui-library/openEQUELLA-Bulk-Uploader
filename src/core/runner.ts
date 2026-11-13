@@ -2,7 +2,7 @@ import type { OeqClient } from './client.js';
 import { rowLabel, type Manifest, type ManifestEntry, type RowStatus } from './types.js';
 import { loadManifest, saveManifest } from './state.js';
 import { buildMetadataXml } from './metadata.js';
-import { uploadFile } from './upload.js';
+import { uploadFiles } from './upload.js';
 import { ApiError } from './errors.js';
 import { randomUUID } from 'node:crypto';
 import { acquireLock, releaseLock } from './lock.js';
@@ -50,7 +50,7 @@ const isRetryable = (err: unknown): boolean => (err instanceof ApiError ? err.re
 /**
  * Statuses that mean "this row's item already exists (or was deliberately
  * left alone) and must never be reprocessed automatically". Reprocessing any
- * of these would call `uploadFile`/`createItem` again against a row that
+ * of these would call `uploadFiles`/`createItem` again against a row that
  * already produced a real openEQUELLA item, creating a duplicate
  * contribution -- exactly the failure mode the manifest/resume design exists
  * to prevent.
@@ -116,7 +116,7 @@ async function processEntry(
   manifest: Manifest,
   entry: ManifestEntry,
 ): Promise<'created' | 'incomplete'> {
-  const stagingUuid = await uploadFile(client, entry.files[0]!.path, entry.files[0]!.name);
+  const stagingUuid = await uploadFiles(client, entry);
 
   const attachmentUuid = randomUUID();
   // Spread only when a path is configured: an unset path must leave NO trace

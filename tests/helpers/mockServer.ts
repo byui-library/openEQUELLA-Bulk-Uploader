@@ -132,6 +132,12 @@ export interface MockState {
    * scaffolding, not modelled protocol — see the header comment above.
    */
   expireNextUpload: number;
+  /**
+   * Let this many more `PUT` staging uploads succeed, then refuse the next one
+   * with 401; -1 is off. Test scaffolding, like `expireNextUpload`: it puts the
+   * 401 on the SECOND file of a row, which a 401 on the first cannot reach.
+   */
+  expireNextUploadAfter: number;
   /** Fail the next N item creations with 503, to exercise retry. */
   failItemNext: number;
   /**
@@ -262,6 +268,7 @@ export async function startMockServer(): Promise<MockServer> {
     issuedTokens: [],
     expireNext: 0,
     expireNextUpload: 0,
+    expireNextUploadAfter: -1,
     failItemNext: 0,
     mismatchAttachmentNext: 0,
     locationStyleNext: 0,
@@ -355,6 +362,11 @@ export async function startMockServer(): Promise<MockServer> {
 
       const stagingUpload = /^\/api\/staging\/([^/]+)\/(.+)$/.exec(path);
       if (stagingUpload && req.method === 'PUT') {
+        if (state.expireNextUploadAfter === 0) {
+          state.expireNextUploadAfter = -1;
+          return send(res, 401, { error: 'token expired' });
+        }
+        if (state.expireNextUploadAfter > 0) state.expireNextUploadAfter--;
         if (state.expireNextUpload > 0) {
           state.expireNextUpload--;
           return send(res, 401, { error: 'token expired' });
