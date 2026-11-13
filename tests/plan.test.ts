@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, isAbsolute } from 'node:path';
+import { join, relative, isAbsolute, resolve } from 'node:path';
 import {
   buildManifest,
   preflightDuplicates,
@@ -457,5 +457,85 @@ describe('markSkipped', () => {
     m.entries[0]!.status = 'created';
     expect(markSkipped(m, [2], 'x')).toBe(0);
     expect(m.entries[0]?.status).toBe('created');
+  });
+});
+
+describe('buildManifest -- folder rows', () => {
+  async function folder(name: string, files: Record<string, string>) {
+    await mkdir(join(dir, name));
+    for (const [f, body] of Object.entries(files)) await writeFile(join(dir, name, f), body);
+  }
+
+  it('plans a folder as one row holding its files in upload order, with sizes', async () => {
+    await folder('Gazette_V2', { 'G_No10.pdf': 'aa', 'G_No9.pdf': 'a', 'Thumbs.db': 'x' });
+    const m = await buildManifest(sheet([{ 'attachment name': 'Gazette_V2' }]), dir, paths, opts);
+    const e = m.entries[0]!;
+    expect(e.source).toBe('Gazette_V2');
+    expect(e.folderPath).toBe(resolve(dir, 'Gazette_V2'));
+    expect(e.files).toEqual([
+      { path: join(resolve(dir, 'Gazette_V2'), 'G_No9.pdf'), name: 'G_No9.pdf', size: 1 },
+      { path: join(resolve(dir, 'Gazette_V2'), 'G_No10.pdf'), name: 'G_No10.pdf', size: 2 },
+    ]);
+    expect(e.skippedFiles).toEqual([{ name: 'Thumbs.db', reason: 'a Windows thumbnail cache' }]);
+  });
+
+  it('matches a folder name case-blind, as a file name is', async () => {
+    await folder('Gazette_V2', { 'a.pdf': 'a' });
+    const m = await buildManifest(sheet([{ 'attachment name': 'gazette_v2' }]), dir, paths, opts);
+    expect(m.entries[0]!.source).toBe('Gazette_V2');
+  });
+
+  it('records a size on a single-file row too, and no folder', async () => {
+    const m = await buildManifest(sheet([{ 'attachment name': 'a.mp4' }]), dir, paths, opts);
+    expect(m.entries[0]!.files[0]!.size).toBe(3);
+    expect(m.entries[0]!.folderPath).toBeUndefined();
+    expect(m.entries[0]!.skippedFiles).toBeUndefined();
+  });
+
+  it('skips a refused folder with its reason, never planning it short', async () => {
+    await folder('Gazette_V3', { 'a.pdf': 'x' });
+    await mkdir(join(dir, 'Gazette_V3', 'extra'));
+    const m = await buildManifest(
+      sheet([{ 'attachment name': 'Gazette_V3' }, { 'attachment name': 'a.mp4' }]),
+      dir, paths, opts,
+    );
+    expect(m.entries.map((e) => e.source)).toEqual(['a.mp4']);
+    expect(m.warnings).toContainEqual(
+      expect.stringMatching(/^Row 2: folder 'Gazette_V3' cannot be uploaded: .*'extra'.*; skipped\.$/),
+    );
+  });
+
+  it('skips an empty folder with its reason', async () => {
+    await mkdir(join(dir, 'Gazette_V4'));
+    const m = await buildManifest(
+      sheet([{ 'attachment name': 'Gazette_V4' }, { 'attachment name': 'a.mp4' }]),
+      dir, paths, opts,
+    );
+    expect(m.warnings).toContain(
+      "Row 2: folder 'Gazette_V4' cannot be uploaded: the folder is empty; skipped.",
+    );
+  });
+
+  it('warns about an unclaimed folder only when the batch uses folders', async () => {
+    await folder('Gazette_V1', { 'a.pdf': 'x' });
+    await folder('Gazette_V2', { 'a.pdf': 'x' });
+    const m = await buildManifest(sheet([{ 'attachment name': 'Gazette_V1' }]), dir, paths, opts);
+    expect(m.warnings).toContain("Folder 'Gazette_V2' has no matching row; not uploaded.");
+  });
+
+  it('stays silent about incidental folders in a file-only batch', async () => {
+    await mkdir(join(dir, 'scratch'));
+    const m = await buildManifest(sheet([{ 'attachment name': 'a.mp4' }]), dir, paths, opts);
+    expect(m.warnings.some((w) => w.includes('scratch'))).toBe(false);
+  });
+
+  it('refuses two rows claiming one folder, as for a file', async () => {
+    await folder('Gazette_V1', { 'a.pdf': 'x' });
+    await expect(
+      buildManifest(
+        sheet([{ 'attachment name': 'Gazette_V1' }, { 'attachment name': 'gazette_v1' }]),
+        dir, paths, opts,
+      ),
+    ).rejects.toThrow(/claimed by rows 2, 3/);
   });
 });

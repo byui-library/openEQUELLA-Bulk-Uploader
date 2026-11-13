@@ -1,10 +1,11 @@
-import { readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import type { Manifest, ManifestEntry, Sheet, ItemState } from './types.js';
+import { readdir, stat } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import type { Manifest, ManifestEntry, ManifestFile, Sheet, ItemState } from './types.js';
 import { splitRepeatable } from './metadata.js';
 import { ATTACHMENT_COLUMN, rowLabel } from './types.js';
 import { validateHeaders, isAnnotationHeader, matchSchemaPath, topSection } from './schema.js';
 import { ValidationError } from './errors.js';
+import { listFolderFiles } from './folderFiles.js';
 import type { OeqClient } from './client.js';
 
 export interface PlanOptions {
@@ -53,13 +54,19 @@ export async function buildManifest(
     throw new ValidationError(`Spreadsheet has invalid column headers:\n${detail}`);
   }
 
-  // withFileTypes + isFile(): filesDir sits next to the batch spreadsheet
-  // itself (and may contain other incidental subfolders); only regular files
-  // are upload candidates. A directory entry must never be "matched" as an
-  // attachment, nor generate a spurious "no matching row" warning.
+  // Files AND folders are candidates: a row may name a subfolder, whose files
+  // become one contribution's attachments (see folderFiles.ts). filesDir sits
+  // next to the batch spreadsheet and may also hold incidental subfolders;
+  // those are reported only in a batch that uses folders at all -- see below.
   const dirEntries = await readdir(filesDir, { withFileTypes: true });
   const onDisk = dirEntries.filter((d) => d.isFile()).map((d) => d.name);
-  const byLower = new Map(onDisk.map((f) => [f.toLowerCase(), f]));
+  const folders = dirEntries.filter((d) => d.isDirectory()).map((d) => d.name);
+  const byLower = new Map<string, { name: string; isFolder: boolean }>([
+    ...folders.map((f) => [f.toLowerCase(), { name: f, isFolder: true }] as const),
+    // Files second, so on a case-sensitive disk a file wins a tie: the
+    // behaviour every existing batch already had.
+    ...onDisk.map((f) => [f.toLowerCase(), { name: f, isFolder: false }] as const),
+  ]);
 
   const entries: ManifestEntry[] = [];
   const warnings: string[] = [];
@@ -75,10 +82,38 @@ export async function buildManifest(
       warnings.push(`Row ${row.rowNumber}: no '${ATTACHMENT_COLUMN}' value; skipped.`);
       continue;
     }
-    const actual = byLower.get(wanted.toLowerCase());
-    if (!actual) {
+    const match = byLower.get(wanted.toLowerCase());
+    if (!match) {
       warnings.push(`Row ${row.rowNumber}: file '${wanted}' not found in ${filesDir}; skipped.`);
       continue;
+    }
+    const actual = match.name;
+
+    // Resolved against the current cwd if filesDir isn't already absolute:
+    // the runner reads these paths back out of job.json in a different
+    // process, possibly with a different cwd, so a cwd-relative path would
+    // silently fail to open there.
+    let files: ManifestFile[];
+    let folderPath: string | undefined;
+    let skippedFiles: ManifestEntry['skippedFiles'];
+    if (match.isFolder) {
+      folderPath = resolve(filesDir, actual);
+      const listing = await listFolderFiles(folderPath);
+      if (listing.refusal !== undefined) {
+        // Skipped whole, never planned with fewer files than the folder
+        // holds: an item missing an issue reads as complete to everyone who
+        // later finds it.
+        warnings.push(
+          `Row ${row.rowNumber}: folder '${actual}' cannot be uploaded: ${listing.refusal}; skipped.`,
+        );
+        continue;
+      }
+      const base = folderPath;
+      files = listing.files.map((f) => ({ path: join(base, f.name), name: f.name, size: f.size }));
+      if (listing.skipped.length > 0) skippedFiles = listing.skipped;
+    } else {
+      const path = resolve(filesDir, actual);
+      files = [{ path, name: actual, size: (await stat(path)).size }];
     }
 
     const rowsForFile = claims.get(actual) ?? [];
@@ -105,12 +140,10 @@ export async function buildManifest(
 
     entries.push({
       rowNumber: row.rowNumber,
-      // Resolved against the current cwd if filesDir isn't already absolute:
-      // Task 10's runner reads these paths back out of job.json in a
-      // different process, possibly with a different cwd, so a
-      // cwd-relative path would silently fail to open there.
       source: actual,
-      files: [{ path: resolve(filesDir, actual), name: actual }],
+      ...(folderPath !== undefined ? { folderPath } : {}),
+      files,
+      ...(skippedFiles !== undefined ? { skippedFiles } : {}),
       metadata,
       status: 'pending',
       attempts: 0,
@@ -134,7 +167,7 @@ export async function buildManifest(
       .map(([file, rows]) => `  '${file}' is claimed by rows ${rows.join(', ')}`)
       .join('\n');
     throw new ValidationError(
-      `Multiple spreadsheet rows claim the same file; each file may back only one ` +
+      `Multiple spreadsheet rows claim the same file or folder; each may back only one ` +
         `contribution:\n${detail}\nFix the '${ATTACHMENT_COLUMN}' column (or remove the ` +
         `duplicate row) and re-run.`,
     );
@@ -142,6 +175,16 @@ export async function buildManifest(
 
   for (const f of onDisk) {
     if (!claims.has(f)) warnings.push(`File '${f}' has no matching row; not uploaded.`);
+  }
+
+  // Unclaimed folders are reported only when this batch uses folders at all.
+  // A file-only batch's folder routinely holds incidental subfolders and
+  // always has, and naming them would be noise. In a folder batch, an
+  // unclaimed folder is a volume that will silently not be contributed.
+  if (entries.some((e) => e.folderPath !== undefined)) {
+    for (const f of folders) {
+      if (!claims.has(f)) warnings.push(`Folder '${f}' has no matching row; not uploaded.`);
+    }
   }
 
   // An empty manifest means the runner would do nothing at all -- almost
@@ -155,7 +198,7 @@ export async function buildManifest(
   if (entries.length === 0) {
     const reason = warnings.length > 0 ? `\n${warnings.join('\n')}` : '';
     throw new ValidationError(
-      `No rows matched any file in ${filesDir}; nothing to upload. Check the directory ` +
+      `No rows matched any file or folder in ${filesDir}; nothing to upload. Check the directory ` +
         `path and the '${ATTACHMENT_COLUMN}' column.${reason}`,
     );
   }
