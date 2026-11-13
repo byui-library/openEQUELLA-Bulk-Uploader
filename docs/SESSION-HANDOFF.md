@@ -494,9 +494,10 @@ Guarded by four mutations, each applied with the Edit tool and watched go red.
   Both fixes are breaking majors, one to `exceljs`, which writes every
   spreadsheet. The analysis is in `SECURITY.md` so nobody force-upgrades on a
   red audit line before a release.
-- **The password in openEQUELLA's login query string.** Not fixable from here —
-  the API declares no body form. TLS covers it in transit; server and
-  load-balancer access logs may hold it at rest. Documented for adopters.
+- ~~**The password in openEQUELLA's login query string.** Not fixable from
+  here, since the API declares no body form.~~ **Superseded 2026-11-11:**
+  openEQUELLA itself moved sign-in to a JSON body and now refuses the query
+  form with 415. v1.2.2 follows it. See CLAUDE.md.
 
 **None of it has been driven through the desktop app.** The desktop sign-in
 window's state check in particular has no test — a `BrowserWindow` is not

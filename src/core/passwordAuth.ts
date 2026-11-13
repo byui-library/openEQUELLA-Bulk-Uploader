@@ -41,10 +41,15 @@ import { SingleFlight } from './singleFlight.js';
  * batch (see duplicates.ts#findDuplicates). See the long comment in auth.ts
  * for why expiry is reactive rather than on a timer.
  *
- * THE PASSWORD TRAVELS IN THE QUERY STRING. That is openEQUELLA's API, not a
- * choice made here. It means the password reaches server access logs, so:
- * https is required (enforced in the constructor), and nothing in this class
- * ever puts a full URL into an error, a message or a log line.
+ * THE PASSWORD TRAVELS IN A JSON BODY: `{ "username", "password" }`, with
+ * `content-type: application/json`. It used to travel in the query string, as
+ * schema/swagger.json still documents; measured 2026-11-11 against both
+ * content.byui.edu and content-test.byui.edu, that form is now answered 415
+ * ("Cannot consume content type") and only JSON is accepted. There is NO
+ * fallback to the old form, by the operator's decision -- nobody has asked for
+ * one. https is still required (enforced in the constructor): the body is a
+ * password in clear text without TLS. Nothing in this class puts the request
+ * body into an error, and anything the server echoes back is redacted.
  */
 /** Shared by the request and by safeEndpoint(), so an error can never name an
  *  endpoint the code did not actually call. */
@@ -55,6 +60,43 @@ const LOGOUT_PATH = '/api/auth/logout';
  *  answers "who is this session", and the only way to tell a real sign-in from
  *  a guest one -- see the guest fixture in tests/fixtures/api/. */
 const CURRENT_USER_PATH = '/api/content/currentuser';
+
+/**
+ * The message for a refused sign-in, which depends on WHAT was refused.
+ *
+ * A 415 is the server refusing the request's SHAPE, not the credentials in
+ * it -- measured live, and exactly the failure v1.2.1 hit when openEQUELLA
+ * dropped the query form, which it reported as "check the username and
+ * password" about credentials that were correct. Sending the operator to
+ * re-type a correct password is worse than no advice, so 415 says the API does
+ * not match and names the way out.
+ *
+ * ONLY 415, because only 415 was measured. A 400 "Missing required field" is
+ * also what a blank username gets, and matching an error's prose would break
+ * the day the server rewords it. And what a server still on the OLD
+ * query-string API does with this tool's JSON body is NOT KNOWN: it may well
+ * see no credentials and answer 401, in which case its operator is told to
+ * check a correct password. That is the accepted cost of having no fallback
+ * (the operator's decision), not something this function can detect.
+ *
+ * Every other failure keeps the credential advice: 401 is the server's
+ * answer to a wrong password, measured live.
+ *
+ * THE RESULT IS A CONSTANT AND IS NEVER REDACTED. It contains no secret, and
+ * redacting it could only damage it -- a weak password that is also a word
+ * here ("password", "tool", "site", a status code) would leave a marker whose
+ * position gives the password away. Only the server's BODY is redacted.
+ */
+function signInFailure(status: number): string {
+  if (status === 415) {
+    return (
+      `Sign-in failed (${status}): this site's sign-in does not match the way this version of ` +
+      `the tool signs in, so the username and password were never checked. Make sure the tool ` +
+      `is up to date; if it is, this site may need OAuth sign-in instead.`
+    );
+  }
+  return `Sign-in failed (${status}). Check the username and password.`;
+}
 
 /**
  * What a logout established -- reported, never thrown.
@@ -134,17 +176,20 @@ export class UsernamePasswordAuth implements AuthProvider {
 
   private async login(): Promise<Session> {
     const url = instanceEndpoint(this.baseUrl, LOGIN_PATH);
-    url.searchParams.set('username', this.username);
-    url.searchParams.set('password', this.password);
 
     let res: Response;
     let body: string;
     try {
-      res = await this.fetchImpl(url, { method: 'POST' });
+      res = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: this.username, password: this.password }),
+      });
       body = await res.text();
     } catch {
-      // Never include the request URL: it carries the password, and some
-      // runtimes fold the failing URL into the error's message or cause.
+      // Never include the failing request, or the runtime's error: the BODY
+      // carries the password, and some runtimes fold the failing request into
+      // the error's message or cause. Nothing here may log `init.body`.
       // Deliberately vague about WHERE this failed -- it covers both the
       // fetch and the res.text() that follows it, and "check the address and
       // your network" is the same advice either way.
@@ -157,7 +202,7 @@ export class UsernamePasswordAuth implements AuthProvider {
 
     if (!res.ok) {
       throw new ApiError(
-        this.redact(`Sign-in failed (${res.status}). Check the username and password.`),
+        signInFailure(res.status),
         res.status,
         this.redact(body),
       );
@@ -261,7 +306,8 @@ export class UsernamePasswordAuth implements AuthProvider {
     }
   }
 
-  /** Origin + path only — never the query string, which carries the password.
+  /** Origin + path only. The password is in the request body, never here, and
+   *  this must stay free of anything request-shaped beyond the address.
    *  `pathname` (not `origin` alone) is what keeps a hosting prefix here: this
    *  must name the endpoint the code actually called. */
   private safeEndpoint(): string {
