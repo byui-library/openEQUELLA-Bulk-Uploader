@@ -56,6 +56,7 @@ const columnSchema = z
     as: z.string().min(1).optional(),
     flagIfEmpty: z.boolean().optional(),
     composeOnly: z.boolean().optional(),
+    each: z.boolean().optional(),
   })
   .strict();
 
@@ -134,6 +135,14 @@ export function parseProfile(input: unknown): Profile {
   // reading it by name is the ONLY way its value can leave the extractor. With
   // no name it is extracted on every row and then silently discarded.
   for (const column of profile.columns) {
+    // A row names exactly one file or one folder; "every file's value,
+    // joined" in that cell would name something that does not exist.
+    if (column.each === true && column.path === ATTACHMENT_COLUMN) {
+      throw new ValidationError(
+        `Column '${ATTACHMENT_COLUMN}' cannot use "each": it names the file or folder the row ` +
+          `uploads, and a row names exactly one.`,
+      );
+    }
     if (column.composeOnly === true && column.as === undefined) {
       throw new ValidationError(
         `Column '${column.path}' is composeOnly but has no "as" name, so nothing could read it. ` +

@@ -145,6 +145,18 @@ export interface Column {
    * person's birth date into a field that means something else.
    */
   composeOnly?: boolean;
+  /**
+   * In a row built from a folder, run this column's sources against EVERY
+   * file and keep each value, in attachment order, de-duplicated (ignoring
+   * case), joined with the separator `plan` splits repeated values on.
+   * Without it, the first file to answer wins.
+   *
+   * Has no effect on a row built from one file. Note that `plan` splits a
+   * joined value into separate elements only for a field the schema declares
+   * repeatable (metadata.ts#isRepeatable); anywhere else it stays one value
+   * with semicolons in it.
+   */
+  each?: boolean;
 }
 
 export interface Profile {

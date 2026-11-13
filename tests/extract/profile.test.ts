@@ -414,3 +414,32 @@ describe('parseProfile and a mistyped provenance placeholder', () => {
     expect(() => parseProfile(withAppend('Written by {model}'))).not.toThrow();
   });
 });
+
+describe('parseProfile -- each', () => {
+  const base = { path: 'attachment name', sources: [{ filename: true }], locked: true };
+
+  it('accepts "each": true on a column', () => {
+    const p = parseProfile({
+      version: 1,
+      pattern: '{v}',
+      columns: [base, { path: 'MWDL/subjects/subject', sources: [{ property: 'title' }], each: true }],
+    });
+    expect(p.columns[1]!.each).toBe(true);
+  });
+
+  it('refuses "each" on the attachment column, which names exactly one file or folder', () => {
+    expect(() =>
+      parseProfile({ version: 1, pattern: '{v}', columns: [{ ...base, each: true }] }),
+    ).toThrow(/'attachment name' cannot use "each"/);
+  });
+
+  it('refuses "each" that is not a boolean', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{v}',
+        columns: [base, { path: 'MWDL/title', sources: [], each: 'yes' }],
+      }),
+    ).toThrow();
+  });
+});
