@@ -19,6 +19,7 @@ describe('categorizeWarnings', () => {
   it('returns all-empty buckets for no warnings', () => {
     expect(categorizeWarnings([])).toEqual({
       missingFile: [],
+      refusedFolder: [],
       unmatchedFile: [],
       duplicateIdentifier: [],
       other: [],
@@ -97,5 +98,24 @@ describe('categorizeWarnings', () => {
     const copy = [...input];
     categorizeWarnings(input);
     expect(input).toEqual(copy);
+  });
+});
+
+describe('categorizeWarnings -- folder rows', () => {
+  // Verbatim shapes from src/core/plan.ts#buildManifest.
+  const REFUSED = "Row 4: folder 'Gazette_V3' cannot be uploaded: the folder is empty; skipped.";
+  const REFUSED_NESTED =
+    "Row 5: folder 'Gazette_V4' cannot be uploaded: it holds a folder ('extra'); a folder inside a " +
+    'folder is not uploaded -- move its files up into this folder or out of it; skipped.';
+  const UNCLAIMED = "Folder 'Gazette_V9' has no matching row; not uploaded.";
+
+  it('buckets a refused folder on its own, never as a missing file', () => {
+    const c = categorizeWarnings([REFUSED, REFUSED_NESTED]);
+    expect(c.refusedFolder).toEqual([REFUSED, REFUSED_NESTED]);
+    expect(c.missingFile).toEqual([]);
+  });
+
+  it('buckets an unclaimed folder with the unclaimed files', () => {
+    expect(categorizeWarnings([UNCLAIMED]).unmatchedFile).toEqual([UNCLAIMED]);
   });
 });

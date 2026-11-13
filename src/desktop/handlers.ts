@@ -39,6 +39,7 @@ import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
 import { signInInteractive } from './signin.js';
 import { rowLabel, type Sheet } from '../core/types.js';
+import { planFolders } from '../core/folderReport.js';
 import { OeqError } from '../core/errors.js';
 import { registerExtractHandlers } from './extractHandlers.js';
 
@@ -747,6 +748,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         invalidHeaders: invalid,
         warnings: manifest.warnings,
         duplicates,
+        folders: planFolders(manifest.entries),
       };
     },
   );
@@ -783,7 +785,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
           getWindow()?.webContents.send(CHANNELS.progress, {
             done,
             total,
-            fileName: rowLabel(entry),
+            label: rowLabel(entry),
             status: entry.status,
             error: entry.error,
           });
@@ -795,7 +797,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         ...summary,
         failures: done.entries
           .filter((e) => e.status === 'failed')
-          .map((e) => ({ rowNumber: e.rowNumber, fileName: rowLabel(e), error: e.error ?? 'unknown' })),
+          .map((e) => ({ rowNumber: e.rowNumber, label: rowLabel(e), error: e.error ?? 'unknown' })),
       };
     },
   );

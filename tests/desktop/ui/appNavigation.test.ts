@@ -87,6 +87,7 @@ const PLAN = {
   invalidHeaders: [],
   warnings: [],
   duplicates: [],
+  folders: [],
 };
 
 const RUN = { created: 2, failed: 0, skipped: 0, incomplete: 0, interrupted: 0, failures: [] };

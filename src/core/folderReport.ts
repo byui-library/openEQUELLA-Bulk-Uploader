@@ -21,3 +21,29 @@ export function folderLines(entries: readonly ManifestEntry[]): string[] {
   }
   return lines;
 }
+
+/** One folder row as the desktop's Review screen shows it. */
+export interface FolderSummary {
+  rowNumber: number;
+  /** `rowLabel`: the folder name and its file count. */
+  label: string;
+  /** In upload order. */
+  files: string[];
+  skipped: { name: string; reason: string }[];
+}
+
+/**
+ * The same account as `folderLines`, as data, for the desktop -- which
+ * renders it as markup rather than printing lines. One source for both, so
+ * the two surfaces cannot list a folder differently.
+ */
+export function planFolders(entries: readonly ManifestEntry[]): FolderSummary[] {
+  return entries
+    .filter((e) => e.folderPath !== undefined)
+    .map((e) => ({
+      rowNumber: e.rowNumber,
+      label: rowLabel(e),
+      files: e.files.map((f) => f.name),
+      skipped: e.skippedFiles ?? [],
+    }));
+}

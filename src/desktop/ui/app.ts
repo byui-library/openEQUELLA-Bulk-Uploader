@@ -467,7 +467,7 @@ function render(): void {
       renderProgress(app, {
         done: state.progress?.done ?? 0,
         total: state.progress?.total ?? state.reviewPlan?.entryCount ?? 0,
-        fileName: state.progress?.fileName ?? '',
+        label: state.progress?.label ?? '',
         log: state.progressLog,
       });
       break;
@@ -1877,7 +1877,7 @@ async function handleUpload(): Promise<void> {
 
 function handleProgress(p: RunProgress): void {
   state.progress = p;
-  state.progressLog.push({ fileName: p.fileName, status: p.status, error: p.error });
+  state.progressLog.push({ label: p.label, status: p.status, error: p.error });
   // Cap memory for an unusually large batch; the log is a convenience, not a
   // record of truth -- the manifest on disk is that.
   if (state.progressLog.length > 500) state.progressLog.shift();
@@ -1898,7 +1898,7 @@ async function finishRun(manifestPath: string, report: RunReport): Promise<void>
     const manifest = await window.oeq.loadManifest(manifestPath);
     state.interruptedEntries = manifest.entries
       .filter((e) => e.status === 'uploading')
-      .map((e) => ({ rowNumber: e.rowNumber, fileName: rowLabel(e) }));
+      .map((e) => ({ rowNumber: e.rowNumber, label: rowLabel(e) }));
   } catch (err) {
     state.interruptedEntries = [];
     state.resultsError = errorMessage(err);

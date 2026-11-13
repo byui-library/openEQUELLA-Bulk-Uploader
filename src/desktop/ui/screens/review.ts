@@ -1,4 +1,4 @@
-import type { ColumnReport, PlanReport } from '../../ipc.js';
+import type { ColumnReport, PlanFolder, PlanReport } from '../../ipc.js';
 import type { DuplicateChoice, DuplicateFinding } from '../../../core/duplicates.js';
 import { canContinueReview } from '../review.js';
 import { categorizeWarnings } from '../warnings.js';
@@ -46,6 +46,44 @@ export interface ReviewProps {
  * response is proof every column is now valid; that's what unlocks the
  * second "Continue to Confirm" click.
  */
+/**
+ * Each folder row's files, in the order they will be attached. Empty for a
+ * batch of single files.
+ *
+ * The order is a rule (natural, case- and punctuation-blind), not a
+ * judgement: it cannot know a commemorative issue belongs last. The remedy
+ * the operator chose is renaming files, and that only works if the order is
+ * in front of them BEFORE the run -- in a collection with no moderation
+ * queue, after is too late. Open by default for the same reason.
+ */
+export function foldersSection(folders: readonly PlanFolder[]): string {
+  if (folders.length === 0) return '';
+  return `
+    <div class="warning-group">
+      <h3>Folders: files in upload order (${folders.length})</h3>
+      <p class="note">
+        Each folder becomes one item, with its files attached in this order. To change the
+        order, rename the files and check again.
+      </p>
+      ${folders
+        .map(
+          (f) => `
+        <details open>
+          <summary>Row ${f.rowNumber}: ${escapeHtml(f.label)}</summary>
+          <ol>${f.files.map((n) => `<li>${escapeHtml(n)}</li>`).join('')}</ol>
+          ${
+            f.skipped.length === 0
+              ? ''
+              : `<p class="note">Not uploaded: ${f.skipped
+                  .map((s) => `${escapeHtml(s.name)} (${escapeHtml(s.reason)})`)
+                  .join(', ')}</p>`
+          }
+        </details>`,
+        )
+        .join('')}
+    </div>`;
+}
+
 export function renderReview(root: HTMLElement, props: ReviewProps): void {
   if (props.loadingColumns || props.columns === null) {
     root.innerHTML = `
@@ -136,7 +174,8 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
         `;
     const allGroups =
       section('Rows whose file could not be found', groups.missingFile) +
-      section('Files with no matching row', groups.unmatchedFile) +
+      section('Folders that cannot be uploaded', groups.refusedFolder) +
+      section('Files or folders with no matching row', groups.unmatchedFile) +
       // Not "Identifiers that may already exist": this group also carries the
       // cases where the check could NOT run -- a failed request, or a schema
       // with no identifier field. A heading that promises hits would make
@@ -148,7 +187,8 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
       <fieldset>
         <legend>Plan summary</legend>
         <p><strong>${props.report.entryCount}</strong> item(s) will be created from this spreadsheet.</p>
-        ${allGroups || '<p class="note">No warnings -- every row matched a file with no issues found.</p>'}
+        ${foldersSection(props.report.folders)}
+        ${allGroups || '<p class="note">No warnings -- every row matched a file or folder with no issues found.</p>'}
       </fieldset>
     `;
   }

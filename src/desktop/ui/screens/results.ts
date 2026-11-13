@@ -3,7 +3,7 @@ import { escapeHtml } from '../dom.js';
 
 export interface InterruptedEntry {
   rowNumber: number;
-  fileName: string;
+  label: string;
 }
 
 export interface ResultsProps {
@@ -68,7 +68,7 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
         ${
           props.interrupted.length > 0
             ? `<ul>${props.interrupted
-                .map((e) => `<li>Row ${e.rowNumber}: ${escapeHtml(e.fileName)}</li>`)
+                .map((e) => `<li>Row ${e.rowNumber}: ${escapeHtml(e.label)}</li>`)
                 .join('')}</ul>`
             : ''
         }
@@ -80,7 +80,7 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
       (f) => `
       <tr>
         <td>${f.rowNumber}</td>
-        <td>${escapeHtml(f.fileName)}</td>
+        <td>${escapeHtml(f.label)}</td>
         <td>${escapeHtml(f.error)}</td>
       </tr>`,
     )

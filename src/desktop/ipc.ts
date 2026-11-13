@@ -5,6 +5,7 @@ import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
 import type { ExtractedRow } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
+import type { FolderSummary } from '../core/folderReport.js';
 // `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
 // this module is reachable from the sandboxed renderer. A type-only import is
 // erased at compile time and never becomes a runtime require (see
@@ -130,12 +131,23 @@ export interface PlanReport {
   warnings: string[];
   /** Rows that look like they have been uploaded to this collection before. */
   duplicates: DuplicateFinding[];
+  /**
+   * Each folder row's files in upload order, and what in the folder will not
+   * be uploaded. Empty for a batch of single files. Shown on Review because
+   * the order is a rule and the remedy for a wrong one is renaming files --
+   * which only works if the operator sees the order before the run.
+   */
+  folders: PlanFolder[];
 }
+
+/** Built by `core/folderReport.ts#planFolders`, the CLI's source too. */
+export type PlanFolder = FolderSummary;
 
 export interface RunProgress {
   done: number;
   total: number;
-  fileName: string;
+  /** The row being worked on, as `types.ts#rowLabel` names it. */
+  label: string;
   status: string;
   error?: string;
 }
@@ -146,7 +158,7 @@ export interface RunReport {
   skipped: number;
   incomplete: number;
   interrupted: number;
-  failures: { rowNumber: number; fileName: string; error: string }[];
+  failures: { rowNumber: number; label: string; error: string }[];
 }
 
 export interface OeqApi {
