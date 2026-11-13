@@ -663,7 +663,7 @@ shape, never as a value the code may assume.
   partly because `llama3.1:8b` answers in ISO format. Ten documents, one
   collection, one language, is evidence, not coverage.
 - **The verifier reads English month names and numeric date forms ONLY, and
-  says so rather than blaming the document.** `Falleció el 6 de enero de 2024`
+  says so rather than blaming the document.** `Falleció el 6 de enero de 1916`
   states a day and `verify.ts` sees only the year, so a correct day-precision
   description of it is refused. Refusing is the safe direction and stays; the
   wording is what had to change, because *"the document states no such date"* is
