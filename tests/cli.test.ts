@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -1253,5 +1253,38 @@ describe('loginAction -- a pasted redirect URL is checked', () => {
 
     expect(await store.loadRaw()).not.toBeNull();
     expect(logs.join('\n')).toMatch(/could not be confirmed/i);
+  });
+});
+
+describe('planAction -- folder rows', () => {
+  it('lists each folder row\'s files in upload order', async () => {
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'G_No2.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'G_No1.pdf'), 'x');
+    const sheetPath = join(dir, 'batch.csv');
+    await writeFile(sheetPath, ['attachment name,MWDL/title', 'Gazette_V2,Gazette Volume 2'].join('\n'));
+
+    const logs = await captureLogs(() =>
+      planAction(
+        {
+          sheet: sheetPath,
+          files: dir,
+          manifest: join(dir, 'job.json'),
+          schemaFile: 'schema/_entity.xml',
+          state: 'draft',
+          skipDuplicateCheck: true,
+        },
+        {
+          OEQ_BASE_URL: 'https://example.test',
+          OEQ_CLIENT_ID: 'id',
+          OEQ_CLIENT_SECRET: 'secret',
+          OEQ_COLLECTION_UUID: 'c1',
+          OEQ_AUTH_MODE: 'client_credentials',
+        },
+      ),
+    );
+    const at = logs.findIndex((l) => l.includes('Row 2: Gazette_V2 (2 files), in upload order:'));
+    expect(at).toBeGreaterThan(-1);
+    expect(logs.slice(at + 1, at + 3)).toEqual(['      1. G_No1.pdf', '      2. G_No2.pdf']);
   });
 });

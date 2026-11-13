@@ -18,6 +18,7 @@ import {
 } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { findDuplicates, findingLabel, type DuplicateFinding } from '../core/duplicates.js';
+import { folderLines } from '../core/folderReport.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
@@ -348,6 +349,10 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
     const lines = [
       `Planned ${manifest.entries.length} item(s) -> ${manifestPath}`,
       `State: ${manifest.itemState}`,
+      // Each folder's files in upload order: the order is a rule and the
+      // remedy for a wrong one is renaming, so it has to be shown before the
+      // run, not discovered in the collection after it.
+      ...folderLines(manifest.entries).map((l) => `  ${l}`),
       ...manifest.warnings.map((w) => `warning: ${w}`),
     ];
     // Reported, never acted on: this tool plans, validates and monitors --

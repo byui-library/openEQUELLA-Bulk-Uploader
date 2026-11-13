@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -759,5 +759,24 @@ describe('mcp redactSecret', () => {
   it('passes text through when no secret is configured', () => {
     expect(redactSecret('nothing configured', {})).toBe('nothing configured');
     expect(redactSecret('empty string', { OEQ_CLIENT_SECRET: '' })).toBe('empty string');
+  });
+});
+
+describe('oeq_plan -- folder rows', () => {
+  it('lists each folder row\'s files in upload order', async () => {
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'G_No2.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'G_No1.pdf'), 'x');
+    const sheetPath = join(dir, 'batch.csv');
+    await writeFile(sheetPath, ['attachment name,MWDL/title', 'Gazette_V2,Gazette Volume 2'].join('\n'));
+
+    const result = await planTool(
+      { sheet: sheetPath, filesDir: dir, manifestPath: join(dir, 'job.json'), skipDuplicateCheck: true },
+      { OEQ_BASE_URL: 'https://example.test', OEQ_COLLECTION_UUID: 'c1' },
+    );
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain(
+      'Row 2: Gazette_V2 (2 files), in upload order:\n      1. G_No1.pdf\n      2. G_No2.pdf',
+    );
   });
 });

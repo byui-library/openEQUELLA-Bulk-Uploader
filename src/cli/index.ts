@@ -11,6 +11,7 @@ import { readSheet } from '../core/sheet.js';
 import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice, findingLabel } from '../core/duplicates.js';
+import { folderLines } from '../core/folderReport.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
@@ -105,6 +106,8 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
 
   await saveManifest(o.manifest, manifest);
   console.log(`Planned ${manifest.entries.length} item(s) -> ${o.manifest}`);
+  // Each folder's files in upload order -- see folderReport.ts for why it is shown.
+  for (const line of folderLines(manifest.entries)) console.log(`  ${line}`);
   for (const w of manifest.warnings) console.log(`  warning: ${w}`);
 }
 
