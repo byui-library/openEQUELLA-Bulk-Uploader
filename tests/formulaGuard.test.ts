@@ -65,7 +65,7 @@ describe('the round trip', () => {
     "'tis the season",
     "''already doubled",
     '-- see attached',
-    'Died 2024-01-09',
+    'Died 1911-05-17',
   ];
 
   it.each(values)('survives guard then unguard unchanged: %j', (value) => {

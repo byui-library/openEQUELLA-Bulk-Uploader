@@ -13,9 +13,8 @@ Three things, and you cannot get any of them from the program itself:
 2. **The web address of your openEQUELLA site** — the same one you type into a
    browser to use openEQUELLA, for example `https://oeq.yourschool.edu`. It
    must start with `https`; the program will not accept an address that starts
-   with `http`, and there is a good reason for that (your password is sent as
-   part of the web address when signing in, so an unencrypted connection would
-   expose it).
+   with `http`, and there is a good reason for that (your password is sent to
+   openEQUELLA when signing in, so an unencrypted connection would expose it).
 3. **A username and password for openEQUELLA** — for most people, the ordinary
    one you already use on the site itself.
 
@@ -468,7 +467,7 @@ unsupported and quotes back what the model said:
 
 ```text
 MWDL/description: left blank -- the model's answer was refused, because it
-stated things this document does not support. "2024-01-06": no date this tool
+stated things this document does not support. "1916-01-06": no date this tool
 can read in the document supports it -- it recognises English month names and
 numeric date forms only. The model did answer and the call succeeded -- this
 tool discarded the answer -- so there is nothing to retry; read the document and
@@ -486,9 +485,9 @@ a language other than English; see the next section.
 #### It reads dates in English only
 
 The check that catches invented dates knows **English month names** and the
-numeric forms (`2024-01-06`, `6.1.2024`, `4/2/98`, `the 6th of January 2024`).
-A document written in another language — `Falleció el 6 de enero de 2024`,
-`Er starb am 6. Januar 2024` — states a day, and the program sees only the year
+numeric forms (`1916-01-06`, `6.1.1916`, `4/2/98`, `the 6th of January 1916`).
+A document written in another language — `Falleció el 6 de enero de 1916`,
+`Er starb am 6. Januar 1916` — states a day, and the program sees only the year
 in it.
 
 **What that means in practice:** if your documents are not in English, a
@@ -539,7 +538,8 @@ publish, choose Draft.
   programs on that specific computer.
 - **The program will not accept your site address.** It must start with
   `https`, not `http`. That is refused rather than warned about because your
-  password travels as part of the web address when signing in to openEQUELLA.
+  password is sent to openEQUELLA when signing in, and over `http` anyone on
+  the network path could read it.
   If your site really is only available over `http`, that is a question for
   your administrator, not something to work around here.
 - **Sign-in fails with a username and password.** Check them by signing in to

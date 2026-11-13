@@ -150,9 +150,9 @@ export interface ProviderConfig {
    * Base URL up to and including /v1. Ollama, LM Studio, OpenAI, Azure.
    *
    * NOT put through `normaliseInstanceUrl`, deliberately, and the reason is
-   * narrow: that function refuses plain http because openEQUELLA's sign-in
-   * carries the password in the QUERY STRING. That is a fact about
-   * openEQUELLA's API and it does not transfer here.
+   * narrow: that function refuses ALL plain http, loopback included, because
+   * openEQUELLA's sign-in sends the password. That is a rule about
+   * openEQUELLA and it does not transfer here.
    *
    * WHAT DOES TRANSFER IS THE CREDENTIAL. A bearer key over plain http to a
    * remote host is readable by everything on the path, so exactly one

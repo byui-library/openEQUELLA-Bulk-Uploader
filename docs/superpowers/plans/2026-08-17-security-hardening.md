@@ -114,7 +114,7 @@ describe('the round trip', () => {
     "'tis the season",
     "''already doubled",
     '-- see attached',
-    'Died 2024-01-09',
+    'Died 1911-05-17',
   ];
 
   it.each(values)('survives guard then unguard unchanged: %j', (value) => {
@@ -263,7 +263,7 @@ describe('formula injection', () => {
     };
     await writeCsv(path, profile, [
       {
-        cells: { [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/description': 'Died 2024-01-09' },
+        cells: { [ATTACHMENT_COLUMN]: 'a.pdf', 'MWDL/description': 'Died 1911-05-17' },
         sources: {},
         notes: [],
         flagged: {},
@@ -272,7 +272,7 @@ describe('formula injection', () => {
     ]);
 
     const text = await readFile(path, 'utf8');
-    expect(text).toContain('Died 2024-01-09');
+    expect(text).toContain('Died 1911-05-17');
     expect(text).not.toContain("'Died");
     await rm(dir, { recursive: true, force: true });
   });

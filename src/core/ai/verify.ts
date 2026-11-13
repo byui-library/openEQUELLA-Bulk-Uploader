@@ -86,8 +86,8 @@ export interface UnsupportedClaim {
  * IT READS ENGLISH DATES ONLY, AND NEVER SAYS OTHERWISE
  * ============================================================================
  *
- * `MONTH_NAMES` is English. `Falleció el 6 de enero de 2024` and `Er starb am
- * 6. Januar 2024` state a day, and this module sees only the year in them. A
+ * `MONTH_NAMES` is English. `Falleció el 6 de enero de 1916` and `Er starb am
+ * 6. Januar 1916` state a day, and this module sees only the year in them. A
  * correct day-precision description of either is therefore refused.
  *
  * REFUSING IS THE SAFE DIRECTION and stays. The failure that built this module
@@ -110,7 +110,7 @@ export interface UnsupportedClaim {
  *
  * An ABSENT part is a part the text did not state, which is a different thing
  * from a part it stated as zero or unknown. `January 6` with no year is
- * `{ month, day }`, and a document giving only `2024` is `{ year }`; neither
+ * `{ month, day }`, and a document giving only `1916` is `{ year }`; neither
  * supports the other, and `entails` below is the whole of that judgement.
  */
 interface Reading {
@@ -126,7 +126,7 @@ interface DateMention {
   end: number;
   /**
    * Every reading of this text. More than one where the text is genuinely
-   * ambiguous and does not say which it means: `6/1/2024` is 6 January to one
+   * ambiguous and does not say which it means: `6/1/1916` is 6 January to one
    * writer and 1 June to another, and `4/2/98` is also either century. See the
    * separator forms in `FORMS`, which keep every reading rather than guessing.
    */
@@ -153,7 +153,7 @@ interface DateMention {
  * disagreement between them. There, a date is being read INTO a catalogue field,
  * so a wrong one is written down as fact and the pattern is conservative. Here a
  * date is being looked for as EVIDENCE, so a form the document uses and this
- * does not see refuses a description that was correct. Missing `Jan. 6, 2024`
+ * does not see refuses a description that was correct. Missing `Jan. 6, 1916`
  * would do exactly that.
  */
 const MONTH = `(?:${MONTH_NAMES.map((name) => {
@@ -166,8 +166,8 @@ const MONTH = `(?:${MONTH_NAMES.map((name) => {
  * A month name to its number, by three-letter stem.
  *
  * NOTHING GOES THROUGH `new Date` HERE ANY MORE, and that is deliberate rather
- * than tidying. `new Date('2024-01')` is parsed as UTC midnight and read back
- * through local date parts, which yields **2023-12-31** anywhere west of UTC --
+ * than tidying. `new Date('1916-01')` is parsed as UTC midnight and read back
+ * through local date parts, which yields **1915-12-31** anywhere west of UTC --
  * the trap `rows.ts#ISO_DATE` exists to avoid, measured in this file before it
  * was written around. A month name is the only thing that ever needed
  * translating, and a table does it with no timezone, no locale and no
@@ -213,7 +213,7 @@ function isLeapYear(year: number): boolean {
 /**
  * A reading, or null where the text does not describe a real day.
  *
- * `45/67/2024` and `2024-02-30` return null, and the caller then leaves the span
+ * `45/67/1916` and `1916-02-30` return null, and the caller then leaves the span
  * FREE so its digits reach the number check rather than being silently excused
  * as a date.
  */
@@ -281,18 +281,18 @@ type Role = 'claim' | 'evidence';
  * The forms a date is written in, MOST SPECIFIC FIRST.
  *
  * Order is the whole of the precision logic: a span already claimed by an
- * earlier form is not offered to a later one, so `2024-01-06` is one day and not
- * also the year 2024, and `6 January 2024` is one day and not also the month
- * January 2024.
+ * earlier form is not offered to a later one, so `1916-01-06` is one day and not
+ * also the year 1916, and `6 January 1916` is one day and not also the month
+ * January 1916.
  *
  * ## A FORM THAT DOES NOT MATCH USED TO MEAN "NO CLAIM WAS MADE"
  *
  * That is the defect these forms were rebuilt around. There was no month-and-day
  * form and no separator form without a four-digit year, so `He died on January
  * 6.` over a document stating no date at all fell through every pattern and was
- * written into the catalogue -- and so did `Died in January of 2024.` over a
+ * written into the catalogue -- and so did `Died in January of 1916.` over a
  * document giving only the year, because `of` broke the month form and the bare
- * `2024` that remained was supported. The rule now is that a MONTH NAME, or a
+ * `1916` that remained was supported. The rule now is that a MONTH NAME, or a
  * DAY-AND-MONTH PAIR, is a claim whether or not a year sits beside it; if it
  * cannot be resolved to something the document supports, it is refused.
  *
@@ -314,39 +314,39 @@ const FORMS: {
   readings: (match: RegExpExecArray) => Reading[];
 }[] = [
   {
-    // 2024-01-06, and 2024-01-06T00:00:00Z -- a routine model output shape, and
+    // 1916-01-06, and 1916-01-06T00:00:00Z -- a routine model output shape, and
     // one the old `\b`-terminated pattern could not see at all: the `T` is a
     // word character, so there was no boundary after the `06`, and what survived
-    // was a bare `2024` that a year-only document supported. Fabricated
+    // was a bare `1916` that a year-only document supported. Fabricated
     // precision, laundered by a timestamp suffix.
     pattern:
       '\\b(\\d{4})-(\\d{2})-(\\d{2})(?:[T ]\\d{2}:\\d{2}(?::\\d{2})?(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?)?(?!\\d)',
     readings: (m) => readings(reading(m[1], m[2], m[3])),
   },
   {
-    // January 6, 2024 / January 6th 2024 / Jan. 6, 2024 / January the 6th, 2024
+    // January 6, 1916 / January 6th 1916 / Jan. 6, 1916 / January the 6th, 1916
     pattern: `\\b(${MONTH})\\s+(?:the\\s+)?(\\d{1,2})${ORDINAL}\\s*,?\\s*(?:of\\s+)?(\\d{4})(?!\\d)`,
     readings: (m) => readings(reading(m[3], monthOf(m[1] ?? ''), m[2])),
   },
   {
-    // 6 January 2024 / the 6th of January 2024
+    // 6 January 1916 / the 6th of January 1916
     pattern: `\\b(?:the\\s+)?(\\d{1,2})${ORDINAL}\\s+(?:of\\s+)?(${MONTH})\\s*,?\\s*(\\d{4})(?!\\d)`,
     readings: (m) => readings(reading(m[3], monthOf(m[2] ?? ''), m[1])),
   },
   {
     /*
-     * 1/6/2024, 6-1-2024, 6.1.2024.
+     * 1/6/1916, 6-1-1916, 6.1.1916.
      *
      * BOTH READINGS ARE KEPT, because the text does not say which it means and
      * this module must not guess: 6 January and 1 June are equally good
-     * readings of `6/1/2024`, and picking one would refuse a supported date at
+     * readings of `6/1/1916`, and picking one would refuse a supported date at
      * whichever institution writes the other way round. A claim is supported
      * when it matches EITHER, which is the permissive direction and the correct
      * one -- the model read the same ambiguous string.
      *
-     * The full stop belongs in the separator class: `6.1.2024` is how much of
+     * The full stop belongs in the separator class: `6.1.1916` is how much of
      * the world writes a date, and without it that document supported nothing
-     * while `Died 06.01.2024` in a reply was reported as the invented NUMBER
+     * while `Died 06.01.1916` in a reply was reported as the invented NUMBER
      * `06.01`. A decimal cannot be confused with this -- two separators and a
      * four-digit tail are required.
      */
@@ -369,12 +369,12 @@ const FORMS: {
       ),
   },
   {
-    // 2024-01, and never the first half of 2024-01-06 -- that span is taken.
+    // 1916-01, and never the first half of 1916-01-06 -- that span is taken.
     pattern: '\\b(\\d{4})-(\\d{2})(?![\\d-])',
     readings: (m) => readings(reading(m[1], m[2])),
   },
   {
-    // January 2024 / January of 2024
+    // January 1916 / January of 1916
     pattern: `\\b(${MONTH})\\s+(?:of\\s+)?(\\d{4})(?!\\d)`,
     readings: (m) => readings(reading(m[2], monthOf(m[1] ?? ''))),
   },
@@ -420,7 +420,7 @@ const FORMS: {
  *
  * A match overlapping a span an earlier form already took is dropped, which is
  * what keeps one date from being counted as three. A match no reading survives
- * -- `45/67/2024` -- is dropped too, and its span left free, so the digits are
+ * -- `45/67/1916` -- is dropped too, and its span left free, so the digits are
  * still available to the number check rather than silently excused as a date.
  *
  * Overlap is tested against a per-character mask rather than by scanning the
@@ -459,15 +459,15 @@ function dateMentions(text: string, role: Role): DateMention[] {
  * Whether one stated reading supports one claimed reading.
  *
  * EVERY PART THE CLAIM STATES MUST BE STATED, AND EQUAL, IN THE DOCUMENT'S. A
- * part the claim leaves out is not checked, so `2024` is supported by
- * `2024-01-06`; a part the claim states and the document does not is
- * unsupported, so `2024-01-06` is NOT supported by `2024`, and `January 6` is
- * not supported by `2024` either. That second case is the founding failure at a
+ * part the claim leaves out is not checked, so `1916` is supported by
+ * `1916-01-06`; a part the claim states and the document does not is
+ * unsupported, so `1916-01-06` is NOT supported by `1916`, and `January 6` is
+ * not supported by `1916` either. That second case is the founding failure at a
  * finer grain: a day and a month the document never wrote are as invented as a
  * date it never mentioned.
  *
- * READINGS ARE NOT COMBINED ACROSS MENTIONS. A document stating `1938-2024` in
- * one place and `January 6` in another does not, here, support `2024-01-06`;
+ * READINGS ARE NOT COMBINED ACROSS MENTIONS. A document stating `1938-1916` in
+ * one place and `January 6` in another does not, here, support `1916-01-06`;
  * joining two mentions is an inference about which fact belongs to which, and
  * this module does not make inferences. The cost is a false rejection on a
  * document written that way, and the operator is told the nearest date it did
@@ -778,7 +778,7 @@ function addSpelledNumbers(text: string, found: Set<string>): void {
  * `-40` was reported as the claim `40`, which the operator then could not find
  * in the quoted reply -- a note naming something that is not there. A `-` counts
  * as a sign only where what precedes it is not itself part of a number, so the
- * `2024` of `1938-2024` stays positive.
+ * `1916` of `1938-1916` stays positive.
  */
 function withSign(text: string, index: number, token: string): string {
   if (index === 0 || text[index - 1] !== '-') return token;
@@ -831,8 +831,8 @@ const SMALLEST_CHECKED = 10;
 
 /** The text with every date span blanked, so the number check does not report
  *  the parts of a date the date check has already passed or failed. Without
- *  this, an accepted `2024-01-06` is hunted for as `2024`, `1` and `6` against a
- *  document that wrote "January 6, 2024", and a supported date is refused
+ *  this, an accepted `1916-01-06` is hunted for as `1916`, `1` and `6` against a
+ *  document that wrote "January 6, 1916", and a supported date is refused
  *  through the other door.
  *
  *  SPLIT INTO UTF-16 CODE UNITS, NOT CODE POINTS. `span.start` and `span.end`
@@ -840,7 +840,7 @@ const SMALLEST_CHECKED = 10;
  *  indexed the mask by something else entirely: one astral character earlier in
  *  the reply shifted every window after it. Ten emoji moved the mask far enough
  *  to leave a fabricated number unmasked and written; two exposed the `20` of a
- *  `2024` already checked as a date and refused a good description as an
+ *  `1916` already checked as a date and refused a good description as an
  *  invented number. `quoted()` in `fill.ts` is correctly code-point-based and is
  *  NOT the same problem: it cuts a string for display, where splitting a
  *  surrogate pair leaves half a character in a spreadsheet cell. One counts

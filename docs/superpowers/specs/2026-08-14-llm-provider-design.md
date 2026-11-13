@@ -227,12 +227,12 @@ as "no claim was made" — so the layer's effectiveness turned on a model's
 formatting habit rather than on anything the design asserts. **The rule is now
 that a month name, or a day-and-month pair, is a claim whether or not a year
 sits beside it.** `Jan. 6`, `the 6th of January`, `1/6`, `in January`,
-`2024-01-06T00:00:00Z`, `in January of 2024` and `6.1.2024` are all claims.
+`1916-01-06T00:00:00Z`, `in January of 1916` and `6.1.1916` are all claims.
 
 **Precision ranking was replaced by a `Reading`** — a date decomposed into the
 parts the text actually stated — under one rule, `entails`: every part the claim
 states must be stated, and equal, in the document's. A part the claim omits is
-not checked, so `2024` is supported by `2024-01-06`; the reverse is not, which
+not checked, so `1916` is supported by `1916-01-06`; the reverse is not, which
 is fabricated precision refused at a finer grain than the design anticipated.
 `new Date` is gone from the path, month names resolve through a stem table, and
 every reading is calendar-validated.
@@ -252,7 +252,7 @@ to prevent it. The filter is load-bearing and is pinned by mutation.
 
 ### It reads English dates only, and says so
 
-`MONTH_NAMES` is English. A document writing `Falleció el 6 de enero de 2024`
+`MONTH_NAMES` is English. A document writing `Falleció el 6 de enero de 1916`
 states a day, and this layer sees only the year in it, so a **correct**
 day-precision description of that document is refused and discarded.
 

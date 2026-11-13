@@ -13,25 +13,34 @@ Open a GitHub issue for anything already public. For anything that is not,
 use GitHub's **Report a vulnerability** button on the Security tab, which
 opens a private advisory rather than a public issue.
 
-## Your password is in the URL, and URLs get logged
+## Your password travels in the request body
 
-openEQUELLA's sign-in API is `POST /api/auth/login?username=…&password=…`.
-Both are query-string parameters; the API declares no request-body form. That
-is openEQUELLA's design and this tool cannot change it.
+The tool signs in with `POST /api/auth/login` and a JSON body,
+`{"username": …, "password": …}`. That is all it sends.
+
+**This used to be a warning about URLs.** openEQUELLA's sign-in took the
+credentials as query-string parameters, as its published API description
+still says, and web servers, proxies and load balancers routinely log the full
+request line. Measured on 2026-11-11, openEQUELLA now refuses that form
+(`415 Unsupported Media Type`) and accepts only the JSON body. The tool has
+followed it, and **it has no fallback to the old form.** An openEQUELLA server
+that still accepts only the query form will refuse the tool's password sign-in,
+and may do so with an ordinary "wrong password" answer, so the tool cannot tell
+you that is the reason. If a password that works in the browser is refused
+here, use OAuth, or ask for the fallback.
 
 - **In transit it is protected.** HTTPS is required before any request is
-  built, and plain `http` is refused outright — including to `localhost` —
-  precisely because the password rides in the URL.
-- **At rest on the server it may not be.** Web servers, reverse proxies and
-  load balancers routinely record the full request line, query string included.
-  An AWS load balancer's access logs do.
+  built, and plain `http` is refused outright, including to `localhost`. A
+  request body is just as readable as a URL without TLS.
+- **The tool never logs it.** Nothing puts the request body into an error, and
+  anything the server echoes back is redacted in every form the tool knows: the
+  literal password, its two URL encodings, and any JSON spelling of it (any
+  character written as itself, as `\uXXXX` in either case, or as its short
+  escape, in any mix). An echo in some other encoding, such as base64 or HTML
+  entities, would not be caught.
 
-**What to check on your own instance:** whether access logging captures query
-strings, how long those logs are kept, and who can read them. Where your site
-supports OAuth, prefer it — the password never leaves the browser in that flow.
-
-This is worth raising with the openEQUELLA project itself. A login that took
-its credentials in the request body would close it for every institution.
+Where your site supports OAuth, prefer it: the password never leaves the
+browser in that flow.
 
 ## What leaves your machine
 
@@ -103,18 +112,19 @@ checked against how this code actually calls the library:
 | `uuid` (via `exceljs`) | Missing bounds check when a `buf` argument is passed | **Not reachable, and not fixable by upgrading.** `exceljs` calls `uuidv4()` with no arguments, and `exceljs@4.4.0` is already the latest release. |
 | `brace-expansion`, `fast-uri`, `hono`, `ip-address`, `qs` (transitive) | Denial of service, SSRF and parser differentials | **Fixed in range** by `npm audit fix`, 2026-10-02. |
 
-**Electron is the one that matters, and it is NOT fixed.** `npm audit` lists
-`electron` under the full tree only because it is a devDependency, but it is
-the runtime packaged into every installer staff run. **`electron@33` is out of
-support**, and advisories against it include a context-isolation bypass
-(fixed in 39.8.9) and several use-after-free bugs. Moving to a supported major is
-a breaking change that needs the desktop app driven by hand afterwards — the
-renderer is sandboxed and its failure mode is a silent blank window — so it is
-its own piece of work, not an audit fix.
+**Electron is the one that matters, because it is the runtime packaged into
+every installer staff run** — `npm audit` files it under devDependencies, which
+undersells it. `electron@33` was out of support with advisories including a
+context-isolation bypass. **Upgraded to `electron@44` and `electron-builder@26`
+on 2026-10-02**, which clears every Electron, builder and `tar` advisory. Checked
+beyond the suite, because the renderer is sandboxed and its failure mode is a
+silent blank window: the dev build and the packaged `win-unpacked` build were
+both launched with a disposable profile and inspected over CDP — Setup
+rendered, `window.oeq` was bridged, no console errors.
 
-The remaining development-only advisories (`vitest`, `electron-builder` and its
-`tar`) are reachable only on a developer's machine running the test UI or
-packaging a build, and clear with the same major upgrades.
+The remaining development-only advisories are `vitest` and its `vite`/`esbuild`
+tree, reachable only on a developer's machine running the test UI. They clear
+with a `vitest` major upgrade, not yet done.
 
 **Do not run `npm audit fix --force`.** Its remedy for the `uuid` line is
 `exceljs@3.4.0` — a downgrade across a major version, to older code, in the

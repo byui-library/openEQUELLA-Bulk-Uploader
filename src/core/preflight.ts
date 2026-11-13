@@ -60,8 +60,8 @@ export function summarise(result: PreflightResult): string {
  *
  * Creates nothing. In order:
  *   1. The configured address is https (or loopback) -- read from `Config`,
- *      calls nothing. openEQUELLA takes a password as a query parameter, so
- *      this is the precondition for password sign-in being safe at all.
+ *      calls nothing. Password sign-in sends the password to openEQUELLA, so
+ *      this is the precondition for it being safe at all.
  *   2. A usable token exists (and if not, stops after the sign-in method
  *      below -- nothing further can succeed without one, and every failure
  *      past that point would just be a confusing echo of the same root
@@ -238,9 +238,9 @@ export async function runPreflight(
  * That the configured address is one credentials can safely be sent to.
  *
  * Reads `Config` and calls nothing, which is why it runs first: it is the
- * precondition for password sign-in being safe at all, since openEQUELLA
- * takes the password as a QUERY PARAMETER (confirmed in schema/swagger.json)
- * and over http it would therefore travel in clear text in the request line.
+ * precondition for password sign-in being safe at all: the password is sent to
+ * `/api/auth/login` (a JSON body since late 2026; a query parameter before),
+ * and over http it would therefore travel in clear text.
  * `normaliseInstanceUrl` is the single place that rule lives; this check
  * reports its verdict rather than restating it.
  *
@@ -255,7 +255,7 @@ export async function runPreflight(
  * so `OEQ_AUTH_MODE=password` against `http://localhost` fails when
  * `UsernamePasswordAuth` is constructed, before this report is ever built.
  * The exemption is therefore only ever visible in the OAuth modes, where no
- * password is put in a URL at all.
+ * password is sent at all.
  */
 function httpsCheck(cfg: Config): PreflightCheck {
   if (isLoopback(cfg.baseUrl)) {
@@ -264,8 +264,8 @@ function httpsCheck(cfg: Config): PreflightCheck {
       pass: true,
       message:
         `OEQ_BASE_URL is '${cfg.baseUrl}', a loopback address -- its traffic never leaves this ` +
-        `machine, so https is not required for it. Any other host MUST use https: openEQUELLA ` +
-        `takes your password as part of the web address when signing in, so an unencrypted ` +
+        `machine, so https is not required for it. Any other host MUST use https: your ` +
+        `password or client secret is sent to openEQUELLA when signing in, so an unencrypted ` +
         `connection would expose it.`,
     };
   }
@@ -276,8 +276,8 @@ function httpsCheck(cfg: Config): PreflightCheck {
       label: 'HTTPS',
       pass: true,
       message:
-        `OEQ_BASE_URL is '${normalised}', which uses https. openEQUELLA takes your password as ` +
-        `part of the web address when signing in, so this is what keeps it from travelling in ` +
+        `OEQ_BASE_URL is '${normalised}', which uses https. Your password or client secret is ` +
+        `sent to openEQUELLA when signing in, so this is what keeps it from travelling in ` +
         `clear text.`,
     };
   } catch (err) {

@@ -29,6 +29,19 @@ describe('secretWireForms', () => {
   it('is empty for an empty secret, so nothing redacts everything', () => {
     expect(secretWireForms('')).toEqual(new Set());
   });
+
+  /**
+   * The password now travels in a JSON BODY (openEQUELLA refuses the query
+   * form with 415 since late 2026), and JSON escapes `"` and `\`. A server
+   * echoing the body back sends that escaped form, which none of the three URL
+   * encodings matches.
+   */
+  it('includes the JSON-string form, which escapes quote and backslash', () => {
+    const secret = 'pa"ss\\w';
+    // Written out literally, not computed with JSON.stringify, so a bug in the
+    // implementation's use of it cannot be mirrored here.
+    expect(secretWireForms(secret).has('pa\\"ss\\\\w')).toBe(true);
+  });
 });
 
 describe('redactSecret', () => {
@@ -63,6 +76,51 @@ describe('redactSecret', () => {
     expect(redactSecret('a Summer2026%21 b Summer2026! c', 'Summer2026!')).toBe(
       'a [REDACTED] b [REDACTED] c',
     );
+  });
+
+  it('redacts a JSON request body echoed back verbatim', () => {
+    const secret = 'pa"ss\\w';
+    const echoed = `rejected: {"username":"jsmith","password":"pa\\"ss\\\\w"}`;
+    expect(redactSecret(echoed, secret)).toBe('rejected: {"username":"jsmith","password":"[REDACTED]"}');
+  });
+
+  /**
+   * openEQUELLA is Java. JSON serialisers other than JavaScript's may escape
+   * `/` as `\/` and non-ASCII as `\uXXXX`, in either hex case, so an echoed
+   * body can carry a form `JSON.stringify` never produces.
+   */
+  it.each([
+    ['caf\\u00e9/2026!', 'non-ASCII as lowercase \\u'],
+    ['caf\\u00E9/2026!', 'non-ASCII as uppercase \\u'],
+    ['café\\/2026!', 'slash as \\/'],
+    ['caf\\u00e9\\/2026!', 'both'],
+  ])('redacts the server-escaped form %j (%s)', (onWire) => {
+    expect(redactSecret(`echo: ${onWire} end`, 'café/2026!')).toBe('echo: [REDACTED] end');
+  });
+
+  /**
+   * Enumerating spellings cannot keep up: Gson escapes `<`, `>`, `&`, `=` and
+   * `'` as `<`-style by default, Jackson writes control characters in
+   * uppercase hex, and a serialiser may escape any character it likes. Any
+   * JSON spelling of each character, in any mix, has to be caught.
+   */
+  it.each([
+    ['Fall2026\\u003d\\u0026\\u003cx', 'Gson HTML-safe escapes'],
+    ['Fall2026\\u003D&\\u003Cx', 'mixed, uppercase hex'],
+    ['\\u0046\\u0061ll2026=&<x', 'letters escaped too'],
+  ])('redacts the JSON spelling %j (%s)', (onWire) => {
+    expect(redactSecret(`echo: ${onWire} end`, 'Fall2026=&<x')).toBe('echo: [REDACTED] end');
+  });
+
+  it('redacts a control character in either hex case, and its short escape', () => {
+    const secret = 'unit\x1fsep\tpw';
+    expect(redactSecret('echo: unit\\u001Fsep\\tpw end', secret)).toBe('echo: [REDACTED] end'); // Jackson
+    expect(redactSecret('echo: unit\\u001fsep\\u0009pw end', secret)).toBe('echo: [REDACTED] end');
+  });
+
+  /** Matching JSON spellings must not loosen matching of the plain text. */
+  it('does not treat letters case-insensitively', () => {
+    expect(redactSecret('echo: FALL2026=&<X end', 'Fall2026=&<x')).toBe('echo: FALL2026=&<X end');
   });
 
   it('leaves text alone when the secret is empty', () => {

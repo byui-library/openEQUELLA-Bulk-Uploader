@@ -61,8 +61,8 @@ describe('OpenAiCompatibleProvider', () => {
   /**
    * The local case is PLAIN HTTP, by default, on every local runtime there is:
    * Ollama serves http://localhost:11434 and LM Studio http://localhost:1234.
-   * `normaliseInstanceUrl` refuses http because openEQUELLA's sign-in puts the
-   * password in the query string; nothing of the sort applies here, and the
+   * `normaliseInstanceUrl` refuses all http because openEQUELLA's sign-in sends
+   * the password; nothing of the sort applies here, and the
    * design depends on a loopback endpoint working. This test fails the moment
    * anyone routes a model base URL through that check.
    */

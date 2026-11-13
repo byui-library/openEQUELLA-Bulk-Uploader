@@ -119,11 +119,14 @@ if (!arg('user')) {
 }
 
 // --- live path: password sign-in, then three GETs ------------------------
+// A JSON body, not query parameters: openEQUELLA answers the query form 415
+// since late 2026. See src/core/passwordAuth.ts.
 const loginUrl = endpoint('/api/auth/login');
-loginUrl.searchParams.set('username', arg('user'));
-loginUrl.searchParams.set('password', arg('pass') ?? '');
-
-const loginRes = await fetch(loginUrl, { method: 'POST' });
+const loginRes = await fetch(loginUrl, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ username: arg('user'), password: arg('pass') ?? '' }),
+});
 console.log('=== Q0  POST /api/auth/login ->', loginRes.status);
 const cookies = loginRes.headers.getSetCookie();
 console.log('    set-cookie names:', cookies.map((c) => c.split('=')[0]).join(', ') || '(none)');
