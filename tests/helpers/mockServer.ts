@@ -199,6 +199,8 @@ export interface MockState {
     /** The `file` query param the item was created with -- CONFIRMED to be
      * a query param, not a body field, against swagger.json. */
     stagingFile: string;
+    /** The attachments the create request declared, in the order sent. */
+    attachments: { type?: string; filename?: string; description?: string; uuid?: string }[];
   }[];
   /** Identifiers that already exist, for the duplicate pre-flight. */
   existingIdentifiers: string[];
@@ -404,7 +406,7 @@ export async function startMockServer(): Promise<MockServer> {
         }
         const body = JSON.parse((await readBody(req)).toString('utf8')) as {
           metadata: string;
-          attachments?: { uuid?: string }[];
+          attachments?: { type?: string; filename?: string; description?: string; uuid?: string }[];
         };
         const uuid = nextId('item');
         const version = 1;
@@ -414,6 +416,7 @@ export async function startMockServer(): Promise<MockServer> {
           metadata: body.metadata,
           draft: url.searchParams.get('draft') === 'true',
           stagingFile: fileParam,
+          attachments: body.attachments ?? [],
         });
         const mismatch = state.mismatchAttachmentNext > 0;
         if (mismatch) state.mismatchAttachmentNext--;

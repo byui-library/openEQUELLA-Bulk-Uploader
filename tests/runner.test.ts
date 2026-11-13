@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runManifest, checkLock } from '../src/core/runner.js';
@@ -346,5 +346,81 @@ describe('runManifest job lock', () => {
     expect(summary.created).toBe(1);
     expect(summary.failed).toBe(1);
     expect(await checkLock(path)).toBeNull();
+  });
+});
+
+describe('runManifest -- folder rows', () => {
+  async function folderManifest(uuidPath = ''): Promise<string> {
+    const f = join(dir, 'V2');
+    await mkdir(f);
+    await writeFile(join(f, 'No1.pdf'), 'a');
+    await writeFile(join(f, 'No2.pdf'), 'bb');
+    const m = manifest();
+    m.attachmentUuidPath = uuidPath;
+    m.entries = [
+      {
+        rowNumber: 2,
+        source: 'V2',
+        folderPath: f,
+        files: [
+          { path: join(f, 'No1.pdf'), name: 'No1.pdf', size: 1 },
+          { path: join(f, 'No2.pdf'), name: 'No2.pdf', size: 2 },
+        ],
+        metadata: { 'MWDL/title': ['Gazette, Volume 2'] },
+        status: 'pending',
+        attempts: 0,
+      },
+    ];
+    const path = join(dir, 'job.json');
+    await saveManifest(path, m);
+    return path;
+  }
+
+  it('creates ONE item with every file as an attachment, in order', async () => {
+    const path = await folderManifest();
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.created).toBe(1);
+    expect(mock.state.items).toHaveLength(1);
+    const atts = mock.state.items[0]!.attachments;
+    expect(atts.map((a) => [a.type, a.filename, a.description])).toEqual([
+      ['file', 'No1.pdf', 'No1.pdf'],
+      ['file', 'No2.pdf', 'No2.pdf'],
+    ]);
+    expect(new Set(atts.map((a) => a.uuid)).size).toBe(2);
+    const saved = await loadManifest(path);
+    expect(saved.entries[0]!.attachmentUuids).toEqual(atts.map((a) => a.uuid));
+  });
+
+  it('writes every attachment uuid, in order, to the configured path', async () => {
+    const path = await folderManifest(ATTACHMENT_PATH);
+    await runManifest(client, path, { retryDelayMs: 1 });
+    const item = mock.state.items[0]!;
+    const [first, second] = item.attachments.map((a) => a.uuid!);
+    expect(item.metadata).toContain(first);
+    expect(item.metadata).toContain(second);
+    expect(item.metadata.indexOf(first!)).toBeLessThan(item.metadata.indexOf(second!));
+  });
+
+  it('marks the row incomplete when the server assigns different uuids and the path is set', async () => {
+    const path = await folderManifest(ATTACHMENT_PATH);
+    mock.state.mismatchAttachmentNext = 1;
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.incomplete).toBe(1);
+    expect(mock.state.items).toHaveLength(1);
+    expect((await loadManifest(path)).entries[0]!.error).toMatch(/^Row 2 \(V2 \(2 files\)\): item /);
+  });
+
+  it('fails a folder that changed since planning, creating nothing, and does not retry it', async () => {
+    const path = await folderManifest();
+    await writeFile(join(dir, 'V2', 'No3.pdf'), 'x');
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.failed).toBe(1);
+    expect(mock.state.items).toHaveLength(0);
+    expect(mock.state.stagingAreas.size).toBe(0);
+    const entry = (await loadManifest(path)).entries[0]!;
+    expect(entry.attempts).toBe(1);
+    expect(entry.error).toBe(
+      "Row 2 (V2 (2 files)): the folder changed since planning ('No3.pdf' was added); plan again",
+    );
   });
 });
