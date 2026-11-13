@@ -21,12 +21,32 @@ export type RowStatus =
   | 'failed'
   | 'skipped';
 
+/** One file a row contributes, in upload order. */
+export interface ManifestFile {
+  /** Absolute path on disk. */
+  path: string;
+  /** Filename as it appears as the attachment. */
+  name: string;
+  /**
+   * Bytes at plan time, so the run can tell a file was replaced. ABSENT on a
+   * row planned by a version that did not record sizes (manifest v1): for
+   * those the run checks presence only, and cannot tell a same-named
+   * replacement. Never filled in at load -- that would compare a file against
+   * itself.
+   */
+  size?: number;
+}
+
 export interface ManifestEntry {
   rowNumber: number;
-  /** Absolute path to the file on disk. */
-  filePath: string;
-  /** Filename as it should appear as the attachment. */
-  fileName: string;
+  /** What `attachment name` said: a filename, or a folder name. The row's label. */
+  source: string;
+  /** Set only when `source` named a folder: its absolute path. Re-listed at run time. */
+  folderPath?: string;
+  /** One for a file row; every file in upload order for a folder row. Never empty. */
+  files: ManifestFile[];
+  /** Files in the folder that are never uploaded, shown in the plan. Folder rows only. */
+  skippedFiles?: { name: string; reason: string }[];
   /** Metadata xpath -> value(s). Repeated headers collapse into multiple values. */
   metadata: Record<string, string[]>;
   status: RowStatus;
@@ -34,15 +54,15 @@ export interface ManifestEntry {
   itemUuid?: string;
   /** openEQUELLA items are versioned; this is the version this row created. */
   itemVersion?: number;
-  /** uuid of this row's single attachment, as it exists on the server. */
-  attachmentUuid?: string;
+  /** One uuid per entry in `files`, in the same order, as they exist on the server. */
+  attachmentUuids?: string[];
   error?: string;
   /** Cumulative attempts across all resumed runs; retry resets status, not this. */
   attempts: number;
 }
 
 export interface Manifest {
-  version: 1;
+  version: 2;
   createdAt: string;
   baseUrl: string;
   collectionUuid: string;
@@ -110,4 +130,17 @@ export const ATTACHMENT_COLUMN = 'attachment name';
  */
 export function sameFileName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * How a row is named to the operator everywhere: CLI, MCP, desktop and every
+ * runner error. A file row is its filename, exactly as before; a folder row
+ * says how many files it carries, so "Vol3 (6 files)" cannot be mistaken for
+ * one file. Lives here because the renderer needs it and this module has no
+ * node imports.
+ */
+export function rowLabel(entry: Pick<ManifestEntry, 'source' | 'folderPath' | 'files'>): string {
+  if (entry.folderPath === undefined) return entry.source;
+  const n = entry.files.length;
+  return `${entry.source} (${n} file${n === 1 ? '' : 's'})`;
 }

@@ -85,7 +85,7 @@ beforeEach(async () => {
 });
 
 const manifest = (overrides: Partial<Manifest> = {}): Manifest => ({
-  version: 1,
+  version: 2,
   createdAt: '2026-08-03T00:00:00.000Z',
   baseUrl: 'https://example.test',
   collectionUuid: 'c1',
@@ -138,8 +138,8 @@ describe('retryAction and a live lock', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: join(dir, 'a.mp4'),
-          fileName: 'a.mp4',
+          source: 'a.mp4',
+          files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
           metadata: {},
           status: 'failed',
           attempts: 3,
@@ -167,8 +167,8 @@ describe('retryAction and a live lock', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: join(dir, 'a.mp4'),
-          fileName: 'a.mp4',
+          source: 'a.mp4',
+          files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
           metadata: {},
           status: 'failed',
           attempts: 3,
@@ -176,8 +176,8 @@ describe('retryAction and a live lock', () => {
         },
         {
           rowNumber: 3,
-          filePath: join(dir, 'b.mp4'),
-          fileName: 'b.mp4',
+          source: 'b.mp4',
+          files: [{ path: join(dir, 'b.mp4'), name: 'b.mp4' }],
           metadata: {},
           status: 'created',
           attempts: 1,
@@ -204,8 +204,8 @@ describe('retryAction and a live lock', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: join(dir, 'a.mp4'),
-          fileName: 'a.mp4',
+          source: 'a.mp4',
+          files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
           metadata: {},
           status: 'uploading',
           attempts: 1,
@@ -229,8 +229,8 @@ describe('statusAction', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: join(dir, 'a.mp4'),
-          fileName: 'a.mp4',
+          source: 'a.mp4',
+          files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
           metadata: {},
           status: 'failed',
           attempts: 1,
@@ -277,8 +277,8 @@ describe('runAction exit code', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: join(dir, 'a.mp4'),
-          fileName: 'a.mp4',
+          source: 'a.mp4',
+          files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
           metadata: { 'MWDL/title': ['a'] },
           status: 'uploading',
           attempts: 1,
@@ -300,8 +300,8 @@ describe('runAction exit code', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: join(dir, 'does-not-exist.mp4'),
-          fileName: 'does-not-exist.mp4',
+          source: 'does-not-exist.mp4',
+          files: [{ path: join(dir, 'does-not-exist.mp4'), name: 'does-not-exist.mp4' }],
           metadata: { 'MWDL/title': ['a'] },
           status: 'pending',
           attempts: 0,

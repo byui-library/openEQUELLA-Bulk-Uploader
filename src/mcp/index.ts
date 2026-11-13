@@ -26,7 +26,7 @@ import { redactSecret as redactAllForms } from '../core/redact.js';
 import { OeqClient } from '../core/client.js';
 import { assertNotGuest } from '../core/identity.js';
 import { runPreflight, summarise } from '../core/preflight.js';
-import type { ItemState } from '../core/types.js';
+import { rowLabel, type ItemState } from '../core/types.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -464,14 +464,14 @@ export async function jobStatusTool(args: JobStatusArgs): Promise<ToolResult> {
     const failed = m.entries.filter((e) => e.status === 'failed');
     if (failed.length > 0) {
       lines.push('Failed:');
-      for (const e of failed) lines.push(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'unknown error'}`);
+      for (const e of failed) lines.push(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'unknown error'}`);
     }
 
     // 'uploading' at read time means a prior run died mid-row -- see runner.ts.
     const interrupted = m.entries.filter((e) => e.status === 'uploading');
     if (interrupted.length > 0) {
       lines.push('Interrupted (a prior run died mid-upload; verify in openEQUELLA before retrying):');
-      for (const e of interrupted) lines.push(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'interrupted'}`);
+      for (const e of interrupted) lines.push(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'interrupted'}`);
     }
 
     const lock = await checkLock(args.manifestPath);

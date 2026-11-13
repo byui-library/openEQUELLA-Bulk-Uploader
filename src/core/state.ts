@@ -81,15 +81,15 @@ async function renameWithRetry(tmp: string, path: string, attempt = 0): Promise<
  * corruption there fails later with an entry-specific error instead of a
  * load-time one, which is an acceptable trade for keeping this check small.
  */
-function validateStructure(value: unknown, path: string): asserts value is Manifest {
+function validateStructure(value: unknown, path: string): asserts value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) {
     throw new OeqError(`Manifest at ${path} is not a JSON object.`);
   }
   const m = value as Record<string, unknown>;
 
-  if (m['version'] !== 1) {
+  if (m['version'] !== 1 && m['version'] !== 2) {
     throw new OeqError(
-      `Unsupported manifest version ${JSON.stringify(m['version'])} in ${path}; expected 1. ` +
+      `Unsupported manifest version ${JSON.stringify(m['version'])} in ${path}; expected 1 or 2. ` +
         `This manifest may be from an incompatible version of the tool; do not resume with it.`,
     );
   }
@@ -139,5 +139,34 @@ export async function loadManifest(path: string): Promise<Manifest> {
   }
 
   validateStructure(parsed, path);
-  return parsed;
+  return parsed['version'] === 1 ? upgradeV1(parsed) : (parsed as unknown as Manifest);
+}
+
+/** An entry as manifest v1 wrote it: one file per row. */
+interface V1Entry {
+  filePath: string;
+  fileName: string;
+  attachmentUuid?: string;
+  [field: string]: unknown;
+}
+
+/**
+ * A v1 manifest -- one file per row -- read as v2. Nothing on disk changes
+ * until the runner next saves, which writes v2.
+ *
+ * NO SIZE IS INVENTED. v1 never recorded one, and reading today's size here
+ * would make the run's "changed since planning" check compare a file against
+ * itself and pass. Absent, the check verifies presence only, and
+ * ManifestFile.size says so.
+ */
+function upgradeV1(m: Record<string, unknown>): Manifest {
+  const entries = (m['entries'] as V1Entry[]).map(
+    ({ filePath, fileName, attachmentUuid, ...rest }) => ({
+      ...rest,
+      source: fileName,
+      files: [{ path: filePath, name: fileName }],
+      ...(attachmentUuid !== undefined ? { attachmentUuids: [attachmentUuid] } : {}),
+    }),
+  );
+  return { ...m, version: 2, entries } as unknown as Manifest;
 }

@@ -553,7 +553,7 @@ describe('resolveSchemaPath', () => {
 describe('applyDuplicateChoices', () => {
   function manifestWithRows(rowNumbers: number[]): Manifest {
     return {
-      version: 1,
+      version: 2,
       createdAt: '2026-08-06T00:00:00.000Z',
       baseUrl: 'https://example.test',
       collectionUuid: 'c1',
@@ -563,8 +563,8 @@ describe('applyDuplicateChoices', () => {
       warnings: [],
       entries: rowNumbers.map((rowNumber) => ({
         rowNumber,
-        filePath: `/f/${rowNumber}.pdf`,
-        fileName: `${rowNumber}.pdf`,
+        source: `${rowNumber}.pdf`,
+        files: [{ path: `/f/${rowNumber}.pdf`, name: `${rowNumber}.pdf` }],
         metadata: {},
         status: 'pending' as const,
         attempts: 0,

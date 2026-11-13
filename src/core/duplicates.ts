@@ -193,7 +193,7 @@ export async function findDuplicates(
   if (!titleHeader) {
     return pending.map((entry) => ({
       rowNumber: entry.rowNumber,
-      fileName: entry.fileName,
+      fileName: entry.files[0]!.name,
       tier: 'could-not-check' as const,
       detail: UNKNOWN_TITLE_PATH_DETAIL,
       existing: [],
@@ -216,7 +216,7 @@ export async function findDuplicates(
   if (unchecked) {
     return pending.map((entry) => ({
       rowNumber: entry.rowNumber,
-      fileName: entry.fileName,
+      fileName: entry.files[0]!.name,
       tier: 'could-not-check' as const,
       detail: unchecked,
       existing: [],
@@ -234,13 +234,13 @@ export async function findDuplicates(
             title === ''
               ? []
               : await client.searchByTitle(manifest.collectionUuid, title, titleHeader);
-          const verdict = verdictFor(entry.fileName, title, hits);
+          const verdict = verdictFor(entry.files[0]!.name, title, hits);
           return verdict ? { ...verdict, rowNumber: entry.rowNumber } : null;
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           return {
             rowNumber: entry.rowNumber,
-            fileName: entry.fileName,
+            fileName: entry.files[0]!.name,
             tier: 'could-not-check' as const,
             detail: `could not check whether this already exists (${detail})`,
             existing: [],

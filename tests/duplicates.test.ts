@@ -147,7 +147,7 @@ describe('findDuplicates', () => {
 
   function manifestOf(rows: { rowNumber: number; fileName: string; title: string }[]): Manifest {
     return {
-      version: 1,
+      version: 2,
       createdAt: '2026-08-06T00:00:00.000Z',
       baseUrl: 'https://example.test',
       collectionUuid: 'c1',
@@ -157,8 +157,8 @@ describe('findDuplicates', () => {
       warnings: [],
       entries: rows.map((r) => ({
         rowNumber: r.rowNumber,
-        filePath: `/files/${r.fileName}`,
-        fileName: r.fileName,
+        source: r.fileName,
+        files: [{ path: `/files/${r.fileName}`, name: r.fileName }],
         metadata: { 'MWDL/title': [r.title] },
         status: 'pending' as const,
         attempts: 0,
@@ -453,7 +453,7 @@ describe('the title path is read, not assumed', () => {
    *  wrong one is visible rather than coincidentally right. */
   function manifestWithTwoTitles(): Manifest {
     return {
-      version: 1,
+      version: 2,
       createdAt: '2026-08-12T00:00:00.000Z',
       baseUrl: 'https://example.test',
       collectionUuid: 'c1',
@@ -464,8 +464,8 @@ describe('the title path is read, not assumed', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: '/files/thesis.pdf',
-          fileName: 'thesis.pdf',
+          source: 'thesis.pdf',
+          files: [{ path: '/files/thesis.pdf', name: 'thesis.pdf' }],
           metadata: { 'local/dc/title': ['A Thesis'], 'MWDL/title': ['WRONG'] },
           status: 'pending' as const,
           attempts: 0,

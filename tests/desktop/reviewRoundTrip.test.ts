@@ -113,7 +113,7 @@ describe('extract → upload round trip', () => {
     expect(manifest.entries).toHaveLength(2);
     for (const entry of manifest.entries) {
       const leaked = Object.keys(entry.metadata).filter((k) => k.startsWith('_'));
-      expect(leaked, `${entry.fileName} carries ${leaked.join(', ')}`).toEqual([]);
+      expect(leaked, `${entry.source} carries ${leaked.join(', ')}`).toEqual([]);
     }
   });
 
@@ -127,7 +127,7 @@ describe('extract → upload round trip', () => {
       itemState: 'draft',
     });
 
-    const pdf = manifest.entries.find((e) => e.fileName.endsWith('.pdf'))!;
+    const pdf = manifest.entries.find((e) => e.source.endsWith('.pdf'))!;
     expect(pdf.metadata['MWDL/creators/creator']).toEqual([
       'Sergio J. Ibáñez',
       'Markel Rico',
@@ -136,7 +136,7 @@ describe('extract → upload round trip', () => {
 
     // "Dixon, Matt" is one person written surname-first. It must arrive as one
     // creator, not two.
-    const docx = manifest.entries.find((e) => e.fileName.endsWith('.docx'))!;
+    const docx = manifest.entries.find((e) => e.source.endsWith('.docx'))!;
     expect(docx.metadata['MWDL/creators/creator']).toEqual(['Dixon, Matt']);
   });
 });

@@ -21,7 +21,7 @@ import { runManifest } from '../core/runner.js';
 import { runPreflight, summarise } from '../core/preflight.js';
 import { checkLock } from '../core/lock.js';
 import { OeqError, ValidationError } from '../core/errors.js';
-import type { ItemState } from '../core/types.js';
+import { rowLabel, type ItemState } from '../core/types.js';
 import { runExtract, type ExtractCliOptions } from './extract.js';
 
 type Env = Record<string, string | undefined>;
@@ -135,7 +135,7 @@ export async function runAction(o: RunCliOptions, env: Env = process.env): Promi
     forceInterrupted: o.forceInterrupted,
     maxAttempts: o.maxAttempts,
     onProgress: (e, done, total) =>
-      console.log(`[${done}/${total}] ${e.fileName} -> ${e.status}${e.error ? `: ${e.error}` : ''}`),
+      console.log(`[${done}/${total}] ${rowLabel(e)} -> ${e.status}${e.error ? `: ${e.error}` : ''}`),
   });
 
   console.log(
@@ -169,14 +169,14 @@ export async function statusAction(o: StatusCliOptions): Promise<void> {
   const failed = m.entries.filter((e) => e.status === 'failed');
   if (failed.length > 0) {
     console.log('\nFailed:');
-    for (const e of failed) console.log(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'unknown error'}`);
+    for (const e of failed) console.log(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'unknown error'}`);
   }
 
   const interrupted = m.entries.filter((e) => e.status === 'uploading');
   if (interrupted.length > 0) {
     console.log('\nInterrupted (a prior run died mid-upload; verify in openEQUELLA before retrying):');
     for (const e of interrupted)
-      console.log(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'interrupted'}`);
+      console.log(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'interrupted'}`);
   }
 
   const lock = await checkLock(o.manifest);

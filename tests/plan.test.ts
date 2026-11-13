@@ -53,7 +53,7 @@ describe('buildManifest', () => {
       dir, paths, opts,
     );
     expect(m.entries).toHaveLength(1);
-    expect(m.entries[0]!.fileName).toBe('a.mp4');
+    expect(m.entries[0]!.source).toBe('a.mp4');
     expect(m.entries[0]!.metadata['MWDL/title']).toEqual(['A']);
   });
 
@@ -121,7 +121,7 @@ describe('buildManifest', () => {
       dir, paths, opts,
     );
     expect(m.entries).toHaveLength(1);
-    expect(m.entries[0]!.fileName).toBe('a.mp4');
+    expect(m.entries[0]!.source).toBe('a.mp4');
   });
 
   it('produces an absolute filePath even when filesDir is given relative to cwd', async () => {
@@ -131,7 +131,7 @@ describe('buildManifest', () => {
       rel, paths, opts,
     );
     expect(m.entries).toHaveLength(1);
-    expect(isAbsolute(m.entries[0]!.filePath)).toBe(true);
+    expect(isAbsolute(m.entries[0]!.files[0]!.path)).toBe(true);
   });
 
   it('hard-fails when two rows claim the same file, since each file may back only one contribution', async () => {
@@ -199,7 +199,7 @@ describe('preflightDuplicates', () => {
     identifier: string | undefined,
     header = 'MWDL/identifier',
   ): Manifest => ({
-    version: 1,
+    version: 2,
     createdAt: new Date().toISOString(),
     baseUrl: mock.url,
     collectionUuid: 'c1',
@@ -209,8 +209,8 @@ describe('preflightDuplicates', () => {
     entries: [
       {
         rowNumber: 2,
-        filePath: join(dir, 'a.mp4'),
-        fileName: 'a.mp4',
+        source: 'a.mp4',
+        files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
         metadata: identifier === undefined ? {} : { [header]: [identifier] },
         status: 'pending',
         attempts: 0,
@@ -340,7 +340,7 @@ describe('preflightDuplicates', () => {
     it('warns once for the batch, not once per row', async () => {
       mock.state.currentUser = guest;
       const manifest = manifestWith('a.mp4');
-      manifest.entries.push({ ...manifest.entries[0]!, rowNumber: 3, fileName: 'b.mp4' });
+      manifest.entries.push({ ...manifest.entries[0]!, rowNumber: 3, source: 'b.mp4', files: [{ path: 'b.mp4', name: 'b.mp4' }] });
       expect(await preflightDuplicates(client, manifest, mwdlSchema)).toHaveLength(1);
     });
 
@@ -410,7 +410,7 @@ describe('resolveIdentifierPath', () => {
 describe('markSkipped', () => {
   function twoRowManifest(): Manifest {
     return {
-      version: 1,
+      version: 2,
       createdAt: '2026-08-06T00:00:00.000Z',
       baseUrl: 'https://example.test',
       collectionUuid: 'c1',
@@ -420,8 +420,8 @@ describe('markSkipped', () => {
       warnings: [],
       entries: [2, 3].map((rowNumber) => ({
         rowNumber,
-        filePath: `/f/${rowNumber}.pdf`,
-        fileName: `${rowNumber}.pdf`,
+        source: `${rowNumber}.pdf`,
+        files: [{ path: `/f/${rowNumber}.pdf`, name: `${rowNumber}.pdf` }],
         metadata: {},
         status: 'pending' as const,
         attempts: 0,

@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 const manifest = (): Manifest => ({
-  version: 1,
+  version: 2,
   createdAt: '2026-08-03T00:00:00.000Z',
   baseUrl: mock.url,
   collectionUuid: 'c1',
@@ -40,8 +40,8 @@ const manifest = (): Manifest => ({
   warnings: [],
   entries: ['a.mp4', 'b.mp4'].map((f, i) => ({
     rowNumber: i + 2,
-    filePath: join(dir, f),
-    fileName: f,
+    source: f,
+    files: [{ path: join(dir, f), name: f }],
     metadata: { 'MWDL/title': [f] },
     status: 'pending' as const,
     attempts: 0,
@@ -118,7 +118,7 @@ describe('runManifest', () => {
   it('isolates a permanent failure without stopping the batch', async () => {
     const path = join(dir, 'job.json');
     const m = manifest();
-    m.entries[0]!.filePath = join(dir, 'does-not-exist.mp4');
+    m.entries[0]!.files[0]!.path = join(dir, 'does-not-exist.mp4');
     await saveManifest(path, m);
     const summary = await runManifest(client, path, { retryDelayMs: 1 });
     expect(summary.failed).toBe(1);
@@ -131,7 +131,7 @@ describe('runManifest', () => {
   it('identifies the row and file in a failure message', async () => {
     const path = join(dir, 'job.json');
     const m = manifest();
-    m.entries[0]!.filePath = join(dir, 'does-not-exist.mp4');
+    m.entries[0]!.files[0]!.path = join(dir, 'does-not-exist.mp4');
     await saveManifest(path, m);
     await runManifest(client, path, { retryDelayMs: 1 });
     const done = await loadManifest(path);
@@ -207,7 +207,7 @@ describe('runManifest', () => {
     expect(done.entries[0]!.error).toBeUndefined();
     // The uuid recorded is the one the server actually assigned, so the
     // manifest still describes what exists.
-    expect(done.entries[0]!.attachmentUuid).toBeTruthy();
+    expect(done.entries[0]!.attachmentUuids?.[0]).toBeTruthy();
   });
 
   it('does not reprocess an incomplete entry on a later run (would duplicate the item)', async () => {
@@ -340,7 +340,7 @@ describe('runManifest job lock', () => {
   it('releases the lock after a run with a mix of created and failed entries', async () => {
     const path = join(dir, 'job.json');
     const m = manifest();
-    m.entries[0]!.filePath = join(dir, 'does-not-exist.mp4');
+    m.entries[0]!.files[0]!.path = join(dir, 'does-not-exist.mp4');
     await saveManifest(path, m);
     const summary = await runManifest(client, path, { retryDelayMs: 1 });
     expect(summary.created).toBe(1);

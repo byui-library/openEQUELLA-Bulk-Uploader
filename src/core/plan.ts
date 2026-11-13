@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Manifest, ManifestEntry, Sheet, ItemState } from './types.js';
 import { splitRepeatable } from './metadata.js';
-import { ATTACHMENT_COLUMN } from './types.js';
+import { ATTACHMENT_COLUMN, rowLabel } from './types.js';
 import { validateHeaders, isAnnotationHeader, matchSchemaPath, topSection } from './schema.js';
 import { ValidationError } from './errors.js';
 import type { OeqClient } from './client.js';
@@ -109,8 +109,8 @@ export async function buildManifest(
       // Task 10's runner reads these paths back out of job.json in a
       // different process, possibly with a different cwd, so a
       // cwd-relative path would silently fail to open there.
-      filePath: resolve(filesDir, actual),
-      fileName: actual,
+      source: actual,
+      files: [{ path: resolve(filesDir, actual), name: actual }],
       metadata,
       status: 'pending',
       attempts: 0,
@@ -161,7 +161,7 @@ export async function buildManifest(
   }
 
   return {
-    version: 1,
+    version: 2,
     createdAt: new Date().toISOString(),
     baseUrl: opts.baseUrl,
     collectionUuid: opts.collectionUuid,
@@ -312,14 +312,14 @@ export async function preflightDuplicates(
       if (exists) {
         warnings.push(
           `Row ${entry.rowNumber}: an item with identifier '${identifier}' may already exist ` +
-            `in the collection; verify before uploading '${entry.fileName}'.`,
+            `in the collection; verify before uploading '${rowLabel(entry)}'.`,
         );
       }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       warnings.push(
         `Row ${entry.rowNumber}: could not check whether identifier '${identifier}' already ` +
-          `exists (${detail}); verify manually before uploading '${entry.fileName}'.`,
+          `exists (${detail}); verify manually before uploading '${rowLabel(entry)}'.`,
       );
     }
   }

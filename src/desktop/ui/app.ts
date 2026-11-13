@@ -8,7 +8,7 @@ import type {
   RunReport,
 } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
-import type { ItemState } from '../../core/types.js';
+import { rowLabel, type ItemState } from '../../core/types.js';
 import { initialScreen, nextScreen, settingsReturnTo, type Screen } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
@@ -1898,7 +1898,7 @@ async function finishRun(manifestPath: string, report: RunReport): Promise<void>
     const manifest = await window.oeq.loadManifest(manifestPath);
     state.interruptedEntries = manifest.entries
       .filter((e) => e.status === 'uploading')
-      .map((e) => ({ rowNumber: e.rowNumber, fileName: e.fileName }));
+      .map((e) => ({ rowNumber: e.rowNumber, fileName: rowLabel(e) }));
   } catch (err) {
     state.interruptedEntries = [];
     state.resultsError = errorMessage(err);

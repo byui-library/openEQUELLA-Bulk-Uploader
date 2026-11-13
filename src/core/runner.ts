@@ -1,5 +1,5 @@
 import type { OeqClient } from './client.js';
-import type { Manifest, ManifestEntry, RowStatus } from './types.js';
+import { rowLabel, type Manifest, type ManifestEntry, type RowStatus } from './types.js';
 import { loadManifest, saveManifest } from './state.js';
 import { buildMetadataXml } from './metadata.js';
 import { uploadFile } from './upload.js';
@@ -68,7 +68,7 @@ const TERMINAL_STATUSES: ReadonlySet<RowStatus> = new Set(['created', 'skipped',
 
 /** `Row 14 (Sears, Rivka 072126.MP4)` -- prefix for every error this runner records. */
 function rowContext(entry: ManifestEntry): string {
-  return `Row ${entry.rowNumber} (${entry.fileName})`;
+  return `Row ${entry.rowNumber} (${rowLabel(entry)})`;
 }
 
 function describeError(err: unknown): string {
@@ -116,7 +116,7 @@ async function processEntry(
   manifest: Manifest,
   entry: ManifestEntry,
 ): Promise<'created' | 'incomplete'> {
-  const stagingUuid = await uploadFile(client, entry.filePath, entry.fileName);
+  const stagingUuid = await uploadFile(client, entry.files[0]!.path, entry.files[0]!.name);
 
   const attachmentUuid = randomUUID();
   // Spread only when a path is configured: an unset path must leave NO trace
@@ -132,7 +132,7 @@ async function processEntry(
     collectionUuid: manifest.collectionUuid,
     metadata: buildMetadataXml(metadata),
     stagingUuid,
-    attachments: [{ filename: entry.fileName, description: entry.fileName, uuid: attachmentUuid }],
+    attachments: [{ filename: entry.files[0]!.name, description: entry.files[0]!.name, uuid: attachmentUuid }],
     draft: manifest.itemState === 'draft',
   });
 
@@ -141,7 +141,7 @@ async function processEntry(
 
   const actualUuid = result.attachmentUuids[0];
   if (uuidPath !== '' && actualUuid !== undefined && actualUuid !== attachmentUuid) {
-    entry.attachmentUuid = actualUuid;
+    entry.attachmentUuids = [actualUuid];
     entry.status = 'incomplete';
     entry.error =
       `${rowContext(entry)}: item ${result.uuid} and its attachment were created, but ` +
@@ -153,7 +153,7 @@ async function processEntry(
     return 'incomplete';
   }
 
-  entry.attachmentUuid = actualUuid ?? attachmentUuid;
+  entry.attachmentUuids = [actualUuid ?? attachmentUuid];
   entry.status = 'created';
   delete entry.error;
   return 'created';
