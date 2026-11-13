@@ -317,7 +317,8 @@ describe('oeq_plan duplicate pre-flight', () => {
     const structured = result.structuredContent as { duplicates?: unknown[] } | undefined;
     expect(structured?.duplicates).toHaveLength(1);
     expect(structured?.duplicates?.[0]).toMatchObject({
-      fileName: 'clip1.mp4',
+      source: 'clip1.mp4',
+      fileNames: ['clip1.mp4'],
       tier: 'near-certain',
       rowNumber: expect.any(Number),
     });

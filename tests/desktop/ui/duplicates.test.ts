@@ -5,7 +5,8 @@ import type { DuplicateFinding, DuplicateTier } from '../../../src/core/duplicat
 function finding(rowNumber: number, tier: DuplicateTier): DuplicateFinding {
   return {
     rowNumber,
-    fileName: `row-${rowNumber}.mp4`,
+    source: `row-${rowNumber}.mp4`,
+    fileNames: [`row-${rowNumber}.mp4`],
     tier,
     detail: 'because',
     existing: [],

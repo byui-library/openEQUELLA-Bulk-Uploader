@@ -17,7 +17,7 @@ import {
   suggest,
 } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
-import { findDuplicates, type DuplicateFinding } from '../core/duplicates.js';
+import { findDuplicates, findingLabel, type DuplicateFinding } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
@@ -359,7 +359,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
           'structuredContent.duplicates.',
       );
       for (const d of duplicates) {
-        lines.push(`  Row ${d.rowNumber}: ${d.fileName} -- ${d.tier}: ${d.detail}`);
+        lines.push(`  Row ${d.rowNumber}: ${findingLabel(d)} -- ${d.tier}: ${d.detail}`);
       }
     }
     const result = text(redactSecret(lines.join('\n'), env));

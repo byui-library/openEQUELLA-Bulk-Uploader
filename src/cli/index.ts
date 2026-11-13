@@ -10,7 +10,7 @@ import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
-import { findDuplicates, defaultChoice } from '../core/duplicates.js';
+import { findDuplicates, defaultChoice, findingLabel } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
@@ -83,7 +83,7 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
 
     const findings = await findDuplicates(client, manifest, titleHeader);
     for (const f of findings) {
-      console.log(`  Row ${f.rowNumber}: ${f.fileName} -- ${f.tier}: ${f.detail}`);
+      console.log(`  Row ${f.rowNumber}: ${findingLabel(f)} -- ${f.tier}: ${f.detail}`);
     }
 
     // markSkipped MUST run before saveManifest below, or the skip never

@@ -39,11 +39,11 @@ const findDuplicatesSignedIn = (
 
 describe('verdictFor', () => {
   it('reports nothing when the collection has no item with this title', () => {
-    expect(verdictFor('Smith_Jane.pdf', 'Senior Recital', [])).toBeNull();
+    expect(verdictFor(['Smith_Jane.pdf'], 'Senior Recital', [])).toBeNull();
   });
 
   it('calls it near-certain when an existing item holds the same file', () => {
-    const v = verdictFor('Smith_Jane.pdf', 'Senior Recital', [hit('Senior Recital', ['Smith_Jane.pdf'])]);
+    const v = verdictFor(['Smith_Jane.pdf'], 'Senior Recital', [hit('Senior Recital', ['Smith_Jane.pdf'])]);
     expect(v?.tier).toBe('near-certain');
   });
 
@@ -52,22 +52,22 @@ describe('verdictFor', () => {
    * not proof, and treating it as proof would silently drop real items.
    */
   it('calls it only possible when the title matches but the file differs', () => {
-    const v = verdictFor('Smith_Jane.pdf', 'Senior Recital', [hit('Senior Recital', ['Lee_Anna.pdf'])]);
+    const v = verdictFor(['Smith_Jane.pdf'], 'Senior Recital', [hit('Senior Recital', ['Lee_Anna.pdf'])]);
     expect(v?.tier).toBe('possible');
   });
 
   it('matches a filename ignoring case and surrounding space', () => {
-    const v = verdictFor('Smith_Jane.pdf', 'T', [hit('T', ['  SMITH_JANE.PDF  '])]);
+    const v = verdictFor(['Smith_Jane.pdf'], 'T', [hit('T', ['  SMITH_JANE.PDF  '])]);
     expect(v?.tier).toBe('near-certain');
   });
 
   it('is near-certain if ANY hit holds the file, not just the first', () => {
-    const v = verdictFor('Smith_Jane.pdf', 'T', [hit('T', ['other.pdf']), hit('T', ['Smith_Jane.pdf'])]);
+    const v = verdictFor(['Smith_Jane.pdf'], 'T', [hit('T', ['other.pdf']), hit('T', ['Smith_Jane.pdf'])]);
     expect(v?.tier).toBe('near-certain');
   });
 
   it('handles a hit with no attachments at all', () => {
-    expect(verdictFor('Smith_Jane.pdf', 'T', [hit('T', [])])?.tier).toBe('possible');
+    expect(verdictFor(['Smith_Jane.pdf'], 'T', [hit('T', [])])?.tier).toBe('possible');
   });
 
   /**
@@ -76,17 +76,17 @@ describe('verdictFor', () => {
    * means safety.
    */
   it('reports a row with no title as not checkable, never as clean', () => {
-    const v = verdictFor('Smith_Jane.pdf', '', []);
+    const v = verdictFor(['Smith_Jane.pdf'], '', []);
     expect(v?.tier).toBe('not-checkable');
     expect(v?.detail).toMatch(/no title/i);
   });
 
   it('treats a whitespace-only title as no title', () => {
-    expect(verdictFor('a.pdf', '   ', [])?.tier).toBe('not-checkable');
+    expect(verdictFor(['a.pdf'], '   ', [])?.tier).toBe('not-checkable');
   });
 
   it('carries the existing items through so the operator can look at them', () => {
-    const v = verdictFor('Smith_Jane.pdf', 'T', [hit('T', ['Smith_Jane.pdf'])]);
+    const v = verdictFor(['Smith_Jane.pdf'], 'T', [hit('T', ['Smith_Jane.pdf'])]);
     expect(v?.existing).toEqual([
       { uuid: 'i1', version: 1, title: 'T', attachmentNames: ['Smith_Jane.pdf'] },
     ]);
@@ -97,11 +97,11 @@ describe('verdictFor', () => {
    * come back clean rather than flagging every row in the batch.
    */
   it('ignores a hit whose title is not actually the one searched for', () => {
-    expect(verdictFor('Smith_Jane.pdf', 'Senior Recital', [hit('Something Else', ['Smith_Jane.pdf'])])).toBeNull();
+    expect(verdictFor(['Smith_Jane.pdf'], 'Senior Recital', [hit('Something Else', ['Smith_Jane.pdf'])])).toBeNull();
   });
 
   it('accepts a hit that differs only in case', () => {
-    expect(verdictFor('a.pdf', 'Senior Recital', [hit('SENIOR RECITAL', ['a.pdf'])])?.tier).toBe(
+    expect(verdictFor(['a.pdf'], 'Senior Recital', [hit('SENIOR RECITAL', ['a.pdf'])])?.tier).toBe(
       'near-certain',
     );
   });
@@ -111,7 +111,7 @@ describe('verdictFor', () => {
    * would make the entire duplicate check silently find nothing.
    */
   it('keeps a hit that carries no title of its own', () => {
-    const v = verdictFor('Smith_Jane.pdf', 'Senior Recital', [hit('', ['Smith_Jane.pdf'])]);
+    const v = verdictFor(['Smith_Jane.pdf'], 'Senior Recital', [hit('', ['Smith_Jane.pdf'])]);
     expect(v?.tier).toBe('near-certain');
   });
 });
@@ -509,7 +509,8 @@ describe('the title path is read, not assumed', () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]?.tier).toBe('could-not-check');
     expect(findings[0]?.rowNumber).toBe(2);
-    expect(findings[0]?.fileName).toBe('thesis.pdf');
+    expect(findings[0]?.source).toBe('thesis.pdf');
+    expect(findings[0]?.fileNames).toEqual(['thesis.pdf']);
   });
 
   it('treats an empty title path the same as none at all', async () => {
@@ -544,5 +545,85 @@ describe('the title path is read, not assumed', () => {
     manifest.entries[0]!.status = 'created';
     const client = { searchByTitle: async () => [] };
     expect(await findDuplicatesSignedIn(client, manifest, null)).toEqual([]);
+  });
+});
+
+describe('verdictFor -- several files', () => {
+  const files = ['No1.pdf', 'No2.pdf', 'No3.pdf'];
+
+  it('near-certain when an existing item holds every file, whatever else it holds', () => {
+    const v = verdictFor(files, 'Gazette, Volume 2', [
+      hit('Gazette, Volume 2', ['no1.pdf', 'No2.pdf', 'No3.pdf', 'cover.jpg']),
+    ]);
+    expect(v?.tier).toBe('near-certain');
+    expect(v?.detail).toBe('an item with this title already holds all 3 of these files');
+    expect(v?.fileNames).toEqual(files);
+  });
+
+  it('possible, naming held and missing, when an item holds some', () => {
+    const v = verdictFor(files, 'Gazette, Volume 2', [hit('Gazette, Volume 2', ['No1.pdf'])]);
+    expect(v?.tier).toBe('possible');
+    expect(v?.detail).toBe(
+      "an item with this title already holds 1 of these 3 files ('No1.pdf'); it does not hold " +
+        "'No2.pdf', 'No3.pdf'",
+    );
+  });
+
+  it('judges by the hit holding the most, not the first', () => {
+    const v = verdictFor(files, 'T', [hit('T', ['No1.pdf']), hit('T', files)]);
+    expect(v?.tier).toBe('near-certain');
+  });
+
+  it('does not add up partial holdings across different items', () => {
+    const v = verdictFor(files, 'T', [hit('T', ['No1.pdf', 'No2.pdf']), hit('T', ['No3.pdf'])]);
+    expect(v?.tier).toBe('possible');
+  });
+
+  it('possible, as for one file, when an item holds none of them', () => {
+    expect(verdictFor(files, 'T', [hit('T', ['other.pdf'])])?.detail).toBe(
+      'an item with this title already exists, but holds a different file',
+    );
+  });
+
+  it('a single-file row reads exactly as before', () => {
+    expect(verdictFor(['a.pdf'], 'T', [hit('T', ['a.pdf'])])?.detail).toBe(
+      "an item with this title already holds a file called 'a.pdf'",
+    );
+  });
+});
+
+describe('findDuplicates -- folder rows', () => {
+  it('names the row by its source and checks every file', async () => {
+    const manifest = {
+      version: 2 as const,
+      createdAt: 'x',
+      baseUrl: 'https://h',
+      collectionUuid: 'c',
+      schemaUuid: 's',
+      itemState: 'draft' as const,
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: [
+        {
+          rowNumber: 2,
+          source: 'V2',
+          folderPath: '/b/V2',
+          files: [
+            { path: '/b/V2/No1.pdf', name: 'No1.pdf' },
+            { path: '/b/V2/No2.pdf', name: 'No2.pdf' },
+          ],
+          metadata: { ['MWDL/title']: ['Gazette, Volume 2'] },
+          status: 'pending' as const,
+          attempts: 0,
+        },
+      ],
+    };
+    const client = {
+      searchByTitle: async () => [
+        { uuid: 'i', version: 1, name: '', attachmentNames: ['No1.pdf', 'No2.pdf'] },
+      ],
+    };
+    const [f] = await findDuplicatesSignedIn(client, manifest, 'MWDL/title');
+    expect(f).toMatchObject({ rowNumber: 2, source: 'V2', fileNames: ['No1.pdf', 'No2.pdf'], tier: 'near-certain' });
   });
 });
