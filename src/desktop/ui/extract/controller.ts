@@ -47,6 +47,8 @@ export interface ExtractControllerOptions {
 export interface ExtractController {
   state(): ExtractState;
   chooseFolder(): Promise<void>;
+  /** Switch between one row per file and one row per subfolder, rescanning. */
+  setPerFolder(on: boolean): Promise<void>;
   continue(): Promise<void>;
   back(): void;
   setPattern(pattern: string): Promise<void>;
@@ -130,7 +132,10 @@ export function createExtractController(options: ExtractControllerOptions): Extr
 
   const refreshPreview = async (profile: Profile): Promise<Partial<ExtractState>> => {
     if (state.dir === null) return { profile };
-    return { profile, preview: await options.api.extractPreview({ dir: state.dir, profile }) };
+    return {
+      profile,
+      preview: await options.api.extractPreview({ dir: state.dir, profile, perFolder: state.perFolder }),
+    };
   };
 
   /** Apply a pure column operation, then refresh the preview from the result. */
@@ -232,7 +237,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
         // are valid.
         const instanceId = options.instanceId ?? '';
         const [scan, schemaPaths, schemaNamePath] = await Promise.all([
-          options.api.extractScan(dir, instanceId),
+          options.api.extractScan(dir, instanceId, state.perFolder),
           options.api.schemaPaths(instanceId),
           options.api.schemaNamePath(instanceId),
         ]);
@@ -247,6 +252,24 @@ export function createExtractController(options: ExtractControllerOptions): Extr
         // nothing on the terminal. Guarded by tests/desktop/rendererPurity.test.ts.
         const profile = state.profile ?? scan.starter;
         return { dir, scan, schemaPaths, schemaNamePath, profile };
+      });
+    },
+
+    async setPerFolder(on) {
+      if (on === state.perFolder) return;
+      set({ perFolder: on });
+      if (state.dir === null) return;
+      const dir = state.dir;
+      const previous = state.scan;
+      await guard(async () => {
+        const scan = await options.api.extractScan(dir, options.instanceId ?? '', on);
+        // The starter is replaced only while the operator has not touched it:
+        // the old one was proposed for the OTHER kind of batch (a pattern with
+        // an extension, or without), so keeping it would mis-read every row.
+        // A profile they edited, opened or took from a template is theirs, and
+        // stays.
+        const untouched = state.profile === null || state.profile === previous?.starter;
+        return { scan, profile: untouched ? scan.starter : state.profile };
       });
     },
 
@@ -339,7 +362,14 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       // standing for a run that never happened. A confirmation should be the
       // step immediately before the thing it confirms, with nothing that can
       // still call the whole thing off in between.
-      const approval = await approveModelRun(state.profile);
+      // NO QUESTION IS ASKED IN PER-FOLDER MODE, because nothing can be sent:
+      // the model pass does not run on folder rows (core/ai/fill.ts,
+      // 'folder-row'). Asking would collect consent for something that will
+      // not happen. `sendToModel: false` is still carried, so the main process
+      // has a refusal to read even if it ever stopped checking the mode.
+      const approval: ModelApproval = state.perFolder
+        ? { proceed: true, sendToModel: false }
+        : await approveModelRun(state.profile);
       if (!approval.proceed) return;
       // Cleared before the run so a line left over from a previous save is
       // never read as this one's progress.
@@ -358,6 +388,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
           instanceId: options.instanceId ?? '',
           // The consent, carried rather than re-derived. See `ModelApproval`.
           modelApproved: approval.sendToModel,
+          perFolder: state.perFolder,
         });
         return {
           savedPath: report.outPath,

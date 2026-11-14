@@ -7,6 +7,11 @@ export type ExtractStep = 'folder' | 'columns' | 'save';
 export interface ExtractState {
   step: ExtractStep;
   dir: string | null;
+  /**
+   * One row per SUBFOLDER of `dir`, each to become one item holding all its
+   * files. Off by default, and never inferred from what the folder holds.
+   */
+  perFolder: boolean;
   scan: ExtractScan | null;
   profile: Profile | null;
   /** Where the profile came from, shown so the operator knows what they are editing. */
@@ -49,6 +54,7 @@ export function initialExtractState(): ExtractState {
   return {
     step: 'folder',
     dir: null,
+    perFolder: false,
     scan: null,
     profile: null,
     profilePath: null,

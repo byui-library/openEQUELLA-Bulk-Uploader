@@ -61,7 +61,7 @@ describe('createExtractController', () => {
     // The second argument names whose schema the columns are checked against;
     // no instance was given here, so it is empty and the main process falls
     // back to the bundled export.
-    expect(a.extractScan).toHaveBeenCalledWith('C:/files', '');
+    expect(a.extractScan).toHaveBeenCalledWith('C:/files', '', false);
     expect(c.state().dir).toBe('C:/files');
     expect(c.state().profile?.columns[0]?.path).toBe(ATTACHMENT_COLUMN);
   });
@@ -81,7 +81,7 @@ describe('createExtractController', () => {
       render: vi.fn(),
     });
     await c.chooseFolder();
-    expect(a.extractScan).toHaveBeenCalledWith('C:/files', 'https://other.example.edu');
+    expect(a.extractScan).toHaveBeenCalledWith('C:/files', 'https://other.example.edu', false);
     expect(a.schemaPaths).toHaveBeenCalledWith('https://other.example.edu');
     expect(a.schemaNamePath).toHaveBeenCalledWith('https://other.example.edu');
   });
@@ -760,5 +760,66 @@ describe('the model pass reports itself', () => {
     const { a } = withProgress();
     createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
     expect(a.onModelProgress).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createExtractController -- one row per subfolder', () => {
+  const folderScan = {
+    supported: ['Gazette_V1', 'Gazette_V2'],
+    skipped: [],
+    labels: [],
+    properties: [],
+    tableColumns: [],
+    perFolder: true,
+    starter: {
+      version: 1 as const,
+      pattern: '{part1}_{part2}',
+      columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }],
+    },
+  };
+
+  it('starts off, and rescans the chosen folder as subfolders when switched on', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    expect(c.state().perFolder).toBe(false);
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => folderScan as never);
+    await c.setPerFolder(true);
+    expect(a.extractScan).toHaveBeenLastCalledWith('C:/files', '', true);
+    expect(c.state().perFolder).toBe(true);
+    expect(c.state().scan?.supported).toEqual(['Gazette_V1', 'Gazette_V2']);
+  });
+
+  it('replaces an untouched starter profile with the new scan\'s, and keeps an edited one', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => folderScan as never);
+    await c.setPerFolder(true);
+    expect(c.state().profile?.pattern).toBe('{part1}_{part2}');
+
+    await c.setPattern('Gazette_V{volume}');
+    await c.setPerFolder(false);
+    expect(c.state().profile?.pattern).toBe('Gazette_V{volume}');
+  });
+
+  it('previews and runs per folder, never asking about a model', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({
+      getModel: vi.fn(async () => ({ model: 'm', baseUrl: 'https://hosted.example.test/v1', budget: 1000, cap: 100 })),
+    });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn(), confirm });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => folderScan as never);
+    await c.setPerFolder(true);
+    await c.continue();
+    expect(a.extractPreview).toHaveBeenLastCalledWith(expect.objectContaining({ perFolder: true }));
+    await c.continue();
+    await c.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(a.getModel).not.toHaveBeenCalled();
+    expect(a.extractRun).toHaveBeenCalledWith(
+      expect.objectContaining({ perFolder: true, modelApproved: false }),
+    );
   });
 });

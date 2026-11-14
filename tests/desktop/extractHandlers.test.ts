@@ -1,6 +1,6 @@
 // tests/desktop/extractHandlers.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerExtractHandlers, __resetExtractCache } from '../../src/desktop/extractHandlers.js';
@@ -628,5 +628,88 @@ describe('extract run and consent', () => {
       modelApproved: true,
     });
     expect(await readFile(out, 'utf8')).toMatch(/no model is configured/i);
+  });
+});
+
+describe('extract handlers -- one row per subfolder', () => {
+  beforeEach(() => __resetExtractCache());
+
+  const folderProfile: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{volume}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ join: 'Gazette, Volume {volume}' }] },
+      { path: 'MWDL/description', sources: [{ ai: true }] },
+    ],
+  };
+
+  async function volumes(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-folders-'));
+    for (const v of ['Gazette_V10', 'Gazette_V2']) {
+      await mkdir(join(dir, v));
+      await writeFile(join(dir, v, 'No1.pdf'), makePdf({ text: 'An issue of the gazette for the season.' }));
+    }
+    await writeFile(join(dir, 'stray.pdf'), makePdf({ text: 'x' }));
+    return dir;
+  }
+
+  it('scans subfolders as the rows, naming a loose file as skipped', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const scan = await ipc.call<{
+      supported: string[];
+      skipped: { file: string }[];
+      perFolder?: boolean;
+      starter: Profile;
+    }>('oeq:extractScan', await volumes(), '', true);
+    expect(scan.perFolder).toBe(true);
+    expect(scan.supported).toEqual(['Gazette_V2', 'Gazette_V10']);
+    expect(scan.skipped.map((s) => s.file)).toEqual(['stray.pdf']);
+    expect(scan.starter.pattern).not.toMatch(/\.pdf$/);
+  });
+
+  it('previews one row per subfolder', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const rows = await ipc.call<{ cells: Record<string, string> }[]>('oeq:extractPreview', {
+      dir: await volumes(),
+      profile: folderProfile,
+      perFolder: true,
+    });
+    expect(rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2', 'Gazette_V10']);
+    expect(rows[0]!.cells['MWDL/title']).toBe('Gazette, Volume 2');
+  });
+
+  it('runs one row per subfolder, sends nothing to a model even when approved, and says why', async () => {
+    const ipc = fakeIpcMain();
+    const fetchImpl = vi.fn();
+    const modelFor = vi.fn(async () => ({
+      baseUrl: 'http://localhost:11434/v1',
+      model: 'm',
+      budget: 1000,
+      cap: 100,
+    }));
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: modelFor as never,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const dir = await volumes();
+    const out = join(dir, 'out.csv');
+    const report = await ipc.call<{ written: number; aiWritten: number }>('oeq:extractRun', {
+      dir,
+      profile: folderProfile,
+      outPath: out,
+      instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
+      perFolder: true,
+    });
+    expect(report.written).toBe(2);
+    expect(report.aiWritten).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(modelFor).not.toHaveBeenCalled();
+    expect(await readFile(out, 'utf8')).toContain('rows built from a folder are not supported by the model pass yet');
   });
 });

@@ -9,11 +9,11 @@ import {
   extractItemNamePath,
   parseSchemaPaths,
 } from '../core/schema.js';
-import { extractFolder, listFolder } from '../core/extract/extract.js';
+import { extractFolder, extractFolders, listFolder, listSubfolders } from '../core/extract/extract.js';
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
 import { evidenceFrom, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
-import { buildRow } from '../core/extract/rows.js';
+import { buildFolderRow, buildRow, type FolderDoc } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
 import { starterProfile, type StarterSchema } from '../core/extract/suggest.js';
@@ -31,7 +31,11 @@ const PREVIEW_ROWS = 5;
 
 interface CacheEntry {
   dir: string;
+  /** Which kind of batch this sample is of: the same folder reads differently in each. */
+  perFolder: boolean;
   docs: { filename: string; doc: DocumentData }[];
+  /** Per-folder mode only: the first few subfolders, each with its readable files. */
+  folders: { name: string; docs: FolderDoc[] }[];
 }
 let cache: CacheEntry | null = null;
 
@@ -46,8 +50,29 @@ export function __resetExtractCache(): void {
  * INSIDE the cache miss: it used to run at both call sites before this was
  * invoked, so every column edit walked the directory and discarded the result.
  */
-async function sample(dir: string): Promise<CacheEntry> {
-  if (cache?.dir === dir) return cache;
+async function sample(dir: string, perFolder = false): Promise<CacheEntry> {
+  if (cache?.dir === dir && cache.perFolder === perFolder) return cache;
+  if (perFolder) {
+    // The first few SUBFOLDERS, each read whole, because a folder row is
+    // built from all of its files. `docs` is the same documents flattened,
+    // for the evidence the starter profile is proposed from.
+    const { folders: listed } = await listSubfolders(dir);
+    const folders: CacheEntry['folders'] = [];
+    for (const folder of listed.slice(0, PREVIEW_ROWS)) {
+      const docs: FolderDoc[] = [];
+      for (const name of folder.readable) {
+        try {
+          docs.push({ name, doc: await readDocument(join(dir, folder.name, name)) });
+        } catch {
+          // Noted on the row by the real run; the preview carries on without it.
+        }
+      }
+      folders.push({ name: folder.name, docs });
+    }
+    const docs = folders.flatMap((f) => f.docs.map((d) => ({ filename: d.name, doc: d.doc })));
+    cache = { dir, perFolder, docs, folders };
+    return cache;
+  }
   const { supported } = await listFolder(dir);
   const docs: { filename: string; doc: DocumentData }[] = [];
   for (const filename of spreadAcrossTypes(supported, Math.max(PREVIEW_ROWS, SAMPLE_DOCS))) {
@@ -58,7 +83,7 @@ async function sample(dir: string): Promise<CacheEntry> {
       // it must not stop the sample, or one bad file blanks the whole preview.
     }
   }
-  cache = { dir, docs };
+  cache = { dir, perFolder, docs, folders: [] };
   return cache;
 }
 
@@ -138,15 +163,23 @@ export interface ExtractHandlerOptions {
 }
 
 export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandlerOptions): void {
-  ipcMain.handle(CHANNELS.extractScan, async (_e, dir: string, instanceId?: string): Promise<ExtractScan> => {
+  ipcMain.handle(
+    CHANNELS.extractScan,
+    async (_e, dir: string, instanceId?: string, perFolder?: boolean): Promise<ExtractScan> => {
     // listFolder is core's own, shared with extractFolder. This handler used to
     // reimplement it, with a shorter skip reason that omitted the extension --
     // so a skipped file was described one way here and another way in the run
-    // that followed.
-    const { supported, skipped } = await listFolder(dir);
+    // that followed. listSubfolders is the same for a batch of folders: what
+    // the scan reports is what the run will read.
+    const byFolder = perFolder === true;
+    const subfolders = byFolder ? await listSubfolders(dir) : null;
+    const { supported, skipped } =
+      subfolders !== null
+        ? { supported: subfolders.folders.map((f) => f.name), skipped: subfolders.skipped }
+        : await listFolder(dir);
 
     cache = null;
-    const { docs } = await sample(dir);
+    const { docs } = await sample(dir, byFolder);
 
     // Shared with the CLI's --init-profile. It used to live here, which meant
     // a CLI-built profile had no description sources and no table mappings at
@@ -168,13 +201,23 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
         supported,
         (await cachedFor(instanceId)) ?? (await bundledSchemaOnce(options.schemaFile)),
         evidence,
+        // Folder names carry no extension; see suggest.ts#detectPattern.
+        { folders: byFolder },
       ),
+      ...(byFolder ? { perFolder: true } : {}),
     };
   });
 
   ipcMain.handle(
     CHANNELS.extractPreview,
-    async (_e, args: { dir: string; profile: Profile }): Promise<ExtractedRow[]> => {
+    async (
+      _e,
+      args: { dir: string; profile: Profile; perFolder?: boolean },
+    ): Promise<ExtractedRow[]> => {
+      if (args.perFolder === true) {
+        const { folders } = await sample(args.dir, true);
+        return folders.map((f) => buildFolderRow(args.profile, f.name, f.docs));
+      }
       const { docs } = await sample(args.dir);
       return docs
         .slice(0, PREVIEW_ROWS)
@@ -192,12 +235,29 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
         outPath: string;
         instanceId?: string;
         modelApproved?: boolean;
+        perFolder?: boolean;
       },
     ): Promise<ExtractRunReport> => {
       // THE MODEL PASS BELONGS HERE AND NOT IN extractPreview. The preview
       // re-renders on every column edit, so running it there is a paid call per
       // keystroke. This is the one place a document is read for real.
       const wantsModel = modelColumns(args.profile).length > 0;
+
+      // ONE ROW PER SUBFOLDER: no model, whatever was approved, and no endpoint
+      // is even read. The model pass checks a value against one document and a
+      // folder row has several (core/ai/fill.ts, 'folder-row'); the cells that
+      // asked for one say so instead of looking like documents that said nothing.
+      if (args.perFolder === true) {
+        const result = await extractFolders(args.dir, args.profile);
+        if (wantsModel) noteMissingModel(result.rows, args.profile, 'folder-row');
+        await writeCsv(args.outPath, args.profile, result.rows);
+        return {
+          outPath: args.outPath,
+          written: result.rows.length,
+          flagged: countNeedingReview(result.rows),
+          aiWritten: countModelWritten(result.rows),
+        };
+      }
       // CONSENT IS A CONDITION OF RESOLVING THE ENDPOINT AT ALL, not a thing
       // checked after. Without `modelApproved` this handler decided on its own
       // reading of the store whether to send -- so a renderer whose read of that

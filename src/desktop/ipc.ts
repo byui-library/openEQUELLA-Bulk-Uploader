@@ -401,9 +401,12 @@ export interface OeqApi {
    * `schemaPaths`, so the starter and the Add-column picker cannot disagree
    * about which columns are valid.
    */
-  extractScan(dir: string, instanceId?: string): Promise<ExtractScan>;
-  /** First few rows for the live preview. Cheap enough to call on every edit. */
-  extractPreview(args: { dir: string; profile: Profile }): Promise<ExtractedRow[]>;
+  extractScan(dir: string, instanceId?: string, perFolder?: boolean): Promise<ExtractScan>;
+  /**
+   * First few rows for the live preview. Cheap enough to call on every edit.
+   * `perFolder` builds one row per subfolder, as the run will.
+   */
+  extractPreview(args: { dir: string; profile: Profile; perFolder?: boolean }): Promise<ExtractedRow[]>;
   /**
    * Write the spreadsheet.
    *
@@ -439,6 +442,11 @@ export interface OeqApi {
      * rather than sending unasked.
      */
     modelApproved?: boolean;
+    /**
+     * One row per subfolder. Nothing is sent to a model in this mode, whatever
+     * `modelApproved` says -- see core/ai/fill.ts, 'folder-row'.
+     */
+    perFolder?: boolean;
   }): Promise<ExtractRunReport>;
   /**
    * Every valid schema xpath, for the Add-column picker.
@@ -491,8 +499,10 @@ export interface OeqApi {
 
 /** What a folder actually contains, and what evidence is available to map from. */
 export interface ExtractScan {
-  /** Supported files, sorted. */
+  /** Supported files, sorted -- or, with `perFolder`, the subfolders that will become rows. */
   supported: string[];
+  /** Set when the scan was of subfolders, each to become one row. */
+  perFolder?: boolean;
   /** Files that will not be read, each with a reason. */
   skipped: { file: string; reason: string }[];
   /** `Label:` names found in the sampled documents, deduplicated. */
