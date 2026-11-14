@@ -2,6 +2,40 @@
 
 Read this first.
 
+## RESUME HERE — several files on one contribution is BUILT (2026-11-13)
+
+Branch `feature/multi-file-items`, not pushed, no PR yet. Built task by task
+from [the plan](superpowers/plans/2026-11-13-multi-file-items.md) against
+[the design](superpowers/specs/2026-11-13-multi-file-items-design.md); every
+task TDD with its mutation checks; typecheck, full suite and `build:desktop`
+clean.
+
+**Checked on the real batch, offline.** `extract --per-folder` with
+`templates/snake-river-echoes.profile.json` over the 38 SRE volume folders,
+then `plan --skip-duplicate-check`: 38 items, all 103 files placed, no
+warnings, volumes in natural order. Only three volumes need a human:
+
+- **Vol 2** — `SRE_1972-73_Vol2_No3.pdf` is attached FIRST (see the spec's
+  correction: ignoring punctuation does not fix it). Rename to fix.
+- **Vol 3** — holds `SRE_1973_Vol2_No4.pdf` (a Vol 2 issue, filed here) and
+  `SRE_1974_Vol3_Num3.pdf`, a second, different third issue (different size
+  and checksum from `No3`). Both upload with Vol 3 unless moved or renamed.
+- **Vol 27** — `SRE_1998_Commemorative.pdf` is attached first.
+
+**Next, in order:**
+
+1. The operator reviews the order above and renames what they want moved.
+2. The operator confirms or changes the template's constants (genre
+   `Periodical`, rights `Public`, conversion `Scanned to PDF`, source `None`)
+   -- they were proposed, not decided.
+3. **Live check, operator present:** Vol 2 to content-test as a DRAFT through
+   the desktop app (extract with the toggle, Review shows the order, run). The
+   operator confirms in openEQUELLA that the issues are attached in order and
+   each opens. Ask before running -- it creates a real item.
+4. Push, open the PR, read the automated review comments, merge.
+5. Release **v1.3.0** -- the first release carrying Electron 44 and folder
+   rows. Install it on a staff machine before it reaches the share.
+
 ## State on 2026-11-13
 
 - **v1.2.2 is released** (PR #18, tagged 2026-11-12, Electron 33): password

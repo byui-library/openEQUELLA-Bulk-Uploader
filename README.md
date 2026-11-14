@@ -1,8 +1,9 @@
 # openEQUELLA Bulk Uploader
 
 A local tool for bulk-creating openEQUELLA contributions from a directory of
-files plus a metadata spreadsheet. One file becomes one attachment on one
-contribution — a strict 1:1 relationship. It works at any openEQUELLA
+files plus a metadata spreadsheet. One spreadsheet row becomes one
+contribution, holding either one file or every file in one folder — see
+[Several files on one contribution](#several-files-on-one-contribution). It works at any openEQUELLA
 installation: the collection, the schema, the field that holds an item's title
 and the field that holds an attachment uuid are all read from the instance or
 supplied as configuration, never assumed. It was built for the BYU-Idaho
@@ -380,6 +381,127 @@ Notes:
 - Unknown headers block `plan` and print nearest-match suggestions; run
   `oeq_list_schema_paths` / `oeq_validate_sheet` (MCP) to find the right
   xpath first if you're not sure.
+
+## Several files on one contribution
+
+A row's `attachment name` may name a **subfolder** of the batch folder instead
+of a file. That row becomes one contribution, and every file in the folder is
+attached to it, in name order. Use it for anything that is one record with
+several parts — a journal volume and its issues, a recital and its programme
+pages.
+
+```text
+batch/
+  SRE_Vol2/
+    SRE_1972_Vol2_No1.pdf
+    SRE_1972_Vol2_No2.pdf
+    SRE_1972-73_Vol2_No3.pdf
+  SRE_Vol27/
+    SRE_1998_Commemorative.pdf
+    SRE_1998_Vol27_No1.pdf
+    SRE_1998_Vol27_No2.pdf
+```
+
+| attachment name | MWDL/title |
+| --- | --- |
+| SRE_Vol2 | Snake River Echoes, Volume 2 |
+| SRE_Vol27 | Snake River Echoes, Volume 27 |
+
+### The order is a rule, and you fix it by renaming
+
+Files are attached in **natural name order, ignoring case and punctuation**:
+`No9` comes before `No10`, and `No2&3` sits between `No1` and `No4`. It is one
+rule, used by `plan`, `extract` and the run alike, and it cannot know what a
+file *means*:
+
+| In the folder | Attached in this order | Why |
+| --- | --- | --- |
+| `…_No9.pdf`, `…_No10.pdf` | No9, No10 | numbers compare by value |
+| `SRE_1972_Vol2_No1.pdf`, `SRE_1972-73_Vol2_No3.pdf` | **No3 first** | punctuation is ignored, so `1972-73` reads as `1972 73`, and digits sort before the letters of `Vol` |
+| `SRE_1998_Commemorative.pdf`, `SRE_1998_Vol27_No1.pdf` | **Commemorative first** | `C` comes before `V` |
+
+When the order is wrong, **rename the file** so that it sorts where it
+belongs, then plan again. Nothing reorders files behind your back, so what you
+rename is what is uploaded. **`plan` prints every folder's files in upload
+order** (the desktop app shows them on the Review screen) so you can check it
+before anything is sent:
+
+```text
+Planned 38 item(s) -> job.json
+  Row 3: SRE_Vol2 (3 files), in upload order:
+      1. SRE_1972-73_Vol2_No3.pdf
+      2. SRE_1972_Vol2_No1.pdf
+      3. SRE_1972_Vol2_No2.pdf
+```
+
+### What counts as the folder's contents
+
+- **Every file, of any type**, is attached — a PDF, an image, a spreadsheet.
+- **Clutter is skipped and named**, never silently: `Thumbs.db`, `desktop.ini`,
+  `.DS_Store`, any name beginning with `.`, and Office lock files beginning
+  with `~$`.
+- **A folder inside the folder refuses the whole row**, and so does an empty
+  folder. The row is skipped with the reason as a plan warning; it is never
+  uploaded with fewer files than the folder holds, because an item missing an
+  issue reads as complete to everyone who finds it later.
+- In a batch that uses folders, a folder **no row names** is reported, since
+  it is a volume that would silently not be contributed.
+
+### Do not change a folder between planning and running
+
+The plan records each file's name and size. Before a folder row creates
+anything, the run lists the folder again; a file added, removed or resized
+since then fails the row with *"the folder changed since planning (…); plan
+again"*. A 0-byte file fails it too. That is deliberate: what you reviewed is
+what is uploaded, or nothing is.
+
+All of a row's files go into one staging area and are attached in one
+request. If the session expires partway through a folder, the whole row is
+started again once, from its first file.
+
+Job files written before this existed still resume. They never recorded
+sizes, so for those rows the run checks that each file is present, but cannot
+tell a same-named replacement.
+
+### Duplicates
+
+The title search works as for a single file. What an existing item already
+holds decides the verdict:
+
+- it holds **every** file in the folder — *near-certain*, skipped by default;
+- it holds **some** of them — *possible*, uploaded by default, and the reason
+  names which files it holds and which it does not;
+- it holds **none** — *possible*, as for a single file.
+
+### Building the spreadsheet from a folder of folders
+
+`extract --per-folder` (or **One row per subfolder** on the desktop app's
+folder screen) writes one row per subfolder, with the folder's name in
+`attachment name`. It is never switched on by what the folder happens to
+contain — you choose it.
+
+- The profile's **pattern, `filename` and `filenameStem` read the folder
+  name**, so `"pattern": "SRE_Vol{volume}"` gives every volume its number.
+- Every other source reads the folder's files **in attachment order, and the
+  first file that answers wins**. A value that came from any file but the
+  first is noted in `_notes`, naming the file.
+- A column with **`"each": true`** collects one value from every file instead
+  — in order, without repeats — joined by semicolons, the separator `plan`
+  splits repeated values on.
+- A file the readers cannot open is still attached, and noted on its row.
+- **The language model does not fill rows built from a folder** in this
+  release. Its safety check compares a generated value against one document,
+  and which document that should be for a whole volume is a separate design.
+  Those cells say so in `_notes`; `--ai --per-folder` is refused.
+
+`templates/snake-river-echoes.profile.json` is a worked example: a volume
+title and identifier from the folder name, and the collection's fixed values.
+
+```sh
+oeq-upload extract --dir batch --profile templates/snake-river-echoes.profile.json --per-folder --dry-run
+oeq-upload extract --dir batch --profile templates/snake-river-echoes.profile.json --per-folder --out batch.csv
+oeq-upload plan --sheet batch.csv --files batch
+```
 
 ## CLI usage
 

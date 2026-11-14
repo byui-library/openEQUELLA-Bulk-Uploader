@@ -28,7 +28,10 @@ order sent**; client-supplied attachment uuids are honoured; each opens.
 Measured 2026-11-13. Every case below is a test case.
 
 - Vol 2: `SRE_1972-73_Vol2_No3.pdf` sorts **before** `SRE_1972_Vol2_No1.pdf` in
-  plain name order (`-` < `_`). Ignoring punctuation puts it last, correctly.
+  plain name order (`-` < `_`). **Ignoring punctuation does NOT fix it** --
+  corrected while planning, 2026-11-13: with punctuation ignored the
+  comparison reaches `73` against `Vol`, and digits sort before letters, so
+  it still sorts first. A renaming case, like Vol 27; pinned by a test.
 - Vol 3: six files, including a 1973 `Vol2_No4` filed there and a second, different
   third issue named `Num3`. Sorting cannot judge these; the plan must show them.
 - Vol 4: `No2&3` — `&` in a filename that goes into a staging URL path.
@@ -63,8 +66,9 @@ Measured 2026-11-13. Every case below is a test case.
   `source: string` (what `attachment name` said: a filename or folder name — the
   row's display label). `attachmentUuid` becomes `attachmentUuids: string[]`.
 - `Manifest.version` becomes `2`. **A v1 manifest loads**: each entry maps to a
-  one-element `files` list (size read at load, as v1 did not record it — a v1
-  row's size check is skipped, and the code says so), `source` = `fileName`,
+  one-element `files` list with **no size** (v1 did not record one, and reading
+  today's size at load would make the check compare a file with itself -- so a
+  v1 row's size check is skipped, and `ManifestFile.size` says so), `source` = `fileName`,
   `attachmentUuids` = `[attachmentUuid]` when present. Saved back as v2.
 - Single-file rows plan as one-element lists; there is one code path.
 

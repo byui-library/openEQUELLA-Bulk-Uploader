@@ -1,8 +1,10 @@
 # openEQUELLA Bulk Uploader
 
 A local tool for bulk-creating openEQUELLA contributions from a directory of files
-plus a metadata spreadsheet. One file becomes one attachment on one contribution —
-a strict 1:1 relationship.
+plus a metadata spreadsheet. **One spreadsheet row becomes one contribution**,
+holding either one file or every file in one folder (in `folderFiles.ts` order).
+It was a strict one-file-one-item tool until the folder work of 2026-11-13; much
+of the commentary below predates that and says "file" where it now means "row".
 
 Works at any openEQUELLA institution. BYU-Idaho (`https://content.byui.edu`) is
 one configuration of it, not the only one it fits — but it is the **only** one
@@ -131,10 +133,22 @@ history**, deliberately: the 2026-10-02 rewrite covered third parties only.
 Do not re-introduce a real name to describe the incident — this paragraph
 used to quote the surname it was warning about.
 
-**Electron 44 is on an open PR, `chore/electron-upgrade`** (2026-10-02),
-replacing an out-of-support Electron 33 that ships in every installer. Checked
-by launching the dev and packaged builds over CDP, not only by the suite. Not
-yet in any release, and not yet installed on a staff machine.
+**Electron 44 is MERGED (PR #17)**, replacing an out-of-support Electron 33
+that ships in every installer up to v1.2.2. Checked by launching the dev and
+packaged builds over CDP, not only by the suite. Not yet in any release, and
+not yet installed on a staff machine; v1.3.0 will be the first to carry it.
+
+**Several files on one contribution is BUILT, on `feature/multi-file-items`**
+(2026-11-13), not yet merged or released. A row's `attachment name` may name a
+subfolder; every file in it becomes an attachment of one item, in
+`folderFiles.ts#orderFiles` order. Manifest v2 (`files: ManifestFile[]`); v1
+still loads. The extractor gains `--per-folder` / a desktop toggle and the
+`each` column option; the model pass does NOT run on folder rows. Proven live
+before design (2026-11-11, content-test): one staging area, N PUTs, one
+`POST /api/item` with N attachments is accepted, **order is kept**, client
+uuids are honoured. Still to do: a live Vol 2 draft through the desktop app,
+the operator's review of the 38-volume plan, merge, release v1.3.0.
+Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
 both BYU-Idaho sites**, because openEQUELLA now refuses the old query-string
@@ -214,6 +228,9 @@ The spec lives at
 ```text
 files/            Batch inputs — MP4s + spreadsheet. GITIGNORED (size + student names).
 src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by every front end.
+  folderFiles.ts    THE upload order of a folder's files (orderFiles) and what a folder
+                    contributes (listFolderFiles). Plan, run and extractor all use it.
+  folderReport.ts   Pure. How a plan lists each folder row's files -- CLI, MCP and desktop.
   discovery.ts      Parses /api/collection and /api/schema. PURE — never fetches, so every
                     response shape is pinned against a recorded fixture.
   schemaCache.ts    A fetched schema on disk, keyed (instance url, schema uuid). Exists so
@@ -476,6 +493,20 @@ shape, never as a value the code may assume.
   would also stop the leak, and is deliberately NOT done**: one long-lived
   session would serve every later request, and a session openEQUELLA has since
   expired is answered as the guest with 200 and empty data, never a 401.
+- **One item may hold several files, and openEQUELLA keeps their order.**
+  Proven live on content-test, 2026-11-11, and checked by the operator in
+  openEQUELLA's own interface: one staging area, several `PUT`s, one
+  `POST /api/item` listing N attachments creates one item whose attachments
+  appear in the order sent, each with the client-supplied uuid. That is the
+  whole mechanism of a folder row. **The order is the tool's rule, not a
+  judgement** -- `folderFiles.ts#orderFiles` is natural, case- and
+  punctuation-blind, and it puts a hyphenated year range (`1972-73`) BEFORE
+  the plain year, because with punctuation ignored the comparison reaches
+  `73` against `Vol` and digits sort first. The operator's remedy for a wrong
+  order is renaming files (decided 2026-11-13), which only works because every
+  surface prints the order before the run. Do not "fix" the collator to suit
+  one batch: a second rule is a second order the plan and the run can disagree
+  about.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.
