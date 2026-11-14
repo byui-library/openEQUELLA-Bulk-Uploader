@@ -424,3 +424,35 @@ describe('runManifest -- folder rows', () => {
     );
   });
 });
+
+describe('runManifest -- a server that reports fewer attachments', () => {
+  it('marks the row incomplete even with no uuid path configured', async () => {
+    const f = join(dir, 'V3');
+    await mkdir(f);
+    await writeFile(join(f, 'No1.pdf'), 'a');
+    await writeFile(join(f, 'No2.pdf'), 'bb');
+    const m = manifest();
+    m.entries = [
+      {
+        rowNumber: 2,
+        source: 'V3',
+        folderPath: f,
+        files: [
+          { path: join(f, 'No1.pdf'), name: 'No1.pdf', size: 1 },
+          { path: join(f, 'No2.pdf'), name: 'No2.pdf', size: 2 },
+        ],
+        metadata: { 'MWDL/title': ['Gazette, Volume 3'] },
+        status: 'pending',
+        attempts: 0,
+      },
+    ];
+    const path = join(dir, 'job.json');
+    await saveManifest(path, m);
+    mock.state.dropAttachmentsNext = 1;
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.incomplete).toBe(1);
+    const entry = (await loadManifest(path)).entries[0]!;
+    expect(entry.status).toBe('incomplete');
+    expect(entry.error).toMatch(/reported 1 attachment\(s\) on the item, but 2 file\(s\) were sent/);
+  });
+});

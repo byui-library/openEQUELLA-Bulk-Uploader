@@ -159,7 +159,10 @@ function sourceKind(source: Source): string {
 }
 
 interface Context {
+  /** The ROW's name: a filename, or a folder name for a folder row. */
   filename: string;
+  /** True when `filename` is a folder's name, which has no extension to strip. */
+  folder: boolean;
   parts: Record<string, string> | null;
   labels: Map<string, string>;
   doc: DocumentData;
@@ -186,7 +189,9 @@ function resolve(source: Source, context: Context): Resolved {
   if ('filenameStem' in source) {
     // Only the LAST extension. Titles in a real batch are full of dots --
     // "22. Salazar_proof_10pix1line_revised" -- and cutting at the first would
-    // leave "22".
+    // leave "22". A FOLDER has no extension at all: "Echoes Vol. 12" is the
+    // whole name, and cutting at its last dot would title it "Echoes Vol".
+    if (context.folder) return { value: context.filename };
     return { value: context.filename.replace(/\.[^.\\/]+$/, '') };
   }
 
@@ -389,10 +394,16 @@ function fillAcross(
       if (found === null) continue;
       answered += 1;
       source ??= found.source;
-      const key = found.value.toLowerCase();
-      if (!seen.has(key)) {
+      // De-duplicated PER VALUE, not per cell: a file whose cell already holds
+      // several values ("Aster, A.; Birch, B.") is split first, or a name every
+      // issue repeats would be written once per issue that lists it -- and
+      // plan's splitRepeatable would make each one its own element.
+      for (const part of found.value.split(VALUE_SEPARATOR)) {
+        const value = part.trim();
+        const key = value.toLowerCase();
+        if (value === '' || seen.has(key)) continue;
         seen.add(key);
-        values.push(found.value);
+        values.push(value);
       }
     }
     if (values.length > 0) {
@@ -522,7 +533,7 @@ function build(
     file: f.name,
     // `filename` is the ROW's name -- the folder's, for a folder row -- so
     // every filename-reading source reads it, whichever file is in use.
-    context: { filename: name, parts, labels: findLabels(f.doc.text), doc: f.doc, composed },
+    context: { filename: name, folder, parts, labels: findLabels(f.doc.text), doc: f.doc, composed },
   }));
 
   const cells: Record<string, string> = {};
@@ -550,9 +561,11 @@ function build(
   }
 
   for (const column of profile.columns.filter(isComposed)) {
-    // A compose reads `composed`, not a document, so ONE context is enough and
-    // asking every file would only repeat the same answer.
-    const { value, source } = fillAcross(column, contexts.slice(0, 1), notes, flagged);
+    // EVERY context, not just the first. The compose itself reads `composed`
+    // and answers the same in each, so it wins at the first file when it wins
+    // at all; but a fallback source after it reads documents, and must see
+    // every file like any other column's sources do.
+    const { value, source } = fillAcross(column, contexts, notes, flagged);
     // The same override as the first pass. profile.ts rejects a composed
     // attachment column, but the two passes applying different rules is how
     // that got through review at all -- a row naming something that is not

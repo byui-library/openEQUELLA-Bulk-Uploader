@@ -1,6 +1,6 @@
 // src/core/duplicates.ts
 
-import { sameFileName, type Manifest } from './types.js';
+import { rowLabel, sameFileName, type Manifest } from './types.js';
 
 /**
  * One item already in the collection, as the rules below need to see it.
@@ -32,6 +32,12 @@ export interface DuplicateFinding {
   rowNumber: number;
   /** The row's source: a filename, or a folder name for a folder row. */
   source: string;
+  /**
+   * The row as `types.ts#rowLabel` names it everywhere else -- computed from
+   * the entry, never re-derived from the file count, so a one-file folder
+   * reads "Vol9 (1 file)" here exactly as in the plan and the run.
+   */
+  label: string;
   /** Every file the row would attach, in upload order. One for a file row. */
   fileNames: string[];
   tier: DuplicateTier;
@@ -42,22 +48,13 @@ export interface DuplicateFinding {
 }
 
 /**
- * How a finding names its row: the source, with a file count for a folder
- * row. The same shape `types.ts#rowLabel` gives a manifest entry, so a row
- * reads alike in the duplicate list and everywhere else.
- */
-export function findingLabel(f: Pick<DuplicateFinding, 'source' | 'fileNames'>): string {
-  return f.fileNames.length > 1 ? `${f.source} (${f.fileNames.length} files)` : f.source;
-}
-
-/**
  * The verdict for one row, or null if there is nothing to say.
  *
  * `rowNumber` is omitted: this function is given one row's facts, not the
  * row itself, which is what keeps it testable without a manifest. Omitting
  * it from the type (rather than defaulting it to 0, which does not exist as
  * a spreadsheet row) makes the compiler enforce that every caller supplies
- * the real row number. `source` is omitted for the same reason: it labels a
+ * the real row number. `source` and `label` are omitted for the same reason: they label a
  * row, and the rule does not depend on it.
  *
  * `fileNames` is every file the row would attach -- one for a file row, the
@@ -67,7 +64,7 @@ export function verdictFor(
   fileNames: readonly string[],
   title: string,
   hits: readonly ExistingItemHit[],
-): Omit<DuplicateFinding, 'rowNumber' | 'source'> | null {
+): Omit<DuplicateFinding, 'rowNumber' | 'source' | 'label'> | null {
   const names = [...fileNames];
   if (title.trim() === '') {
     return {
@@ -234,6 +231,7 @@ export async function findDuplicates(
     return pending.map((entry) => ({
       rowNumber: entry.rowNumber,
       source: entry.source,
+      label: rowLabel(entry),
       fileNames: entry.files.map((f) => f.name),
       tier: 'could-not-check' as const,
       detail: UNKNOWN_TITLE_PATH_DETAIL,
@@ -258,6 +256,7 @@ export async function findDuplicates(
     return pending.map((entry) => ({
       rowNumber: entry.rowNumber,
       source: entry.source,
+      label: rowLabel(entry),
       fileNames: entry.files.map((f) => f.name),
       tier: 'could-not-check' as const,
       detail: unchecked,
@@ -277,12 +276,15 @@ export async function findDuplicates(
               ? []
               : await client.searchByTitle(manifest.collectionUuid, title, titleHeader);
           const verdict = verdictFor(entry.files.map((f) => f.name), title, hits);
-          return verdict ? { ...verdict, rowNumber: entry.rowNumber, source: entry.source } : null;
+          return verdict
+            ? { ...verdict, rowNumber: entry.rowNumber, source: entry.source, label: rowLabel(entry) }
+            : null;
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           return {
             rowNumber: entry.rowNumber,
             source: entry.source,
+            label: rowLabel(entry),
             fileNames: entry.files.map((f) => f.name),
             tier: 'could-not-check' as const,
             detail: `could not check whether this already exists (${detail})`,

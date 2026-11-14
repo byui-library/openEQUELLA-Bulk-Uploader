@@ -257,10 +257,16 @@ export function createExtractController(options: ExtractControllerOptions): Extr
 
     async setPerFolder(on) {
       if (on === state.perFolder) return;
-      set({ perFolder: on });
-      if (state.dir === null) return;
+      if (state.dir === null) {
+        set({ perFolder: on });
+        return;
+      }
       const dir = state.dir;
       const previous = state.scan;
+      // The mode changes ONLY WITH the scan that matches it. Set first, a
+      // failed rescan left "folders" switched on over a per-file scan and
+      // profile -- the screen counting files as folders, and the run reading a
+      // per-file pattern against folder names.
       await guard(async () => {
         const scan = await options.api.extractScan(dir, options.instanceId ?? '', on);
         // The starter is replaced only while the operator has not touched it:
@@ -269,7 +275,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
         // A profile they edited, opened or took from a template is theirs, and
         // stays.
         const untouched = state.profile === null || state.profile === previous?.starter;
-        return { scan, profile: untouched ? scan.starter : state.profile };
+        return { perFolder: on, scan, profile: untouched ? scan.starter : state.profile };
       });
     },
 

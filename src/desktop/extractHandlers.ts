@@ -9,10 +9,16 @@ import {
   extractItemNamePath,
   parseSchemaPaths,
 } from '../core/schema.js';
-import { extractFolder, extractFolders, listFolder, listSubfolders } from '../core/extract/extract.js';
+import {
+  extractFolder,
+  extractFolders,
+  listFolder,
+  listSubfolders,
+  type SubfolderListing,
+} from '../core/extract/extract.js';
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
-import { evidenceFrom, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
+import { evidenceFrom, scanFolderEvidence, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
 import { buildFolderRow, buildRow, type FolderDoc } from '../core/extract/rows.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
@@ -50,13 +56,15 @@ export function __resetExtractCache(): void {
  * INSIDE the cache miss: it used to run at both call sites before this was
  * invoked, so every column edit walked the directory and discarded the result.
  */
-async function sample(dir: string, perFolder = false): Promise<CacheEntry> {
+async function sample(dir: string, perFolder = false, listing?: SubfolderListing): Promise<CacheEntry> {
   if (cache?.dir === dir && cache.perFolder === perFolder) return cache;
   if (perFolder) {
     // The first few SUBFOLDERS, each read whole, because a folder row is
     // built from all of its files. `docs` is the same documents flattened,
     // for the evidence the starter profile is proposed from.
-    const { folders: listed } = await listSubfolders(dir);
+    // The scan hands its own listing in, so one scan walks the folder once and
+    // the preview is sampled from exactly the folders the scan reported.
+    const { folders: listed } = listing ?? (await listSubfolders(dir));
     const folders: CacheEntry['folders'] = [];
     for (const folder of listed.slice(0, PREVIEW_ROWS)) {
       const docs: FolderDoc[] = [];
@@ -179,12 +187,18 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
         : await listFolder(dir);
 
     cache = null;
-    const { docs } = await sample(dir, byFolder);
+    const { docs } = await sample(dir, byFolder, subfolders ?? undefined);
 
     // Shared with the CLI's --init-profile. It used to live here, which meant
     // a CLI-built profile had no description sources and no table mappings at
     // all -- every fix for descriptions reached the GUI only.
-    const evidence = evidenceFrom(docs.map((d) => d.doc));
+    // Per folder, the SAME sample the CLI's --init-profile --per-folder takes
+    // (scanFolderEvidence), so the two front ends cannot propose different
+    // starters for one batch.
+    const evidence =
+      subfolders !== null
+        ? await scanFolderEvidence(dir, subfolders)
+        : evidenceFrom(docs.map((d) => d.doc));
 
     return {
       ...evidence,

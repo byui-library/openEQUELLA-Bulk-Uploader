@@ -500,3 +500,21 @@ describe('detectPattern -- folder names', () => {
     expect(detectPattern(['Vol.1', 'Vol.2'], { folders: true })).toBe('{part1}');
   });
 });
+
+describe('starterProfile -- folders', () => {
+  it("titles a folder row from the folder name, never from one document's title or table", () => {
+    const profile = starterProfile(
+      ['Gazette_V1', 'Gazette_V2'],
+      byui,
+      { labels: [], properties: ['title'], tableColumns: ['Title'], sections: [] },
+      { folders: true },
+    );
+    const title = profile.columns.find((c) => c.path === 'MWDL/title');
+    expect(title?.sources).toEqual([{ filenameStem: true }]);
+  });
+
+  it('keeps the document title first for a file row', () => {
+    const title = starterProfile(['a.pdf'], byui).columns.find((c) => c.path === 'MWDL/title');
+    expect(title?.sources[0]).toEqual({ property: 'title' });
+  });
+});

@@ -1033,3 +1033,53 @@ describe('buildFolderRow', () => {
     expect(flagged.notes.join(' ')).toMatch(/check this folder name/);
   });
 });
+
+describe('buildFolderRow -- review fixes', () => {
+  const doc = (text: string, title = ''): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: title ? { title } : {},
+    tables: [],
+  });
+  const withColumns = (columns: Column[]): Profile => ({
+    version: 1,
+    pattern: '{name}',
+    columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }, ...columns],
+  });
+
+  it('filenameStem keeps a dot in a folder name -- a folder has no extension', () => {
+    const row = buildFolderRow(
+      withColumns([{ path: 'MWDL/title', sources: [{ filenameStem: true }] }]),
+      'Echoes Vol. 12',
+      [{ name: 'a.pdf', doc: doc('') }],
+    );
+    expect(row.cells['MWDL/title']).toBe('Echoes Vol. 12');
+  });
+
+  it('each: removes a repeated name inside a multi-valued cell, not just a repeated cell', () => {
+    const row = buildFolderRow(
+      withColumns([{ path: 'MWDL/creators/creator', sources: [{ property: 'author' }], each: true }]),
+      'V2',
+      [
+        { name: 'a.pdf', doc: { ...doc(''), properties: { author: 'Aster, A.; Birch, B.' } } },
+        { name: 'b.pdf', doc: { ...doc(''), properties: { author: 'birch, b.' } } },
+      ],
+    );
+    expect(row.cells['MWDL/creators/creator']).toBe('Aster, A.; Birch, B.');
+  });
+
+  it("a composed column's fallback sources still read every file", () => {
+    const row = buildFolderRow(
+      withColumns([
+        { path: 'MWDL/coverage', as: 'x', composeOnly: true, sources: [] },
+        { path: 'MWDL/description', sources: [{ compose: '{x}' }, { property: 'title' }] },
+      ]),
+      'V2',
+      [
+        { name: 'a.pdf', doc: doc('') },
+        { name: 'b.pdf', doc: doc('', 'Spring issue') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Spring issue');
+  });
+});

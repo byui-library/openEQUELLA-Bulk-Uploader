@@ -151,6 +151,23 @@ async function processEntry(
   // order would leave it describing the wrong files. The live server returns
   // none at all (Location only), which is trusted below.
   const returned = result.attachmentUuids;
+
+  // A COUNT THAT DIFFERS IS A MISSING FILE, whatever is configured. Unlike a
+  // uuid the server chose itself -- which only matters when the metadata
+  // records uuids -- an attachment fewer than was sent means the item does not
+  // hold everything the plan said it would, and an item missing an issue reads
+  // as complete to everyone who finds it later. Never retried: the item exists.
+  if (returned.length > 0 && returned.length !== requested.length) {
+    entry.attachmentUuids = returned;
+    entry.status = 'incomplete';
+    entry.error =
+      `${rowContext(entry)}: item ${result.uuid} was created, but openEQUELLA reported ` +
+      `${returned.length} attachment(s) on the item, but ${requested.length} file(s) were sent. ` +
+      `Check the item in openEQUELLA for the missing files -- do not re-run this row, it would ` +
+      `create a duplicate item.`;
+    return 'incomplete';
+  }
+
   const differs =
     returned.length > 0 &&
     (returned.length !== requested.length || requested.some((u, i) => returned[i] !== u));

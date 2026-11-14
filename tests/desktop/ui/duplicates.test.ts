@@ -6,6 +6,7 @@ function finding(rowNumber: number, tier: DuplicateTier): DuplicateFinding {
   return {
     rowNumber,
     source: `row-${rowNumber}.mp4`,
+    label: `row-${rowNumber}.mp4`,
     fileNames: [`row-${rowNumber}.mp4`],
     tier,
     detail: 'because',

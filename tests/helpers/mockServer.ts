@@ -146,6 +146,8 @@ export interface MockState {
    * for the "server ignored our uuid" case — see header comment above.
    */
   mismatchAttachmentNext: number;
+  /** Make the next N item creations report one attachment fewer than were sent. Test scaffolding. */
+  dropAttachmentsNext: number;
   /**
    * Make the next N item creations respond 201 with an empty body and a
    * `Location: /item/{uuid}/{version}` header instead of a JSON body. Test
@@ -273,6 +275,7 @@ export async function startMockServer(): Promise<MockServer> {
     expireNextUploadAfter: -1,
     failItemNext: 0,
     mismatchAttachmentNext: 0,
+    dropAttachmentsNext: 0,
     locationStyleNext: 0,
     expectedRedirectUri: '', // set below once the listening url is known
     validAuthCodes: new Set(),
@@ -429,10 +432,14 @@ export async function startMockServer(): Promise<MockServer> {
           res.writeHead(201, { location: `/item/${uuid}/${version}` });
           return res.end();
         }
+        const drop = state.dropAttachmentsNext > 0;
+        if (drop) state.dropAttachmentsNext--;
         return send(res, 201, {
           uuid,
           version,
-          attachments: (body.attachments ?? []).map((a) => ({
+          attachments: (body.attachments ?? [])
+            .slice(0, drop ? -1 : undefined)
+            .map((a) => ({
             uuid: mismatch ? nextId('att-server-assigned') : a.uuid ?? nextId('att'),
           })),
         });

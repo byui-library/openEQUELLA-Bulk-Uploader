@@ -823,3 +823,18 @@ describe('createExtractController -- one row per subfolder', () => {
     );
   });
 });
+
+describe('createExtractController -- a failed switch', () => {
+  it('leaves the mode as it was when the rescan fails, so the scan and the mode agree', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => {
+      throw new Error('a subfolder could not be read');
+    });
+    await c.setPerFolder(true);
+    expect(c.state().perFolder).toBe(false);
+    expect(c.state().scan?.supported).toEqual(['a.pdf']);
+    expect(c.state().error).toMatch(/could not be read/);
+  });
+});

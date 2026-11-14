@@ -98,23 +98,33 @@ export async function checkUnchanged(unit: UploadUnit): Promise<void> {
         `the folder changed since planning (${problems.join('; ')}); plan again`,
       );
     }
+    // The listing above has just measured every file; one measurement, not two
+    // that could disagree.
+    for (const f of unit.files) refuseEmpty(f, now.get(f.name)!);
+    return;
   }
 
   for (const f of unit.files) {
     const { size } = await stat(f.path);
-    if (unit.folderPath === undefined && f.size !== undefined && size !== f.size) {
+    if (f.size !== undefined && size !== f.size) {
       throw new ValidationError(
         `'${f.name}' changed since planning (${f.size} bytes when planned, ${size} now); plan again`,
       );
     }
-    // A 0-byte source file is a hazard distinct from a missing one: it would
-    // "succeed" and silently create an empty attachment rather than surfacing
-    // as a problem. It is essentially always evidence of a broken export or
-    // copy upstream, never an intentional empty attachment, so this rejects
-    // loudly instead of producing a silently-broken item.
-    if (size === 0) {
-      throw new ValidationError(`Refusing to upload '${f.path}': the file is 0 bytes.`);
-    }
+    refuseEmpty(f, size);
+  }
+}
+
+/**
+ * A 0-byte source file is a hazard distinct from a missing one: it would
+ * "succeed" and silently create an empty attachment rather than surfacing as
+ * a problem. It is essentially always evidence of a broken export or copy
+ * upstream, never an intentional empty attachment, so this rejects loudly
+ * instead of producing a silently-broken item.
+ */
+function refuseEmpty(f: ManifestFile, size: number): void {
+  if (size === 0) {
+    throw new ValidationError(`Refusing to upload '${f.path}': the file is 0 bytes.`);
   }
 }
 

@@ -166,8 +166,17 @@ export function starterProfile(
   // The filename last, so a document that states its title keeps it. Two of
   // twelve real journal PDFs state none, and this field becomes the item's
   // NAME -- an empty one contributes a nameless item.
+  //
+  // A FOLDER ROW IS TITLED FROM THE FOLDER. Its documents are its PARTS -- an
+  // issue's embedded title ("Issue 1", or a scanner default) describes one
+  // file, and the first file to answer wins silently, so the whole volume
+  // would be catalogued under one issue's name. The folder name names the
+  // item; a template or the operator can do better from there.
   if (titlePath) {
-    columns.push({ path: titlePath, sources: [{ property: 'title' }, { filenameStem: true }] });
+    columns.push({
+      path: titlePath,
+      sources: options.folders === true ? [{ filenameStem: true }] : [{ property: 'title' }, { filenameStem: true }],
+    });
   }
   if (creatorPath) {
     columns.push({ path: creatorPath, sources: [{ property: 'author' }], transform: 'people' });
@@ -193,6 +202,9 @@ export function starterProfile(
     .filter((m) => m.path !== '' && m.path !== ATTACHMENT_COLUMN);
 
   for (const { source, path } of found) {
+    // A folder row's title stays the folder's -- see where the title column
+    // is built. A table cell is one document's title, not the item's.
+    if (options.folders === true && path === titlePath) continue;
     const existing = byPath.get(path);
     if (existing) {
       // Prepended, NOT replacing. A mixed folder needs both: the Word files

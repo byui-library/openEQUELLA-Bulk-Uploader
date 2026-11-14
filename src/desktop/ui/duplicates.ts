@@ -1,6 +1,5 @@
 import {
   defaultChoice,
-  findingLabel,
   type DuplicateChoice,
   type DuplicateFinding,
   type DuplicateTier,
@@ -50,7 +49,7 @@ export function duplicatesSection(
       return `
       <tr>
         <td>${d.rowNumber}</td>
-        <td>${escapeHtml(findingLabel(d))}</td>
+        <td>${escapeHtml(d.label)}</td>
         <td>${escapeHtml(label)}<br><small>${escapeHtml(d.detail)}</small>${heldLine}</td>
         <td>
           <label><input type="radio" name="dup-${d.rowNumber}" value="skip"

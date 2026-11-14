@@ -627,3 +627,34 @@ describe('findDuplicates -- folder rows', () => {
     expect(f).toMatchObject({ rowNumber: 2, source: 'V2', fileNames: ['No1.pdf', 'No2.pdf'], tier: 'near-certain' });
   });
 });
+
+describe('findDuplicates -- labels', () => {
+  it('labels a one-file folder row as the plan does, not as a file', async () => {
+    const manifest = {
+      version: 2 as const,
+      createdAt: 'x',
+      baseUrl: 'https://h',
+      collectionUuid: 'c',
+      schemaUuid: 's',
+      itemState: 'draft' as const,
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: [
+        {
+          rowNumber: 2,
+          source: 'V9',
+          folderPath: '/b/V9',
+          files: [{ path: '/b/V9/No1.pdf', name: 'No1.pdf' }],
+          metadata: { 'MWDL/title': ['Gazette, Volume 9'] },
+          status: 'pending' as const,
+          attempts: 0,
+        },
+      ],
+    };
+    const client = {
+      searchByTitle: async () => [{ uuid: 'i', version: 1, name: '', attachmentNames: ['No1.pdf'] }],
+    };
+    const [f] = await findDuplicatesSignedIn(client, manifest, 'MWDL/title');
+    expect(f?.label).toBe('V9 (1 file)');
+  });
+});
