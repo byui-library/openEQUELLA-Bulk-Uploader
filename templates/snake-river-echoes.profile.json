@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "pattern": "SRE_Vol{volume}",
+  "columns": [
+    { "path": "attachment name", "sources": [{ "filename": true }], "locked": true },
+    { "path": "MWDL/identifier", "sources": [{ "filename": true }] },
+    { "path": "MWDL/title", "sources": [{ "join": "Snake River Echoes, Volume {volume}" }, { "filenameStem": true }] },
+    { "path": "MWDL/genres/genre", "sources": [], "default": "Periodical" },
+    { "path": "MWDL/conversionSpecifications", "sources": [], "default": "Scanned to PDF" },
+    { "path": "MWDL/source", "sources": [], "default": "None" },
+    { "path": "BYUI_extended/byui_rights/restrict_to_byui", "sources": [], "default": "Public" }
+  ]
+}

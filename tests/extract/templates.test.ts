@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { listTemplates, loadTemplate } from '../../src/core/extract/templates.js';
 import { setDefault, setFirstSource } from '../../src/core/extract/columns.js';
 import { parseProfile } from '../../src/core/extract/profile.js';
-import { buildRow } from '../../src/core/extract/rows.js';
+import { buildFolderRow, buildRow } from '../../src/core/extract/rows.js';
 import { extractDefinition, parseSchemaPaths } from '../../src/core/schema.js';
 import { ATTACHMENT_COLUMN, type DocumentData } from '../../src/core/extract/types.js';
 
@@ -327,5 +327,29 @@ describe('listTemplates', () => {
     await put('notes.txt');
     await put('good-one.profile.json');
     expect((await listTemplates(dir)).map((t) => t.id)).toEqual(['good-one']);
+  });
+});
+
+describe('the Snake River Echoes template', () => {
+  it('is listed, with a readable name', async () => {
+    const found = (await listTemplates()).find((t) => t.id === 'snake-river-echoes');
+    expect(found?.label).toBe('Snake River Echoes');
+  });
+
+  it('names only real schema paths', async () => {
+    const paths = parseSchemaPaths(extractDefinition(await readFile('schema/_entity.xml', 'utf8')));
+    for (const column of (await loadTemplate('snake-river-echoes')).columns) {
+      if (column.path === ATTACHMENT_COLUMN) continue;
+      expect(paths.has(column.path), `${column.path} is not in the schema`).toBe(true);
+    }
+  });
+
+  it('builds a volume title from the folder name', async () => {
+    const p = await loadTemplate('snake-river-echoes');
+    const row = buildFolderRow(p, 'SRE_Vol10', [{ name: 'SRE_1981_Vol10_No1.pdf', doc: doc('') }]);
+    expect(row.cells[ATTACHMENT_COLUMN]).toBe('SRE_Vol10');
+    expect(row.cells['MWDL/title']).toBe('Snake River Echoes, Volume 10');
+    expect(row.cells['MWDL/identifier']).toBe('SRE_Vol10');
+    expect(row.notes).toEqual([]);
   });
 });
