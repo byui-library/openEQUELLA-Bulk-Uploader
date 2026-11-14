@@ -1,6 +1,6 @@
 // tests/extract/cli-extract.test.ts
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, readdir, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runExtract } from '../../src/cli/extract.js';
@@ -858,5 +858,94 @@ describe('the model key never leaves this surface', () => {
     expect(leaks(`something went wrong: ${KEY}`)).toBeDefined();
     expect(leaks(`truncated at the boundary: ${KEY.slice(0, 12)}`)).toBeDefined();
     expect(leaks('nothing to see here')).toBeUndefined();
+  });
+});
+
+describe('runExtract --per-folder', () => {
+  const folderProfile: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{volume}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ join: 'Gazette, Volume {volume}' }] },
+    ],
+  };
+
+  /** The batch in one folder; the profile and output beside it, not in it. */
+  async function setupFolders(p: Profile = folderProfile) {
+    const root = await mkdtemp(join(tmpdir(), 'oeq-cli-extract-folders-'));
+    const dir = join(root, 'batch');
+    await mkdir(dir);
+    for (const v of ['Gazette_V1', 'Gazette_V2']) {
+      await mkdir(join(dir, v));
+      await writeFile(join(dir, v, 'No1.pdf'), makePdf({ text: 'An issue of the gazette' }));
+    }
+    const profilePath = join(root, 'p.profile.json');
+    await saveProfile(profilePath, p);
+    return { dir, root, profilePath, out: join(root, 'out.csv') };
+  }
+
+  it('writes one row per subfolder, named by the folder', async () => {
+    const { dir, profilePath, out } = await setupFolders();
+    await runExtract(
+      { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true },
+      () => {},
+    );
+    const csv = await readFile(out, 'utf8');
+    expect(csv).toContain('Gazette_V1');
+    expect(csv).toContain('Gazette, Volume 2');
+    expect(csv).not.toContain('No1.pdf');
+  });
+
+  it('refuses --ai with --per-folder before reading anything', async () => {
+    const { dir, profilePath, out } = await setupFolders();
+    const fetchImpl = vi.fn();
+    await expect(
+      runExtract(
+        { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true, ai: true },
+        () => {},
+        { OEQ_MODEL_BASE_URL: 'http://localhost:11434/v1', OEQ_MODEL: 'm' },
+        fetchImpl as unknown as typeof fetch,
+      ),
+    ).rejects.toThrow(/--ai cannot be used with --per-folder/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("says why a model column is empty on a folder row, and does not blame a missing --ai", async () => {
+    const { dir, profilePath, out } = await setupFolders({
+      ...folderProfile,
+      columns: [...folderProfile.columns, { path: 'MWDL/description', sources: [{ ai: true }] }],
+    });
+    await runExtract(
+      { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true },
+      () => {},
+    );
+    const csv = await readFile(out, 'utf8');
+    expect(csv).toContain('rows built from a folder are not supported by the model pass yet');
+    expect(csv).not.toContain('--ai was not given');
+  });
+
+  it('names a loose file beside the subfolders', async () => {
+    const { dir, profilePath, out } = await setupFolders();
+    await writeFile(join(dir, 'stray.pdf'), makePdf({ text: 'x' }));
+    const lines: string[] = [];
+    await runExtract(
+      { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true },
+      (m) => lines.push(m),
+    );
+    expect(lines.join('\n')).toMatch(/stray\.pdf -- a file directly in the chosen folder/);
+  });
+
+  it('--init-profile --per-folder infers the pattern from the folder names', async () => {
+    const { dir, root } = await setupFolders();
+    const profilePath = join(root, 'new.profile.json');
+    const lines: string[] = [];
+    await runExtract(
+      { dir, profile: profilePath, out: join(root, 'o.csv'), schemaFile: 'schema/_entity.xml', perFolder: true, initProfile: true },
+      (m) => lines.push(m),
+    );
+    const written = JSON.parse(await readFile(profilePath, 'utf8')) as Profile;
+    expect(written.pattern).not.toMatch(/\.pdf$/);
+    expect(written.columns[0]).toMatchObject({ path: ATTACHMENT_COLUMN, sources: [{ filename: true }] });
   });
 });

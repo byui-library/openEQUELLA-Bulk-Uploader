@@ -488,3 +488,15 @@ describe('starterProfile falling back to the filename for a title', () => {
     }
   });
 });
+
+describe('detectPattern -- folder names', () => {
+  it('reads folder names whole, with no extension and no supported-file filter', () => {
+    expect(detectPattern(['Gazette_V1', 'Gazette_V2', 'Gazette_V10'], { folders: true })).toBe(
+      '{part1}_{part2}',
+    );
+  });
+
+  it('treats a dot in a folder name as part of the name', () => {
+    expect(detectPattern(['Vol.1', 'Vol.2'], { folders: true })).toBe('{part1}');
+  });
+});

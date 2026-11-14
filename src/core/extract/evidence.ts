@@ -2,7 +2,7 @@
 import { join } from 'node:path';
 import { findLabels } from './labels.js';
 import { findSections, readSection } from './sections.js';
-import { listFolder } from './extract.js';
+import { listFolder, type SubfolderListing } from './extract.js';
 import { readDocument } from './readers/index.js';
 import { DOCUMENT_PROPERTIES, type DocumentData } from './types.js';
 
@@ -111,6 +111,28 @@ export async function scanEvidence(dir: string, limit = SAMPLE_DOCS): Promise<Ev
       docs.push(await readDocument(join(dir, filename)));
     } catch {
       // Reported elsewhere as a skipped file.
+    }
+  }
+  return evidenceFrom(docs);
+}
+
+/**
+ * `scanEvidence` for a batch of SUBFOLDERS: the sample is drawn from the
+ * readable files across them, spread over types the same way, so a starter
+ * profile for a volume-per-folder batch sees what its issues actually hold.
+ */
+export async function scanFolderEvidence(
+  dir: string,
+  listing: SubfolderListing,
+  limit = SAMPLE_DOCS,
+): Promise<Evidence> {
+  const paths = listing.folders.flatMap((f) => f.readable.map((name) => join(f.name, name)));
+  const docs: DocumentData[] = [];
+  for (const path of spreadAcrossTypes(paths, limit)) {
+    try {
+      docs.push(await readDocument(join(dir, path)));
+    } catch {
+      // Reported on its row by extractFolders.
     }
   }
   return evidenceFrom(docs);

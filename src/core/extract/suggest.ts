@@ -32,17 +32,23 @@ function majorityExtension(filenames: string[]): string {
  * placeholder covering the whole name, which always matches and is honest
  * about having found no structure.
  */
-export function detectPattern(allFilenames: string[]): string {
+export function detectPattern(allFilenames: string[], options: { folders?: boolean } = {}): string {
+  // FOLDER NAMES carry no extension and are not "supported" files, so neither
+  // the filter nor the extension applies: every name votes, whole. A dot in a
+  // folder name is part of the name, not the start of an extension.
+  const folders = options.folders === true;
   // Only files the extractor can actually read may influence the pattern. A
   // folder routinely contains other things -- the profile .json itself,
   // Thumbs.db, a stray .txt -- and letting those vote produced a pattern
   // built around the wrong extension entirely. Filtering here rather than in
   // each caller keeps every front end correct by construction.
-  const filenames = allFilenames.filter(isSupported);
-  const extension = majorityExtension(filenames);
-  const stems = filenames
-    .filter((n) => extname(n).toLowerCase() === extension)
-    .map((n) => n.slice(0, n.length - extname(n).length));
+  const filenames = folders ? allFilenames : allFilenames.filter(isSupported);
+  const extension = folders ? '' : majorityExtension(filenames);
+  const stems = folders
+    ? filenames
+    : filenames
+        .filter((n) => extname(n).toLowerCase() === extension)
+        .map((n) => n.slice(0, n.length - extname(n).length));
 
   if (stems.length === 0) return `{part1}${extension}`;
 
@@ -141,6 +147,8 @@ export function starterProfile(
   filenames: string[],
   schema: StarterSchema,
   evidence?: StarterEvidence,
+  /** `folders: true` when `filenames` are the subfolder names of a per-folder batch. */
+  options: { folders?: boolean } = {},
 ): Profile {
   const section = topSection(schema.titleHeader);
   const titlePath = declaredColumn(schema.titleHeader, schema.paths);
@@ -166,7 +174,7 @@ export function starterProfile(
   }
   if (descriptionPath) columns.push({ path: descriptionPath, sources: [] });
 
-  if (evidence === undefined) return { version: 1, pattern: detectPattern(filenames), columns };
+  if (evidence === undefined) return { version: 1, pattern: detectPattern(filenames, options), columns };
 
   const byPath = new Map(columns.map((c) => [c.path, c]));
 
@@ -228,5 +236,5 @@ export function starterProfile(
     ];
   }
 
-  return { version: 1, pattern: detectPattern(filenames), columns };
+  return { version: 1, pattern: detectPattern(filenames, options), columns };
 }

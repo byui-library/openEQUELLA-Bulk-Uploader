@@ -9,8 +9,14 @@ import {
 } from '../core/schema.js';
 import { loadProfile, saveProfile, validateAgainstSchema } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
-import { extractFolder, listFolder, type FolderListing } from '../core/extract/extract.js';
-import { scanEvidence } from '../core/extract/evidence.js';
+import {
+  extractFolder,
+  extractFolders,
+  listFolder,
+  listSubfolders,
+  type FolderListing,
+} from '../core/extract/extract.js';
+import { scanEvidence, scanFolderEvidence } from '../core/extract/evidence.js';
 import { writeCsv } from '../core/extract/csv.js';
 import { aiConfirmation } from '../core/ai/confirm.js';
 import { describeHost } from '../core/ai/endpoint.js';
@@ -22,7 +28,7 @@ import { assertUsableCap } from '../core/ai/fill.js';
 import { assertUsableBudget } from '../core/ai/slice.js';
 import { timeoutSecondsProblem } from '../core/ai/provider.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
-import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
+import type { DocumentData, ExtractResult, ExtractedRow, Profile } from '../core/extract/types.js';
 
 export interface ExtractCliOptions {
   dir: string;
@@ -42,6 +48,12 @@ export interface ExtractCliOptions {
   ai?: boolean;
   /** Agree, in advance, to what `--ai` says it is about to send. See `approve`. */
   yes?: boolean;
+  /**
+   * One row per SUBFOLDER of `dir`, each to become one item holding every
+   * file in it. Never inferred from what the folder holds: the operator says
+   * which kind of batch this is.
+   */
+  perFolder?: boolean;
 }
 
 const PREVIEW_ROWS = 5;
@@ -263,10 +275,27 @@ export async function runExtract(
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof fetch,
 ): Promise<void> {
+  // REFUSED BEFORE ANYTHING IS READ. An explicit instruction that cannot be
+  // carried out, exactly as `--ai` with no endpoint is: the model pass checks
+  // what it writes against ONE document, and a folder row has several.
+  if (options.perFolder === true && options.ai === true) {
+    throw new ValidationError(
+      `--ai cannot be used with --per-folder: the model pass checks what it writes against ONE ` +
+        `document, and a row built from a folder has several. Drop --ai; the model columns will ` +
+        `say why they are empty.`,
+    );
+  }
+
   if (options.initProfile) {
-    const names = (await readdir(options.dir, { withFileTypes: true }))
-      .filter((e) => e.isFile())
-      .map((e) => e.name);
+    // In per-folder mode the "filenames" a pattern is inferred from are the
+    // FOLDER names, because that is what each row's attachment name will be.
+    const subfolders = options.perFolder === true ? await listSubfolders(options.dir) : null;
+    const names =
+      subfolders !== null
+        ? subfolders.folders.map((f) => f.name)
+        : (await readdir(options.dir, { withFileTypes: true }))
+            .filter((e) => e.isFile())
+            .map((e) => e.name);
     // Read a sample of the documents, not just their names. Without this the
     // description column came out with NO sources at all and the Word files'
     // "Job Description" table was never mapped -- the CLI produced a profile
@@ -283,7 +312,10 @@ export async function runExtract(
         descriptionHeader: extractItemDescriptionPath(schemaXml),
         paths: parseSchemaPaths(extractDefinition(schemaXml)),
       },
-      await scanEvidence(options.dir),
+      subfolders !== null
+        ? await scanFolderEvidence(options.dir, subfolders)
+        : await scanEvidence(options.dir),
+      { folders: subfolders !== null },
     );
     await saveProfile(options.profile, profile);
     log(`Wrote a starter profile to ${options.profile}`);
@@ -312,6 +344,16 @@ export async function runExtract(
   // could -- see its docblock for the two that qualify by a quirk and are
   // excluded.
   const wantsModel = modelColumns(profile).length > 0;
+
+  // ONE ROW PER SUBFOLDER. No model branch at all: --ai was refused above, and
+  // the cells that asked for one say why they are empty instead of looking
+  // like documents with nothing to say.
+  if (options.perFolder === true) {
+    const result = await extractFolders(options.dir, profile);
+    if (wantsModel) noteMissingModel(result.rows, profile, 'folder-row');
+    await finishExtract(options, profile, result, log);
+    return;
+  }
 
   // `--ai` ON A PROFILE NO MODEL COULD WRITE IS REFUSED, exactly as `--ai` with
   // no endpoint is. Both are an explicit instruction that cannot be carried
@@ -416,6 +458,16 @@ export async function runExtract(
     noteMissingModel(result.rows, profile, unfilled);
   }
 
+  await finishExtract(options, profile, result, log);
+}
+
+/** What every run does with its rows: report them, then preview or write. */
+async function finishExtract(
+  options: ExtractCliOptions,
+  profile: Profile,
+  result: ExtractResult,
+  log: (message: string) => void,
+): Promise<void> {
   if (result.skipped.length > 0) {
     log(`Skipped ${result.skipped.length} file(s):`);
     for (const { file, reason } of result.skipped) log(`  ${file} -- ${reason}`);
@@ -447,7 +499,11 @@ export async function runExtract(
   }
 
   if (result.rows.length === 0) {
-    throw new OeqError(`No readable files found in ${options.dir}; nothing to write.`);
+    throw new OeqError(
+      options.perFolder === true
+        ? `No subfolder of ${options.dir} can become a row; nothing to write.`
+        : `No readable files found in ${options.dir}; nothing to write.`,
+    );
   }
 
   await writeCsv(options.out, profile, result.rows);

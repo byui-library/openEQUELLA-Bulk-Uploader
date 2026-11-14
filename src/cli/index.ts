@@ -795,13 +795,21 @@ export function buildProgram(env: Env = process.env): Command {
 
   program
     .command('extract')
-    .description('build a spreadsheet from a folder of PDFs and .docx files')
+    .description(
+      'build a spreadsheet from a folder of PDFs and .docx files -- one row per file, or with ' +
+        '--per-folder one row per subfolder',
+    )
     .requiredOption('--dir <path>', 'folder of files to read')
     .requiredOption('--profile <path>', 'extraction profile (.profile.json)')
     .option('--out <path>', 'where to write the spreadsheet', 'extracted.csv')
     .option('--schema-file <path>', 'local schema export', 'schema/_entity.xml')
     .option('--dry-run', 'show the first few rows without writing anything')
     .option('--init-profile', 'write a starter profile for this folder, then stop')
+    .option(
+      '--per-folder',
+      'one row per SUBFOLDER: each subfolder becomes one item, with every file in it attached ' +
+        'in name order (cannot be combined with --ai)',
+    )
     .option(
       '--ai',
       'let a language model fill the columns whose profile asks for one, using ' +
