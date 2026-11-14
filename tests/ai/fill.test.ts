@@ -1321,3 +1321,15 @@ describe('fillWithModel progress', () => {
     await expect(fillWithModel(rows, profile, provider('A description.'), options())).resolves.toBeUndefined();
   });
 });
+
+describe('noteMissingModel -- folder rows', () => {
+  it("notes a folder row's model column instead of leaving it silently blank", async () => {
+    const { noteMissingModel } = await import('../../src/core/ai/fill.js');
+    const rows = [row()];
+    noteMissingModel(rows, profile, 'folder-row');
+    expect(rows[0]!.notes).toContain(
+      'MWDL/description: not sent to the model -- rows built from a folder are not supported by ' +
+        'the model pass yet',
+    );
+  });
+});

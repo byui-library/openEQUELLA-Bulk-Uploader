@@ -197,8 +197,16 @@ export function noteMissingModel(
  * That is this codebase's named failure shape -- a diagnosis naming the one
  * place the problem is not -- and it had a test pinning it, so nobody would have
  * noticed.
+ *
+ * `folder-row` is a fourth, and it is not a setting anyone can change. A row
+ * built from a folder has several documents, and `verify.ts` checks a
+ * generated value against ONE -- which document a volume's description must be
+ * supported by is a separate design (out of scope for the release that
+ * introduced folder rows). Until it exists, nothing from a folder row is sent,
+ * whatever is configured, and the cell says so rather than looking like a
+ * document that had nothing to say.
  */
-export type MissingModelReason = 'not-configured' | 'not-requested' | 'not-approved';
+export type MissingModelReason = 'not-configured' | 'not-requested' | 'not-approved' | 'folder-row';
 
 const MISSING_MODEL: Record<MissingModelReason, string> = {
   'not-configured':
@@ -211,6 +219,8 @@ const MISSING_MODEL: Record<MissingModelReason, string> = {
   'not-approved':
     `no model was run for this batch, so nothing was written here. If you expected one, ` +
     `check the model settings for this site on the Setup screen -- or fill this cell in by hand.`,
+  'folder-row':
+    'not sent to the model -- rows built from a folder are not supported by the model pass yet',
 };
 
 /**
