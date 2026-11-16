@@ -231,6 +231,8 @@ src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by e
   folderFiles.ts    THE upload order of a folder's files (orderFiles) and what a folder
                     contributes (listFolderFiles). Plan, run and extractor all use it.
   folderReport.ts   Pure. How a plan lists each folder row's files -- CLI, MCP and desktop.
+  attachmentOrder.ts  Pure, renderer-safe. Both halves of the `attachment order` cell, and
+                    reorderFiles -- the one rule for matching an order to a folder.
   discovery.ts      Parses /api/collection and /api/schema. PURE — never fetches, so every
                     response shape is pinned against a recorded fixture.
   schemaCache.ts    A fetched schema on disk, keyed (instance url, schema uuid). Exists so
