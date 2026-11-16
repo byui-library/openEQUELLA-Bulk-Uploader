@@ -207,6 +207,18 @@ export interface Profile {
      * such as "Obituary" in every filename of an obituary batch.
      */
     filenameWordsInText?: { ignore?: string[] };
+    /**
+     * Check a FOLDER's arrangement, for one-row-per-subfolder batches. Each
+     * pattern finds an issue number -- and optionally a volume -- anywhere in
+     * a file's name: `["Vol{volume}_No{issue}", "Vol{volume}_Num{issue}"]`.
+     *
+     * CHECKING ONLY. It does not change the order files are attached in
+     * (folderFiles.ts#orderFiles); renaming does that, by the operator's
+     * decision of 2026-11-16. A file named for another volume, or two files
+     * claiming one issue, holds the folder back; an unnumbered file and a gap
+     * are notes. See issueChecks.ts.
+     */
+    issues?: { patterns: string[] };
   };
 }
 

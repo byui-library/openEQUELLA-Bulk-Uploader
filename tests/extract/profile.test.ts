@@ -443,3 +443,36 @@ describe('parseProfile -- each', () => {
     ).toThrow();
   });
 });
+
+describe('parseProfile -- issue checks', () => {
+  const base = { path: 'attachment name', sources: [{ filename: true }], locked: true };
+  const withChecks = (pattern: string, patterns: unknown) => ({
+    version: 1,
+    pattern,
+    columns: [base],
+    checks: { issues: { patterns } },
+  });
+
+  it('accepts issue patterns', () => {
+    const p = parseProfile(withChecks('SRE_Vol{volume}', ['Vol{volume}_No{issue}', 'Vol{volume}_Num{issue}']));
+    expect(p.checks?.issues?.patterns).toHaveLength(2);
+  });
+
+  it('refuses a pattern with no {issue}', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{volume}', ['Vol{volume}']))).toThrow(/\{issue\}/);
+  });
+
+  it('refuses a placeholder other than {issue} and {volume}', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{volume}', ['No{issue}_{year}']))).toThrow(/\{year\}/);
+  });
+
+  it('refuses {volume} in a check when the folder pattern has none to compare it with', () => {
+    expect(() => parseProfile(withChecks('{name}', ['Vol{volume}_No{issue}']))).toThrow(
+      /"pattern" has no \{volume\}/,
+    );
+  });
+
+  it('refuses an empty pattern list', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{volume}', []))).toThrow();
+  });
+});

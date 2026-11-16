@@ -73,6 +73,7 @@ const profileSchema = z
     checks: z
       .object({
         filenameWordsInText: z.object({ ignore: z.array(z.string()).optional() }).strict().optional(),
+        issues: z.object({ patterns: z.array(z.string().min(1)).min(1) }).strict().optional(),
       })
       .strict()
       .optional(),
@@ -134,6 +135,32 @@ export function parseProfile(input: unknown): Profile {
   // A composeOnly column is never written to the sheet, so a compose template
   // reading it by name is the ONLY way its value can leave the extractor. With
   // no name it is extracted on every row and then silently discarded.
+  // Issue-check patterns are checked here, at load, rather than discovered on
+  // the batch: a pattern the checker cannot use would otherwise check nothing
+  // across four hundred folders and say so only at the end, if at all.
+  for (const pattern of profile.checks?.issues?.patterns ?? []) {
+    const names = placeholders(pattern);
+    if (!names.includes('issue')) {
+      throw new ValidationError(
+        `The issue check pattern '${pattern}' has no {issue}, so it could never find an issue number.`,
+      );
+    }
+    const unknown = names.filter((n) => n !== 'issue' && n !== 'volume');
+    if (unknown.length > 0) {
+      throw new ValidationError(
+        `The issue check pattern '${pattern}' uses ${unknown.map((n) => `{${n}}`).join(', ')}; ` +
+          `only {issue} and {volume} mean anything there.`,
+      );
+    }
+    if (names.includes('volume') && !placeholders(profile.pattern).includes('volume')) {
+      throw new ValidationError(
+        `The issue check pattern '${pattern}' compares {volume}, but the profile's "pattern" has no ` +
+          `{volume} to read from the folder name, so the volume check could never run. Add {volume} ` +
+          `to "pattern" (e.g. "SRE_Vol{volume}") or drop it from the check.`,
+      );
+    }
+  }
+
   for (const column of profile.columns) {
     // A row names exactly one file or one folder; "every file's value,
     // joined" in that cell would name something that does not exist.
