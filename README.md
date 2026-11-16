@@ -473,6 +473,47 @@ holds decides the verdict:
   names which files it holds and which it does not;
 - it holds **none** — *possible*, as for a single file.
 
+### Checking the volumes: misfiled, duplicated and unnumbered issues
+
+A serial kept as one folder per volume can go wrong in ways no file listing
+shows: an issue filed in the wrong volume, two different scans both numbered
+issue 3, a gap. A template can declare how its file names state an issue —
+and, optionally, a volume — and the spreadsheet builder checks every folder
+against it:
+
+```json
+"pattern": "SRE_Vol{volume}",
+"checks": { "issues": { "patterns": ["Vol{volume}_No{issue}", "Vol{volume}_Num{issue}"] } }
+```
+
+`{issue}` and `{volume}` are numbers, found anywhere in a file's name, ignoring
+capitals; the folder's own volume comes from `{volume}` in `pattern`. `No2&3`
+is one file covering issues 2 and 3.
+
+| Finding | Effect |
+| --- | --- |
+| A file's name gives another volume | **Held back** — the folder is left out of the spreadsheet |
+| Two files claim the same issue | **Held back**, naming both |
+| A file has no issue number (e.g. `Commemorative`) | Note — still attached, in name order |
+| A gap in the numbering | Note — a missing *last* issue cannot be detected, and the note says so |
+| No file in the batch matched any pattern | Note — the arrangement was not checked |
+
+**The checks never move or reorder anything.** A misfiled name in the right
+folder looks exactly like a correct name in the wrong one; only a person can
+tell, so the folder is held back until someone does. Fix it on disk — move or
+rename the file — and build the spreadsheet again. Order is still name order,
+and renaming is still how you change it.
+
+Every per-folder build writes **`<spreadsheet>-problems.csv` beside the
+spreadsheet**: folder, file, effect, problem and what to do, one line each,
+including folders refused for being empty or holding a folder. It is rewritten
+on every build — header only when there is nothing to report — so an old log
+can never describe folders you have since fixed. A held-back folder then shows
+up at `plan` as *"Folder '…' has no matching row; not uploaded"*.
+
+The checks run when the spreadsheet is built, because that is where the
+template is; a spreadsheet typed by hand is not checked.
+
 ### Building the spreadsheet from a folder of folders
 
 `extract --per-folder` (or **One row per subfolder** on the desktop app's

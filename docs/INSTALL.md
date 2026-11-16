@@ -536,6 +536,14 @@ folder becomes one item**.
    **One row per subfolder**. The program counts folders instead of files, and
    each row's `attachment name` is the folder's name. The language model is not
    used for rows built this way; those cells say so in `_notes`.
+   **When you save, read what the last screen says about held-back folders.**
+   If the template knows how its files are numbered, as the *Snake River
+   Echoes* one does, the program checks every folder. A file that belongs to
+   another volume, or two files with the same issue number, keeps that folder
+   out of the spreadsheet so it is not uploaded. Click **Show problem list**: a
+   spreadsheet beside yours says what is wrong in each folder and what to do.
+   Fix the folders, then build the spreadsheet again. Notes, such as a file
+   with no issue number, are worth a look but don't stop anything.
 4. **On the Review screen, read *Folders: files in upload order* for every
    folder before you continue.** It lists each folder's files, numbered, in
    exactly the order they will be attached, plus anything that will not be

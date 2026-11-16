@@ -506,7 +506,15 @@ shape, never as a value the code may assume.
   order is renaming files (decided 2026-11-13), which only works because every
   surface prints the order before the run. Do not "fix" the collator to suit
   one batch: a second rule is a second order the plan and the run can disagree
-  about.
+  about. **Declared issue patterns CHECK the arrangement and never change the
+  order** (operator's "Option C", 2026-11-16, chosen over ordering by issue
+  number after the three were weighed). `extract/issueChecks.ts` holds a folder
+  back -- left out of the spreadsheet -- for a file named for another volume or
+  two files claiming one issue, and NEVER moves a file: a misnamed file in the
+  right folder is indistinguishable from a right name in the wrong one. The
+  checks run at extract time because only the extractor has the template; a
+  hand-made spreadsheet is unchecked, and the docs say so. On the real 38-volume
+  batch the log came out at exactly three lines, all real.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.

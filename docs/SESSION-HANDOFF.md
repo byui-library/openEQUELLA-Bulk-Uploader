@@ -22,9 +22,17 @@ warnings, volumes in natural order. Only three volumes need a human:
   and checksum from `No3`). Both upload with Vol 3 unless moved or renamed.
 - **Vol 27** — `SRE_1998_Commemorative.pdf` is attached first.
 
+**Issue checks added 2026-11-16 (the operator's Option C; spec addendum).**
+The template now declares `Vol{volume}_No{issue}` / `Vol{volume}_Num{issue}`,
+and the real batch's problems log holds exactly three lines: Vol 3 held back
+(its Vol 2 issue, and No3 vs Num3 both claiming issue 3) and Vol 27's
+Commemorative as a note. 37 rows are written; Vol 3 is left out until fixed.
+
 **Next, in order:**
 
-1. The operator reviews the order above and renames what they want moved.
+1. The operator fixes Vol 3 on disk (move `SRE_1973_Vol2_No4.pdf` to
+   `SRE_Vol2`; decide between `No3` and `Num3`), renames Vol 2's
+   `1972-73` file and Vol 27's Commemorative if wanted, and builds again.
 2. The operator confirms or changes the template's constants (genre
    `Periodical`, rights `Public`, conversion `Scanned to PDF`, source `None`)
    -- they were proposed, not decided.
