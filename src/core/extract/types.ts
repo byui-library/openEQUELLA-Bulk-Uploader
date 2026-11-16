@@ -341,6 +341,12 @@ export interface ExtractedRow {
    * is absent, exactly like `flagged`.
    */
   aiWritten: Record<string, AiWrite>;
+  /**
+   * A folder row's files in issue order, when the template declares issue
+   * patterns -- written to the spreadsheet's `attachment order` column, which
+   * is how the order reaches `plan`. Absent means name order.
+   */
+  attachmentOrder?: string[];
 }
 
 export interface ExtractResult {

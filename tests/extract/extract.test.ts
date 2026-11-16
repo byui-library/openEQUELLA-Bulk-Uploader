@@ -260,3 +260,39 @@ describe('extractFolders -- issue checks', () => {
     ]);
   });
 });
+
+describe('extractFolders -- issue order', () => {
+  const ordered: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{volume}',
+    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    checks: { issues: { patterns: ['V{volume}_No{issue}'] } },
+  };
+
+  it('records the issue order on the row, and reads the files in it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    for (const f of ['G_1972-73_V2_No3.pdf', 'G_1972_V2_No1.pdf', 'G_Special.pdf', 'G_1973_V2_No4.pdf', 'G_1972_V2_No2.pdf']) {
+      await writeFile(join(dir, 'Gazette_V2', f), 'x');
+    }
+    const calls: string[] = [];
+    const result = await extractFolders(dir, ordered, {
+      reader: async (p: string) => {
+        calls.push(basename(p));
+        return emptyDoc;
+      },
+    });
+    const order = ['G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf', 'G_1972-73_V2_No3.pdf', 'G_1973_V2_No4.pdf', 'G_Special.pdf'];
+    expect(result.rows[0]!.attachmentOrder).toEqual(order);
+    expect(calls).toEqual(order);
+  });
+
+  it('records name order when the template declares no issue patterns, so it can be edited by hand', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'b_No1.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'a_No2.pdf'), 'x');
+    const result = await extractFolders(dir, { ...ordered, checks: undefined }, { reader: async () => emptyDoc });
+    expect(result.rows[0]!.attachmentOrder).toEqual(['a_No2.pdf', 'b_No1.pdf']);
+  });
+});

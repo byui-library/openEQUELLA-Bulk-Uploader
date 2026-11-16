@@ -2,6 +2,7 @@
 import { writeFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import { guardFormula } from '../formulaGuard.js';
+import { ATTACHMENT_ORDER_COLUMN } from '../types.js';
 import type { ExtractedRow, FolderProblem, Profile } from './types.js';
 
 /** Where each value came from. Underscore-prefixed, so the uploader ignores it. */
@@ -27,7 +28,19 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
   // ordinary column pointed at a schema field that means something else.
   const columns = profile.columns.filter((c) => !c.composeOnly);
 
-  const headers = [...columns.map((c) => c.path), SOURCE_COLUMN, NOTES_COLUMN];
+  // A folder batch's rows carry their attachment order, and it goes straight
+  // after `attachment name` -- beside the folder it orders, where someone
+  // reviewing it will look, and where they edit it to reorder by hand. Only
+  // when a row has one: a file batch's spreadsheet is unchanged.
+  const ordered = rows.some((r) => r.attachmentOrder !== undefined);
+  const [first, ...rest] = columns.map((c) => c.path);
+  const headers = [
+    ...(first === undefined ? [] : [first]),
+    ...(ordered ? [ATTACHMENT_ORDER_COLUMN] : []),
+    ...rest,
+    SOURCE_COLUMN,
+    NOTES_COLUMN,
+  ];
   sheet.addRow(headers);
 
   for (const row of rows) {
@@ -45,7 +58,9 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
     // `_`-prefixed annotation names, none of which can begin with a trigger --
     // and guarding one would stop `plan` matching the column at all.
     sheet.addRow([
-      ...columns.map((c) => guardFormula(row.cells[c.path] ?? '')),
+      ...columns.slice(0, 1).map((c) => guardFormula(row.cells[c.path] ?? '')),
+      ...(ordered ? [guardFormula((row.attachmentOrder ?? []).join('; '))] : []),
+      ...columns.slice(1).map((c) => guardFormula(row.cells[c.path] ?? '')),
       guardFormula(sources),
       guardFormula(row.notes.join('; ')),
     ]);

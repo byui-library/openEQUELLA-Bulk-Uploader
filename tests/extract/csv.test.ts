@@ -247,3 +247,38 @@ describe('the problems log', () => {
     expect(await readFile(path, 'utf8')).not.toMatch(/,=HYPERLINK/);
   });
 });
+
+describe('the attachment order column', () => {
+  const p: Profile = {
+    version: 1,
+    pattern: '{x}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [] },
+    ],
+  };
+  const row = (over: Partial<ExtractedRow> = {}): ExtractedRow => ({
+    cells: { [ATTACHMENT_COLUMN]: 'Gazette_V2', 'MWDL/title': 'T' },
+    sources: {},
+    notes: [],
+    flagged: {},
+    aiWritten: {},
+    ...over,
+  });
+
+  it('follows attachment name when any row carries an order, joined by semicolons', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-order-'));
+    const path = join(dir, 'o.csv');
+    await writeCsv(path, p, [row({ attachmentOrder: ['No1.pdf', 'No2.pdf'] })]);
+    const records = parse((await readFile(path, 'utf8')).replace(/^﻿/, ''), { columns: true }) as Record<string, string>[];
+    expect(Object.keys(records[0]!).slice(0, 3)).toEqual([ATTACHMENT_COLUMN, 'attachment order', 'MWDL/title']);
+    expect(records[0]!['attachment order']).toBe('No1.pdf; No2.pdf');
+  });
+
+  it('is absent when no row carries one', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-order-'));
+    const path = join(dir, 'o.csv');
+    await writeCsv(path, p, [row()]);
+    expect(await readFile(path, 'utf8')).not.toContain('attachment order');
+  });
+});

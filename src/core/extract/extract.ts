@@ -5,7 +5,7 @@ import { buildFolderRow, buildRow, type FolderDoc } from './rows.js';
 import { clutterReason, listFolderFiles, orderFiles } from '../folderFiles.js';
 import { isSupported, readDocument, type DocumentReader } from './readers/index.js';
 import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from './types.js';
-import { checkIssues, folderVolume } from './issueChecks.js';
+import { checkIssues, folderVolume, orderByIssue } from './issueChecks.js';
 
 export interface ExtractOptions {
   /** Injectable so orchestration can be tested without real files. */
@@ -250,9 +250,13 @@ export async function extractFolders(
       continue;
     }
 
+    // Read in ATTACHMENT order -- issue order when the template declares it --
+    // because "the first file that answers wins" means the first issue.
+    const order = orderByIssue(patterns, folder.files);
+    const readable = new Set(folder.readable);
     const docs: FolderDoc[] = [];
     const unreadable: string[] = [];
-    for (const name of folder.readable) {
+    for (const name of order.filter((n) => readable.has(n))) {
       try {
         docs.push({ name, doc: await reader(join(dir, folder.name, name)) });
       } catch (error) {
@@ -265,6 +269,9 @@ export async function extractFolders(
     row.notes.push(...unreadable);
     // The notes go on the row as well, so `_notes` and the log agree.
     row.notes.push(...findings.map((f) => (f.file === '' ? f.problem : `${f.file}: ${f.problem}`)));
+    // ALWAYS recorded for a folder row -- issue order or name order -- so the
+    // spreadsheet shows every folder's order and staff can change it by hand.
+    row.attachmentOrder = order;
     rows.push(row);
     done += 1;
     onProgress?.(done, found.folders.length);

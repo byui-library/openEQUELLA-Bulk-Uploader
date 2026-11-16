@@ -894,7 +894,8 @@ describe('runExtract --per-folder', () => {
     const csv = await readFile(out, 'utf8');
     expect(csv).toContain('Gazette_V1');
     expect(csv).toContain('Gazette, Volume 2');
-    expect(csv).not.toContain('No1.pdf');
+    // The FOLDER is the attachment name; its files appear only in the order column.
+    expect(csv).toMatch(/^Gazette_V1,No1.pdf,/m);
   });
 
   it('refuses --ai with --per-folder before reading anything', async () => {

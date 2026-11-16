@@ -292,8 +292,8 @@ export interface HeaderValidation {
   ignored: string[];
 }
 
-/** The reserved column naming the file on disk; never a metadata xpath. */
-const RESERVED = new Set(['attachment name']);
+/** The reserved columns -- the file or folder on disk, and a folder's attachment order. Never metadata. */
+const RESERVED = new Set(['attachment name', 'attachment order']);
 
 /**
  * A column whose name starts with `_` is an annotation for the person reading
