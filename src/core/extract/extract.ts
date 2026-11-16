@@ -4,7 +4,8 @@ import { extname, join } from 'node:path';
 import { buildFolderRow, buildRow, type FolderDoc } from './rows.js';
 import { clutterReason, listFolderFiles, orderFiles } from '../folderFiles.js';
 import { isSupported, readDocument, type DocumentReader } from './readers/index.js';
-import type { DocumentData, ExtractResult, ExtractedRow, Profile } from './types.js';
+import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from './types.js';
+import { checkIssues, folderVolume } from './issueChecks.js';
 
 export interface ExtractOptions {
   /** Injectable so orchestration can be tested without real files. */
@@ -147,16 +148,19 @@ export interface SubfolderListing {
  * rather than ignored: the operator chose "one row per subfolder", and a file
  * beside the subfolders is either a mistake or a sign the wrong mode is on.
  */
+/** Why a file beside the subfolders is not a row. One constant, so the log can tell it from a refused folder. */
+const LOOSE_FILE_REASON =
+  'a file directly in the chosen folder -- with one row per subfolder, only subfolders become rows';
+
+/** What the problems log says a held-back folder's skipped entry means. */
+const HELD_BACK_REASON = 'held back -- see the problems log';
+
 export async function listSubfolders(dir: string): Promise<SubfolderListing> {
   const entries = await readdir(dir, { withFileTypes: true });
   const skipped: SubfolderListing['skipped'] = [];
   for (const entry of entries) {
     if (entry.isFile() && clutterReason(entry.name) === null) {
-      skipped.push({
-        file: entry.name,
-        reason:
-          'a file directly in the chosen folder -- with one row per subfolder, only subfolders become rows',
-      });
+      skipped.push({ file: entry.name, reason: LOOSE_FILE_REASON });
     }
   }
 
@@ -199,9 +203,53 @@ export async function extractFolders(
   const skipped = [...found.skipped];
   const rows: ExtractedRow[] = [];
 
+  // THE PROBLEMS LOG IS THE WHOLE ACCOUNT of what was left out and why: the
+  // folders and files the listing refused are in it as well as what the issue
+  // check found, so an operator reading it needs no other list.
+  const problems: FolderProblem[] = found.skipped.map(({ file, reason }) =>
+    reason === LOOSE_FILE_REASON
+      ? {
+          folder: '',
+          file,
+          effect: 'held back' as const,
+          problem: reason,
+          fix: 'move it into the folder of the item it belongs to, or out of the batch folder',
+        }
+      : {
+          folder: file,
+          file: '',
+          effect: 'held back' as const,
+          problem: reason,
+          fix: 'correct the folder, then build the spreadsheet again',
+        },
+  );
+
+  const patterns = profile.checks?.issues?.patterns ?? [];
+  let numbered = 0;
+
   let done = 0;
   for (const folder of found.folders) {
     if (signal?.aborted) break;
+
+    // CHECKED BEFORE ANYTHING IS READ: a folder held back costs no reading,
+    // and is left out of the spreadsheet altogether -- which is what holds it
+    // back, since `plan` then finds no row for it and says so.
+    const findings =
+      patterns.length === 0
+        ? []
+        : (() => {
+            const result = checkIssues(patterns, folderVolume(profile.pattern, folder.name), folder.name, folder.files);
+            numbered += result.numbered;
+            return result.findings;
+          })();
+    problems.push(...findings.map((f) => ({ folder: folder.name, ...f })));
+    if (findings.some((f) => f.effect === 'held back')) {
+      skipped.push({ file: folder.name, reason: HELD_BACK_REASON });
+      done += 1;
+      onProgress?.(done, found.folders.length);
+      continue;
+    }
+
     const docs: FolderDoc[] = [];
     const unreadable: string[] = [];
     for (const name of folder.readable) {
@@ -215,10 +263,24 @@ export async function extractFolders(
     }
     const row = buildFolderRow(profile, folder.name, docs);
     row.notes.push(...unreadable);
+    // The notes go on the row as well, so `_notes` and the log agree.
+    row.notes.push(...findings.map((f) => (f.file === '' ? f.problem : `${f.file}: ${f.problem}`)));
     rows.push(row);
     done += 1;
     onProgress?.(done, found.folders.length);
   }
 
-  return { rows, skipped };
+  // A check that matched nothing did not run, and must not read as clean --
+  // the failure this codebase has had three times. Once, for the batch.
+  if (patterns.length > 0 && found.folders.length > 0 && numbered === 0) {
+    problems.push({
+      folder: '',
+      file: '',
+      effect: 'note',
+      problem: 'no file in the batch matched the issue patterns, so the arrangement was not checked',
+      fix: "compare the profile's checks.issues.patterns with the file names",
+    });
+  }
+
+  return { rows, skipped, problems };
 }

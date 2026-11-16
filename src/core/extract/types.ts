@@ -347,4 +347,22 @@ export interface ExtractResult {
   rows: ExtractedRow[];
   /** Files that could not be read at all, with the reason. */
   skipped: { file: string; reason: string }[];
+  /**
+   * One row per subfolder only: everything left out of the spreadsheet and
+   * everything worth a look, for the problems log beside it. Absent for a
+   * one-row-per-file run.
+   */
+  problems?: FolderProblem[];
+}
+
+/** One line of the problems log. */
+export interface FolderProblem {
+  /** The subfolder concerned, or '' for a loose file or the whole batch. */
+  folder: string;
+  /** The file(s) concerned, or '' when it is about the folder or the batch. */
+  file: string;
+  /** `held back`: left out of the spreadsheet, so not uploaded. `note`: still in it. */
+  effect: 'held back' | 'note';
+  problem: string;
+  fix: string;
 }

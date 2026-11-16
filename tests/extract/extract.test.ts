@@ -181,3 +181,82 @@ describe('extractFolders', () => {
     ]);
   });
 });
+
+describe('extractFolders -- issue checks', () => {
+  const checked: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{volume}',
+    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    checks: { issues: { patterns: ['V{volume}_No{issue}', 'V{volume}_Num{issue}'] } },
+  };
+
+  async function batch(layout: Record<string, string[]>): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-issues-'));
+    for (const [name, files] of Object.entries(layout)) {
+      await mkdir(join(dir, name));
+      for (const f of files) await writeFile(join(dir, name, f), 'x');
+    }
+    return dir;
+  }
+
+  it('holds a folder back -- no row, no reading -- and reports why', async () => {
+    const dir = await batch({
+      Gazette_V2: ['G_V2_No1.pdf', 'G_V2_No2.pdf'],
+      Gazette_V3: ['G_V2_No3.pdf', 'G_V3_No1.pdf'],
+    });
+    const reader = vi.fn(async () => emptyDoc);
+    const result = await extractFolders(dir, checked, { reader });
+    expect(result.rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2']);
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(result.skipped).toContainEqual({
+      file: 'Gazette_V3',
+      reason: 'held back -- see the problems log',
+    });
+    expect(result.problems).toContainEqual(
+      expect.objectContaining({ folder: 'Gazette_V3', file: 'G_V2_No3.pdf', effect: 'held back' }),
+    );
+  });
+
+  it('keeps a folder with only notes, and puts the notes on its row too', async () => {
+    const dir = await batch({ Gazette_V27: ['G_Commemorative.pdf', 'G_V27_No1.pdf'] });
+    const result = await extractFolders(dir, checked, { reader: async () => emptyDoc });
+    expect(result.rows).toHaveLength(1);
+    expect(result.problems).toEqual([
+      expect.objectContaining({ folder: 'Gazette_V27', file: 'G_Commemorative.pdf', effect: 'note' }),
+    ]);
+    expect(result.rows[0]!.notes.join(' ')).toMatch(/G_Commemorative\.pdf: no issue number/);
+  });
+
+  it('reports refused folders and loose files in the problems log as well', async () => {
+    const dir = await batch({ Gazette_V4: [] });
+    await writeFile(join(dir, 'stray.pdf'), 'x');
+    const result = await extractFolders(dir, checked, { reader: async () => emptyDoc });
+    expect(result.problems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ folder: 'Gazette_V4', file: '', effect: 'held back', problem: 'the folder is empty' }),
+        expect.objectContaining({ folder: '', file: 'stray.pdf', effect: 'held back' }),
+      ]),
+    );
+  });
+
+  it('says once that nothing was checked when no file matched any pattern', async () => {
+    const dir = await batch({ Gazette_V1: ['scan1.pdf', 'scan2.pdf'] });
+    const result = await extractFolders(dir, checked, { reader: async () => emptyDoc });
+    const batchLines = result.problems!.filter((p) => p.folder === '' && p.file === '');
+    expect(batchLines).toEqual([
+      expect.objectContaining({
+        effect: 'note',
+        problem: 'no file in the batch matched the issue patterns, so the arrangement was not checked',
+      }),
+    ]);
+  });
+
+  it('with no issue patterns, checks nothing and still reports refused folders', async () => {
+    const dir = await batch({ Gazette_V1: ['G_V9_No1.pdf'], Gazette_V2: [] });
+    const result = await extractFolders(dir, { ...checked, checks: undefined }, { reader: async () => emptyDoc });
+    expect(result.rows).toHaveLength(1);
+    expect(result.problems).toEqual([
+      expect.objectContaining({ folder: 'Gazette_V2', effect: 'held back' }),
+    ]);
+  });
+});
