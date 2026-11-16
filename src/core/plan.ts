@@ -255,7 +255,18 @@ export function applyAttachmentOrder<F extends { name: string }>(
     .map((n) => n.trim())
     .filter((n) => n !== '');
   if (wanted.length === 0) return { files: [...listed] };
+  return reorderFiles(listed, wanted);
+}
 
+/**
+ * `listed` in the order `wanted` names them, or why that cannot be done. ONE
+ * rule for every way an order arrives -- the spreadsheet cell and the desktop
+ * Review screen -- so neither can accept a list the other would refuse.
+ */
+export function reorderFiles<F extends { name: string }>(
+  listed: readonly F[],
+  wanted: readonly string[],
+): { files: F[] } | { problem: string } {
   const byLower = new Map(listed.map((f) => [f.name.toLowerCase(), f]));
   const files: F[] = [];
   const strays: string[] = [];
@@ -279,6 +290,39 @@ export function applyAttachmentOrder<F extends { name: string }>(
     ...(missing.length > 0 ? [`missing from the order: ${missing.join(', ')}`] : []),
   ];
   return problems.length > 0 ? { problem: problems.join('; ') } : { files };
+}
+
+/**
+ * Reorder planned folder rows -- the desktop Review screen's ↑/↓ buttons,
+ * applied to the manifest just before the run, as duplicate choices are.
+ *
+ * ALL OR NOTHING. Every order is checked before any entry changes: a run
+ * started with half the operator's reordering applied would upload items in
+ * an order nobody chose. Only a PENDING FOLDER row can be reordered -- a
+ * created item's attachments are already fixed in openEQUELLA. Returns how
+ * many rows were reordered.
+ */
+export function applyFolderOrders(manifest: Manifest, orders: Readonly<Record<number, readonly string[]>>): number {
+  const changes: { entry: ManifestEntry; files: ManifestFile[] }[] = [];
+  for (const [row, wanted] of Object.entries(orders)) {
+    const rowNumber = Number(row);
+    const entry = manifest.entries.find((e) => e.rowNumber === rowNumber);
+    if (entry === undefined || entry.folderPath === undefined || entry.status !== 'pending') {
+      throw new ValidationError(
+        `Row ${rowNumber} is not a folder waiting to be uploaded, so its order cannot be changed.`,
+      );
+    }
+    const result = reorderFiles(entry.files, wanted);
+    if ('problem' in result) {
+      throw new ValidationError(
+        `Row ${rowNumber} (${rowLabel(entry)}): the new attachment order does not match the folder ` +
+          `(${result.problem})`,
+      );
+    }
+    changes.push({ entry, files: result.files });
+  }
+  for (const { entry, files } of changes) entry.files = files;
+  return changes.length;
 }
 
 /**

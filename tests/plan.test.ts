@@ -7,6 +7,7 @@ import {
   buildManifest,
   preflightDuplicates,
   markSkipped,
+  applyFolderOrders,
   resolveIdentifierPath,
   NO_IDENTIFIER_PATH_WARNING,
   GUEST_SESSION_WARNING,
@@ -20,7 +21,7 @@ import { OeqClient } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ValidationError } from '../src/core/errors.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
-import type { Sheet, Manifest } from '../src/core/types.js';
+import type { Sheet, Manifest, RowStatus } from '../src/core/types.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -607,5 +608,51 @@ describe('buildManifest -- attachment order', () => {
     expect(m.warnings).toContain(
       "Row 2: 'attachment order' applies only to a row naming a folder; ignored for 'a.mp4'.",
     );
+  });
+});
+
+describe('applyFolderOrders', () => {
+  const folderEntry = (rowNumber: number, names: string[]) => ({
+    rowNumber,
+    source: `V${rowNumber}`,
+    folderPath: `/b/V${rowNumber}`,
+    files: names.map((name) => ({ path: `/b/V${rowNumber}/${name}`, name, size: 1 })),
+    metadata: {},
+    status: 'pending' as RowStatus,
+    attempts: 0,
+  });
+  const manifestOf = (...entries: ReturnType<typeof folderEntry>[]): Manifest => ({
+    version: 2,
+    createdAt: 'x',
+    baseUrl: 'https://h',
+    collectionUuid: 'c',
+    schemaUuid: 's',
+    itemState: 'draft',
+    attachmentColumn: 'attachment name',
+    warnings: [],
+    entries,
+  });
+
+  it('reorders a folder row, keeping each file whole (path and size)', () => {
+    const m = manifestOf(folderEntry(2, ['a.pdf', 'b.pdf', 'c.pdf']));
+    expect(applyFolderOrders(m, { 2: ['c.pdf', 'a.pdf', 'b.pdf'] })).toBe(1);
+    expect(m.entries[0]!.files).toEqual([
+      { path: '/b/V2/c.pdf', name: 'c.pdf', size: 1 },
+      { path: '/b/V2/a.pdf', name: 'a.pdf', size: 1 },
+      { path: '/b/V2/b.pdf', name: 'b.pdf', size: 1 },
+    ]);
+  });
+
+  it('refuses an order that does not name exactly the folder\'s files, changing nothing', () => {
+    const m = manifestOf(folderEntry(2, ['a.pdf', 'b.pdf']), folderEntry(3, ['x.pdf', 'y.pdf']));
+    expect(() => applyFolderOrders(m, { 3: ['y.pdf', 'x.pdf'], 2: ['b.pdf'] })).toThrow(
+      "Row 2 (V2 (2 files)): the new attachment order does not match the folder (missing from the order: a.pdf)",
+    );
+    expect(m.entries[1]!.files.map((f) => f.name)).toEqual(['x.pdf', 'y.pdf']);
+  });
+
+  it('refuses an order for a row that is not a pending folder row', () => {
+    const m = manifestOf({ ...folderEntry(2, ['a.pdf']), status: 'skipped' });
+    expect(() => applyFolderOrders(m, { 2: ['a.pdf'] })).toThrow(/Row 2 is not a folder waiting to be uploaded/);
   });
 });
