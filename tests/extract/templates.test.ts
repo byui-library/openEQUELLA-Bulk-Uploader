@@ -352,6 +352,14 @@ describe('the Snake River Echoes template', () => {
     expect(row.cells['MWDL/identifier']).toBe('SRE_Vol10');
     expect(row.notes).toEqual([]);
   });
+
+  // The operator's wording, 2026-11-16: the journal's earlier name, as its own
+  // early issues print it, with the volume from the folder name.
+  it('describes each volume as the Society Quarterly, with its volume number', async () => {
+    const p = await loadTemplate('snake-river-echoes');
+    const row = buildFolderRow(p, 'SRE_Vol10', [{ name: 'SRE_1981_Vol10_No1.pdf', doc: doc('') }]);
+    expect(row.cells['MWDL/description']).toBe('Upper Snake River Valley Historical Society Quarterly, Volume 10');
+  });
 });
 
 describe('the Snake River Echoes template -- issue checks', () => {

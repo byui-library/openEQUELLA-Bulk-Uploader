@@ -11,6 +11,7 @@
     { "path": "attachment name", "sources": [{ "filename": true }], "locked": true },
     { "path": "MWDL/identifier", "sources": [{ "filename": true }] },
     { "path": "MWDL/title", "sources": [{ "join": "Snake River Echoes, Volume {group}" }, { "filenameStem": true }] },
+    { "path": "MWDL/description", "sources": [{ "join": "Upper Snake River Valley Historical Society Quarterly, Volume {group}" }] },
     { "path": "MWDL/genres/genre", "sources": [], "default": "Periodical" },
     { "path": "MWDL/conversionSpecifications", "sources": [], "default": "Scanned to PDF" },
     { "path": "MWDL/source", "sources": [], "default": "None" },
