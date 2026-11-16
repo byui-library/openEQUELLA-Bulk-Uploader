@@ -539,3 +539,73 @@ describe('buildManifest -- folder rows', () => {
     ).rejects.toThrow(/claimed by rows 2, 3/);
   });
 });
+
+describe('buildManifest -- attachment order', () => {
+  const sheetWithOrder = (rows: Record<string, string>[]): Sheet => ({
+    headers: ['attachment name', 'attachment order', 'MWDL/title'],
+    rows: rows.map((cells, i) => ({ rowNumber: i + 2, cells })),
+  });
+  async function folder(name: string, files: string[]) {
+    await mkdir(join(dir, name));
+    for (const f of files) await writeFile(join(dir, name, f), 'x');
+  }
+
+  it('attaches in the order the column gives, and never sends it as metadata', async () => {
+    await folder('Gazette_V2', ['G_1972-73_No3.pdf', 'G_1972_No1.pdf', 'G_1972_No2.pdf']);
+    const m = await buildManifest(
+      sheetWithOrder([
+        { 'attachment name': 'Gazette_V2', 'attachment order': 'G_1972_No1.pdf; G_1972_No2.pdf; G_1972-73_No3.pdf', 'MWDL/title': 'T' },
+      ]),
+      dir, paths, opts,
+    );
+    expect(m.entries[0]!.files.map((f) => f.name)).toEqual(['G_1972_No1.pdf', 'G_1972_No2.pdf', 'G_1972-73_No3.pdf']);
+    expect(m.entries[0]!.metadata['attachment order']).toBeUndefined();
+  });
+
+  it('matches the names case-blind, as attachment name is', async () => {
+    await folder('Gazette_V2', ['a.pdf', 'b.pdf']);
+    const m = await buildManifest(
+      sheetWithOrder([{ 'attachment name': 'Gazette_V2', 'attachment order': 'B.PDF;a.pdf', 'MWDL/title': 'T' }]),
+      dir, paths, opts,
+    );
+    expect(m.entries[0]!.files.map((f) => f.name)).toEqual(['b.pdf', 'a.pdf']);
+  });
+
+  it('uses name order when the cell is blank', async () => {
+    await folder('Gazette_V2', ['b.pdf', 'a.pdf']);
+    const m = await buildManifest(
+      sheetWithOrder([{ 'attachment name': 'Gazette_V2', 'attachment order': '', 'MWDL/title': 'T' }]),
+      dir, paths, opts,
+    );
+    expect(m.entries[0]!.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
+  });
+
+  it('refuses a row whose order does not name exactly the folder\'s files', async () => {
+    await folder('Gazette_V2', ['a.pdf', 'b.pdf', 'c.pdf']);
+    await writeFile(join(dir, 'other.pdf'), 'x');
+    const m = await buildManifest(
+      sheetWithOrder([
+        { 'attachment name': 'Gazette_V2', 'attachment order': 'b.pdf; a.pdf; d.pdf; a.pdf', 'MWDL/title': 'T' },
+        { 'attachment name': 'a.mp4', 'attachment order': '', 'MWDL/title': 'T' },
+      ]),
+      dir, paths, opts,
+    );
+    expect(m.entries.map((e) => e.source)).toEqual(['a.mp4']);
+    expect(m.warnings).toContain(
+      "Row 2: folder 'Gazette_V2' cannot be uploaded: its 'attachment order' does not match the folder " +
+        "(not in the folder: d.pdf; listed twice: a.pdf; missing from the order: c.pdf) -- fix the column, " +
+        'or clear it to use name order; skipped.',
+    );
+  });
+
+  it('warns that an order on a single-file row is ignored', async () => {
+    const m = await buildManifest(
+      sheetWithOrder([{ 'attachment name': 'a.mp4', 'attachment order': 'a.mp4', 'MWDL/title': 'T' }]),
+      dir, paths, opts,
+    );
+    expect(m.entries).toHaveLength(1);
+    expect(m.warnings).toContain(
+      "Row 2: 'attachment order' applies only to a row naming a folder; ignored for 'a.mp4'.",
+    );
+  });
+});

@@ -22,8 +22,8 @@ describe('foldersSection', () => {
     expect(html).toContain('Thumbs.db (a Windows thumbnail cache)');
   });
 
-  it('tells the operator how to change the order', () => {
-    expect(foldersSection([folder])).toContain('rename the files');
+  it('tells the operator how to change the order: the order column', () => {
+    expect(foldersSection([folder])).toContain('<code>attachment order</code> cell in your spreadsheet');
   });
 
   it('escapes names, and carries no inline style -- the CSP would drop it', () => {

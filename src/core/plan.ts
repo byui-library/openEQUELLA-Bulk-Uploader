@@ -2,7 +2,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Manifest, ManifestEntry, ManifestFile, Sheet, ItemState } from './types.js';
 import { splitRepeatable } from './metadata.js';
-import { ATTACHMENT_COLUMN, rowLabel } from './types.js';
+import { ATTACHMENT_COLUMN, ATTACHMENT_ORDER_COLUMN, rowLabel } from './types.js';
 import { validateHeaders, isAnnotationHeader, matchSchemaPath, topSection } from './schema.js';
 import { ValidationError } from './errors.js';
 import { listFolderFiles } from './folderFiles.js';
@@ -109,11 +109,30 @@ export async function buildManifest(
         continue;
       }
       const base = folderPath;
-      files = listing.files.map((f) => ({ path: join(base, f.name), name: f.name, size: f.size }));
+      const ordered = applyAttachmentOrder(listing.files, row.cells[ATTACHMENT_ORDER_COLUMN] ?? '');
+      if ('problem' in ordered) {
+        // Refused whole, like any other folder that cannot be what the plan
+        // says: an order naming files the folder does not hold -- a stale
+        // order, or a typo -- must never upload a different set than the one
+        // the spreadsheet describes.
+        warnings.push(
+          `Row ${row.rowNumber}: folder '${actual}' cannot be uploaded: its '${ATTACHMENT_ORDER_COLUMN}' ` +
+            `does not match the folder (${ordered.problem}) -- fix the column, or clear it to use name ` +
+            `order; skipped.`,
+        );
+        continue;
+      }
+      files = ordered.files.map((f) => ({ path: join(base, f.name), name: f.name, size: f.size }));
       if (listing.skipped.length > 0) skippedFiles = listing.skipped;
     } else {
       const path = resolve(filesDir, actual);
       files = [{ path, name: actual, size: (await stat(path)).size }];
+      if ((row.cells[ATTACHMENT_ORDER_COLUMN] ?? '').trim() !== '') {
+        warnings.push(
+          `Row ${row.rowNumber}: '${ATTACHMENT_ORDER_COLUMN}' applies only to a row naming a folder; ` +
+            `ignored for '${actual}'.`,
+        );
+      }
     }
 
     const rowsForFile = claims.get(actual) ?? [];
@@ -122,7 +141,7 @@ export async function buildManifest(
 
     const metadata: Record<string, string[]> = {};
     for (const [header, value] of Object.entries(row.cells)) {
-      if (header === ATTACHMENT_COLUMN) continue;
+      if (header === ATTACHMENT_COLUMN || header === ATTACHMENT_ORDER_COLUMN) continue;
       // Filled in with the real uuid once the attachment exists -- but only
       // when a path is configured. The `!== ''` guard matters: without it, an
       // unconfigured batch would silently drop any column whose header is
@@ -215,6 +234,51 @@ export async function buildManifest(
     entries,
     warnings,
   };
+}
+
+/**
+ * A folder's files in the order the spreadsheet's `attachment order` cell
+ * gives, or why that order cannot be used.
+ *
+ * BLANK MEANS NAME ORDER -- the listing as it came, from
+ * folderFiles.ts#orderFiles. Otherwise the cell must name EXACTLY the folder's
+ * files, each once; names match case-blind, as `attachment name` does, and the
+ * folder's own spelling is what is uploaded. Anything else is reported in
+ * full -- every stray, repeat and omission at once -- so one edit fixes it.
+ */
+export function applyAttachmentOrder<F extends { name: string }>(
+  listed: readonly F[],
+  cell: string,
+): { files: F[] } | { problem: string } {
+  const wanted = cell
+    .split(';')
+    .map((n) => n.trim())
+    .filter((n) => n !== '');
+  if (wanted.length === 0) return { files: [...listed] };
+
+  const byLower = new Map(listed.map((f) => [f.name.toLowerCase(), f]));
+  const files: F[] = [];
+  const strays: string[] = [];
+  const repeats: string[] = [];
+  const seen = new Set<string>();
+  for (const name of wanted) {
+    const key = name.toLowerCase();
+    const file = byLower.get(key);
+    if (file === undefined) strays.push(name);
+    else if (seen.has(key)) repeats.push(name);
+    else {
+      seen.add(key);
+      files.push(file);
+    }
+  }
+  const missing = listed.filter((f) => !seen.has(f.name.toLowerCase())).map((f) => f.name);
+
+  const problems = [
+    ...(strays.length > 0 ? [`not in the folder: ${strays.join(', ')}`] : []),
+    ...(repeats.length > 0 ? [`listed twice: ${[...new Set(repeats)].join(', ')}`] : []),
+    ...(missing.length > 0 ? [`missing from the order: ${missing.join(', ')}`] : []),
+  ];
+  return problems.length > 0 ? { problem: problems.join('; ') } : { files };
 }
 
 /**

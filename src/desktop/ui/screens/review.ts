@@ -63,7 +63,8 @@ export function foldersSection(folders: readonly PlanFolder[]): string {
       <h3>Folders: files in upload order (${folders.length})</h3>
       <p class="note">
         Each folder becomes one item, with its files attached in this order. To change the
-        order, rename the files and check again.
+        order, edit the folder's <code>attachment order</code> cell in your spreadsheet -- or
+        rename the files -- and check again.
       </p>
       ${folders
         .map(
