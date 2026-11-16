@@ -29,17 +29,38 @@ outside the repository):
   two are one scan of Volume 3 Number 3 (20 pages, identical dimensions,
   96-100% identical text) with `Num3` an older, poorer OCR pass. `No3` kept.
 
+**Decisions recorded 2026-11-16:**
+
+- The template's constants (genre `Periodical`, rights `Public`, conversion
+  `Scanned to PDF`, source `None`) are CONFIRMED by the operator.
+- **A journal's title is public bibliographic data, not "institutional
+  detail".** A code review flagged "Upper Snake River Valley Historical Society
+  Quarterly" (now in the template, a test and INSTALL.md) against CLAUDE.md's
+  rule for this public repository; the operator decided it STAYS AS WRITTEN,
+  like "Snake River Echoes" before it. Personal data stays forbidden: this is
+  the title of a published serial, nothing more.
+
+**Known issue, NOT YET FIXED -- a click can be swallowed on the columns
+screen.** Typing in one of the screen's text boxes (the name pattern, "when
+blank", or the new "Text with parts of the name" box) and then clicking a
+button straight away: leaving the box saves it, the save re-renders the whole
+screen by replacing `innerHTML`, and the button under the mouse is destroyed
+before its click lands -- so the click does nothing and must be repeated.
+Found by code review 2026-11-16; pre-existing for the pattern and default
+boxes. Deliberately left for its own change, because the fix belongs in how
+the screen re-renders (e.g. not re-rendering on the `busy` flip that `guard`
+in `ui/extract/controller.ts` performs at the start of every edit, or
+patching the changed parts instead of replacing the markup), not in each box.
+Operator's instruction: note it and fix it later.
+
 **Next, in order:**
 
-1. The operator confirms or changes the template's constants (genre
-   `Periodical`, rights `Public`, conversion `Scanned to PDF`, source `None`)
-   -- they were proposed, not decided.
-2. **Live check, operator present:** Vol 2 to content-test as a DRAFT through
+1. **Live check, operator present:** Vol 2 to content-test as a DRAFT through
    the desktop app (extract with the toggle, Review shows the order, run). The
    operator confirms in openEQUELLA that the issues are attached in order and
    each opens. Ask before running -- it creates a real item.
-3. Push, open the PR, read the automated review comments, merge.
-4. Release **v1.3.0** -- the first release carrying Electron 44 and folder
+2. Push, open the PR, read the automated review comments, merge.
+3. Release **v1.3.0** -- the first release carrying Electron 44 and folder
    rows. Install it on a staff machine before it reaches the share.
 
 ## State on 2026-11-13
