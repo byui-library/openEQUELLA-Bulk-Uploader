@@ -507,8 +507,14 @@ shape, never as a value the code may assume.
   through three decisions on 2026-11-16, and the history matters: rename-only
   (13 Nov) -> "Option C", patterns CHECK only -> **part numbers ORDER** (a real
   volume crosses a year boundary, so a year in a name says nothing about
-  sequence). Staff may edit the column by hand; that was the operator's
-  explicit requirement. **`extract/sequenceChecks.ts` is deliberately
+  sequence). Reviewing and changing the order was the operator's explicit
+  requirement, and there are two ways: the desktop Review screen's ↑/↓
+  (`applyFolderOrders`, written into the job just before the run, as
+  duplicate choices are; moot for a row that will not upload) and the cell in
+  Excel. **The builder writes the cell ONLY where part order differs from
+  name order** -- an always-written list went stale on any rename and plan
+  refused the folder. `core/attachmentOrder.ts` owns the cell's format and
+  `reorderFiles`, the one matching rule the upload and the renderer share. **`extract/sequenceChecks.ts` is deliberately
   NEUTRAL** -- `{part}`, `{group}`, `{year}` plus per-template `labels` for the
   messages (Snake River Echoes: issue / volume) -- renamed from journal terms
   BEFORE the first release so no template is ever written in a journal-only

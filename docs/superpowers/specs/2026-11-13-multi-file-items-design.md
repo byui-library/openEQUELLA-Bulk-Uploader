@@ -238,6 +238,8 @@ issue numbers take precedence within a folder.** This supersedes Option C's
   a part dated before the part it follows; across the batch, a missing group,
   two folders claiming one, a group dated before the one it follows. `{year}`
   in a pattern supplies the dates; `1972-73` is a span.
-- **The order is always reviewable and editable.** Every folder row's
-  `attachment order` cell is filled in -- part order where patterns exist,
-  name order otherwise -- so staff can review it in Excel and reorder by hand.
+- **The order is always reviewable and editable** -- on the desktop Review
+  screen with ↑/↓ (written into the job just before the run), or in Excel. The
+  `attachment order` cell is written only where part order differs from name
+  order (after review: an always-written list went stale on any rename and
+  plan refused the folder).

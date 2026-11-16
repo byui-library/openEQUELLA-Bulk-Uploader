@@ -418,8 +418,10 @@ file on the desktop app's Review screen, which apply at upload and leave the
 spreadsheet as it is. Leave the cell blank, or leave the
 column out of a hand-made spreadsheet, and files go in name order.
 
-When the spreadsheet is built with one row per subfolder, the column is always
-filled in for you:
+When the spreadsheet is built with one row per subfolder, the builder fills the
+column in **only for a folder whose order differs from name order**, so renaming a
+file still takes effect everywhere else. Every folder's order, cell or no cell, is
+listed on the desktop's Review screen and in `plan`'s output. The order is:
 
 - **If the template declares sequence patterns** (next section), files go in
   **part-number order**, and files with no part number go last. A volume whose

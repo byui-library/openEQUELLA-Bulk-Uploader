@@ -544,11 +544,11 @@ folder becomes one item**.
    order** undoes it. Your changes are used when you upload; your spreadsheet
    is not changed.
 
-   You can also set an order in the spreadsheet itself: the `attachment order`
-   column, next to each folder's name, lists its files separated by
-   semicolons. Rearrange them there, naming every file exactly once, and check
-   again. The program refuses a row whose list doesn't match the folder, and
-   says what is wrong.
+   You can also set an order in the spreadsheet itself, in the `attachment order`
+   column next to each folder's name. It is filled in only for a folder whose
+   order is not simply name order; type the file names in any other, separated by
+   semicolons and naming every file exactly once, and check again. The program
+   refuses a row whose list doesn't match the folder, and says what is wrong.
 5. **Do not touch the folders until the upload finishes.** The program checks
    each folder again just before uploading it. If a file was added, removed or
    changed since Review, that item is not uploaded, and the reason ends with
