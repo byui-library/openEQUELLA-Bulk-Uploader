@@ -17,7 +17,7 @@ import {
   type FolderListing,
 } from '../core/extract/extract.js';
 import { scanEvidence, scanFolderEvidence } from '../core/extract/evidence.js';
-import { problemsPathFor, writeCsv, writeProblemsCsv } from '../core/extract/csv.js';
+import { countProblems, problemsPathFor, writeCsv, writeProblemsCsv } from '../core/extract/csv.js';
 import { aiConfirmation } from '../core/ai/confirm.js';
 import { describeHost } from '../core/ai/endpoint.js';
 import { modelColumns } from '../core/ai/eligible.js';
@@ -473,9 +473,7 @@ async function reportProblems(
   problems: readonly FolderProblem[],
   log: (message: string) => void,
 ): Promise<void> {
-  const held = problems.filter((p) => p.effect === 'held back');
-  const heldFolders = new Set(held.filter((p) => p.folder !== '').map((p) => p.folder)).size;
-  const notes = problems.length - held.length;
+  const { heldBack: heldFolders, notes } = countProblems(problems);
 
   if (options.dryRun) {
     for (const p of problems) {

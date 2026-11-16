@@ -68,3 +68,42 @@ describe('extract folder screen -- one row per subfolder', () => {
     expect(render({ perFolder: true }).root.innerHTML).not.toMatch(/style\s*=/);
   });
 });
+
+import { renderExtractSave, type ExtractSaveProps } from '../../../src/desktop/ui/screens/extractSave.js';
+
+describe('extract save screen -- the problems log', () => {
+  function renderSave(over: Partial<ExtractSaveProps> = {}) {
+    const root = new FakeElement();
+    let opened = 0;
+    renderExtractSave(root as unknown as HTMLElement, {
+      fileCount: 36,
+      flagged: 0,
+      aiWritten: 0,
+      savedPath: 'C:/batch/sre.csv',
+      problems: { path: 'C:/batch/sre-problems.csv', heldBack: 2, notes: 3 },
+      busy: false,
+      modelStatus: null,
+      error: null,
+      onSave: () => {},
+      onBack: () => {},
+      onOpenFolder: () => {},
+      onOpenProblems: () => (opened += 1),
+      onDone: () => {},
+      ...over,
+    });
+    return { root, opened: () => opened };
+  }
+
+  it('says how many folders were held back, and offers the list', () => {
+    const { root, opened } = renderSave();
+    expect(root.innerHTML).toContain('<strong>2</strong> folder(s) were held back');
+    expect(root.innerHTML).toContain('<strong>3</strong> note(s)');
+    root.fire('#extract-open-problems');
+    expect(opened()).toBe(1);
+  });
+
+  it('says nothing about a log when the run had none (one row per file)', () => {
+    const { root } = renderSave({ problems: null });
+    expect(root.has('#extract-open-problems')).toBe(false);
+  });
+});

@@ -9,6 +9,13 @@ export interface ExtractSaveProps {
    *  and "a machine wrote this" are different things to tell somebody. */
   aiWritten: number;
   savedPath: string | null;
+  /**
+   * The problems log of a one-row-per-subfolder run, or null when there was
+   * none. `heldBack` folders are NOT in the spreadsheet and will not be
+   * uploaded until fixed -- the one thing on this screen an operator must not
+   * miss, so it is said before anything else.
+   */
+  problems: { path: string; heldBack: number; notes: number } | null;
   busy: boolean;
   /**
    * What the model pass is doing right now, or null when it is not running.
@@ -24,6 +31,7 @@ export interface ExtractSaveProps {
   onSave(): void;
   onBack(): void;
   onOpenFolder(): void;
+  onOpenProblems(): void;
   onDone(): void;
 }
 
@@ -61,6 +69,7 @@ export function renderExtractSave(root: HTMLElement, props: ExtractSaveProps): v
                       every one is flagged. Check them against the documents before uploading.`
                }
              </p>
+             ${problemsSection(props.problems)}
              <p><strong>Open it in Excel and check it before uploading.</strong>
              The <code>_notes</code> column says which rows need a look, and
              <code>_source</code> says where each value came from. Leave them or delete
@@ -93,4 +102,29 @@ export function renderExtractSave(root: HTMLElement, props: ExtractSaveProps): v
   root.querySelector<HTMLButtonElement>('#extract-back')?.addEventListener('click', props.onBack);
   root.querySelector<HTMLButtonElement>('#extract-open-folder')?.addEventListener('click', props.onOpenFolder);
   root.querySelector<HTMLButtonElement>('#extract-done')?.addEventListener('click', props.onDone);
+  root.querySelector<HTMLButtonElement>('#extract-open-problems')?.addEventListener('click', props.onOpenProblems);
+}
+
+/** What the problems log holds, and the way to it. Empty when there is no log. */
+function problemsSection(problems: ExtractSaveProps['problems']): string {
+  if (problems === null) return '';
+  const held =
+    problems.heldBack === 0
+      ? ''
+      : `<p class="warn"><strong>${problems.heldBack}</strong> folder(s) were held back and are not
+           in the spreadsheet, so they will not be uploaded. The problem list says what is wrong with
+           each and how to fix it; fix the folders, then build the spreadsheet again.</p>`;
+  const notes =
+    problems.notes === 0
+      ? ''
+      : `<p><strong>${problems.notes}</strong> note(s) to check &mdash; such as a file with no issue
+           number, or a gap in the numbering. Those folders are in the spreadsheet.</p>`;
+  const clean =
+    problems.heldBack === 0 && problems.notes === 0 ? '<p>No problems were found in the folders.</p>' : '';
+  return `
+    ${held}${notes}${clean}
+    <p>
+      <button id="extract-open-problems" type="button">Show problem list</button>
+      <code>${escapeHtml(problems.path)}</code>
+    </p>`;
 }

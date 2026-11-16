@@ -82,6 +82,7 @@ export function renderExtract(
         fileCount: state.savedPath === null ? (state.scan?.supported.length ?? 0) : state.savedWritten,
         flagged: state.savedFlagged,
         aiWritten: state.savedAiWritten,
+        problems: state.savedProblems,
         savedPath: state.savedPath,
         busy: state.busy,
         modelStatus: state.modelStatus,
@@ -90,6 +91,11 @@ export function renderExtract(
         onBack: () => controller.back(),
         onOpenFolder: () => {
           if (state.savedPath !== null) onOpenFolder(state.savedPath);
+        },
+        // Shown in Explorer with the log selected, the same way as the
+        // spreadsheet -- not opened, so Excel does not launch behind the app.
+        onOpenProblems: () => {
+          if (state.savedProblems !== null) onOpenFolder(state.savedProblems.path);
         },
         onDone: () => controller.exit(),
       });

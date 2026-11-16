@@ -20,7 +20,7 @@ import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
 import { evidenceFrom, scanFolderEvidence, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
 import { buildFolderRow, buildRow, type FolderDoc } from '../core/extract/rows.js';
-import { writeCsv } from '../core/extract/csv.js';
+import { countProblems, problemsPathFor, writeCsv, writeProblemsCsv } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
 import { starterProfile, type StarterSchema } from '../core/extract/suggest.js';
 import { listTemplates, loadTemplate } from '../core/extract/templates.js';
@@ -264,12 +264,20 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       if (args.perFolder === true) {
         const result = await extractFolders(args.dir, args.profile);
         if (wantsModel) noteMissingModel(result.rows, args.profile, 'folder-row');
+        // The log beside the spreadsheet, written every run -- see writeProblemsCsv.
+        const problems = result.problems ?? [];
+        const problemsPath = problemsPathFor(args.outPath);
+        await writeProblemsCsv(problemsPath, problems);
         await writeCsv(args.outPath, args.profile, result.rows);
         return {
           outPath: args.outPath,
           written: result.rows.length,
           flagged: countNeedingReview(result.rows),
           aiWritten: countModelWritten(result.rows),
+          problems: {
+            path: problemsPath,
+            ...countProblems(problems),
+          },
         };
       }
       // CONSENT IS A CONDITION OF RESOLVING THE ENDPOINT AT ALL, not a thing

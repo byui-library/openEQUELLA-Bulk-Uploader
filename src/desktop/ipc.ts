@@ -545,6 +545,12 @@ export interface ExtractRunReport {
   /** Rows a language model wrote into. Its own number rather than hidden: a
    *  machine wrote text that is about to become a permanent record. */
   aiWritten: number;
+  /**
+   * One row per subfolder only: the problems log written beside the
+   * spreadsheet, and what is in it. `heldBack` counts FOLDERS left out of the
+   * spreadsheet -- not uploaded unless fixed; `notes` the lines worth a look.
+   */
+  problems?: { path: string; heldBack: number; notes: number };
 }
 
 export const CHANNELS = {

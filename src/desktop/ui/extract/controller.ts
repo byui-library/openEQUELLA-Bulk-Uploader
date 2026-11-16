@@ -401,6 +401,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
           savedWritten: report.written,
           savedFlagged: report.flagged,
           savedAiWritten: report.aiWritten,
+          savedProblems: report.problems ?? null,
         };
       });
     },

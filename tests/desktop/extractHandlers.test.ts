@@ -713,3 +713,41 @@ describe('extract handlers -- one row per subfolder', () => {
     expect(await readFile(out, 'utf8')).toContain('rows built from a folder are not supported by the model pass yet');
   });
 });
+
+describe('extract handlers -- the problems log', () => {
+  beforeEach(() => __resetExtractCache());
+
+  it('writes it beside the spreadsheet and reports what it holds', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const root = await mkdtemp(join(tmpdir(), 'oeq-eh-problems-'));
+    const dir = join(root, 'batch');
+    await mkdir(dir);
+    for (const [folder, files] of [
+      ['Gazette_V2', ['G_V2_No1.pdf']],
+      ['Gazette_V3', ['G_V2_No2.pdf']],
+      ['Gazette_V4', ['G_Special.pdf', 'G_V4_No1.pdf']],
+    ] as const) {
+      await mkdir(join(dir, folder));
+      for (const f of files) await writeFile(join(dir, folder, f), makePdf({ text: 'An issue.' }));
+    }
+    const out = join(root, 'sre.csv');
+    const report = await ipc.call<{ written: number; problems?: { path: string; heldBack: number; notes: number } }>(
+      'oeq:extractRun',
+      {
+        dir,
+        profile: {
+          version: 1,
+          pattern: 'Gazette_V{volume}',
+          columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+          checks: { issues: { patterns: ['V{volume}_No{issue}'] } },
+        },
+        outPath: out,
+        perFolder: true,
+      },
+    );
+    expect(report.written).toBe(2);
+    expect(report.problems).toEqual({ path: join(root, 'sre-problems.csv'), heldBack: 1, notes: 1 });
+    expect(await readFile(join(root, 'sre-problems.csv'), 'utf8')).toContain('Gazette_V3,G_V2_No2.pdf,held back');
+  });
+});

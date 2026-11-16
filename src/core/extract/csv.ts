@@ -100,3 +100,18 @@ export async function writeProblemsCsv(path: string, problems: readonly FolderPr
   // a CSV without one in the system codepage and mangles every accent.
   await writeFile(path, Buffer.concat([Buffer.from('﻿', 'utf8'), Buffer.from(body as ArrayBuffer)]));
 }
+
+/**
+ * What a problems log holds, as both surfaces report it: FOLDERS held back
+ * (a folder with two problems is one folder left out) and note lines. One
+ * count, so the CLI and the desktop cannot tell an operator different numbers.
+ */
+export function countProblems(problems: readonly FolderProblem[]): { heldBack: number; notes: number } {
+  const held = problems.filter((p) => p.effect === 'held back');
+  return {
+    // Folders only: a loose file beside them is listed in the log, but it is
+    // not a folder, and "N folder(s) held back" must count what it says.
+    heldBack: new Set(held.filter((p) => p.folder !== '').map((p) => p.folder)).size,
+    notes: problems.length - held.length,
+  };
+}
