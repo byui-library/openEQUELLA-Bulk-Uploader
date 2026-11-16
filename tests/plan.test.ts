@@ -651,8 +651,34 @@ describe('applyFolderOrders', () => {
     expect(m.entries[1]!.files.map((f) => f.name)).toEqual(['x.pdf', 'y.pdf']);
   });
 
-  it('refuses an order for a row that is not a pending folder row', () => {
-    const m = manifestOf({ ...folderEntry(2, ['a.pdf']), status: 'skipped' });
-    expect(() => applyFolderOrders(m, { 2: ['a.pdf'] })).toThrow(/Row 2 is not a folder waiting to be uploaded/);
+  // A folder reordered and then marked "Skip" as a duplicate must not block
+  // the batch: skips are applied first, and its order is moot.
+  it('ignores an order for a row that will not upload, and still applies the rest', () => {
+    const m = manifestOf({ ...folderEntry(2, ['a.pdf', 'b.pdf']), status: 'skipped' }, folderEntry(3, ['x.pdf', 'y.pdf']));
+    expect(applyFolderOrders(m, { 2: ['b.pdf', 'a.pdf'], 3: ['y.pdf', 'x.pdf'], 9: ['z.pdf'] })).toBe(1);
+    expect(m.entries[0]!.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
+    expect(m.entries[1]!.files.map((f) => f.name)).toEqual(['y.pdf', 'x.pdf']);
+  });
+
+  it('tells apart two names that differ only in case, as a case-sensitive disk does', () => {
+    const m = manifestOf(folderEntry(2, ['Scan.pdf', 'scan.pdf']));
+    expect(applyFolderOrders(m, { 2: ['scan.pdf', 'Scan.pdf'] })).toBe(1);
+    expect(m.entries[0]!.files.map((f) => f.name)).toEqual(['scan.pdf', 'Scan.pdf']);
+  });
+});
+
+describe('buildManifest -- reserved headers, any case', () => {
+  it('reads an order typed as "Attachment Order", and never sends it as metadata', async () => {
+    await mkdir(join(dir, 'Gazette_V2'));
+    for (const f of ['a.pdf', 'b.pdf']) await writeFile(join(dir, 'Gazette_V2', f), 'x');
+    const m = await buildManifest(
+      {
+        headers: ['Attachment Name', 'Attachment Order', 'MWDL/title'],
+        rows: [{ rowNumber: 2, cells: { 'Attachment Name': 'Gazette_V2', 'Attachment Order': 'b.pdf; a.pdf', 'MWDL/title': 'T' } }],
+      },
+      dir, paths, opts,
+    );
+    expect(m.entries[0]!.files.map((f) => f.name)).toEqual(['b.pdf', 'a.pdf']);
+    expect(Object.keys(m.entries[0]!.metadata)).toEqual(['MWDL/title']);
   });
 });

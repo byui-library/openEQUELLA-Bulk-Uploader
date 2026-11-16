@@ -77,7 +77,7 @@ export async function buildManifest(
   const claims = new Map<string, number[]>();
 
   for (const row of sheet.rows) {
-    const wanted = (row.cells[ATTACHMENT_COLUMN] ?? '').trim();
+    const wanted = (reservedCell(row.cells, ATTACHMENT_COLUMN) ?? '').trim();
     if (wanted === '') {
       warnings.push(`Row ${row.rowNumber}: no '${ATTACHMENT_COLUMN}' value; skipped.`);
       continue;
@@ -109,7 +109,7 @@ export async function buildManifest(
         continue;
       }
       const base = folderPath;
-      const ordered = applyAttachmentOrder(listing.files, row.cells[ATTACHMENT_ORDER_COLUMN] ?? '');
+      const ordered = applyAttachmentOrder(listing.files, reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN));
       if ('problem' in ordered) {
         // Refused whole, like any other folder that cannot be what the plan
         // says: an order naming files the folder does not hold -- a stale
@@ -127,7 +127,7 @@ export async function buildManifest(
     } else {
       const path = resolve(filesDir, actual);
       files = [{ path, name: actual, size: (await stat(path)).size }];
-      if ((row.cells[ATTACHMENT_ORDER_COLUMN] ?? '').trim() !== '') {
+      if (reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN).trim() !== '') {
         warnings.push(
           `Row ${row.rowNumber}: '${ATTACHMENT_ORDER_COLUMN}' applies only to a row naming a folder; ` +
             `ignored for '${actual}'.`,
@@ -141,7 +141,7 @@ export async function buildManifest(
 
     const metadata: Record<string, string[]> = {};
     for (const [header, value] of Object.entries(row.cells)) {
-      if (header === ATTACHMENT_COLUMN || header === ATTACHMENT_ORDER_COLUMN) continue;
+      if (isReservedHeader(header)) continue;
       // Filled in with the real uuid once the attachment exists -- but only
       // when a path is configured. The `!== ''` guard matters: without it, an
       // unconfigured batch would silently drop any column whose header is
@@ -237,6 +237,24 @@ export async function buildManifest(
 }
 
 /**
+ * A reserved column's cell, matching the header CASE-BLIND -- as
+ * `schema.ts#validateHeaders` accepts it. Matched exactly here while validation
+ * matched case-blind, a header typed `Attachment Order` passed validation, was
+ * then ignored as an order AND sent to openEQUELLA as metadata. One rule for
+ * both halves.
+ */
+function reservedCell(cells: Readonly<Record<string, string>>, name: string): string {
+  const header = Object.keys(cells).find((h) => h.toLowerCase() === name);
+  return header === undefined ? '' : (cells[header] ?? '');
+}
+
+/** Whether a header is one of the reserved columns, never metadata. Case-blind, see reservedCell. */
+function isReservedHeader(header: string): boolean {
+  const lower = header.toLowerCase();
+  return lower === ATTACHMENT_COLUMN || lower === ATTACHMENT_ORDER_COLUMN;
+}
+
+/**
  * A folder's files in the order the spreadsheet's `attachment order` cell
  * gives, or why that order cannot be used.
  *
@@ -267,22 +285,30 @@ export function reorderFiles<F extends { name: string }>(
   listed: readonly F[],
   wanted: readonly string[],
 ): { files: F[] } | { problem: string } {
-  const byLower = new Map(listed.map((f) => [f.name.toLowerCase(), f]));
+  // EXACT FIRST, then case-blind -- but only where the case-blind spelling is
+  // unambiguous. On a case-sensitive disk `Scan.pdf` and `scan.pdf` are two
+  // files, and a lowercase key alone would merge them and refuse every order
+  // naming both as "listed twice".
+  const exact = new Map(listed.map((f) => [f.name, f]));
+  const byLower = new Map<string, F | null>();
+  for (const f of listed) {
+    const key = f.name.toLowerCase();
+    byLower.set(key, byLower.has(key) ? null : f);
+  }
   const files: F[] = [];
   const strays: string[] = [];
   const repeats: string[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<F>();
   for (const name of wanted) {
-    const key = name.toLowerCase();
-    const file = byLower.get(key);
+    const file = exact.get(name) ?? byLower.get(name.toLowerCase()) ?? undefined;
     if (file === undefined) strays.push(name);
-    else if (seen.has(key)) repeats.push(name);
+    else if (seen.has(file)) repeats.push(name);
     else {
-      seen.add(key);
+      seen.add(file);
       files.push(file);
     }
   }
-  const missing = listed.filter((f) => !seen.has(f.name.toLowerCase())).map((f) => f.name);
+  const missing = listed.filter((f) => !seen.has(f)).map((f) => f.name);
 
   const problems = [
     ...(strays.length > 0 ? [`not in the folder: ${strays.join(', ')}`] : []),
@@ -298,8 +324,9 @@ export function reorderFiles<F extends { name: string }>(
  *
  * ALL OR NOTHING. Every order is checked before any entry changes: a run
  * started with half the operator's reordering applied would upload items in
- * an order nobody chose. Only a PENDING FOLDER row can be reordered -- a
- * created item's attachments are already fixed in openEQUELLA. Returns how
+ * an order nobody chose. Only a PENDING FOLDER row is reordered -- a
+ * created item's attachments are already fixed, and an order for any other row
+ * is ignored as moot rather than refused (see below). Returns how
  * many rows were reordered.
  */
 export function applyFolderOrders(manifest: Manifest, orders: Readonly<Record<number, readonly string[]>>): number {
@@ -307,11 +334,11 @@ export function applyFolderOrders(manifest: Manifest, orders: Readonly<Record<nu
   for (const [row, wanted] of Object.entries(orders)) {
     const rowNumber = Number(row);
     const entry = manifest.entries.find((e) => e.rowNumber === rowNumber);
-    if (entry === undefined || entry.folderPath === undefined || entry.status !== 'pending') {
-      throw new ValidationError(
-        `Row ${rowNumber} is not a folder waiting to be uploaded, so its order cannot be changed.`,
-      );
-    }
+    // A row that will not upload has no order to apply, and refusing over it
+    // would block the whole batch: a folder reordered AND then marked "Skip"
+    // as a duplicate (skips are applied first), or one the re-plan at upload
+    // time left out. Its order is simply moot.
+    if (entry === undefined || entry.folderPath === undefined || entry.status !== 'pending') continue;
     const result = reorderFiles(entry.files, wanted);
     if ('problem' in result) {
       throw new ValidationError(
