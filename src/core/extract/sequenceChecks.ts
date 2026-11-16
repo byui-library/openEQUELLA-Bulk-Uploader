@@ -264,7 +264,7 @@ export function checkSequence(
     const highest = Math.max(...parts);
     const lowest = Math.min(...parts);
     const missing: number[] = [];
-    for (let n = 1; n < highest; n += 1) if (!byPart.has(n)) missing.push(n);
+    for (let n = lowest + 1; n < highest; n += 1) if (!byPart.has(n)) missing.push(n);
     if (missing.length > 0) {
       const found = lowest === highest ? `${L.part} ${lowest} found` : `${L.parts} ${lowest} to ${highest} found`;
       findings.push({
@@ -273,7 +273,7 @@ export function checkSequence(
         problem:
           `${missing.length === 1 ? L.part : L.parts} ${listed(missing)} ` +
           `${missing.length === 1 ? 'is' : 'are'} missing from the numbering (${found}); ` +
-          `a missing LAST ${L.part} cannot be detected`,
+          `a missing FIRST or LAST ${L.part} cannot be detected`,
         fix: `check whether it exists; if the ${L.group} is genuinely incomplete, nothing is needed`,
       });
     }

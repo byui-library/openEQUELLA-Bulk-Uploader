@@ -522,7 +522,7 @@ builder then orders and checks every folder:
 | A file's name gives another group | **Held back** — the folder is left out of the spreadsheet |
 | Two files claim the same part | **Held back**, naming both |
 | A file has no part number (e.g. `Commemorative`) | Note — attached after the numbered parts |
-| A gap in the numbering | Note — a missing *last* part cannot be detected, and the note says so |
+| A gap in the numbering | Note — counted from the lowest part found, so a run numbered straight through its groups is fine; a missing *first* or *last* part cannot be detected, and the note says so |
 | A part dated before the part it follows | Note — the dates run backwards |
 | A group number with no folder, or two folders for one | Note |
 | A group dated before the group it follows | Note |

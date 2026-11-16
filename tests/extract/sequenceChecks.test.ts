@@ -105,15 +105,21 @@ describe('checkSequence', () => {
         file: '',
         effect: 'note',
         problem:
-          'issue 3 is missing from the numbering (issues 1 to 4 found); a missing LAST issue cannot be detected',
+          'issue 3 is missing from the numbering (issues 1 to 4 found); a missing FIRST or LAST issue cannot be detected',
         fix: 'check whether it exists; if the volume is genuinely incomplete, nothing is needed',
       },
     ]);
   });
 
-  it('notes the issues missing before the first one found', () => {
-    const r = checkSequence(RULE, 5, 'Gazette_V5', ['G_V5_No3.pdf']);
-    expect(r.findings[0]?.problem).toMatch(/^issues 1, 2 are missing/);
+  // A serial may number issues straight through its volumes -- Vol 2 holding
+  // issues 13 to 24 -- so a folder need not start at 1. Counting gaps from 1
+  // would note "issues 1 to 12 missing" on every folder after the first, and a
+  // log that cries wolf on every line teaches the operator to skim it.
+  it('counts gaps from the lowest part found, not from 1', () => {
+    expect(checkSequence(RULE, 2, 'Gazette_V2', ['G_V2_No13.pdf', 'G_V2_No14.pdf']).findings).toEqual([]);
+    expect(checkSequence(RULE, 2, 'Gazette_V2', ['G_V2_No13.pdf', 'G_V2_No15.pdf']).findings[0]?.problem).toBe(
+      'issue 14 is missing from the numbering (issues 13 to 15 found); a missing FIRST or LAST issue cannot be detected',
+    );
   });
 
   it('reads a combined issue as covering both numbers: no gap, no duplicate', () => {
