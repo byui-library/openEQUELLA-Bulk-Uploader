@@ -1,6 +1,6 @@
 // src/desktop/ui/extract/state.ts
 import type { ExtractScan } from '../../ipc.js';
-import type { Column, ExtractedRow, Profile } from '../../../core/extract/types.js';
+import type { Column, ExtractedRow, ProblemsSummary, Profile } from '../../../core/extract/types.js';
 
 export type ExtractStep = 'folder' | 'columns' | 'save';
 
@@ -43,7 +43,7 @@ export interface ExtractState {
    *  machine writing into a permanent record is not a thing to hide either. */
   savedAiWritten: number;
   /** The problems log of a one-row-per-subfolder run, or null when there was none. */
-  savedProblems: { path: string; heldBack: number; looseFiles: number; notes: number } | null;
+  savedProblems: ProblemsSummary | null;
   /** True while the Add-column picker is open. */
   adding: boolean;
   /** The picker's search box. */

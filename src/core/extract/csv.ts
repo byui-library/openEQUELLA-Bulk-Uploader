@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import { guardFormula } from '../formulaGuard.js';
 import { ATTACHMENT_ORDER_COLUMN } from '../types.js';
 import { formatAttachmentOrder } from '../attachmentOrder.js';
-import type { ExtractedRow, FolderProblem, Profile } from './types.js';
+import type { ExtractedRow, FolderProblem, ProblemsSummary, Profile } from './types.js';
 
 /** Where each value came from. Underscore-prefixed, so the uploader ignores it. */
 export const SOURCE_COLUMN = '_source';
@@ -126,7 +126,7 @@ export async function writeProblemsCsv(path: string, problems: readonly FolderPr
  */
 export function countProblems(
   problems: readonly FolderProblem[],
-): { heldBack: number; looseFiles: number; notes: number } {
+): Omit<ProblemsSummary, 'path'> {
   const held = problems.filter((p) => p.effect === 'held back');
   return {
     // Folders, counted once each however many problems they have. A loose file
@@ -136,4 +136,18 @@ export function countProblems(
     looseFiles: held.filter((p) => p.folder === '').length,
     notes: problems.length - held.length,
   };
+}
+
+/**
+ * Write a per-folder build's problems log beside its spreadsheet, and say what
+ * is in it. The one composition the CLI and the desktop both use, so the log's
+ * name, its writing and its counts cannot drift apart between them.
+ */
+export async function writeProblemsLog(
+  spreadsheetPath: string,
+  problems: readonly FolderProblem[],
+): Promise<ProblemsSummary> {
+  const path = problemsPathFor(spreadsheetPath);
+  await writeProblemsCsv(path, problems);
+  return { path, ...countProblems(problems) };
 }

@@ -13,6 +13,7 @@ import {
   orderBySequence,
   resolveLabels,
   type GroupSummary,
+  type SequenceFinding,
   type SequenceRule,
 } from './sequenceChecks.js';
 
@@ -145,8 +146,9 @@ export interface SubfolderListing {
    * can open, which are the only ones whose contents feed the row.
    */
   folders: { name: string; files: string[]; readable: string[] }[];
-  /** Loose files and refused subfolders, each with a reason. */
-  skipped: { file: string; reason: string }[];
+  /** Loose files and refused subfolders, each with a reason. `kind` says which,
+   *  as data -- never read back out of the reason's wording. */
+  skipped: { file: string; reason: string; kind: 'file' | 'folder' }[];
 }
 
 /**
@@ -169,7 +171,7 @@ export async function listSubfolders(dir: string): Promise<SubfolderListing> {
   const skipped: SubfolderListing['skipped'] = [];
   for (const entry of entries) {
     if (entry.isFile() && clutterReason(entry.name) === null) {
-      skipped.push({ file: entry.name, reason: LOOSE_FILE_REASON });
+      skipped.push({ file: entry.name, reason: LOOSE_FILE_REASON, kind: 'file' });
     }
   }
 
@@ -180,7 +182,7 @@ export async function listSubfolders(dir: string): Promise<SubfolderListing> {
   for (const name of names) {
     const listing = await listFolderFiles(join(dir, name));
     if (listing.refusal !== undefined) {
-      skipped.push({ file: name, reason: listing.refusal });
+      skipped.push({ file: name, reason: listing.refusal, kind: 'folder' });
       continue;
     }
     const files = listing.files.map((f) => f.name);
@@ -209,14 +211,14 @@ export async function extractFolders(
   const { reader = readDocument, onProgress, signal } = options;
   const found = options.listing ?? (await listSubfolders(dir));
   // Copied, never appended to in place -- the same reason as extractFolder.
-  const skipped = [...found.skipped];
+  const skipped: ExtractResult['skipped'] = found.skipped.map(({ file, reason }) => ({ file, reason }));
   const rows: ExtractedRow[] = [];
 
   // THE PROBLEMS LOG IS THE WHOLE ACCOUNT of what was left out and why: the
   // folders and files the listing refused are in it as well as what the sequence
   // check found, so an operator reading it needs no other list.
-  const problems: FolderProblem[] = found.skipped.map(({ file, reason }) =>
-    reason === LOOSE_FILE_REASON
+  const problems: FolderProblem[] = found.skipped.map(({ file, reason, kind }) =>
+    kind === 'file'
       ? {
           folder: '',
           file,
@@ -237,7 +239,6 @@ export async function extractFolders(
     patterns: profile.checks?.sequence?.patterns ?? [],
     labels: resolveLabels(profile.checks?.sequence?.labels),
   };
-  const patterns = rule.patterns;
   let numbered = 0;
   // Every folder's group and years, held back or not, for the checks across
   // the run of groups (sequenceChecks.ts#checkBatch).
@@ -250,16 +251,14 @@ export async function extractFolders(
     // CHECKED BEFORE ANYTHING IS READ: a folder held back costs no reading,
     // and is left out of the spreadsheet altogether -- which is what holds it
     // back, since `plan` then finds no row for it and says so.
-    const findings =
-      patterns.length === 0
-        ? []
-        : (() => {
-            const group = folderGroup(profile.pattern, folder.name);
-            const result = checkSequence(rule, group, folder.name, folder.files);
-            numbered += result.numbered;
-            groups.push({ folder: folder.name, group, years: result.years });
-            return result.findings;
-          })();
+    let findings: SequenceFinding[] = [];
+    if (rule.patterns.length > 0) {
+      const group = folderGroup(profile.pattern, folder.name);
+      const result = checkSequence(rule, group, folder.name, folder.files);
+      numbered += result.numbered;
+      groups.push({ folder: folder.name, group, years: result.years });
+      findings = result.findings;
+    }
     problems.push(...findings.map((f) => ({ folder: folder.name, ...f })));
     if (findings.some((f) => f.effect === 'held back')) {
       skipped.push({ file: folder.name, reason: HELD_BACK_REASON });
@@ -270,7 +269,7 @@ export async function extractFolders(
 
     // Read in ATTACHMENT order -- part order when the template declares it --
     // because "the first file that answers wins" means the first part.
-    const order = orderBySequence(patterns, folder.files);
+    const order = orderBySequence(rule.patterns, folder.files);
     const readable = new Set(folder.readable);
     const docs: FolderDoc[] = [];
     const unreadable: string[] = [];
@@ -317,7 +316,7 @@ export async function extractFolders(
 
   // A check that matched nothing did not run, and must not read as clean --
   // the failure this codebase has had three times. Once, for the batch.
-  if (patterns.length > 0 && found.folders.length > 0 && numbered === 0) {
+  if (rule.patterns.length > 0 && found.folders.length > 0 && numbered === 0) {
     problems.push({
       folder: '',
       file: '',

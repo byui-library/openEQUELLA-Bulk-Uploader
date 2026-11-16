@@ -383,3 +383,19 @@ export interface FolderProblem {
   problem: string;
   fix: string;
 }
+
+/**
+ * What a problems log holds and where it is -- the one shape the CLI, the
+ * desktop's run report and its save screen all read. Named once, so a new
+ * count is one edit and cannot be missed on a surface that only passes it on.
+ */
+export interface ProblemsSummary {
+  /** The log, beside the spreadsheet. */
+  path: string;
+  /** Folders left out of the spreadsheet, counted once each. */
+  heldBack: number;
+  /** Loose files beside the folders, also left out. */
+  looseFiles: number;
+  /** Lines to review that held nothing back. */
+  notes: number;
+}

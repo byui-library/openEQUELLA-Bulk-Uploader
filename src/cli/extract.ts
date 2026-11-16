@@ -17,7 +17,7 @@ import {
   type FolderListing,
 } from '../core/extract/extract.js';
 import { scanEvidence, scanFolderEvidence } from '../core/extract/evidence.js';
-import { countProblems, problemsPathFor, writeCsv, writeProblemsCsv } from '../core/extract/csv.js';
+import { writeCsv, writeProblemsLog } from '../core/extract/csv.js';
 import { aiConfirmation } from '../core/ai/confirm.js';
 import { describeHost } from '../core/ai/endpoint.js';
 import { modelColumns } from '../core/ai/eligible.js';
@@ -473,8 +473,6 @@ async function reportProblems(
   problems: readonly FolderProblem[],
   log: (message: string) => void,
 ): Promise<void> {
-  const { heldBack: heldFolders, looseFiles, notes } = countProblems(problems);
-
   if (options.dryRun) {
     for (const p of problems) {
       const where = [p.folder, p.file].filter((s) => s !== '').join(' -- ');
@@ -483,11 +481,8 @@ async function reportProblems(
     return;
   }
 
-  const path = problemsPathFor(options.out);
-  await writeProblemsCsv(path, problems);
-  if (heldFolders > 0) {
-    log(`${heldFolders} folder(s) held back -- not in the spreadsheet. See ${path}`);
-  }
+  const { path, heldBack, looseFiles, notes } = await writeProblemsLog(options.out, problems);
+  if (heldBack > 0) log(`${heldBack} folder(s) held back -- not in the spreadsheet. See ${path}`);
   if (looseFiles > 0) {
     log(`${looseFiles} loose file(s) beside the folders left out -- not in the spreadsheet. See ${path}`);
   }

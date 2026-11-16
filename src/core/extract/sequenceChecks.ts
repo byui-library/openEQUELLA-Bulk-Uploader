@@ -29,9 +29,6 @@ import type { FolderProblem, SequenceLabels } from './types.js';
  * part, is held back for a person; everything else is a note. PURE -- no I/O.
  */
 
-/** A template's words for its parts and groups. Declared with the profile types. */
-export type { SequenceLabels };
-
 /**
  * A template's labels with every gap filled: `part` and `group` when it says
  * nothing, and a plural made by adding "s" when it gives only the singular.
@@ -54,16 +51,8 @@ export interface SequenceRule {
   labels: SequenceLabels;
 }
 
-/** One thing the operator should know about a folder. */
-export interface SequenceFinding {
-  /** The file(s) concerned, or '' when the finding is about the folder. */
-  file: string;
-  /** `held back`: the folder is left out of the spreadsheet. `note`: it is not. */
-  effect: 'held back' | 'note';
-  problem: string;
-  /** What to do about it, in words an operator can act on. */
-  fix: string;
-}
+/** One thing about a folder: a problems-log line before it knows which folder. */
+export type SequenceFinding = Omit<FolderProblem, 'folder'>;
 
 /** The longest span `parseParts` will read as a range, so a year is never one. */
 const MAX_RANGE = 12;
@@ -127,7 +116,7 @@ export interface YearSpan {
 }
 
 /** `1972-73` -> 1972 to 1973; a two-digit end belongs to the start's century, or the next. */
-export function parseYears(text: string): YearSpan {
+function parseYears(text: string): YearSpan {
   const [start, end] = text.split('-').map((s) => s.trim());
   const from = Number(start);
   if (end === undefined || end === '') return { from, to: from };

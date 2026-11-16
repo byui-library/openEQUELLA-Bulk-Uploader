@@ -3,7 +3,7 @@ import type { ItemState, Manifest } from '../core/types.js';
 import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
-import type { ExtractedRow } from '../core/extract/types.js';
+import type { ExtractedRow, ProblemsSummary } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
 import type { FolderSummary } from '../core/folderReport.js';
 // `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
@@ -558,7 +558,7 @@ export interface ExtractRunReport {
    * spreadsheet, and what is in it. `heldBack` counts FOLDERS left out of the
    * spreadsheet -- not uploaded unless fixed; `notes` the lines worth a look.
    */
-  problems?: { path: string; heldBack: number; looseFiles: number; notes: number };
+  problems?: ProblemsSummary;
 }
 
 export const CHANNELS = {

@@ -1,4 +1,5 @@
 import { escapeHtml } from '../dom.js';
+import type { ProblemsSummary } from '../../../core/extract/types.js';
 
 export interface ExtractSaveProps {
   fileCount: number;
@@ -15,7 +16,7 @@ export interface ExtractSaveProps {
    * uploaded until fixed -- the one thing on this screen an operator must not
    * miss, so it is said before anything else.
    */
-  problems: { path: string; heldBack: number; looseFiles: number; notes: number } | null;
+  problems: ProblemsSummary | null;
   busy: boolean;
   /**
    * What the model pass is doing right now, or null when it is not running.
