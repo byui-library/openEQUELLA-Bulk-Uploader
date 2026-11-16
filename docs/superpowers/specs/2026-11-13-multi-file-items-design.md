@@ -224,3 +224,20 @@ issue numbers take precedence within a folder.** This supersedes Option C's
   because the manifest records it -- one order, decided once.
 - The unnumbered-file note now says the file is attached after the numbered
   issues.
+
+## Addendum, 2026-11-16 (last): neutral vocabulary, dates, editable order
+
+- **Neutral before release.** `checks.issues` became `checks.sequence` and
+  `{issue}`/`{volume}` became `{part}`/`{group}`, with per-template `labels`
+  for the messages. The operator chose to fix the vocabulary now -- once a
+  release ships, templates are written in it -- and to defer every other
+  generalisation (ordering by role, completeness checks, attachment
+  descriptions, a desktop pattern editor) until a second real collection
+  shows its shape.
+- **Dates and group numbers are flagged for review** (notes, never holds):
+  a part dated before the part it follows; across the batch, a missing group,
+  two folders claiming one, a group dated before the one it follows. `{year}`
+  in a pattern supplies the dates; `1972-73` is a span.
+- **The order is always reviewable and editable.** Every folder row's
+  `attachment order` cell is filled in -- part order where patterns exist,
+  name order otherwise -- so staff can review it in Excel and reorder by hand.

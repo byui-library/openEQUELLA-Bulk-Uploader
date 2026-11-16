@@ -1,47 +1,45 @@
-# Session handoff — updated 2026-11-13
+# Session handoff — updated 2026-11-16
 
 Read this first.
 
-## RESUME HERE — several files on one contribution is BUILT (2026-11-13)
+## RESUME HERE — several files on one contribution is BUILT (2026-11-16)
 
-Branch `feature/multi-file-items`, not pushed, no PR yet. Built task by task
-from [the plan](superpowers/plans/2026-11-13-multi-file-items.md) against
-[the design](superpowers/specs/2026-11-13-multi-file-items-design.md); every
-task TDD with its mutation checks; typecheck, full suite and `build:desktop`
-clean.
+Branch `feature/multi-file-items`, not pushed, no PR yet. Built from
+[the plan](superpowers/plans/2026-11-13-multi-file-items.md) and
+[the design](superpowers/specs/2026-11-13-multi-file-items-design.md), whose
+two 2026-11-16 addenda record how ordering and checking were decided. Every
+step test-first with mutation checks; typecheck, full suite and
+`build:desktop` clean.
 
-**Checked on the real batch, offline.** `extract --per-folder` with
-`templates/snake-river-echoes.profile.json` over the 38 SRE volume folders,
-then `plan --skip-duplicate-check`: 38 items, all 103 files placed, no
-warnings, volumes in natural order. Only three volumes need a human:
+**What the batch looks like now (offline: extract + plan, nothing sent).** 38
+items, 102 files, no plan warnings; the problems log has ONE line -- Vol 27's
+Commemorative issue, attached last. Order comes from issue numbers through the
+spreadsheet's `attachment order` column, so Vol 2 runs No1-No4 across its year
+boundary. The checks are neutral (`{part}`/`{group}`/`{year}`, template
+`labels` issue/volume) and also flag dates and volume numbers that disagree --
+none do in this batch.
 
-- **Vol 2** — `SRE_1972-73_Vol2_No3.pdf` is attached FIRST (see the spec's
-  correction: ignoring punctuation does not fix it). Rename to fix.
-- **Vol 3** — holds `SRE_1973_Vol2_No4.pdf` (a Vol 2 issue, filed here) and
-  `SRE_1974_Vol3_Num3.pdf`, a second, different third issue (different size
-  and checksum from `No3`). Both upload with Vol 3 unless moved or renamed.
-- **Vol 27** — `SRE_1998_Commemorative.pdf` is attached first.
+**Fixed on disk by the operator's instruction, 2026-11-16** (the SRE folder is
+outside the repository):
 
-**Issue checks added 2026-11-16 (the operator's Option C; spec addendum).**
-The template now declares `Vol{volume}_No{issue}` / `Vol{volume}_Num{issue}`,
-and the real batch's problems log holds exactly three lines: Vol 3 held back
-(its Vol 2 issue, and No3 vs Num3 both claiming issue 3) and Vol 27's
-Commemorative as a note. 37 rows are written; Vol 3 is left out until fixed.
+- `SRE_1973_Vol2_No4.pdf` moved from `SRE_Vol3` to `SRE_Vol2` -- its own text
+  reads "Volume II, Number 4, Spring 1973", checked before moving.
+- `SRE_1974_Vol3_Num3.pdf` moved to `Snake River Echoes\SRE_set_aside\`, NOT
+  renamed: renaming would have overwritten `No3`. Compared page by page, the
+  two are one scan of Volume 3 Number 3 (20 pages, identical dimensions,
+  96-100% identical text) with `Num3` an older, poorer OCR pass. `No3` kept.
 
 **Next, in order:**
 
-1. The operator fixes Vol 3 on disk (move `SRE_1973_Vol2_No4.pdf` to
-   `SRE_Vol2`; decide between `No3` and `Num3`), renames Vol 2's
-   `1972-73` file and Vol 27's Commemorative if wanted, and builds again.
-2. The operator confirms or changes the template's constants (genre
+1. The operator confirms or changes the template's constants (genre
    `Periodical`, rights `Public`, conversion `Scanned to PDF`, source `None`)
    -- they were proposed, not decided.
-3. **Live check, operator present:** Vol 2 to content-test as a DRAFT through
+2. **Live check, operator present:** Vol 2 to content-test as a DRAFT through
    the desktop app (extract with the toggle, Review shows the order, run). The
    operator confirms in openEQUELLA that the issues are attached in order and
    each opens. Ask before running -- it creates a real item.
-4. Push, open the PR, read the automated review comments, merge.
-5. Release **v1.3.0** -- the first release carrying Electron 44 and folder
+3. Push, open the PR, read the automated review comments, merge.
+4. Release **v1.3.0** -- the first release carrying Electron 44 and folder
    rows. Install it on a staff machine before it reaches the share.
 
 ## State on 2026-11-13

@@ -407,31 +407,41 @@ batch/
 | SRE_Vol2 | Snake River Echoes, Volume 2 |
 | SRE_Vol27 | Snake River Echoes, Volume 27 |
 
-### The order is a rule, and you fix it by renaming
+### The order: the `attachment order` column, and how it is filled
 
-Files are attached in **natural name order, ignoring case and punctuation**:
-`No9` comes before `No10`, and `No2&3` sits between `No1` and `No4`. It is one
-rule, used by `plan`, `extract` and the run alike, and it cannot know what a
-file *means*:
+**A row's `attachment order` column decides the order**: the folder's files,
+joined by semicolons. `plan` attaches them in exactly that order, and refuses
+the row — listing every stray, repeat and omission — if the cell does not name
+exactly the files in the folder, so a stale order can never upload a different
+set. **Edit the cell in Excel to reorder by hand.** Leave it blank, or leave the
+column out of a hand-made spreadsheet, and files go in name order.
 
-| In the folder | Attached in this order | Why |
+When the spreadsheet is built with one row per subfolder, the column is always
+filled in for you:
+
+- **If the template declares sequence patterns** (next section), files go in
+  **part-number order**, and files with no part number go last. A volume whose
+  years cross a boundary still comes out right, because the issue numbers, not
+  the years in the names, decide.
+- **Otherwise, natural name order**, ignoring case and punctuation: `No9`
+  before `No10`. That rule cannot know what a file *means*:
+
+| In the folder | Name order | Part order (with a pattern) |
 | --- | --- | --- |
-| `…_No9.pdf`, `…_No10.pdf` | No9, No10 | numbers compare by value |
-| `SRE_1972_Vol2_No1.pdf`, `SRE_1972-73_Vol2_No3.pdf` | **No3 first** | punctuation is ignored, so `1972-73` reads as `1972 73`, and digits sort before the letters of `Vol` |
-| `SRE_1998_Commemorative.pdf`, `SRE_1998_Vol27_No1.pdf` | **Commemorative first** | `C` comes before `V` |
+| `SRE_1972_Vol2_No1.pdf`, `SRE_1972-73_Vol2_No3.pdf` | **No3 first**: `1972-73` reads as `1972 73`, and digits sort before `Vol` | No1, then No3 |
+| `SRE_1998_Commemorative.pdf`, `SRE_1998_Vol27_No1.pdf` | **Commemorative first** | No1, then Commemorative |
 
-When the order is wrong, **rename the file** so that it sorts where it
-belongs, then plan again. Nothing reorders files behind your back, so what you
-rename is what is uploaded. **`plan` prints every folder's files in upload
-order** (the desktop app shows them on the Review screen) so you can check it
-before anything is sent:
+**`plan` prints every folder's files in upload order**, and the desktop app
+shows them on the Review screen, so you can check the order before anything is
+sent:
 
 ```text
 Planned 38 item(s) -> job.json
-  Row 3: SRE_Vol2 (3 files), in upload order:
-      1. SRE_1972-73_Vol2_No3.pdf
-      2. SRE_1972_Vol2_No1.pdf
-      3. SRE_1972_Vol2_No2.pdf
+  Row 3: SRE_Vol2 (4 files), in upload order:
+      1. SRE_1972_Vol2_No1.pdf
+      2. SRE_1972_Vol2_No2.pdf
+      3. SRE_1972-73_Vol2_No3.pdf
+      4. SRE_1973_Vol2_No4.pdf
 ```
 
 ### What counts as the folder's contents
@@ -473,36 +483,54 @@ holds decides the verdict:
   names which files it holds and which it does not;
 - it holds **none** — *possible*, as for a single file.
 
-### Checking the volumes: misfiled, duplicated and unnumbered issues
+### Sequence patterns: ordering and checking a folder's parts
 
-A serial kept as one folder per volume can go wrong in ways no file listing
-shows: an issue filed in the wrong volume, two different scans both numbered
-issue 3, a gap. A template can declare how its file names state an issue —
-and, optionally, a volume — and the spreadsheet builder checks every folder
-against it:
+Any collection kept as one folder per item has the same shape: numbered
+**parts** in a folder, the folder being one of a run of **groups**. A journal's
+issues in a volume, a manuscript's folios in a box, an interview's sessions.
+The same shape fails in ways no file listing shows: a part filed in the wrong
+group, two different scans both numbered 3, a gap, dates out of order. A
+template can declare how its file names state these, and the spreadsheet
+builder then orders and checks every folder:
 
 ```json
-"pattern": "SRE_Vol{volume}",
-"checks": { "issues": { "patterns": ["Vol{volume}_No{issue}", "Vol{volume}_Num{issue}"] } }
+"pattern": "SRE_Vol{group}",
+"checks": {
+  "sequence": {
+    "patterns": ["{year}_Vol{group}_No{part}", "{year}_Vol{group}_Num{part}"],
+    "labels": { "part": "issue", "group": "volume" }
+  }
+}
 ```
 
-`{issue}` and `{volume}` are numbers, found anywhere in a file's name, ignoring
-capitals; the folder's own volume comes from `{volume}` in `pattern`. `No2&3`
-is one file covering issues 2 and 3.
+- `{part}` is the file's number within its folder. `No2&3` covers parts 2
+  and 3, and `No2-4` covers 2 to 4.
+- `{group}` is the group the file says it belongs to; the folder's own group
+  is `{group}` in `pattern`, read from the folder name.
+- `{year}` is a year, or a span such as `1972-73`.
+- All three are found anywhere in a name, ignoring capitals. Each is optional
+  except `{part}`, and several patterns cover several spellings.
+- **`labels` are the collection's own words** for the messages, so an operator
+  reads "2 files claim issue 3", not "2 files claim part 3". Plurals default
+  to adding "s"; give `parts` or `groups` when that is wrong (`"groups":
+  "boxes"`). Without labels the messages say "part" and "group".
 
 | Finding | Effect |
 | --- | --- |
-| A file's name gives another volume | **Held back** — the folder is left out of the spreadsheet |
-| Two files claim the same issue | **Held back**, naming both |
-| A file has no issue number (e.g. `Commemorative`) | Note — still attached, in name order |
-| A gap in the numbering | Note — a missing *last* issue cannot be detected, and the note says so |
-| No file in the batch matched any pattern | Note — the arrangement was not checked |
+| A file's name gives another group | **Held back** — the folder is left out of the spreadsheet |
+| Two files claim the same part | **Held back**, naming both |
+| A file has no part number (e.g. `Commemorative`) | Note — attached after the numbered parts |
+| A gap in the numbering | Note — a missing *last* part cannot be detected, and the note says so |
+| A part dated before the part it follows | Note — the dates run backwards |
+| A group number with no folder, or two folders for one | Note |
+| A group dated before the group it follows | Note |
+| No file in the batch matched any pattern | Note — nothing was checked |
 
-**The checks never move or reorder anything.** A misfiled name in the right
-folder looks exactly like a correct name in the wrong one; only a person can
-tell, so the folder is held back until someone does. Fix it on disk — move or
-rename the file — and build the spreadsheet again. Order is still name order,
-and renaming is still how you change it.
+**The patterns order and check, but never move a file.** A misfiled name in
+the right folder looks exactly like a correct name in the wrong one; only a
+person can tell, so the folder is held back until someone does. Fix it on
+disk, by moving or renaming the file, and build the spreadsheet again. Notes
+are for review: each could be the publisher's own irregularity.
 
 Every per-folder build writes **`<spreadsheet>-problems.csv` beside the
 spreadsheet**: folder, file, effect, problem and what to do, one line each,

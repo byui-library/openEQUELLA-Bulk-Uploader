@@ -498,23 +498,30 @@ shape, never as a value the code may assume.
   openEQUELLA's own interface: one staging area, several `PUT`s, one
   `POST /api/item` listing N attachments creates one item whose attachments
   appear in the order sent, each with the client-supplied uuid. That is the
-  whole mechanism of a folder row. **The order is the tool's rule, not a
-  judgement** -- `folderFiles.ts#orderFiles` is natural, case- and
-  punctuation-blind, and it puts a hyphenated year range (`1972-73`) BEFORE
-  the plain year, because with punctuation ignored the comparison reaches
-  `73` against `Vol` and digits sort first. The operator's remedy for a wrong
-  order is renaming files (decided 2026-11-13), which only works because every
-  surface prints the order before the run. Do not "fix" the collator to suit
-  one batch: a second rule is a second order the plan and the run can disagree
-  about. **Declared issue patterns CHECK the arrangement and never change the
-  order** (operator's "Option C", 2026-11-16, chosen over ordering by issue
-  number after the three were weighed). `extract/issueChecks.ts` holds a folder
-  back -- left out of the spreadsheet -- for a file named for another volume or
-  two files claiming one issue, and NEVER moves a file: a misnamed file in the
-  right folder is indistinguishable from a right name in the wrong one. The
-  checks run at extract time because only the extractor has the template; a
-  hand-made spreadsheet is unchecked, and the docs say so. On the real 38-volume
-  batch the log came out at exactly three lines, all real.
+  whole mechanism of a folder row. **The order is ONE decision, recorded in
+  the spreadsheet's reserved `attachment order` column** and frozen into the
+  manifest by `plan`, so plan, Review and run cannot disagree. `plan` refuses a
+  row whose column does not name exactly the folder's files; blank means
+  natural name order (`folderFiles.ts#orderFiles`), which puts `1972-73` BEFORE
+  `1972` because digits sort before `Vol`. How the column gets filled went
+  through three decisions on 2026-11-16, and the history matters: rename-only
+  (13 Nov) -> "Option C", patterns CHECK only -> **part numbers ORDER** (a real
+  volume crosses a year boundary, so a year in a name says nothing about
+  sequence). Staff may edit the column by hand; that was the operator's
+  explicit requirement. **`extract/sequenceChecks.ts` is deliberately
+  NEUTRAL** -- `{part}`, `{group}`, `{year}` plus per-template `labels` for the
+  messages (Snake River Echoes: issue / volume) -- renamed from journal terms
+  BEFORE the first release so no template is ever written in a journal-only
+  form; the next collection's shape is unknown, so nothing beyond the
+  vocabulary was generalised. A file of another group or two files claiming
+  one part HOLD the folder back (left out of the spreadsheet); unnumbered
+  files, gaps and dates running backwards -- in a folder or across the run of
+  groups -- are NOTES. It NEVER moves a file: a misnamed file in the right
+  folder is indistinguishable from a right name in the wrong one. The checks
+  run at extract time because only the extractor has the template; a
+  hand-made spreadsheet is unchecked, and the docs say so. On the real
+  38-volume batch, after the operator's fixes, the log is one line: Vol 27's
+  unnumbered commemorative issue, attached last.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.

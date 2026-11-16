@@ -518,38 +518,35 @@ folder becomes one item**.
    nothing else in it: no folder inside a folder, and no empty folders. The
    program refuses a folder like that rather than uploading part of it, and
    tells you which one and why.
-2. **Name the files so they sort in the order you want.** Files are attached
-   in name order, with numbers compared properly (`No9` before `No10`) and
-   capitals and punctuation ignored. It cannot know what a file *means*, so
-   watch for these:
-   - a special issue named in words, such as `Commemorative`, sorts by its
-     first letter, here before every `Vol…` file;
-   - a year range like `1972-73` sorts **before** the plain year `1972`;
-   - a file from another volume that has ended up in the wrong folder is
-     uploaded with that folder.
-
-   To fix the order, **rename the file** to follow the same pattern as the
-   others. For example, `SRE_1998_Commemorative.pdf` becomes
-   `SRE_1998_Vol27_No3_Commemorative.pdf` to sort after issue 2.
-3. **Build the spreadsheet with one row per folder.** On the first screen of
-   *I don't have a spreadsheet yet…*, choose your batch folder and tick
+2. **Build the spreadsheet with one row per folder.** On the first screen of
+   *I don't have a spreadsheet yet…*, choose your batch folder, pick the
+   template if there is one (for example *Snake River Echoes*), and tick
    **One row per subfolder**. The program counts folders instead of files, and
    each row's `attachment name` is the folder's name. The language model is not
    used for rows built this way; those cells say so in `_notes`.
-   **When you save, read what the last screen says about held-back folders.**
-   If the template knows how its files are numbered, as the *Snake River
-   Echoes* one does, the program checks every folder. A file that belongs to
-   another volume, or two files with the same issue number, keeps that folder
-   out of the spreadsheet so it is not uploaded. Click **Show problem list**: a
-   spreadsheet beside yours says what is wrong in each folder and what to do.
-   Fix the folders, then build the spreadsheet again. Notes, such as a file
-   with no issue number, are worth a look but don't stop anything.
-4. **On the Review screen, read *Folders: files in upload order* for every
+3. **When you save, read what the last screen says about held-back folders.**
+   If the template knows how its files are numbered, the program checks every
+   folder. A file that belongs to another volume, or two files with the same
+   issue number, keeps that folder out of the spreadsheet so it is not
+   uploaded. Click **Show problem list**: a spreadsheet beside yours says what
+   is wrong in each folder and what to do. Fix the folders on disk, then build
+   the spreadsheet again. Notes are worth a look but don't stop anything: a
+   file with no issue number, a gap in the numbering, or dates that run
+   backwards.
+4. **Check the order in the spreadsheet, and change it there if you need
+   to.** The `attachment order` column, next to each folder's name, lists its
+   files in the order they will be attached. With a template that knows the
+   numbering, that is issue order, with any unnumbered file (such as a
+   commemorative issue) last. Otherwise it is name order. To change it, edit
+   the cell: rearrange the file names, keeping a semicolon between them and
+   naming every file in the folder exactly once. The program refuses a row
+   whose list doesn't match the folder, and says what is wrong.
+5. **On the Review screen, read *Folders: files in upload order* for every
    folder before you continue.** It lists each folder's files, numbered, in
    exactly the order they will be attached, plus anything that will not be
-   uploaded (such as `Thumbs.db`). This is your one chance to catch an order
+   uploaded (such as `Thumbs.db`). This is your last chance to catch an order
    you don't want.
-5. **Do not touch the folders until the upload finishes.** The program checks
+6. **Do not touch the folders until the upload finishes.** The program checks
    each folder again just before uploading it. If a file was added, removed or
    changed since Review, that item is not uploaded, and the reason ends with
    *plan again*. Go back, check again, and run the upload once more.
