@@ -18,7 +18,8 @@ export function placeholders(pattern: string): string[] {
   return names;
 }
 
-function escapeLiteral(text: string): string {
+/** Escape regex metacharacters in literal pattern text. Shared with sequenceChecks.ts, so one grammar escapes both. */
+export function escapeLiteral(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 

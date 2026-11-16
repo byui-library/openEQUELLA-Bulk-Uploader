@@ -1,5 +1,5 @@
 // src/core/extract/sequenceChecks.ts
-import { applyPattern, placeholders } from './pattern.js';
+import { applyPattern, escapeLiteral, placeholders } from './pattern.js';
 import type { FolderProblem, SequenceLabels } from './types.js';
 
 /**
@@ -114,7 +114,7 @@ function compile(pattern: string): { regex: RegExp; names: string[] } {
       // A year, or a span such as 1972-73 for a part published across a year
       // boundary -- a real volume of the first serial does exactly that.
       if (piece === '{year}') return String.raw`(\d{4}(?:\s*-\s*\d{2,4})?)`;
-      return piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return escapeLiteral(piece);
     })
     .join('');
   return { regex: new RegExp(source, 'i'), names };

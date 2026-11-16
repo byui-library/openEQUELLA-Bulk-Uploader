@@ -79,6 +79,11 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
   // src/core/sheet.ts passes `bom: true` to csv-parse so the mark never reaches
   // the first column name. That matters: a BOM corrupts the FIRST field only,
   // which is how it once broke .env parsing here in a thoroughly confusing way.
+  await writeWithBom(path, workbook);
+}
+
+/** A workbook's CSV, written with the UTF-8 byte-order mark Excel needs -- see writeCsv. */
+async function writeWithBom(path: string, workbook: ExcelJS.Workbook): Promise<void> {
   const body = await workbook.csv.writeBuffer();
   await writeFile(path, Buffer.concat([Buffer.from('﻿', 'utf8'), Buffer.from(body as ArrayBuffer)]));
 }
@@ -110,10 +115,9 @@ export async function writeProblemsCsv(path: string, problems: readonly FolderPr
   for (const p of problems) {
     sheet.addRow([p.folder, p.file, p.effect, p.problem, p.fix].map(guardFormula));
   }
-  const body = await workbook.csv.writeBuffer();
-  // The same byte-order mark as writeCsv, for the same reason: Excel reads
-  // a CSV without one in the system codepage and mangles every accent.
-  await writeFile(path, Buffer.concat([Buffer.from('﻿', 'utf8'), Buffer.from(body as ArrayBuffer)]));
+  // The same byte-order mark as writeCsv, for the same reason: Excel reads a
+  // CSV without one in the system codepage and mangles every accent.
+  await writeWithBom(path, workbook);
 }
 
 /**

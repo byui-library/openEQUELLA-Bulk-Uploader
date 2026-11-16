@@ -146,9 +146,6 @@ export function parseProfile(input: unknown): Profile {
     throw new ValidationError(`Two columns both use the name '${dupeAlias}'.`);
   }
 
-  // A composeOnly column is never written to the sheet, so a compose template
-  // reading it by name is the ONLY way its value can leave the extractor. With
-  // no name it is extracted on every row and then silently discarded.
   // Sequence patterns are checked here, at load, rather than discovered on the
   // batch: a pattern the checker cannot use would otherwise check nothing
   // across four hundred folders and say so only at the end, if at all.
@@ -175,6 +172,9 @@ export function parseProfile(input: unknown): Profile {
     }
   }
 
+  // A composeOnly column is never written to the sheet, so a compose template
+  // reading it by name is the ONLY way its value can leave the extractor. With
+  // no name it is extracted on every row and then silently discarded.
   for (const column of profile.columns) {
     // A row names exactly one file or one folder; "every file's value,
     // joined" in that cell would name something that does not exist.
