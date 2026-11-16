@@ -3,6 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { buildFolderRow, buildRow, type FolderDoc } from './rows.js';
 import { clutterReason, listFolderFiles, orderFiles } from '../folderFiles.js';
+import { canWriteInOrder } from '../attachmentOrder.js';
 import { isSupported, readDocument, type DocumentReader } from './readers/index.js';
 import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from './types.js';
 import {
@@ -292,9 +293,9 @@ export async function extractFolders(
     // that plan must refuse. Every folder's order is still reviewed, and can be
     // changed, on the desktop Review screen.
     if (order.some((name, i) => name !== folder.files[i])) {
-      // A name the cell cannot carry -- it splits on ';' and trims -- would be
+      // A name the cell cannot carry (attachmentOrder.ts#canWriteInOrder) would be
       // refused by plan; say so here instead of writing a list that cannot work.
-      const unwritable = order.filter((n) => n.includes(';') || n.trim() !== n);
+      const unwritable = order.filter((n) => !canWriteInOrder(n));
       if (unwritable.length === 0) row.attachmentOrder = order;
       else {
         row.notes.push(

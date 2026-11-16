@@ -3,9 +3,17 @@ import { join, resolve } from 'node:path';
 import type { Manifest, ManifestEntry, ManifestFile, Sheet, ItemState } from './types.js';
 import { splitRepeatable } from './metadata.js';
 import { ATTACHMENT_COLUMN, ATTACHMENT_ORDER_COLUMN, rowLabel } from './types.js';
-import { validateHeaders, isAnnotationHeader, matchSchemaPath, topSection } from './schema.js';
+import {
+  validateHeaders,
+  isAnnotationHeader,
+  isReservedHeader,
+  matchSchemaPath,
+  reservedCell,
+  topSection,
+} from './schema.js';
 import { ValidationError } from './errors.js';
 import { listFolderFiles } from './folderFiles.js';
+import { parseAttachmentOrder, reorderFiles } from './attachmentOrder.js';
 import type { OeqClient } from './client.js';
 
 export interface PlanOptions {
@@ -77,7 +85,7 @@ export async function buildManifest(
   const claims = new Map<string, number[]>();
 
   for (const row of sheet.rows) {
-    const wanted = (reservedCell(row.cells, ATTACHMENT_COLUMN) ?? '').trim();
+    const wanted = reservedCell(row.cells, ATTACHMENT_COLUMN).trim();
     if (wanted === '') {
       warnings.push(`Row ${row.rowNumber}: no '${ATTACHMENT_COLUMN}' value; skipped.`);
       continue;
@@ -109,7 +117,9 @@ export async function buildManifest(
         continue;
       }
       const base = folderPath;
-      const ordered = applyAttachmentOrder(listing.files, reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN));
+      // Blank means name order -- the listing as it came, from folderFiles.ts.
+      const wantedOrder = parseAttachmentOrder(reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN));
+      const ordered = wantedOrder.length === 0 ? { files: listing.files } : reorderFiles(listing.files, wantedOrder);
       if ('problem' in ordered) {
         // Refused whole, like any other folder that cannot be what the plan
         // says: an order naming files the folder does not hold -- a stale
@@ -234,88 +244,6 @@ export async function buildManifest(
     entries,
     warnings,
   };
-}
-
-/**
- * A reserved column's cell, matching the header CASE-BLIND -- as
- * `schema.ts#validateHeaders` accepts it. Matched exactly here while validation
- * matched case-blind, a header typed `Attachment Order` passed validation, was
- * then ignored as an order AND sent to openEQUELLA as metadata. One rule for
- * both halves.
- */
-function reservedCell(cells: Readonly<Record<string, string>>, name: string): string {
-  const header = Object.keys(cells).find((h) => h.toLowerCase() === name);
-  return header === undefined ? '' : (cells[header] ?? '');
-}
-
-/** Whether a header is one of the reserved columns, never metadata. Case-blind, see reservedCell. */
-function isReservedHeader(header: string): boolean {
-  const lower = header.toLowerCase();
-  return lower === ATTACHMENT_COLUMN || lower === ATTACHMENT_ORDER_COLUMN;
-}
-
-/**
- * A folder's files in the order the spreadsheet's `attachment order` cell
- * gives, or why that order cannot be used.
- *
- * BLANK MEANS NAME ORDER -- the listing as it came, from
- * folderFiles.ts#orderFiles. Otherwise the cell must name EXACTLY the folder's
- * files, each once; names match case-blind, as `attachment name` does, and the
- * folder's own spelling is what is uploaded. Anything else is reported in
- * full -- every stray, repeat and omission at once -- so one edit fixes it.
- */
-export function applyAttachmentOrder<F extends { name: string }>(
-  listed: readonly F[],
-  cell: string,
-): { files: F[] } | { problem: string } {
-  const wanted = cell
-    .split(';')
-    .map((n) => n.trim())
-    .filter((n) => n !== '');
-  if (wanted.length === 0) return { files: [...listed] };
-  return reorderFiles(listed, wanted);
-}
-
-/**
- * `listed` in the order `wanted` names them, or why that cannot be done. ONE
- * rule for every way an order arrives -- the spreadsheet cell and the desktop
- * Review screen -- so neither can accept a list the other would refuse.
- */
-export function reorderFiles<F extends { name: string }>(
-  listed: readonly F[],
-  wanted: readonly string[],
-): { files: F[] } | { problem: string } {
-  // EXACT FIRST, then case-blind -- but only where the case-blind spelling is
-  // unambiguous. On a case-sensitive disk `Scan.pdf` and `scan.pdf` are two
-  // files, and a lowercase key alone would merge them and refuse every order
-  // naming both as "listed twice".
-  const exact = new Map(listed.map((f) => [f.name, f]));
-  const byLower = new Map<string, F | null>();
-  for (const f of listed) {
-    const key = f.name.toLowerCase();
-    byLower.set(key, byLower.has(key) ? null : f);
-  }
-  const files: F[] = [];
-  const strays: string[] = [];
-  const repeats: string[] = [];
-  const seen = new Set<F>();
-  for (const name of wanted) {
-    const file = exact.get(name) ?? byLower.get(name.toLowerCase()) ?? undefined;
-    if (file === undefined) strays.push(name);
-    else if (seen.has(file)) repeats.push(name);
-    else {
-      seen.add(file);
-      files.push(file);
-    }
-  }
-  const missing = listed.filter((f) => !seen.has(f)).map((f) => f.name);
-
-  const problems = [
-    ...(strays.length > 0 ? [`not in the folder: ${strays.join(', ')}`] : []),
-    ...(repeats.length > 0 ? [`listed twice: ${[...new Set(repeats)].join(', ')}`] : []),
-    ...(missing.length > 0 ? [`missing from the order: ${missing.join(', ')}`] : []),
-  ];
-  return problems.length > 0 ? { problem: problems.join('; ') } : { files };
 }
 
 /**

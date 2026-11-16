@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import { guardFormula } from '../formulaGuard.js';
 import { ATTACHMENT_ORDER_COLUMN } from '../types.js';
+import { formatAttachmentOrder } from '../attachmentOrder.js';
 import type { ExtractedRow, FolderProblem, Profile } from './types.js';
 
 /** Where each value came from. Underscore-prefixed, so the uploader ignores it. */
@@ -33,15 +34,12 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
   // reviewing it will look, and where they edit it to reorder by hand. Only
   // when a row has one: a file batch's spreadsheet is unchanged.
   const ordered = rows.some((r) => r.attachmentOrder !== undefined);
-  const [first, ...rest] = columns.map((c) => c.path);
-  const headers = [
-    ...(first === undefined ? [] : [first]),
-    ...(ordered ? [ATTACHMENT_ORDER_COLUMN] : []),
-    ...rest,
-    SOURCE_COLUMN,
-    NOTES_COLUMN,
-  ];
-  sheet.addRow(headers);
+  // ONE layout for the header and every row: the order cell, when present,
+  // goes in at index 1, straight after `attachment name` (which profile.ts
+  // pins to the first column).
+  const withOrder = (cells: string[], order: string): string[] =>
+    ordered ? [...cells.slice(0, 1), order, ...cells.slice(1)] : cells;
+  sheet.addRow([...withOrder(columns.map((c) => c.path), ATTACHMENT_ORDER_COLUMN), SOURCE_COLUMN, NOTES_COLUMN]);
 
   for (const row of rows) {
     const sources = Object.entries(row.sources)
@@ -58,9 +56,10 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
     // `_`-prefixed annotation names, none of which can begin with a trigger --
     // and guarding one would stop `plan` matching the column at all.
     sheet.addRow([
-      ...columns.slice(0, 1).map((c) => guardFormula(row.cells[c.path] ?? '')),
-      ...(ordered ? [guardFormula((row.attachmentOrder ?? []).join('; '))] : []),
-      ...columns.slice(1).map((c) => guardFormula(row.cells[c.path] ?? '')),
+      ...withOrder(
+        columns.map((c) => row.cells[c.path] ?? ''),
+        row.attachmentOrder === undefined ? '' : formatAttachmentOrder(row.attachmentOrder),
+      ).map(guardFormula),
       guardFormula(sources),
       guardFormula(row.notes.join('; ')),
     ]);

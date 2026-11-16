@@ -3,6 +3,7 @@ import type { DuplicateChoice, DuplicateFinding } from '../../../core/duplicates
 import { canContinueReview } from '../review.js';
 import { categorizeWarnings } from '../warnings.js';
 import { escapeHtml } from '../dom.js';
+import { reorderFiles } from '../../../core/attachmentOrder.js';
 import { duplicatesSection } from '../duplicates.js';
 
 export interface ReviewProps {
@@ -79,9 +80,13 @@ export function ordersStillValid(
   for (const folder of folders) {
     const order = orders[folder.rowNumber];
     if (order === undefined) continue;
-    const same =
-      order.length === folder.files.length && [...order].sort().join('\n') === [...folder.files].sort().join('\n');
-    if (same) kept[folder.rowNumber] = [...order];
+    // The SAME rule the upload applies (attachmentOrder.ts#reorderFiles), so
+    // the screen never keeps an order the run would refuse, or the reverse.
+    const result = reorderFiles(
+      folder.files.map((name) => ({ name })),
+      order,
+    );
+    if ('files' in result) kept[folder.rowNumber] = result.files.map((f) => f.name);
   }
   return kept;
 }
