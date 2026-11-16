@@ -462,8 +462,8 @@ describe('parseProfile -- issue checks', () => {
     expect(() => parseProfile(withChecks('SRE_Vol{volume}', ['Vol{volume}']))).toThrow(/\{issue\}/);
   });
 
-  it('refuses a placeholder other than {issue} and {volume}', () => {
-    expect(() => parseProfile(withChecks('SRE_Vol{volume}', ['No{issue}_{year}']))).toThrow(/\{year\}/);
+  it('refuses a placeholder other than {issue}, {volume} and {year}', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{volume}', ['No{issue}_{season}']))).toThrow(/\{season\}/);
   });
 
   it('refuses {volume} in a check when the folder pattern has none to compare it with', () => {
@@ -474,5 +474,17 @@ describe('parseProfile -- issue checks', () => {
 
   it('refuses an empty pattern list', () => {
     expect(() => parseProfile(withChecks('SRE_Vol{volume}', []))).toThrow();
+  });
+});
+
+describe('parseProfile -- dated issue checks', () => {
+  it('accepts {year} in an issue check pattern', () => {
+    const p = parseProfile({
+      version: 1,
+      pattern: 'SRE_Vol{volume}',
+      columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }],
+      checks: { issues: { patterns: ['{year}_Vol{volume}_No{issue}'] } },
+    });
+    expect(p.checks?.issues?.patterns[0]).toBe('{year}_Vol{volume}_No{issue}');
   });
 });

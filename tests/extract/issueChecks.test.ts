@@ -1,6 +1,6 @@
 // tests/extract/issueChecks.test.ts
 import { describe, it, expect } from 'vitest';
-import { checkIssues, folderVolume, orderByIssue, parseIssues } from '../../src/core/extract/issueChecks.js';
+import { checkBatch, checkIssues, folderVolume, orderByIssue, parseIssues } from '../../src/core/extract/issueChecks.js';
 
 const PATTERNS = ['V{volume}_No{issue}', 'V{volume}_Num{issue}'];
 
@@ -33,7 +33,7 @@ describe('folderVolume', () => {
 describe('checkIssues', () => {
   it('finds nothing to say about a clean run', () => {
     const r = checkIssues(PATTERNS, 4, 'Gazette_V4', ['G_1975_V4_No1.pdf', 'G_1975_V4_No2.pdf']);
-    expect(r).toEqual({ findings: [], numbered: 2 });
+    expect(r).toEqual({ findings: [], numbered: 2, years: null });
   });
 
   it('holds the folder back for a file named for another volume, and leaves it out of the other checks', () => {
@@ -113,7 +113,7 @@ describe('checkIssues', () => {
 
   it('matches anywhere in the name, ignoring case and a hyphenated year before it', () => {
     const r = checkIssues(PATTERNS, 2, 'Gazette_V2', ['G_1972-73_v2_no3.pdf', 'G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf']);
-    expect(r).toEqual({ findings: [], numbered: 3 });
+    expect(r).toEqual({ findings: [], numbered: 3, years: null });
   });
 
   it('cannot compare volumes when the folder gives none, and says so once', () => {
@@ -136,7 +136,7 @@ describe('checkIssues', () => {
 
 describe('checkIssues -- a folder of one', () => {
   it('says nothing about an unnumbered file that is alone: there is no order for it to be wrong in', () => {
-    expect(checkIssues(PATTERNS, 17, 'Gazette_V17', ['G_1988_V17.pdf'])).toEqual({ findings: [], numbered: 0 });
+    expect(checkIssues(PATTERNS, 17, 'Gazette_V17', ['G_1988_V17.pdf'])).toEqual({ findings: [], numbered: 0, years: null });
   });
 });
 
@@ -167,5 +167,89 @@ describe('orderByIssue', () => {
   it('keeps the given order for a tie, and for no patterns at all', () => {
     expect(orderByIssue(PATTERNS, ['b_V1_No1.pdf', 'a_V1_No1.pdf'])).toEqual(['b_V1_No1.pdf', 'a_V1_No1.pdf']);
     expect(orderByIssue([], ['z.pdf', 'a.pdf'])).toEqual(['z.pdf', 'a.pdf']);
+  });
+});
+
+describe('checkIssues -- dates', () => {
+  const DATED = ['{year}_V{volume}_No{issue}'];
+
+  it('accepts a volume that runs across a year boundary, in order', () => {
+    const r = checkIssues(DATED, 2, 'Gazette_V2', [
+      'G_1972_V2_No1.pdf',
+      'G_1972_V2_No2.pdf',
+      'G_1972-73_V2_No3.pdf',
+      'G_1973_V2_No4.pdf',
+    ]);
+    expect(r.findings).toEqual([]);
+    expect(r.years).toEqual({ from: 1972, to: 1973 });
+  });
+
+  it('notes an issue dated before the issue it follows', () => {
+    const r = checkIssues(DATED, 5, 'Gazette_V5', ['G_1976_V5_No1.pdf', 'G_1975_V5_No2.pdf']);
+    expect(r.findings).toEqual([
+      {
+        file: 'G_1975_V5_No2.pdf',
+        effect: 'note',
+        problem: 'issue 2 is dated 1975, before issue 1 (1976) -- the dates run backwards',
+        fix: 'check the year in its name against the issue itself; rename it if the name is wrong',
+      },
+    ]);
+  });
+});
+
+describe('checkBatch', () => {
+  it('notes a volume number with no folder', () => {
+    expect(
+      checkBatch([
+        { folder: 'G_V1', volume: 1, years: null },
+        { folder: 'G_V3', volume: 3, years: null },
+      ]),
+    ).toEqual([
+      {
+        folder: '',
+        file: '',
+        effect: 'note',
+        problem: 'no folder for volume 2 (volumes 1 to 3 found)',
+        fix: 'check whether it exists; if the run is genuinely incomplete, nothing is needed',
+      },
+    ]);
+  });
+
+  it('notes two folders claiming one volume', () => {
+    expect(
+      checkBatch([
+        { folder: 'G_V4', volume: 4, years: null },
+        { folder: 'G_V04', volume: 4, years: null },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        folder: 'G_V4, G_V04',
+        problem: '2 folders claim volume 4',
+      }),
+    ]);
+  });
+
+  it('notes a volume dated before the volume it follows', () => {
+    expect(
+      checkBatch([
+        { folder: 'G_V7', volume: 7, years: { from: 1978, to: 1978 } },
+        { folder: 'G_V8', volume: 8, years: { from: 1976, to: 1976 } },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        folder: 'G_V8',
+        problem: 'volume 8 is dated from 1976, before volume 7 (from 1978) -- the dates run backwards',
+      }),
+    ]);
+  });
+
+  it('says nothing about a clean run, or about folders with no volume', () => {
+    expect(
+      checkBatch([
+        { folder: 'G_V1', volume: 1, years: { from: 1971, to: 1972 } },
+        { folder: 'G_V2', volume: 2, years: { from: 1972, to: 1973 } },
+        { folder: 'Extras', volume: null, years: null },
+      ]),
+    ).toEqual([]);
   });
 });

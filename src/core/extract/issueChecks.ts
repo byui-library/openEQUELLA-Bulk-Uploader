@@ -1,5 +1,6 @@
 // src/core/extract/issueChecks.ts
 import { applyPattern, placeholders } from './pattern.js';
+import type { FolderProblem } from './types.js';
 
 /**
  * Checking a folder's ARRANGEMENT before it becomes one item.
@@ -78,25 +79,51 @@ function compile(pattern: string): { regex: RegExp; names: string[] } {
     .map((part) => {
       if (part === '{issue}') return `(${ISSUE_TEXT})`;
       if (part === '{volume}') return String.raw`(\d+)`;
+      // A year, or a span such as 1972-73 for an issue published across a
+      // year boundary -- a real volume of the first serial does exactly that.
+      if (part === '{year}') return String.raw`(\d{4}(?:\s*-\s*\d{2,4})?)`;
       return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     })
     .join('');
   return { regex: new RegExp(source, 'i'), names };
 }
 
+/** A year or year span as written in a name: `1972`, `1972-73`, `1999-2000`. */
+export interface YearSpan {
+  from: number;
+  to: number;
+}
+
+/** `1972-73` -> 1972 to 1973; a two-digit end belongs to the start's century, or the next. */
+export function parseYears(text: string): YearSpan {
+  const [start, end] = text.split('-').map((s) => s.trim());
+  const from = Number(start);
+  if (end === undefined || end === '') return { from, to: from };
+  let to = Number(end);
+  if (end.length <= 2) {
+    to += Math.floor(from / 100) * 100;
+    if (to < from) to += 100;
+  }
+  return { from, to: Math.max(from, to) };
+}
+
+const showYears = (y: YearSpan) => (y.from === y.to ? `${y.from}` : `${y.from}-${y.to}`);
+
 /** What a name says, by the first pattern that matches it. */
 function read(
   compiled: ReturnType<typeof compile>[],
   name: string,
-): { issues: number[]; volume: number | null } | null {
+): { issues: number[]; volume: number | null; years: YearSpan | null } | null {
   for (const { regex, names } of compiled) {
     const match = regex.exec(name);
     if (!match) continue;
     const issue = match[names.indexOf('issue') + 1] ?? '';
     const volumeAt = names.indexOf('volume');
+    const yearAt = names.indexOf('year');
     return {
       issues: parseIssues(issue),
       volume: volumeAt === -1 ? null : Number(match[volumeAt + 1]),
+      years: yearAt === -1 ? null : parseYears(match[yearAt + 1] ?? ''),
     };
   }
   return null;
@@ -139,12 +166,14 @@ export function checkIssues(
   volume: number | null,
   folderName: string,
   fileNames: readonly string[],
-): { findings: IssueFinding[]; numbered: number } {
+): { findings: IssueFinding[]; numbered: number; years: YearSpan | null } {
   const compiled = patterns.map(compile);
   const findings: IssueFinding[] = [];
   const byIssue = new Map<number, string[]>();
   let numbered = 0;
   let volumeUnchecked = false;
+  // Every dated file that belongs here, for the date checks after the loop.
+  const dated: { name: string; issue: number; years: YearSpan }[] = [];
 
   for (const name of fileNames) {
     const found = read(compiled, name);
@@ -181,6 +210,9 @@ export function checkIssues(
       continue;
     }
     for (const issue of found.issues) byIssue.set(issue, [...(byIssue.get(issue) ?? []), name]);
+    if (found.years !== null && found.issues.length > 0) {
+      dated.push({ name, issue: Math.min(...found.issues), years: found.years });
+    }
   }
 
   for (const [issue, files] of [...byIssue].sort(([a], [b]) => a - b)) {
@@ -222,5 +254,109 @@ export function checkIssues(
     });
   }
 
-  return { findings, numbered };
+  // DATES, IN ISSUE ORDER. A volume may cross a year boundary, so dates may
+  // stay the same or move on; going BACKWARDS means a year or an issue number
+  // in some name is wrong. A note, not a hold: only the issue itself can say
+  // which, and it may be the publisher's own irregularity.
+  const inOrder = [...dated].sort((a, b) => a.issue - b.issue);
+  for (let i = 1; i < inOrder.length; i += 1) {
+    const previous = inOrder[i - 1]!;
+    const current = inOrder[i]!;
+    if (current.years.from < previous.years.from) {
+      findings.push({
+        file: current.name,
+        effect: 'note',
+        problem:
+          `issue ${current.issue} is dated ${showYears(current.years)}, before issue ${previous.issue} ` +
+          `(${showYears(previous.years)}) -- the dates run backwards`,
+        fix: 'check the year in its name against the issue itself; rename it if the name is wrong',
+      });
+    }
+  }
+  const years =
+    dated.length === 0
+      ? null
+      : { from: Math.min(...dated.map((d) => d.years.from)), to: Math.max(...dated.map((d) => d.years.to)) };
+
+  return { findings, numbered, years };
+}
+
+/** One folder as the batch-wide check sees it. */
+export interface VolumeSummary {
+  folder: string;
+  /** From the folder name, through the profile's `pattern`; null when it gives none. */
+  volume: number | null;
+  /** The years its dated files span; null when none is dated. */
+  years: YearSpan | null;
+}
+
+/**
+ * Checks across the whole batch: volumes are a run, and the run can be
+ * inconsistent in ways no single folder shows. NOTES ONLY -- each could be
+ * the publisher's own irregularity, and only a person with the issues in
+ * front of them can say.
+ *
+ * - a volume number between the lowest and highest with no folder;
+ * - two folders claiming one volume;
+ * - a volume dated before the volume it follows.
+ */
+export function checkBatch(volumes: readonly VolumeSummary[]): FolderProblem[] {
+  const problems: FolderProblem[] = [];
+  const numbered = volumes.filter((v): v is VolumeSummary & { volume: number } => v.volume !== null);
+  if (numbered.length === 0) return problems;
+
+  const byVolume = new Map<number, VolumeSummary[]>();
+  for (const v of numbered) byVolume.set(v.volume, [...(byVolume.get(v.volume) ?? []), v]);
+  const present = [...byVolume.keys()].sort((a, b) => a - b);
+  const lowest = present[0]!;
+  const highest = present[present.length - 1]!;
+
+  const missing: number[] = [];
+  for (let n = lowest + 1; n < highest; n += 1) if (!byVolume.has(n)) missing.push(n);
+  if (missing.length > 0) {
+    problems.push({
+      folder: '',
+      file: '',
+      effect: 'note',
+      problem:
+        `no folder for ${missing.length === 1 ? 'volume' : 'volumes'} ${listed(missing)} ` +
+        `(volumes ${lowest} to ${highest} found)`,
+      fix: 'check whether it exists; if the run is genuinely incomplete, nothing is needed',
+    });
+  }
+
+  for (const [volume, folders] of byVolume) {
+    if (folders.length < 2) continue;
+    problems.push({
+      folder: folders.map((f) => f.folder).join(', '),
+      file: '',
+      effect: 'note',
+      problem: `${folders.length} folders claim volume ${volume}`,
+      fix: 'rename the folder whose number is wrong, or merge them if they are one volume',
+    });
+  }
+
+  // Compared by where each volume STARTS, in volume order. Volumes share a
+  // year at their boundary routinely; starting earlier than the one before is
+  // the inconsistency.
+  let previous: (VolumeSummary & { volume: number; years: YearSpan }) | null = null;
+  for (const volume of present) {
+    for (const v of byVolume.get(volume)!) {
+      if (v.years === null) continue;
+      const dated = v as VolumeSummary & { volume: number; years: YearSpan };
+      if (previous !== null && previous.volume !== volume && dated.years.from < previous.years.from) {
+        problems.push({
+          folder: v.folder,
+          file: '',
+          effect: 'note',
+          problem:
+            `volume ${volume} is dated from ${dated.years.from}, before volume ${previous.volume} ` +
+            `(from ${previous.years.from}) -- the dates run backwards`,
+          fix: "check the folder's volume number and the years in its file names",
+        });
+      }
+      previous = dated;
+    }
+  }
+  return problems;
 }

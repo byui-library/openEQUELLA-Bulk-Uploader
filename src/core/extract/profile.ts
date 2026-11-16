@@ -145,11 +145,11 @@ export function parseProfile(input: unknown): Profile {
         `The issue check pattern '${pattern}' has no {issue}, so it could never find an issue number.`,
       );
     }
-    const unknown = names.filter((n) => n !== 'issue' && n !== 'volume');
+    const unknown = names.filter((n) => n !== 'issue' && n !== 'volume' && n !== 'year');
     if (unknown.length > 0) {
       throw new ValidationError(
         `The issue check pattern '${pattern}' uses ${unknown.map((n) => `{${n}}`).join(', ')}; ` +
-          `only {issue} and {volume} mean anything there.`,
+          `only {issue}, {volume} and {year} mean anything there.`,
       );
     }
     if (names.includes('volume') && !placeholders(profile.pattern).includes('volume')) {

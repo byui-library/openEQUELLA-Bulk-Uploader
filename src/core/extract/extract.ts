@@ -5,7 +5,7 @@ import { buildFolderRow, buildRow, type FolderDoc } from './rows.js';
 import { clutterReason, listFolderFiles, orderFiles } from '../folderFiles.js';
 import { isSupported, readDocument, type DocumentReader } from './readers/index.js';
 import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from './types.js';
-import { checkIssues, folderVolume, orderByIssue } from './issueChecks.js';
+import { checkBatch, checkIssues, folderVolume, orderByIssue, type VolumeSummary } from './issueChecks.js';
 
 export interface ExtractOptions {
   /** Injectable so orchestration can be tested without real files. */
@@ -226,6 +226,9 @@ export async function extractFolders(
 
   const patterns = profile.checks?.issues?.patterns ?? [];
   let numbered = 0;
+  // Every folder's volume and years, held back or not, for the checks across
+  // the run of volumes (issueChecks.ts#checkBatch).
+  const volumes: VolumeSummary[] = [];
 
   let done = 0;
   for (const folder of found.folders) {
@@ -238,8 +241,10 @@ export async function extractFolders(
       patterns.length === 0
         ? []
         : (() => {
-            const result = checkIssues(patterns, folderVolume(profile.pattern, folder.name), folder.name, folder.files);
+            const volume = folderVolume(profile.pattern, folder.name);
+            const result = checkIssues(patterns, volume, folder.name, folder.files);
             numbered += result.numbered;
+            volumes.push({ folder: folder.name, volume, years: result.years });
             return result.findings;
           })();
     problems.push(...findings.map((f) => ({ folder: folder.name, ...f })));
@@ -276,6 +281,10 @@ export async function extractFolders(
     done += 1;
     onProgress?.(done, found.folders.length);
   }
+
+  // Across the whole run: a missing volume, two folders for one, dates that
+  // run backwards from one volume to the next. Notes for review, never holds.
+  problems.push(...checkBatch(volumes));
 
   // A check that matched nothing did not run, and must not read as clean --
   // the failure this codebase has had three times. Once, for the batch.

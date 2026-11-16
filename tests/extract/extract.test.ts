@@ -296,3 +296,32 @@ describe('extractFolders -- issue order', () => {
     expect(result.rows[0]!.attachmentOrder).toEqual(['a_No2.pdf', 'b_No1.pdf']);
   });
 });
+
+describe('extractFolders -- the batch-wide checks', () => {
+  it('notes a missing volume and a volume dated before the one it follows', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-batch-'));
+    for (const [folder, file] of [
+      ['Gazette_V1', 'G_1971_V1_No1.pdf'],
+      ['Gazette_V2', 'G_1970_V2_No1.pdf'],
+      ['Gazette_V4', 'G_1974_V4_No1.pdf'],
+    ]) {
+      await mkdir(join(dir, folder!));
+      await writeFile(join(dir, folder!, file!), 'x');
+    }
+    const result = await extractFolders(
+      dir,
+      {
+        version: 1,
+        pattern: 'Gazette_V{volume}',
+        columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+        checks: { issues: { patterns: ['{year}_V{volume}_No{issue}'] } },
+      },
+      { reader: async () => emptyDoc },
+    );
+    expect(result.rows).toHaveLength(3);
+    expect(result.problems!.map((p) => p.problem)).toEqual([
+      'no folder for volume 3 (volumes 1 to 4 found)',
+      'volume 2 is dated from 1970, before volume 1 (from 1971) -- the dates run backwards',
+    ]);
+  });
+});
