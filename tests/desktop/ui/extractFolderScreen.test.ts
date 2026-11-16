@@ -80,7 +80,7 @@ describe('extract save screen -- the problems log', () => {
       flagged: 0,
       aiWritten: 0,
       savedPath: 'C:/batch/sre.csv',
-      problems: { path: 'C:/batch/sre-problems.csv', heldBack: 2, notes: 3 },
+      problems: { path: 'C:/batch/sre-problems.csv', heldBack: 2, looseFiles: 0, notes: 3 },
       busy: false,
       modelStatus: null,
       error: null,
@@ -105,5 +105,28 @@ describe('extract save screen -- the problems log', () => {
   it('says nothing about a log when the run had none (one row per file)', () => {
     const { root } = renderSave({ problems: null });
     expect(root.has('#extract-open-problems')).toBe(false);
+  });
+});
+
+describe('extract save screen -- a log of loose files only', () => {
+  it('says the loose files were left out, and never that nothing was found', () => {
+    const root = new FakeElement();
+    renderExtractSave(root as unknown as HTMLElement, {
+      fileCount: 3,
+      flagged: 0,
+      aiWritten: 0,
+      savedPath: 'C:/batch/sre.csv',
+      problems: { path: 'C:/batch/sre-problems.csv', heldBack: 0, looseFiles: 1, notes: 0 },
+      busy: false,
+      modelStatus: null,
+      error: null,
+      onSave: () => {},
+      onBack: () => {},
+      onOpenFolder: () => {},
+      onOpenProblems: () => {},
+      onDone: () => {},
+    });
+    expect(root.innerHTML).toContain('<strong>1</strong> file(s) lie loose');
+    expect(root.innerHTML).not.toContain('No problems were found');
   });
 });

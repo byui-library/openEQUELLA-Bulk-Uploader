@@ -287,13 +287,37 @@ describe('extractFolders -- issue order', () => {
     expect(calls).toEqual(order);
   });
 
-  it('records name order when the template declares no sequence patterns, so it can be edited by hand', async () => {
+  // Recorded ONLY where it differs from name order. An always-written order
+  // went stale the moment a file was renamed -- the documented remedy -- and
+  // plan then refused the folder. Name order needs no cell: blank means it.
+  it('records no order where the sequence order is name order anyway', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No1.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No2.pdf'), 'x');
+    const result = await extractFolders(dir, ordered, { reader: async () => emptyDoc });
+    expect(result.rows[0]!.attachmentOrder).toBeUndefined();
+  });
+
+  it('records no order when the template declares no sequence patterns', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
     await mkdir(join(dir, 'Gazette_V2'));
     await writeFile(join(dir, 'Gazette_V2', 'b_No1.pdf'), 'x');
     await writeFile(join(dir, 'Gazette_V2', 'a_No2.pdf'), 'x');
     const result = await extractFolders(dir, { ...ordered, checks: undefined }, { reader: async () => emptyDoc });
-    expect(result.rows[0]!.attachmentOrder).toEqual(['a_No2.pdf', 'b_No1.pdf']);
+    expect(result.rows[0]!.attachmentOrder).toBeUndefined();
+  });
+
+  it('notes, rather than writes, an order a file name would break', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    // Name order puts the 1972-73 issue first; issue order puts it last -- so an
+    // order is needed, and this name cannot be carried by the cell.
+    await writeFile(join(dir, 'Gazette_V2', 'G_1972_V2_No1.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'G_1972-73_V2_No3; supplement.pdf'), 'x');
+    const result = await extractFolders(dir, ordered, { reader: async () => emptyDoc });
+    expect(result.rows[0]!.attachmentOrder).toBeUndefined();
+    expect(result.rows[0]!.notes.join(' ')).toMatch(/could not be written to the 'attachment order' column/);
   });
 });
 

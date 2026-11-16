@@ -895,7 +895,10 @@ describe('runExtract --per-folder', () => {
     expect(csv).toContain('Gazette_V1');
     expect(csv).toContain('Gazette, Volume 2');
     // The FOLDER is the attachment name; its files appear only in the order column.
-    expect(csv).toMatch(/^Gazette_V1,No1.pdf,/m);
+    // The FOLDER is the attachment name, and this folder needs no order cell:
+    // its name order is already its order.
+    expect(csv).toMatch(/^Gazette_V1,/m);
+    expect(csv).not.toContain('attachment order');
   });
 
   it('refuses --ai with --per-folder before reading anything', async () => {

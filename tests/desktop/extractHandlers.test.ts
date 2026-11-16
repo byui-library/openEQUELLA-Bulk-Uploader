@@ -732,7 +732,7 @@ describe('extract handlers -- the problems log', () => {
       for (const f of files) await writeFile(join(dir, folder, f), makePdf({ text: 'An issue.' }));
     }
     const out = join(root, 'sre.csv');
-    const report = await ipc.call<{ written: number; problems?: { path: string; heldBack: number; notes: number } }>(
+    const report = await ipc.call<{ written: number; problems?: { path: string; heldBack: number; looseFiles: number; notes: number } }>(
       'oeq:extractRun',
       {
         dir,
@@ -747,7 +747,7 @@ describe('extract handlers -- the problems log', () => {
       },
     );
     expect(report.written).toBe(2);
-    expect(report.problems).toEqual({ path: join(root, 'sre-problems.csv'), heldBack: 1, notes: 1 });
+    expect(report.problems).toEqual({ path: join(root, 'sre-problems.csv'), heldBack: 1, looseFiles: 0, notes: 1 });
     expect(await readFile(join(root, 'sre-problems.csv'), 'utf8')).toContain('Gazette_V3,G_V2_No2.pdf,held back');
   });
 });

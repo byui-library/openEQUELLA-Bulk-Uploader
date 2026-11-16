@@ -43,7 +43,7 @@ export interface ExtractState {
    *  machine writing into a permanent record is not a thing to hide either. */
   savedAiWritten: number;
   /** The problems log of a one-row-per-subfolder run, or null when there was none. */
-  savedProblems: { path: string; heldBack: number; notes: number } | null;
+  savedProblems: { path: string; heldBack: number; looseFiles: number; notes: number } | null;
   /** True while the Add-column picker is open. */
   adding: boolean;
   /** The picker's search box. */

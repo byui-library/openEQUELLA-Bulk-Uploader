@@ -15,7 +15,7 @@ export interface ExtractSaveProps {
    * uploaded until fixed -- the one thing on this screen an operator must not
    * miss, so it is said before anything else.
    */
-  problems: { path: string; heldBack: number; notes: number } | null;
+  problems: { path: string; heldBack: number; looseFiles: number; notes: number } | null;
   busy: boolean;
   /**
    * What the model pass is doing right now, or null when it is not running.
@@ -114,15 +114,28 @@ function problemsSection(problems: ExtractSaveProps['problems']): string {
       : `<p class="warn"><strong>${problems.heldBack}</strong> folder(s) were held back and are not
            in the spreadsheet, so they will not be uploaded. The problem list says what is wrong with
            each and how to fix it; fix the folders, then build the spreadsheet again.</p>`;
+  const loose =
+    problems.looseFiles === 0
+      ? ''
+      : `<p class="warn"><strong>${problems.looseFiles}</strong> file(s) lie loose beside the
+           folders, so they are not in the spreadsheet and will not be uploaded. Move each into the
+           folder it belongs to, then build the spreadsheet again.</p>`;
+  // Neutral wording: the problem list itself speaks the template's own words
+  // (issue, folio, ...), and this summary must not contradict it.
   const notes =
     problems.notes === 0
       ? ''
-      : `<p><strong>${problems.notes}</strong> note(s) to check &mdash; such as a file with no issue
-           number, or a gap in the numbering. Those folders are in the spreadsheet.</p>`;
+      : `<p><strong>${problems.notes}</strong> note(s) to check &mdash; such as a file with no number
+           in its name, a gap in the numbering, or dates out of order. Those folders are in the
+           spreadsheet.</p>`;
+  // Clean only when NOTHING is listed: a summary reading "no problems" over a
+  // log that holds a held-back line is a check reporting success it did not have.
   const clean =
-    problems.heldBack === 0 && problems.notes === 0 ? '<p>No problems were found in the folders.</p>' : '';
+    problems.heldBack === 0 && problems.looseFiles === 0 && problems.notes === 0
+      ? '<p>No problems were found in the folders.</p>'
+      : '';
   return `
-    ${held}${notes}${clean}
+    ${held}${loose}${notes}${clean}
     <p>
       <button id="extract-open-problems" type="button">Show problem list</button>
       <code>${escapeHtml(problems.path)}</code>

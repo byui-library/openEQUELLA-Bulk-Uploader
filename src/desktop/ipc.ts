@@ -558,7 +558,7 @@ export interface ExtractRunReport {
    * spreadsheet, and what is in it. `heldBack` counts FOLDERS left out of the
    * spreadsheet -- not uploaded unless fixed; `notes` the lines worth a look.
    */
-  problems?: { path: string; heldBack: number; notes: number };
+  problems?: { path: string; heldBack: number; looseFiles: number; notes: number };
 }
 
 export const CHANNELS = {

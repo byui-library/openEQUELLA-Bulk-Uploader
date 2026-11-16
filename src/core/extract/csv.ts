@@ -121,12 +121,16 @@ export async function writeProblemsCsv(path: string, problems: readonly FolderPr
  * (a folder with two problems is one folder left out) and note lines. One
  * count, so the CLI and the desktop cannot tell an operator different numbers.
  */
-export function countProblems(problems: readonly FolderProblem[]): { heldBack: number; notes: number } {
+export function countProblems(
+  problems: readonly FolderProblem[],
+): { heldBack: number; looseFiles: number; notes: number } {
   const held = problems.filter((p) => p.effect === 'held back');
   return {
-    // Folders only: a loose file beside them is listed in the log, but it is
-    // not a folder, and "N folder(s) held back" must count what it says.
+    // Folders, counted once each however many problems they have. A loose file
+    // is not a folder, so it gets its own count -- folded into neither, a log
+    // holding only loose files read as "no problems" on the save screen.
     heldBack: new Set(held.filter((p) => p.folder !== '').map((p) => p.folder)).size,
+    looseFiles: held.filter((p) => p.folder === '').length,
     notes: problems.length - held.length,
   };
 }

@@ -473,7 +473,7 @@ async function reportProblems(
   problems: readonly FolderProblem[],
   log: (message: string) => void,
 ): Promise<void> {
-  const { heldBack: heldFolders, notes } = countProblems(problems);
+  const { heldBack: heldFolders, looseFiles, notes } = countProblems(problems);
 
   if (options.dryRun) {
     for (const p of problems) {
@@ -487,6 +487,9 @@ async function reportProblems(
   await writeProblemsCsv(path, problems);
   if (heldFolders > 0) {
     log(`${heldFolders} folder(s) held back -- not in the spreadsheet. See ${path}`);
+  }
+  if (looseFiles > 0) {
+    log(`${looseFiles} loose file(s) beside the folders left out -- not in the spreadsheet. See ${path}`);
   }
   if (notes > 0) log(`${notes} note(s) to check in ${path}`);
   if (problems.length === 0) log(`No problems found; the log at ${path} is empty.`);

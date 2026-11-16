@@ -286,9 +286,25 @@ export async function extractFolders(
     row.notes.push(...unreadable);
     // The notes go on the row as well, so `_notes` and the log agree.
     row.notes.push(...findings.map((f) => (f.file === '' ? f.problem : `${f.file}: ${f.problem}`)));
-    // ALWAYS recorded for a folder row -- part order or name order -- so the
-    // spreadsheet shows every folder's order and staff can change it by hand.
-    row.attachmentOrder = order;
+    // RECORDED ONLY WHERE IT DIFFERS FROM NAME ORDER. Blank means name order,
+    // so a folder that needs no cell gets none -- and a rename, the documented
+    // remedy for an order, then takes effect instead of leaving a stale list
+    // that plan must refuse. Every folder's order is still reviewed, and can be
+    // changed, on the desktop Review screen.
+    if (order.some((name, i) => name !== folder.files[i])) {
+      // A name the cell cannot carry -- it splits on ';' and trims -- would be
+      // refused by plan; say so here instead of writing a list that cannot work.
+      const unwritable = order.filter((n) => n.includes(';') || n.trim() !== n);
+      if (unwritable.length === 0) row.attachmentOrder = order;
+      else {
+        row.notes.push(
+          `the order by ${rule.labels.part} could not be written to the 'attachment order' column, ` +
+            `because ${unwritable.map((n) => `'${n}'`).join(', ')} contains ';' or starts or ends ` +
+            `with a space; it will upload in name order unless the file is renamed, or the order ` +
+            `is changed on the Review screen`,
+        );
+      }
+    }
     rows.push(row);
     done += 1;
     onProgress?.(done, found.folders.length);

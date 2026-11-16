@@ -7,6 +7,7 @@ import { parse } from 'csv-parse/sync';
 import {
   writeCsv,
   writeProblemsCsv,
+  countProblems,
   problemsPathFor,
   NOTES_COLUMN,
   SOURCE_COLUMN,
@@ -280,5 +281,30 @@ describe('the attachment order column', () => {
     const path = join(dir, 'o.csv');
     await writeCsv(path, p, [row()]);
     expect(await readFile(path, 'utf8')).not.toContain('attachment order');
+  });
+});
+
+describe('countProblems', () => {
+  const line = (folder: string, file: string, effect: 'held back' | 'note') => ({
+    folder,
+    file,
+    effect,
+    problem: 'p',
+    fix: 'f',
+  });
+
+  it('counts held-back folders once each, loose files separately, and notes', () => {
+    expect(
+      countProblems([
+        line('V3', 'a.pdf', 'held back'),
+        line('V3', 'b.pdf', 'held back'),
+        line('', 'stray.pdf', 'held back'),
+        line('V27', 'c.pdf', 'note'),
+      ]),
+    ).toEqual({ heldBack: 1, looseFiles: 1, notes: 1 });
+  });
+
+  it('never reads as clean while a loose file was left out', () => {
+    expect(countProblems([line('', 'stray.pdf', 'held back')])).toEqual({ heldBack: 0, looseFiles: 1, notes: 0 });
   });
 });
