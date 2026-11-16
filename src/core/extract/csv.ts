@@ -2,7 +2,7 @@
 import { writeFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import { guardFormula } from '../formulaGuard.js';
-import type { ExtractedRow, Profile } from './types.js';
+import type { ExtractedRow, FolderProblem, Profile } from './types.js';
 
 /** Where each value came from. Underscore-prefixed, so the uploader ignores it. */
 export const SOURCE_COLUMN = '_source';
@@ -65,5 +65,38 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
   // the first column name. That matters: a BOM corrupts the FIRST field only,
   // which is how it once broke .env parsing here in a thoroughly confusing way.
   const body = await workbook.csv.writeBuffer();
+  await writeFile(path, Buffer.concat([Buffer.from('﻿', 'utf8'), Buffer.from(body as ArrayBuffer)]));
+}
+
+/**
+ * Where the problems log for a spreadsheet goes: beside it, named after it.
+ * `sre.csv` -> `sre-problems.csv`. Beside the spreadsheet on both surfaces,
+ * because that is the folder the operator is already working in.
+ */
+export function problemsPathFor(spreadsheetPath: string): string {
+  return `${spreadsheetPath.replace(/\.csv$/i, '')}-problems.csv`;
+}
+
+/**
+ * The problems log of a one-row-per-subfolder build: every folder left out of
+ * the spreadsheet and every note worth a look, one line each.
+ *
+ * WRITTEN EVERY TIME, header alone when there is nothing to say. A log left
+ * over from an earlier build would describe folders that have since been
+ * fixed, and an operator has no way to tell a stale log from a current one.
+ *
+ * Guarded like the spreadsheet: the file names and folder names in it came
+ * off a disk nobody vetted, and Excel executes a cell that begins `=`.
+ */
+export async function writeProblemsCsv(path: string, problems: readonly FolderProblem[]): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('problems');
+  sheet.addRow(['folder', 'file', 'effect', 'problem', 'what to do']);
+  for (const p of problems) {
+    sheet.addRow([p.folder, p.file, p.effect, p.problem, p.fix].map(guardFormula));
+  }
+  const body = await workbook.csv.writeBuffer();
+  // The same byte-order mark as writeCsv, for the same reason: Excel reads
+  // a CSV without one in the system codepage and mangles every accent.
   await writeFile(path, Buffer.concat([Buffer.from('﻿', 'utf8'), Buffer.from(body as ArrayBuffer)]));
 }

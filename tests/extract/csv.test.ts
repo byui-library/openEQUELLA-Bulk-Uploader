@@ -4,7 +4,13 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'csv-parse/sync';
-import { writeCsv, NOTES_COLUMN, SOURCE_COLUMN } from '../../src/core/extract/csv.js';
+import {
+  writeCsv,
+  writeProblemsCsv,
+  problemsPathFor,
+  NOTES_COLUMN,
+  SOURCE_COLUMN,
+} from '../../src/core/extract/csv.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile } from '../../src/core/extract/types.js';
 import { readSheet } from '../../src/core/sheet.js';
 
@@ -203,5 +209,41 @@ describe('formula injection', () => {
 
     const sheet = await readSheet(path);
     expect(sheet.rows[0]?.cells['MWDL/title']).toBe(dangerous);
+  });
+});
+
+describe('the problems log', () => {
+  it('is named after the spreadsheet it sits beside', () => {
+    expect(problemsPathFor(join('C:', 'batch', 'sre.csv'))).toBe(join('C:', 'batch', 'sre-problems.csv'));
+    expect(problemsPathFor(join('C:', 'batch', 'sre.CSV'))).toBe(join('C:', 'batch', 'sre-problems.csv'));
+    expect(problemsPathFor(join('C:', 'batch', 'sre'))).toBe(join('C:', 'batch', 'sre-problems.csv'));
+  });
+
+  it('writes one line per problem under a header an operator can read', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-problems-'));
+    const path = join(dir, 'p.csv');
+    await writeProblemsCsv(path, [
+      { folder: 'Gazette_V3', file: 'G_V2_No4.pdf', effect: 'held back', problem: 'wrong volume', fix: 'move it' },
+    ]);
+    const text = (await readFile(path, 'utf8')).replace(/^﻿/, '');
+    const lines = text.trim().split(/\r?\n/);
+    expect(lines[0]).toBe('folder,file,effect,problem,what to do');
+    expect(lines[1]).toBe('Gazette_V3,G_V2_No4.pdf,held back,wrong volume,move it');
+  });
+
+  it('writes the header alone when there is nothing to report, so an old log is never left standing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-problems-'));
+    const path = join(dir, 'p.csv');
+    await writeProblemsCsv(path, []);
+    expect((await readFile(path, 'utf8')).replace(/^﻿/, '').trim()).toBe('folder,file,effect,problem,what to do');
+  });
+
+  it('guards a cell Excel would execute', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-problems-'));
+    const path = join(dir, 'p.csv');
+    await writeProblemsCsv(path, [
+      { folder: 'V1', file: '=HYPERLINK("x").pdf', effect: 'note', problem: 'p', fix: 'f' },
+    ]);
+    expect(await readFile(path, 'utf8')).not.toMatch(/,=HYPERLINK/);
   });
 });
