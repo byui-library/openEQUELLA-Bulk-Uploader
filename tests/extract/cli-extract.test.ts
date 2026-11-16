@@ -949,3 +949,61 @@ describe('runExtract --per-folder', () => {
     expect(written.columns[0]).toMatchObject({ path: ATTACHMENT_COLUMN, sources: [{ filename: true }] });
   });
 });
+
+describe('runExtract --per-folder -- the problems log', () => {
+  const checked: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{volume}',
+    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    checks: { issues: { patterns: ['V{volume}_No{issue}'] } },
+  };
+
+  async function setup() {
+    const root = await mkdtemp(join(tmpdir(), 'oeq-cli-problems-'));
+    const dir = join(root, 'batch');
+    await mkdir(dir);
+    for (const [folder, files] of [
+      ['Gazette_V2', ['G_V2_No1.pdf']],
+      ['Gazette_V3', ['G_V2_No2.pdf', 'G_V3_No1.pdf']],
+    ] as const) {
+      await mkdir(join(dir, folder));
+      for (const f of files) await writeFile(join(dir, folder, f), makePdf({ text: 'An issue.' }));
+    }
+    const profilePath = join(root, 'p.profile.json');
+    await saveProfile(profilePath, checked);
+    return { dir, root, profilePath, out: join(root, 'sre.csv') };
+  }
+
+  it('writes the log beside the spreadsheet and says where, leaving the held-back folder out', async () => {
+    const { dir, root, profilePath, out } = await setup();
+    const lines: string[] = [];
+    await runExtract(
+      { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true },
+      (m) => lines.push(m),
+    );
+    const log = await readFile(join(root, 'sre-problems.csv'), 'utf8');
+    expect(log).toContain('Gazette_V3,G_V2_No2.pdf,held back');
+    expect(await readFile(out, 'utf8')).not.toContain('Gazette_V3');
+    expect(lines.join('\n')).toContain(`1 folder(s) held back -- not in the spreadsheet. See ${join(root, 'sre-problems.csv')}`);
+  });
+
+  it('writes the log even when every folder is held back', async () => {
+    const { dir, root, profilePath, out } = await setup();
+    await writeFile(join(dir, 'Gazette_V2', 'G_V9_No1.pdf'), makePdf({ text: 'x' }));
+    await expect(
+      runExtract({ dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true }, () => {}),
+    ).rejects.toThrow(/nothing to write/);
+    expect(await readFile(join(root, 'sre-problems.csv'), 'utf8')).toContain('Gazette_V2');
+  });
+
+  it('prints the problems on a dry run and writes nothing', async () => {
+    const { dir, root, profilePath, out } = await setup();
+    const lines: string[] = [];
+    await runExtract(
+      { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true, dryRun: true },
+      (m) => lines.push(m),
+    );
+    expect(lines.join('\n')).toMatch(/held back: Gazette_V3 -- G_V2_No2\.pdf: its name says volume 2/);
+    expect(await readdir(root)).not.toContain('sre-problems.csv');
+  });
+});

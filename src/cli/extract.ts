@@ -17,7 +17,7 @@ import {
   type FolderListing,
 } from '../core/extract/extract.js';
 import { scanEvidence, scanFolderEvidence } from '../core/extract/evidence.js';
-import { writeCsv } from '../core/extract/csv.js';
+import { problemsPathFor, writeCsv, writeProblemsCsv } from '../core/extract/csv.js';
 import { aiConfirmation } from '../core/ai/confirm.js';
 import { describeHost } from '../core/ai/endpoint.js';
 import { modelColumns } from '../core/ai/eligible.js';
@@ -28,7 +28,7 @@ import { assertUsableCap } from '../core/ai/fill.js';
 import { assertUsableBudget } from '../core/ai/slice.js';
 import { timeoutSecondsProblem } from '../core/ai/provider.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
-import type { DocumentData, ExtractResult, ExtractedRow, Profile } from '../core/extract/types.js';
+import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from '../core/extract/types.js';
 
 export interface ExtractCliOptions {
   dir: string;
@@ -351,6 +351,7 @@ export async function runExtract(
   if (options.perFolder === true) {
     const result = await extractFolders(options.dir, profile);
     if (wantsModel) noteMissingModel(result.rows, profile, 'folder-row');
+    await reportProblems(options, result.problems ?? [], log);
     await finishExtract(options, profile, result, log);
     return;
   }
@@ -459,6 +460,38 @@ export async function runExtract(
   }
 
   await finishExtract(options, profile, result, log);
+}
+
+/**
+ * The problems log of a per-folder run, written BEFORE the spreadsheet so it
+ * exists even when every folder was held back and there is no spreadsheet to
+ * write -- that is when it is needed most. A dry run writes nothing, so it
+ * prints the lines instead.
+ */
+async function reportProblems(
+  options: ExtractCliOptions,
+  problems: readonly FolderProblem[],
+  log: (message: string) => void,
+): Promise<void> {
+  const held = problems.filter((p) => p.effect === 'held back');
+  const heldFolders = new Set(held.filter((p) => p.folder !== '').map((p) => p.folder)).size;
+  const notes = problems.length - held.length;
+
+  if (options.dryRun) {
+    for (const p of problems) {
+      const where = [p.folder, p.file].filter((s) => s !== '').join(' -- ');
+      log(`  ${p.effect}: ${where === '' ? '(batch)' : where}: ${p.problem}`);
+    }
+    return;
+  }
+
+  const path = problemsPathFor(options.out);
+  await writeProblemsCsv(path, problems);
+  if (heldFolders > 0) {
+    log(`${heldFolders} folder(s) held back -- not in the spreadsheet. See ${path}`);
+  }
+  if (notes > 0) log(`${notes} note(s) to check in ${path}`);
+  if (problems.length === 0) log(`No problems found; the log at ${path} is empty.`);
 }
 
 /** What every run does with its rows: report them, then preview or write. */
