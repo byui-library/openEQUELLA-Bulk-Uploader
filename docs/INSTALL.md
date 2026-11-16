@@ -533,20 +533,23 @@ folder becomes one item**.
    the spreadsheet again. Notes are worth a look but don't stop anything: a
    file with no issue number, a gap in the numbering, or dates that run
    backwards.
-4. **Check the order in the spreadsheet, and change it there if you need
-   to.** The `attachment order` column, next to each folder's name, lists its
-   files in the order they will be attached. With a template that knows the
-   numbering, that is issue order, with any unnumbered file (such as a
-   commemorative issue) last. Otherwise it is name order. To change it, edit
-   the cell: rearrange the file names, keeping a semicolon between them and
-   naming every file in the folder exactly once. The program refuses a row
-   whose list doesn't match the folder, and says what is wrong.
-5. **On the Review screen, read *Folders: files in upload order* for every
-   folder before you continue.** It lists each folder's files, numbered, in
-   exactly the order they will be attached, plus anything that will not be
-   uploaded (such as `Thumbs.db`). This is your last chance to catch an order
-   you don't want.
-6. **Do not touch the folders until the upload finishes.** The program checks
+4. **On the Review screen, read *Folders: files in upload order* for every
+   folder before you continue, and change any order you don't want right
+   there.** It lists each folder's files, numbered, in exactly the order they
+   will be attached, plus anything that will not be uploaded (such as
+   `Thumbs.db`). With a template that knows the numbering, that is issue
+   order, with any unnumbered file (such as a commemorative issue) last.
+   Otherwise it is name order. Use the **↑** and **↓** beside a file to move
+   it. A changed folder says *order changed here*, and **Put back the planned
+   order** undoes it. Your changes are used when you upload; your spreadsheet
+   is not changed.
+
+   You can also set an order in the spreadsheet itself: the `attachment order`
+   column, next to each folder's name, lists its files separated by
+   semicolons. Rearrange them there, naming every file exactly once, and check
+   again. The program refuses a row whose list doesn't match the folder, and
+   says what is wrong.
+5. **Do not touch the folders until the upload finishes.** The program checks
    each folder again just before uploading it. If a file was added, removed or
    changed since Review, that item is not uploaded, and the reason ends with
    *plan again*. Go back, check again, and run the upload once more.

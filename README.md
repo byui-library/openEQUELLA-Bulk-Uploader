@@ -413,7 +413,9 @@ batch/
 joined by semicolons. `plan` attaches them in exactly that order, and refuses
 the row — listing every stray, repeat and omission — if the cell does not name
 exactly the files in the folder, so a stale order can never upload a different
-set. **Edit the cell in Excel to reorder by hand.** Leave it blank, or leave the
+set. **Edit the cell in Excel to reorder by hand**, or use the ↑/↓ arrows beside each
+file on the desktop app's Review screen, which apply at upload and leave the
+spreadsheet as it is. Leave the cell blank, or leave the
 column out of a hand-made spreadsheet, and files go in name order.
 
 When the spreadsheet is built with one row per subfolder, the column is always
