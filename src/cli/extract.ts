@@ -500,7 +500,7 @@ async function finishExtract(
   log: (message: string) => void,
 ): Promise<void> {
   if (result.skipped.length > 0) {
-    log(`Skipped ${result.skipped.length} file(s):`);
+    log(`Skipped ${result.skipped.length} ${options.perFolder === true ? 'file(s) or folder(s)' : 'file(s)'}:`);
     for (const { file, reason } of result.skipped) log(`  ${file} -- ${reason}`);
   }
 

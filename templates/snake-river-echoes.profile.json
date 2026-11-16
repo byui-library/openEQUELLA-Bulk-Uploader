@@ -1,6 +1,7 @@
 {
   "version": 1,
   "pattern": "SRE_Vol{volume}",
+  "checks": { "issues": { "patterns": ["Vol{volume}_No{issue}", "Vol{volume}_Num{issue}"] } },
   "columns": [
     { "path": "attachment name", "sources": [{ "filename": true }], "locked": true },
     { "path": "MWDL/identifier", "sources": [{ "filename": true }] },

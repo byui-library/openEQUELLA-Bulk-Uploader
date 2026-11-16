@@ -124,6 +124,11 @@ export function checkIssues(
   for (const name of fileNames) {
     const found = read(compiled, name);
     if (found === null) {
+      // The note is about PLACE in the attachment order, and a file alone in
+      // its folder has none to get wrong -- a whole volume scanned as one PDF
+      // is the common case, and noting every one of those teaches the operator
+      // to skim the log.
+      if (fileNames.length === 1) continue;
       findings.push({
         file: name,
         effect: 'note',

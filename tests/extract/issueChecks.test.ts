@@ -133,3 +133,9 @@ describe('checkIssues', () => {
     expect(r.findings[0]).toMatchObject({ effect: 'held back', problem: '2 files claim issue 1' });
   });
 });
+
+describe('checkIssues -- a folder of one', () => {
+  it('says nothing about an unnumbered file that is alone: there is no order for it to be wrong in', () => {
+    expect(checkIssues(PATTERNS, 17, 'Gazette_V17', ['G_1988_V17.pdf'])).toEqual({ findings: [], numbered: 0 });
+  });
+});
