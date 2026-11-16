@@ -290,6 +290,13 @@ It works in three steps:
    they are left alone rather than put somewhere that looks plausible. Add them
    yourself if you want them.
 
+   To fill a column with **your own words plus a part of the name** (for
+   example *Upper Snake River Valley Historical Society Quarterly, Volume 2*),
+   choose **Text with parts of the name…** as its source. A box appears: type
+   the words, and put the part in braces where it belongs, such as
+   `…Quarterly, Volume {volume}`. The box lists the parts you can use, and the
+   preview updates when you click away.
+
    Where a column shows **two** sources, it tries them in order and takes the
    first that isn't empty. That is how one setup can serve a folder holding both
    Word files and PDFs: the Word files have a *Job Title* cell, the PDFs record

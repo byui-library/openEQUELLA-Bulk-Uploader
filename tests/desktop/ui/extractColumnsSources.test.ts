@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderExtractColumns, type ExtractColumnsProps } from '../../../src/desktop/ui/screens/extractColumns.js';
 import { FakeElement } from '../../helpers/fakeDom.js';
+import { optionsForColumn } from '../../../src/desktop/ui/extract/sources.js';
 import { ATTACHMENT_COLUMN, type Profile, type Source } from '../../../src/core/extract/types.js';
 
 /**
@@ -164,4 +165,78 @@ describe('a column configured with something the files do not supply', () => {
    * which is tested directly in tests/desktop/ui/extract/sources.test.ts. The
    * round trip itself was checked against the running app.
    */
+});
+
+/**
+ * ## Text with parts of the name
+ *
+ * REPORTED BY THE OPERATOR, building the Snake River Echoes spreadsheet: a
+ * description of fixed words plus the volume number -- "Upper Snake River
+ * Valley Historical Society Quarterly, Volume 2" -- could not be made on this
+ * screen. The format had it all along (`join`, which the shipped templates use
+ * for titles); the screen offered no way to make one.
+ */
+describe('a column built from text with parts of the name', () => {
+  const volumes = (sources: Source[]): Profile => ({
+    version: 1,
+    pattern: 'SRE_Vol{volume}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources },
+    ],
+  });
+
+  function choose(root: FakeElement, label: string): void {
+    const select = root.querySelector('.source-select') as unknown as FakeElement;
+    const index = [...root.innerHTML.matchAll(/<option value="(\d+)"[^>]*>([^<]*)</g)].find((m) =>
+      m[2]!.startsWith(label),
+    );
+    select.value = index![1]!;
+    select.listeners.get('change')!.forEach((fn) => fn({}));
+  }
+
+  it('is offered, and starts from the first part of the name', () => {
+    const chosen: Source[] = [];
+    const root = render(volumes([]), { onSourceChange: (_p, s) => s && chosen.push(s) });
+    choose(root, 'Text with parts of the name');
+    expect(chosen).toEqual([{ join: '{volume}' }]);
+  });
+
+  it('shows the text in a box to edit, selected in the list, with the parts it can use', () => {
+    const html = render(volumes([{ join: 'Quarterly, Volume {volume}' }])).innerHTML;
+    expect(html).toMatch(/<option value="\d+" selected>Text with parts of the name/);
+    expect(html).toMatch(/class="join-input"[^>]*value="Quarterly, Volume \{volume\}"/);
+    expect(html).toContain('{volume}');
+    // Listed once: the text is in the box, not as a second option.
+    expect(html.match(/Text with parts of the name/g)).toHaveLength(1);
+  });
+
+  it('saves what is typed when the box is left', () => {
+    const chosen: Source[] = [];
+    const root = render(volumes([{ join: '{volume}' }]), { onSourceChange: (_p, s) => s && chosen.push(s) });
+    const input = root.querySelector('.join-input') as unknown as FakeElement;
+    input.value = 'Upper Snake River Valley Historical Society Quarterly, Volume {volume}';
+    input.listeners.get('change')!.forEach((fn) => fn({}));
+    expect(chosen).toEqual([{ join: 'Upper Snake River Valley Historical Society Quarterly, Volume {volume}' }]);
+  });
+
+  // Asserted on the option list itself: the screen's change handler finds the
+  // column through `closest('tr')`, which the fake DOM cannot answer (see
+  // tests/helpers/fakeDom.ts), and it resolves the choice from exactly this list.
+  it('keeps the text it had rather than resetting it when chosen again', () => {
+    const scan = { labels: [], properties: [], tableColumns: [], sections: [] };
+    const options = optionsForColumn('SRE_Vol{volume}', scan, [{ join: 'Quarterly, Volume {volume}' }]);
+    expect(options.filter((o) => 'join' in o.source)).toEqual([
+      { label: 'Text with parts of the name…', source: { join: 'Quarterly, Volume {volume}' } },
+    ]);
+  });
+
+  it('ignores a blank box rather than saving a source that could never fill anything', () => {
+    const chosen: (Source | null)[] = [];
+    const root = render(volumes([{ join: '{volume}' }]), { onSourceChange: (_p, s) => chosen.push(s) });
+    const input = root.querySelector('.join-input') as unknown as FakeElement;
+    input.value = '   ';
+    input.listeners.get('change')!.forEach((fn) => fn({}));
+    expect(chosen).toEqual([]);
+  });
 });

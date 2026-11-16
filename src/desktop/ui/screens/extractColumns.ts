@@ -1,7 +1,8 @@
 // src/desktop/ui/screens/extractColumns.ts
 import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
-import { describeSource, optionsForColumn, restOfChain, type SourceEvidence } from '../extract/sources.js';
+import { isCurrentOption, optionsForColumn, restOfChain, type SourceEvidence } from '../extract/sources.js';
+import { placeholders } from '../../../core/extract/pattern.js';
 import { plainLabel } from '../extract/picker.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
 import { countNeedingReview } from '../../../core/ai/review.js';
@@ -39,16 +40,25 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
   // obituary template -- matched nothing and rendered as "(nothing)".
   const options = optionsForColumn(props.profile.pattern, props.scan, column.sources);
   const current = column.sources[0];
-  const currentLabel = current === undefined ? '' : describeSource(current);
   const rest = restOfChain(column.sources);
 
   const optionHtml = [
     `<option value="">(nothing &mdash; fill in Excel)</option>`,
     ...options.map(
       (o, n) =>
-        `<option value="${n}" ${o.label === currentLabel ? 'selected' : ''}>${escapeHtml(o.label)}</option>`,
+        `<option value="${n}" ${isCurrentOption(o, current) ? 'selected' : ''}>${escapeHtml(o.label)}</option>`,
     ),
   ].join('');
+
+  // TEXT WITH PARTS OF THE NAME gets a box for its text, under the list. Saved
+  // on `change` -- when the box is left -- not on every keystroke, so the
+  // screen does not re-render mid-word and needs no caret restoring.
+  const joinBox =
+    current !== undefined && 'join' in current
+      ? `<label class="hint" for="join-${index}">Text &mdash; put a part of the name in braces:
+           ${partsOf(props.profile.pattern).map((n) => `<code>{${escapeHtml(n)}}</code>`).join(' ') || 'the pattern has no parts yet'}</label>
+         <input id="join-${index}" class="join-input" type="text" value="${escapeHtml(current.join)}">`
+      : '';
 
   return `
     <tr data-path="${escapeHtml(path)}" ${locked ? 'class="locked"' : ''}>
@@ -70,6 +80,7 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
             ? '<span class="fixed">the file itself</span>'
             : `<label class="sr-only" for="src-${index}">Source for ${escapeHtml(plainLabel(path))}</label>
                <select id="src-${index}" class="source-select">${optionHtml}</select>
+               ${joinBox}
                ${
                  rest === null
                    ? ''
@@ -267,6 +278,14 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
       props.onSourceChange(path, chosen);
     }),
   );
+  root.querySelectorAll<HTMLInputElement>('.join-input').forEach((i) =>
+    i.addEventListener('change', () => {
+      // A blank box is ignored, not saved: an empty text could never fill
+      // anything, and the profile loader refuses one.
+      const text = i.value.trim();
+      if (text !== '') props.onSourceChange(pathOf(i), { join: text });
+    }),
+  );
   root.querySelectorAll<HTMLInputElement>('.default-input').forEach((i) =>
     i.addEventListener('change', () => props.onDefaultChange(pathOf(i), i.value)),
   );
@@ -280,4 +299,13 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
   root.querySelector<HTMLButtonElement>('#extract-save-profile')?.addEventListener('click', props.onSaveProfile);
   root.querySelector<HTMLButtonElement>('#extract-continue')?.addEventListener('click', props.onContinue);
   root.querySelector<HTMLButtonElement>('#extract-back')?.addEventListener('click', props.onBack);
+}
+
+/** The parts a pattern names, for the text box's hint; none for a half-typed pattern. */
+function partsOf(pattern: string): string[] {
+  try {
+    return placeholders(pattern);
+  } catch {
+    return [];
+  }
 }

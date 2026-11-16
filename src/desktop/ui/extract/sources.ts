@@ -63,6 +63,20 @@ export function describeSource(source: Source): string {
  * built differently would disagree about that index, which is how a click on
  * one source would store another.
  */
+/** The source-list entry for text with parts of the name (a `join`). */
+export const JOIN_LABEL = 'Text with parts of the name…';
+
+/**
+ * Whether `option` is the one the list should show selected for a column whose
+ * first source is `current`. By label, except text-with-parts, whose label
+ * never names its text: any `join` is that one option.
+ */
+export function isCurrentOption(option: SourceOption, current: Source | undefined): boolean {
+  if (current === undefined) return false;
+  if ('join' in current) return 'join' in option.source;
+  return option.label === describeSource(current);
+}
+
 export function optionsForColumn(
   pattern: string,
   scan: SourceEvidence,
@@ -71,6 +85,14 @@ export function optionsForColumn(
   const offered = sourceOptions(pattern, scan);
   const current = sources[0];
   if (current === undefined) return offered;
+  // A column already built from text keeps ITS text as the option's source, so
+  // choosing the option again does not reset what was typed -- and it is one
+  // option, not a second entry naming the text, which sits in its own box.
+  if ('join' in current) {
+    const at = offered.findIndex((o) => 'join' in o.source);
+    if (at === -1) return [...offered, { label: JOIN_LABEL, source: current }];
+    return offered.map((o, i) => (i === at ? { label: JOIN_LABEL, source: current } : o));
+  }
   const label = describeSource(current);
   if (offered.some((option) => option.label === label)) return offered;
   return [...offered, { label, source: current }];
@@ -116,6 +138,12 @@ export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOpti
     label: `Filename part: ${name}`,
     source: { placeholder: name },
   }));
+  // Fixed words around parts of the name -- "Society Quarterly, Volume {volume}".
+  // Offered only when the pattern HAS parts: without one it is just a default.
+  // Starts from the first part, so it fills something the moment it is chosen;
+  // the column row then shows a box to type the rest (screens/extractColumns.ts).
+  const first = names[0];
+  if (first !== undefined) options.push({ label: JOIN_LABEL, source: { join: `{${first}}` } });
 
   for (const label of scan.labels) {
     options.push({ label: `Label in document: ${label}`, source: { label } });

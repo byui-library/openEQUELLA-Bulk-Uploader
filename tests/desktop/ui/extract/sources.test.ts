@@ -29,6 +29,7 @@ describe('sourceOptions', () => {
     const empty = { supported: [], skipped: [], labels: [], properties: [], tableColumns: [], sections: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
     expect(sourceOptions('{a}.pdf', empty).map((o) => o.label)).toEqual([
       'Filename part: a',
+      'Text with parts of the name…',
       'The file name, without its extension',
       'The start of the document (a guess -- always flagged)',
       'A language model, asked after extraction (only where no source was sure)',
@@ -154,5 +155,12 @@ describe('optionsForColumn', () => {
     const opts = optionsForColumn('{a}.pdf', scan, [{ compose: '{x}' }, { presence: { any: ['x'], then: 'y' } }]);
     expect(shown(opts)).toContain('Built from other columns: {x}');
     expect(shown(opts).some((l) => l.startsWith('"y" when'))).toBe(false);
+  });
+});
+
+describe('text with parts of the name', () => {
+  const empty = { labels: [], properties: [], tableColumns: [], sections: [] };
+  it('is not offered when the pattern has no parts -- it would only be a default', () => {
+    expect(sourceOptions('report.pdf', empty).some((o) => 'join' in o.source)).toBe(false);
   });
 });
