@@ -200,3 +200,27 @@ orders.
 1. This addendum. 2. Profile schema. 3. The pure check (`issueChecks.ts`).
 4. `extractFolders` holds back and reports. 5. The problems CSV. 6. CLI.
 7. Desktop. 8. Template. 9. Docs. 10. Verification and the real-batch dry run.
+
+## Addendum, 2026-11-16 (later): issue numbers set the order
+
+Fixing the real batch showed why name order cannot serve a serial: a volume
+runs across a year boundary (Vol 2 is 1972, 1972-73 and 1973), so the year in
+a name says nothing about where an issue falls, while the issue numbers are
+right. **The operator decided: where a template declares issue patterns,
+issue numbers take precedence within a folder.** This supersedes Option C's
+"checking only".
+
+- **Order:** files a pattern matches, by issue number (the lowest, for a
+  combined `No2&3`); then files with no issue number, in name order -- which
+  is also the operator's earlier wish for irregular issues to go last. Ties
+  keep name order. A template with no issue patterns changes nothing.
+- **How it reaches the upload:** `plan` never sees the template, so the
+  spreadsheet carries the order. The builder writes a reserved
+  **`attachment order`** column, the folder's files joined by `; `. `plan`
+  uses it when present and **refuses the row** when it does not name exactly
+  the folder's files -- a stale order is never uploaded. Without the column,
+  name order, as before. Staff may edit the column in Excel to reorder by hand.
+- The order shown in the plan and on Review is the one the run attaches,
+  because the manifest records it -- one order, decided once.
+- The unnumbered-file note now says the file is attached after the numbered
+  issues.
