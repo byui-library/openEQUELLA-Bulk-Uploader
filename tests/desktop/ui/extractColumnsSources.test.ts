@@ -273,3 +273,36 @@ describe('checking the typed text before it is saved', () => {
     );
   });
 });
+
+/**
+ * REPORTED BY THE OPERATOR, looking at the preview: "it's not clear how the
+ * individual files will get attached to a single contribution from a folder".
+ * A row named SRE_Vol1 gave no sign it carries four issues.
+ */
+describe('the preview of a folder batch', () => {
+  const folderRow = (name: string, files: string[]) => ({
+    cells: { [ATTACHMENT_COLUMN]: name, 'MWDL/description': 'd' },
+    sources: {},
+    notes: [],
+    flagged: {},
+    aiWritten: {},
+    files,
+  });
+
+  it('shows the files each row will attach, in order, after the folder name', () => {
+    const html = render(chained([]), {
+      preview: [folderRow('Gazette_V1', ['G_No1.pdf', 'G_No2.pdf'])],
+    }).innerHTML;
+    expect(html).toMatch(/<th>attachment name<\/th><th>Files attached, in order<\/th>/);
+    expect(html).toContain('2 files: G_No1.pdf, G_No2.pdf');
+    expect(html).toContain('first 1 folder(s)');
+  });
+
+  it('adds no such column for a batch of single files', () => {
+    const html = render(chained([]), {
+      preview: [{ cells: { [ATTACHMENT_COLUMN]: 'a.pdf' }, sources: {}, notes: [], flagged: {}, aiWritten: {} }],
+    }).innerHTML;
+    expect(html).not.toContain('Files attached');
+    expect(html).toContain('first 1 file(s)');
+  });
+});

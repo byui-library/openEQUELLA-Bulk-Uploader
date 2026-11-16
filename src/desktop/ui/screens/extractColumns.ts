@@ -118,22 +118,29 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
 
 function previewTable(props: ExtractColumnsProps): string {
   const paths = props.profile.columns.map((c) => c.path);
-  const head = paths.map((p) => `<th>${escapeHtml(p)}</th>`).join('');
+  // A FOLDER BATCH SHOWS WHAT EACH ROW HOLDS, straight after the folder name.
+  // Reported by the operator: a row named SRE_Vol1 gave no sign that it is one
+  // item carrying four issues. Display only -- never a spreadsheet column.
+  const folders = props.preview.some((row) => row.files !== undefined);
+  const cell = (value: string) =>
+    `<td>${value === '' ? '<span class="blank">(blank)</span>' : escapeHtml(value)}</td>`;
+  const filesCell = (files: string[] | undefined) =>
+    cell(files === undefined ? '' : `${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}`);
+  const head = paths
+    .map((p, i) => `<th>${escapeHtml(p)}</th>${folders && i === 0 ? '<th>Files attached, in order</th>' : ''}`)
+    .join('');
   const body = props.preview
     .map(
       (row) =>
         `<tr>${paths
-          .map((p) => {
-            const value = row.cells[p] ?? '';
-            return `<td>${value === '' ? '<span class="blank">(blank)</span>' : escapeHtml(value)}</td>`;
-          })
+          .map((p, i) => `${cell(row.cells[p] ?? '')}${folders && i === 0 ? filesCell(row.files) : ''}`)
           .join('')}</tr>`,
     )
     .join('');
   const flagged = previewReviewCount(props.preview);
 
   return `
-    <h3>Preview &mdash; first ${props.preview.length} file(s)
+    <h3>Preview &mdash; first ${props.preview.length} ${folders ? 'folder(s)' : 'file(s)'}
       ${flagged > 0 ? `<span class="warn-inline">${flagged} need review</span>` : ''}
     </h3>
     <div class="preview-scroll"><table class="preview"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>

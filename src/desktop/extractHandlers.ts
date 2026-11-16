@@ -13,6 +13,7 @@ import {
   extractFolder,
   extractFolders,
   listFolder,
+  folderUploadOrder,
   listSubfolders,
   type SubfolderListing,
 } from '../core/extract/extract.js';
@@ -40,8 +41,8 @@ interface CacheEntry {
   /** Which kind of batch this sample is of: the same folder reads differently in each. */
   perFolder: boolean;
   docs: { filename: string; doc: DocumentData }[];
-  /** Per-folder mode only: the first few subfolders, each with its readable files. */
-  folders: { name: string; docs: FolderDoc[] }[];
+  /** Per-folder mode only: the first few subfolders -- every file, and the readable ones read. */
+  folders: { name: string; files: string[]; docs: FolderDoc[] }[];
 }
 let cache: CacheEntry | null = null;
 
@@ -75,7 +76,7 @@ async function sample(dir: string, perFolder = false, listing?: SubfolderListing
           // Noted on the row by the real run; the preview carries on without it.
         }
       }
-      folders.push({ name: folder.name, docs });
+      folders.push({ name: folder.name, files: folder.files, docs });
     }
     const docs = folders.flatMap((f) => f.docs.map((d) => ({ filename: d.name, doc: d.doc })));
     cache = { dir, perFolder, docs, folders };
@@ -230,7 +231,16 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
     ): Promise<ExtractedRow[]> => {
       if (args.perFolder === true) {
         const { folders } = await sample(args.dir, true);
-        return folders.map((f) => buildFolderRow(args.profile, f.name, f.docs));
+        return folders.map((f) => {
+          // Built exactly as the run builds it: documents read in UPLOAD order
+          // (the first that answers wins), and the files the row will attach
+          // shown beside it -- an operator asked how one row becomes one item.
+          const order = folderUploadOrder(args.profile, f.files);
+          const docs = [...f.docs].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+          const row = buildFolderRow(args.profile, f.name, docs);
+          row.files = order;
+          return row;
+        });
       }
       const { docs } = await sample(args.dir);
       return docs

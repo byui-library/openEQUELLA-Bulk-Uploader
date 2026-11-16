@@ -349,3 +349,22 @@ describe('extractFolders -- the batch-wide checks', () => {
     ]);
   });
 });
+
+describe('extractFolders -- the files a row will attach', () => {
+  it('records every file of the folder, in upload order, including ones no reader opens', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-files-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    for (const f of ['G_V2_No2.pdf', 'G_V2_No1.pdf', 'cover.jpg']) await writeFile(join(dir, 'Gazette_V2', f), 'x');
+    const result = await extractFolders(
+      dir,
+      {
+        version: 1,
+        pattern: 'Gazette_V{group}',
+        columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+        checks: { sequence: { patterns: ['V{group}_No{part}'] } },
+      },
+      { reader: async () => emptyDoc },
+    );
+    expect(result.rows[0]!.files).toEqual(['G_V2_No1.pdf', 'G_V2_No2.pdf', 'cover.jpg']);
+  });
+});

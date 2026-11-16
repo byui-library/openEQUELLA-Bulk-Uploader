@@ -358,6 +358,13 @@ export interface ExtractedRow {
    * is how the order reaches `plan`. Absent means name order.
    */
   attachmentOrder?: string[];
+  /**
+   * A folder row's files -- ALL of them, readable or not -- in the order they
+   * will be attached. For showing an operator what a row will hold; never
+   * written to the spreadsheet (`attachmentOrder` carries an order, and only
+   * where one is needed). Absent for a row built from one file.
+   */
+  files?: string[];
 }
 
 export interface ExtractResult {

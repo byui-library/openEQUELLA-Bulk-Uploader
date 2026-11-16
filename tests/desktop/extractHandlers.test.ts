@@ -679,6 +679,8 @@ describe('extract handlers -- one row per subfolder', () => {
     });
     expect(rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2', 'Gazette_V10']);
     expect(rows[0]!.cells['MWDL/title']).toBe('Gazette, Volume 2');
+    // Each preview row says what the item will hold.
+    expect((rows[0] as { files?: string[] }).files).toEqual(['No1.pdf']);
   });
 
   it('runs one row per subfolder, sends nothing to a model even when approved, and says why', async () => {
