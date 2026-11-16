@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { foldersSection, moveFile } from '../../../src/desktop/ui/screens/review.js';
+import { foldersSection, moveFile, ordersStillValid } from '../../../src/desktop/ui/screens/review.js';
 
 const folder = {
   rowNumber: 2,
@@ -68,5 +68,19 @@ describe('moveFile', () => {
   it('does nothing past either end', () => {
     expect(moveFile(['a', 'b'], 0, -1)).toEqual(['a', 'b']);
     expect(moveFile(['a', 'b'], 1, 1)).toEqual(['a', 'b']);
+  });
+});
+
+describe('ordersStillValid', () => {
+  const planned = (rowNumber: number, files: string[]) => ({ rowNumber, label: '', files, skipped: [] });
+
+  it('keeps an order whose folder still holds exactly those files', () => {
+    expect(ordersStillValid({ 2: ['b', 'a'] }, [planned(2, ['a', 'b'])])).toEqual({ 2: ['b', 'a'] });
+  });
+
+  it('drops an order whose folder gained, lost or renamed a file, or is gone', () => {
+    expect(
+      ordersStillValid({ 2: ['b', 'a'], 3: ['y', 'x'], 4: ['q', 'p'] }, [planned(2, ['a', 'b', 'c']), planned(3, ['x', 'z'])]),
+    ).toEqual({});
   });
 });

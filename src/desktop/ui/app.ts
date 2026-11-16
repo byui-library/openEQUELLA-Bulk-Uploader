@@ -30,7 +30,7 @@ import { timeoutSecondsProblem } from '../../core/ai/provider.js';
 import { signOutNotice } from './signout.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
-import { moveFile, renderReview } from './screens/review.js';
+import { moveFile, ordersStillValid, renderReview } from './screens/review.js';
 import { renderConfirm } from './screens/confirm.js';
 import { renderProgress, type ProgressLogEntry } from './screens/progress.js';
 import { renderResults, type InterruptedEntry } from './screens/results.js';
@@ -1743,6 +1743,9 @@ async function runReviewCheck(): Promise<void> {
       overrides: { ...state.reviewOverrides },
     });
     state.reviewPlan = report;
+    // An arrow order made against the previous plan survives only if its
+    // folder still holds exactly those files -- see ordersStillValid.
+    state.folderOrders = ordersStillValid(state.folderOrders, report.folders);
     state.duplicates = report.duplicates;
     state.reviewChecked = true;
     state.reviewChecking = false;

@@ -66,6 +66,27 @@ export function moveFile(files: readonly string[], index: number, delta: -1 | 1)
 }
 
 /**
+ * The orders chosen here that still fit a fresh plan: a folder that gained,
+ * lost or renamed a file since the order was chosen -- or is no longer in the
+ * plan -- drops its order and shows the planned one again. Kept, a stale order
+ * would hide the new file on screen and then refuse the whole run at upload.
+ */
+export function ordersStillValid(
+  orders: Readonly<Record<number, readonly string[]>>,
+  folders: readonly PlanFolder[],
+): Record<number, string[]> {
+  const kept: Record<number, string[]> = {};
+  for (const folder of folders) {
+    const order = orders[folder.rowNumber];
+    if (order === undefined) continue;
+    const same =
+      order.length === folder.files.length && [...order].sort().join('\n') === [...folder.files].sort().join('\n');
+    if (same) kept[folder.rowNumber] = [...order];
+  }
+  return kept;
+}
+
+/**
  * Each folder row's files, in the order they will be attached, with ↑/↓ to
  * change it here. Empty for a batch of single files.
  *
