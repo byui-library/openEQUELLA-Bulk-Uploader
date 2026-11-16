@@ -1,10 +1,20 @@
-// tests/extract/issueChecks.test.ts
+// tests/extract/sequenceChecks.test.ts
 import { describe, it, expect } from 'vitest';
-import { checkBatch, checkIssues, folderVolume, orderByIssue, parseIssues } from '../../src/core/extract/issueChecks.js';
+import {
+  checkBatch,
+  checkSequence,
+  folderGroup,
+  orderBySequence,
+  parseParts,
+  resolveLabels,
+} from '../../src/core/extract/sequenceChecks.js';
 
-const PATTERNS = ['V{volume}_No{issue}', 'V{volume}_Num{issue}'];
+const PATTERNS = ['V{group}_No{part}', 'V{group}_Num{part}'];
+// The first serial's own words, so every message reads exactly as an operator sees it.
+const LABELS = resolveLabels({ part: 'issue', group: 'volume' });
+const RULE = { patterns: PATTERNS, labels: LABELS };
 
-describe('parseIssues', () => {
+describe('parseParts', () => {
   it.each([
     ['3', [3]],
     ['2&3', [2, 3]],
@@ -12,32 +22,32 @@ describe('parseIssues', () => {
     ['1+2', [1, 2]],
     ['2-4', [2, 3, 4]],
     ['10', [10]],
-  ])('reads %s as %j', (text, issues) => expect(parseIssues(text)).toEqual(issues));
+  ])('reads %s as %j', (text, issues) => expect(parseParts(text)).toEqual(issues));
 
   it('does not read a year after a dash as the end of a range', () => {
-    expect(parseIssues('3-1974')).toEqual([3]);
+    expect(parseParts('3-1974')).toEqual([3]);
   });
 });
 
-describe('folderVolume', () => {
-  it("reads the folder's {volume} from the profile pattern", () => {
-    expect(folderVolume('Gazette_V{volume}', 'Gazette_V12')).toBe(12);
+describe('folderGroup', () => {
+  it("reads the folder's {group} from the profile pattern", () => {
+    expect(folderGroup('Gazette_V{group}', 'Gazette_V12')).toBe(12);
   });
   it('is null when the folder name does not match, or the value is not a number', () => {
-    expect(folderVolume('Gazette_V{volume}', 'Extras')).toBeNull();
-    expect(folderVolume('Gazette_V{volume}', 'Gazette_VX')).toBeNull();
-    expect(folderVolume('{name}', 'Gazette_V12')).toBeNull();
+    expect(folderGroup('Gazette_V{group}', 'Extras')).toBeNull();
+    expect(folderGroup('Gazette_V{group}', 'Gazette_VX')).toBeNull();
+    expect(folderGroup('{name}', 'Gazette_V12')).toBeNull();
   });
 });
 
-describe('checkIssues', () => {
+describe('checkSequence', () => {
   it('finds nothing to say about a clean run', () => {
-    const r = checkIssues(PATTERNS, 4, 'Gazette_V4', ['G_1975_V4_No1.pdf', 'G_1975_V4_No2.pdf']);
+    const r = checkSequence(RULE, 4, 'Gazette_V4', ['G_1975_V4_No1.pdf', 'G_1975_V4_No2.pdf']);
     expect(r).toEqual({ findings: [], numbered: 2, years: null });
   });
 
   it('holds the folder back for a file named for another volume, and leaves it out of the other checks', () => {
-    const r = checkIssues(PATTERNS, 3, 'Gazette_V3', [
+    const r = checkSequence(RULE, 3, 'Gazette_V3', [
       'G_1973_V2_No4.pdf',
       'G_1973_V3_No1.pdf',
       'G_1974_V3_No2.pdf',
@@ -55,7 +65,7 @@ describe('checkIssues', () => {
   });
 
   it('holds the folder back when two files claim one issue, naming both', () => {
-    const r = checkIssues(PATTERNS, 3, 'Gazette_V3', [
+    const r = checkSequence(RULE, 3, 'Gazette_V3', [
       'G_1974_V3_No3.pdf',
       'G_1974_V3_No4.pdf',
       'G_1974_V3_Num3.pdf',
@@ -73,7 +83,7 @@ describe('checkIssues', () => {
   });
 
   it('notes a file with no issue number, without holding the folder back', () => {
-    const r = checkIssues(PATTERNS, 27, 'Gazette_V27', [
+    const r = checkSequence(RULE, 27, 'Gazette_V27', [
       'G_1998_Commemorative.pdf',
       'G_1998_V27_No1.pdf',
       'G_1998_V27_No2.pdf',
@@ -89,7 +99,7 @@ describe('checkIssues', () => {
   });
 
   it('notes a gap, saying a missing last issue cannot be seen', () => {
-    const r = checkIssues(PATTERNS, 5, 'Gazette_V5', ['G_V5_No1.pdf', 'G_V5_No2.pdf', 'G_V5_No4.pdf']);
+    const r = checkSequence(RULE, 5, 'Gazette_V5', ['G_V5_No1.pdf', 'G_V5_No2.pdf', 'G_V5_No4.pdf']);
     expect(r.findings).toEqual([
       {
         file: '',
@@ -102,22 +112,22 @@ describe('checkIssues', () => {
   });
 
   it('notes the issues missing before the first one found', () => {
-    const r = checkIssues(PATTERNS, 5, 'Gazette_V5', ['G_V5_No3.pdf']);
+    const r = checkSequence(RULE, 5, 'Gazette_V5', ['G_V5_No3.pdf']);
     expect(r.findings[0]?.problem).toMatch(/^issues 1, 2 are missing/);
   });
 
   it('reads a combined issue as covering both numbers: no gap, no duplicate', () => {
-    const r = checkIssues(PATTERNS, 4, 'Gazette_V4', ['G_V4_No1.pdf', 'G_V4_No2&3.pdf', 'G_V4_No4.pdf']);
+    const r = checkSequence(RULE, 4, 'Gazette_V4', ['G_V4_No1.pdf', 'G_V4_No2&3.pdf', 'G_V4_No4.pdf']);
     expect(r.findings).toEqual([]);
   });
 
   it('matches anywhere in the name, ignoring case and a hyphenated year before it', () => {
-    const r = checkIssues(PATTERNS, 2, 'Gazette_V2', ['G_1972-73_v2_no3.pdf', 'G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf']);
+    const r = checkSequence(RULE, 2, 'Gazette_V2', ['G_1972-73_v2_no3.pdf', 'G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf']);
     expect(r).toEqual({ findings: [], numbered: 3, years: null });
   });
 
   it('cannot compare volumes when the folder gives none, and says so once', () => {
-    const r = checkIssues(PATTERNS, null, 'Extras', ['G_V2_No1.pdf', 'G_V3_No2.pdf']);
+    const r = checkSequence(RULE, null, 'Extras', ['G_V2_No1.pdf', 'G_V3_No2.pdf']);
     expect(r.findings).toEqual([
       {
         file: '',
@@ -128,27 +138,27 @@ describe('checkIssues', () => {
     ]);
   });
 
-  it('a pattern without {volume} checks issues only', () => {
-    const r = checkIssues(['No{issue}'], null, 'Anything', ['a_No1.pdf', 'b_No1.pdf']);
+  it('a pattern without {group} checks parts only', () => {
+    const r = checkSequence({ patterns: ['No{part}'], labels: LABELS }, null, 'Anything', ['a_No1.pdf', 'b_No1.pdf']);
     expect(r.findings[0]).toMatchObject({ effect: 'held back', problem: '2 files claim issue 1' });
   });
 });
 
-describe('checkIssues -- a folder of one', () => {
+describe('checkSequence -- a folder of one', () => {
   it('says nothing about an unnumbered file that is alone: there is no order for it to be wrong in', () => {
-    expect(checkIssues(PATTERNS, 17, 'Gazette_V17', ['G_1988_V17.pdf'])).toEqual({ findings: [], numbered: 0, years: null });
+    expect(checkSequence(RULE, 17, 'Gazette_V17', ['G_1988_V17.pdf'])).toEqual({ findings: [], numbered: 0, years: null });
   });
 });
 
-describe('orderByIssue', () => {
+describe('orderBySequence', () => {
   it('orders by issue number across a year boundary in the names', () => {
     expect(
-      orderByIssue(PATTERNS, ['G_1972-73_V2_No3.pdf', 'G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf', 'G_1973_V2_No4.pdf']),
+      orderBySequence(PATTERNS, ['G_1972-73_V2_No3.pdf', 'G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf', 'G_1973_V2_No4.pdf']),
     ).toEqual(['G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf', 'G_1972-73_V2_No3.pdf', 'G_1973_V2_No4.pdf']);
   });
 
   it('puts files with no issue number last, keeping their name order', () => {
-    expect(orderByIssue(PATTERNS, ['G_Commemorative.pdf', 'G_Index.pdf', 'G_V27_No2.pdf', 'G_V27_No1.pdf'])).toEqual([
+    expect(orderBySequence(PATTERNS, ['G_Commemorative.pdf', 'G_Index.pdf', 'G_V27_No2.pdf', 'G_V27_No1.pdf'])).toEqual([
       'G_V27_No1.pdf',
       'G_V27_No2.pdf',
       'G_Commemorative.pdf',
@@ -157,7 +167,7 @@ describe('orderByIssue', () => {
   });
 
   it('places a combined issue by its lowest number', () => {
-    expect(orderByIssue(PATTERNS, ['G_V4_No4.pdf', 'G_V4_No2&3.pdf', 'G_V4_No1.pdf'])).toEqual([
+    expect(orderBySequence(PATTERNS, ['G_V4_No4.pdf', 'G_V4_No2&3.pdf', 'G_V4_No1.pdf'])).toEqual([
       'G_V4_No1.pdf',
       'G_V4_No2&3.pdf',
       'G_V4_No4.pdf',
@@ -165,16 +175,16 @@ describe('orderByIssue', () => {
   });
 
   it('keeps the given order for a tie, and for no patterns at all', () => {
-    expect(orderByIssue(PATTERNS, ['b_V1_No1.pdf', 'a_V1_No1.pdf'])).toEqual(['b_V1_No1.pdf', 'a_V1_No1.pdf']);
-    expect(orderByIssue([], ['z.pdf', 'a.pdf'])).toEqual(['z.pdf', 'a.pdf']);
+    expect(orderBySequence(PATTERNS, ['b_V1_No1.pdf', 'a_V1_No1.pdf'])).toEqual(['b_V1_No1.pdf', 'a_V1_No1.pdf']);
+    expect(orderBySequence([], ['z.pdf', 'a.pdf'])).toEqual(['z.pdf', 'a.pdf']);
   });
 });
 
-describe('checkIssues -- dates', () => {
-  const DATED = ['{year}_V{volume}_No{issue}'];
+describe('checkSequence -- dates', () => {
+  const DATED = ['{year}_V{group}_No{part}'];
 
   it('accepts a volume that runs across a year boundary, in order', () => {
-    const r = checkIssues(DATED, 2, 'Gazette_V2', [
+    const r = checkSequence({ patterns: DATED, labels: LABELS }, 2, 'Gazette_V2', [
       'G_1972_V2_No1.pdf',
       'G_1972_V2_No2.pdf',
       'G_1972-73_V2_No3.pdf',
@@ -185,7 +195,7 @@ describe('checkIssues -- dates', () => {
   });
 
   it('notes an issue dated before the issue it follows', () => {
-    const r = checkIssues(DATED, 5, 'Gazette_V5', ['G_1976_V5_No1.pdf', 'G_1975_V5_No2.pdf']);
+    const r = checkSequence({ patterns: DATED, labels: LABELS }, 5, 'Gazette_V5', ['G_1976_V5_No1.pdf', 'G_1975_V5_No2.pdf']);
     expect(r.findings).toEqual([
       {
         file: 'G_1975_V5_No2.pdf',
@@ -200,9 +210,9 @@ describe('checkIssues -- dates', () => {
 describe('checkBatch', () => {
   it('notes a volume number with no folder', () => {
     expect(
-      checkBatch([
-        { folder: 'G_V1', volume: 1, years: null },
-        { folder: 'G_V3', volume: 3, years: null },
+      checkBatch(LABELS, [
+        { folder: 'G_V1', group: 1, years: null },
+        { folder: 'G_V3', group: 3, years: null },
       ]),
     ).toEqual([
       {
@@ -217,9 +227,9 @@ describe('checkBatch', () => {
 
   it('notes two folders claiming one volume', () => {
     expect(
-      checkBatch([
-        { folder: 'G_V4', volume: 4, years: null },
-        { folder: 'G_V04', volume: 4, years: null },
+      checkBatch(LABELS, [
+        { folder: 'G_V4', group: 4, years: null },
+        { folder: 'G_V04', group: 4, years: null },
       ]),
     ).toEqual([
       expect.objectContaining({
@@ -231,9 +241,9 @@ describe('checkBatch', () => {
 
   it('notes a volume dated before the volume it follows', () => {
     expect(
-      checkBatch([
-        { folder: 'G_V7', volume: 7, years: { from: 1978, to: 1978 } },
-        { folder: 'G_V8', volume: 8, years: { from: 1976, to: 1976 } },
+      checkBatch(LABELS, [
+        { folder: 'G_V7', group: 7, years: { from: 1978, to: 1978 } },
+        { folder: 'G_V8', group: 8, years: { from: 1976, to: 1976 } },
       ]),
     ).toEqual([
       expect.objectContaining({
@@ -245,11 +255,40 @@ describe('checkBatch', () => {
 
   it('says nothing about a clean run, or about folders with no volume', () => {
     expect(
-      checkBatch([
-        { folder: 'G_V1', volume: 1, years: { from: 1971, to: 1972 } },
-        { folder: 'G_V2', volume: 2, years: { from: 1972, to: 1973 } },
-        { folder: 'Extras', volume: null, years: null },
+      checkBatch(LABELS, [
+        { folder: 'G_V1', group: 1, years: { from: 1971, to: 1972 } },
+        { folder: 'G_V2', group: 2, years: { from: 1972, to: 1973 } },
+        { folder: 'Extras', group: null, years: null },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('labels', () => {
+  it('defaults to neutral words, and makes plurals with -s', () => {
+    expect(resolveLabels()).toEqual({ part: 'part', parts: 'parts', group: 'group', groups: 'groups' });
+    expect(resolveLabels({ part: 'folio' })).toMatchObject({ part: 'folio', parts: 'folios' });
+  });
+
+  it("takes a plural the template states, since not every word adds -s", () => {
+    expect(resolveLabels({ group: 'box', groups: 'boxes' })).toMatchObject({ group: 'box', groups: 'boxes' });
+  });
+
+  it("speaks the template's words in every message", () => {
+    const rule = { patterns: ['Box{group}_f{part}'], labels: resolveLabels({ part: 'folio', group: 'box', groups: 'boxes' }) };
+    const r = checkSequence(rule, 4, 'Box4', ['Box4_f1.tif', 'Box4_f1b.tif', 'Box5_f2.tif']);
+    expect(r.findings.map((f) => f.problem)).toEqual([
+      "its name says box 5, but it is in the folder for box 4 ('Box4')",
+      '2 files claim folio 1',
+    ]);
+    expect(checkBatch(rule.labels, [
+      { folder: 'Box1', group: 1, years: null },
+      { folder: 'Box4', group: 4, years: null },
+    ])[0]?.problem).toBe('no folder for boxes 2, 3 (boxes 1 to 4 found)');
+  });
+
+  it('reads neutrally when a template gives no labels', () => {
+    const r = checkSequence({ patterns: ['No{part}'], labels: resolveLabels() }, null, 'X', ['a_No1.pdf', 'b_No1.pdf']);
+    expect(r.findings[0]?.problem).toBe('2 files claim part 1');
   });
 });

@@ -450,30 +450,30 @@ describe('parseProfile -- issue checks', () => {
     version: 1,
     pattern,
     columns: [base],
-    checks: { issues: { patterns } },
+    checks: { sequence: { patterns } },
   });
 
   it('accepts issue patterns', () => {
-    const p = parseProfile(withChecks('SRE_Vol{volume}', ['Vol{volume}_No{issue}', 'Vol{volume}_Num{issue}']));
-    expect(p.checks?.issues?.patterns).toHaveLength(2);
+    const p = parseProfile(withChecks('SRE_Vol{group}', ['Vol{group}_No{part}', 'Vol{group}_Num{part}']));
+    expect(p.checks?.sequence?.patterns).toHaveLength(2);
   });
 
-  it('refuses a pattern with no {issue}', () => {
-    expect(() => parseProfile(withChecks('SRE_Vol{volume}', ['Vol{volume}']))).toThrow(/\{issue\}/);
+  it('refuses a pattern with no {part}', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{group}', ['Vol{group}']))).toThrow(/\{part\}/);
   });
 
-  it('refuses a placeholder other than {issue}, {volume} and {year}', () => {
-    expect(() => parseProfile(withChecks('SRE_Vol{volume}', ['No{issue}_{season}']))).toThrow(/\{season\}/);
+  it('refuses a placeholder other than {part}, {group} and {year}', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{group}', ['No{part}_{season}']))).toThrow(/\{season\}/);
   });
 
-  it('refuses {volume} in a check when the folder pattern has none to compare it with', () => {
-    expect(() => parseProfile(withChecks('{name}', ['Vol{volume}_No{issue}']))).toThrow(
-      /"pattern" has no \{volume\}/,
+  it('refuses {group} in a check when the folder pattern has none to compare it with', () => {
+    expect(() => parseProfile(withChecks('{name}', ['Vol{group}_No{part}']))).toThrow(
+      /"pattern" has no \{group\}/,
     );
   });
 
   it('refuses an empty pattern list', () => {
-    expect(() => parseProfile(withChecks('SRE_Vol{volume}', []))).toThrow();
+    expect(() => parseProfile(withChecks('SRE_Vol{group}', []))).toThrow();
   });
 });
 
@@ -481,10 +481,10 @@ describe('parseProfile -- dated issue checks', () => {
   it('accepts {year} in an issue check pattern', () => {
     const p = parseProfile({
       version: 1,
-      pattern: 'SRE_Vol{volume}',
+      pattern: 'SRE_Vol{group}',
       columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }],
-      checks: { issues: { patterns: ['{year}_Vol{volume}_No{issue}'] } },
+      checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['{year}_Vol{group}_No{part}'] } },
     });
-    expect(p.checks?.issues?.patterns[0]).toBe('{year}_Vol{volume}_No{issue}');
+    expect(p.checks?.sequence?.patterns[0]).toBe('{year}_Vol{group}_No{part}');
   });
 });

@@ -636,10 +636,10 @@ describe('extract handlers -- one row per subfolder', () => {
 
   const folderProfile: Profile = {
     version: 1,
-    pattern: 'Gazette_V{volume}',
+    pattern: 'Gazette_V{group}',
     columns: [
       { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
-      { path: 'MWDL/title', sources: [{ join: 'Gazette, Volume {volume}' }] },
+      { path: 'MWDL/title', sources: [{ join: 'Gazette, Volume {group}' }] },
       { path: 'MWDL/description', sources: [{ ai: true }] },
     ],
   };
@@ -738,9 +738,9 @@ describe('extract handlers -- the problems log', () => {
         dir,
         profile: {
           version: 1,
-          pattern: 'Gazette_V{volume}',
+          pattern: 'Gazette_V{group}',
           columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
-          checks: { issues: { patterns: ['V{volume}_No{issue}'] } },
+          checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['V{group}_No{part}'] } },
         },
         outPath: out,
         perFolder: true,

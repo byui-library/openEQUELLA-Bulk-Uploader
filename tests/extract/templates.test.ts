@@ -357,6 +357,6 @@ describe('the Snake River Echoes template', () => {
 describe('the Snake River Echoes template -- issue checks', () => {
   it('declares issue patterns for both spellings found in the batch', async () => {
     const p = await loadTemplate('snake-river-echoes');
-    expect(p.checks?.issues?.patterns).toEqual(['{year}_Vol{volume}_No{issue}', '{year}_Vol{volume}_Num{issue}']);
+    expect(p.checks?.sequence?.patterns).toEqual(['{year}_Vol{group}_No{part}', '{year}_Vol{group}_Num{part}']);
   });
 });

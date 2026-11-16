@@ -92,7 +92,7 @@ describe('extractFolder', () => {
 describe('extractFolders', () => {
   const folderProfile: Profile = {
     version: 1,
-    pattern: 'Gazette_V{volume}',
+    pattern: 'Gazette_V{group}',
     columns: [
       { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
       { path: 'MWDL/title', sources: [{ property: 'title' }] },
@@ -185,9 +185,9 @@ describe('extractFolders', () => {
 describe('extractFolders -- issue checks', () => {
   const checked: Profile = {
     version: 1,
-    pattern: 'Gazette_V{volume}',
+    pattern: 'Gazette_V{group}',
     columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
-    checks: { issues: { patterns: ['V{volume}_No{issue}', 'V{volume}_Num{issue}'] } },
+    checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['V{group}_No{part}', 'V{group}_Num{part}'] } },
   };
 
   async function batch(layout: Record<string, string[]>): Promise<string> {
@@ -246,7 +246,7 @@ describe('extractFolders -- issue checks', () => {
     expect(batchLines).toEqual([
       expect.objectContaining({
         effect: 'note',
-        problem: 'no file in the batch matched the issue patterns, so the arrangement was not checked',
+        problem: 'no file in the batch matched the sequence patterns, so the arrangement was not checked',
       }),
     ]);
   });
@@ -264,9 +264,9 @@ describe('extractFolders -- issue checks', () => {
 describe('extractFolders -- issue order', () => {
   const ordered: Profile = {
     version: 1,
-    pattern: 'Gazette_V{volume}',
+    pattern: 'Gazette_V{group}',
     columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
-    checks: { issues: { patterns: ['V{volume}_No{issue}'] } },
+    checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['V{group}_No{part}'] } },
   };
 
   it('records the issue order on the row, and reads the files in it', async () => {
@@ -287,7 +287,7 @@ describe('extractFolders -- issue order', () => {
     expect(calls).toEqual(order);
   });
 
-  it('records name order when the template declares no issue patterns, so it can be edited by hand', async () => {
+  it('records name order when the template declares no sequence patterns, so it can be edited by hand', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
     await mkdir(join(dir, 'Gazette_V2'));
     await writeFile(join(dir, 'Gazette_V2', 'b_No1.pdf'), 'x');
@@ -312,9 +312,9 @@ describe('extractFolders -- the batch-wide checks', () => {
       dir,
       {
         version: 1,
-        pattern: 'Gazette_V{volume}',
+        pattern: 'Gazette_V{group}',
         columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
-        checks: { issues: { patterns: ['{year}_V{volume}_No{issue}'] } },
+        checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['{year}_V{group}_No{part}'] } },
       },
       { reader: async () => emptyDoc },
     );

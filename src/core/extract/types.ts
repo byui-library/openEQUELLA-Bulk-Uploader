@@ -1,5 +1,13 @@
 // src/core/extract/types.ts
 
+/** A collection's own words for the parts and groups of a folder batch -- see sequenceChecks.ts. */
+export interface SequenceLabels {
+  part: string;
+  parts: string;
+  group: string;
+  groups: string;
+}
+
 /** The reserved column naming the file on disk. Always first, never removable. */
 export const ATTACHMENT_COLUMN = 'attachment name';
 
@@ -208,17 +216,20 @@ export interface Profile {
      */
     filenameWordsInText?: { ignore?: string[] };
     /**
-     * Check a FOLDER's arrangement, for one-row-per-subfolder batches. Each
-     * pattern finds an issue number -- and optionally a volume -- anywhere in
-     * a file's name: `["Vol{volume}_No{issue}", "Vol{volume}_Num{issue}"]`.
+     * How the files in each FOLDER are numbered, for one-row-per-subfolder
+     * batches. Each pattern finds a `{part}` number -- and optionally the
+     * `{group}` the file belongs to and a `{year}` -- anywhere in a file's
+     * name: `["{year}_Vol{group}_No{part}"]`. The folder's own group is
+     * `{group}` in the profile's `pattern`.
      *
-     * CHECKING ONLY. It does not change the order files are attached in
-     * (folderFiles.ts#orderFiles); renaming does that, by the operator's
-     * decision of 2026-11-16. A file named for another volume, or two files
-     * claiming one issue, holds the folder back; an unnumbered file and a gap
-     * are notes. See issueChecks.ts.
+     * Parts set the attachment order and are checked: a file of another group,
+     * or two files claiming one part, holds the folder back; an unnumbered
+     * file, a gap, and dates running backwards are notes. `labels` gives the
+     * collection's own words for its messages -- `{ part: "issue", group:
+     * "volume" }` -- and defaults to "part" and "group". Neutral by design: see
+     * sequenceChecks.ts.
      */
-    issues?: { patterns: string[] };
+    sequence?: { patterns: string[]; labels?: Partial<SequenceLabels> };
   };
 }
 

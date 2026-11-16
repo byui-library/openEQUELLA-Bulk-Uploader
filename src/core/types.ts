@@ -88,7 +88,7 @@ export const ATTACHMENT_COLUMN = 'attachment name';
 /**
  * Reserved: a folder row's files in the order they are to be attached, joined
  * by semicolons. The extractor writes it from the template's issue patterns
- * (extract/issueChecks.ts#orderByIssue), because `plan` never sees a template;
+ * (extract/sequenceChecks.ts#orderBySequence), because `plan` never sees a template;
  * staff may also edit it by hand. Absent or blank means name order. Never
  * metadata.
  */

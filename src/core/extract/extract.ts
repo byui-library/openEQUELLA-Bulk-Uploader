@@ -5,7 +5,15 @@ import { buildFolderRow, buildRow, type FolderDoc } from './rows.js';
 import { clutterReason, listFolderFiles, orderFiles } from '../folderFiles.js';
 import { isSupported, readDocument, type DocumentReader } from './readers/index.js';
 import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from './types.js';
-import { checkBatch, checkIssues, folderVolume, orderByIssue, type VolumeSummary } from './issueChecks.js';
+import {
+  checkBatch,
+  checkSequence,
+  folderGroup,
+  orderBySequence,
+  resolveLabels,
+  type GroupSummary,
+  type SequenceRule,
+} from './sequenceChecks.js';
 
 export interface ExtractOptions {
   /** Injectable so orchestration can be tested without real files. */
@@ -204,7 +212,7 @@ export async function extractFolders(
   const rows: ExtractedRow[] = [];
 
   // THE PROBLEMS LOG IS THE WHOLE ACCOUNT of what was left out and why: the
-  // folders and files the listing refused are in it as well as what the issue
+  // folders and files the listing refused are in it as well as what the sequence
   // check found, so an operator reading it needs no other list.
   const problems: FolderProblem[] = found.skipped.map(({ file, reason }) =>
     reason === LOOSE_FILE_REASON
@@ -224,11 +232,15 @@ export async function extractFolders(
         },
   );
 
-  const patterns = profile.checks?.issues?.patterns ?? [];
+  const rule: SequenceRule = {
+    patterns: profile.checks?.sequence?.patterns ?? [],
+    labels: resolveLabels(profile.checks?.sequence?.labels),
+  };
+  const patterns = rule.patterns;
   let numbered = 0;
-  // Every folder's volume and years, held back or not, for the checks across
-  // the run of volumes (issueChecks.ts#checkBatch).
-  const volumes: VolumeSummary[] = [];
+  // Every folder's group and years, held back or not, for the checks across
+  // the run of groups (sequenceChecks.ts#checkBatch).
+  const groups: GroupSummary[] = [];
 
   let done = 0;
   for (const folder of found.folders) {
@@ -241,10 +253,10 @@ export async function extractFolders(
       patterns.length === 0
         ? []
         : (() => {
-            const volume = folderVolume(profile.pattern, folder.name);
-            const result = checkIssues(patterns, volume, folder.name, folder.files);
+            const group = folderGroup(profile.pattern, folder.name);
+            const result = checkSequence(rule, group, folder.name, folder.files);
             numbered += result.numbered;
-            volumes.push({ folder: folder.name, volume, years: result.years });
+            groups.push({ folder: folder.name, group, years: result.years });
             return result.findings;
           })();
     problems.push(...findings.map((f) => ({ folder: folder.name, ...f })));
@@ -255,9 +267,9 @@ export async function extractFolders(
       continue;
     }
 
-    // Read in ATTACHMENT order -- issue order when the template declares it --
-    // because "the first file that answers wins" means the first issue.
-    const order = orderByIssue(patterns, folder.files);
+    // Read in ATTACHMENT order -- part order when the template declares it --
+    // because "the first file that answers wins" means the first part.
+    const order = orderBySequence(patterns, folder.files);
     const readable = new Set(folder.readable);
     const docs: FolderDoc[] = [];
     const unreadable: string[] = [];
@@ -274,7 +286,7 @@ export async function extractFolders(
     row.notes.push(...unreadable);
     // The notes go on the row as well, so `_notes` and the log agree.
     row.notes.push(...findings.map((f) => (f.file === '' ? f.problem : `${f.file}: ${f.problem}`)));
-    // ALWAYS recorded for a folder row -- issue order or name order -- so the
+    // ALWAYS recorded for a folder row -- part order or name order -- so the
     // spreadsheet shows every folder's order and staff can change it by hand.
     row.attachmentOrder = order;
     rows.push(row);
@@ -282,9 +294,9 @@ export async function extractFolders(
     onProgress?.(done, found.folders.length);
   }
 
-  // Across the whole run: a missing volume, two folders for one, dates that
-  // run backwards from one volume to the next. Notes for review, never holds.
-  problems.push(...checkBatch(volumes));
+  // Across the whole run: a missing group, two folders for one, dates that
+  // run backwards from one group to the next. Notes for review, never holds.
+  problems.push(...checkBatch(rule.labels, groups));
 
   // A check that matched nothing did not run, and must not read as clean --
   // the failure this codebase has had three times. Once, for the batch.
@@ -293,8 +305,8 @@ export async function extractFolders(
       folder: '',
       file: '',
       effect: 'note',
-      problem: 'no file in the batch matched the issue patterns, so the arrangement was not checked',
-      fix: "compare the profile's checks.issues.patterns with the file names",
+      problem: 'no file in the batch matched the sequence patterns, so the arrangement was not checked',
+      fix: "compare the profile's checks.sequence.patterns with the file names",
     });
   }
 
