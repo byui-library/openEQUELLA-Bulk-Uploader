@@ -29,6 +29,8 @@ export interface BatchState {
   duplicates: DuplicateFinding[];
   /** Row number -> what the operator decided. Absent means the tier default. */
   duplicateChoices: Record<number, DuplicateChoice>;
+  /** Row number -> a folder's file order chosen on Review. Absent means the planned order. */
+  folderOrders: Record<number, string[]>;
 
   itemState: ItemState;
   typedCount: string;
@@ -71,6 +73,7 @@ export function clearedForNextBatch(): BatchState {
     reviewError: null,
     duplicates: [],
     duplicateChoices: {},
+    folderOrders: {},
 
     itemState: 'draft',
     typedCount: '',

@@ -33,7 +33,7 @@ import {
   validateHeaders,
   isAnnotationHeader,
 } from '../core/schema.js';
-import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
+import { buildManifest, preflightDuplicates, markSkipped, applyFolderOrders } from '../core/plan.js';
 import { findDuplicates } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
@@ -768,6 +768,21 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       );
       await saveManifest(args.manifestPath, manifest);
       return marked;
+    },
+  );
+
+  ipcMain.handle(
+    CHANNELS.applyFolderOrders,
+    async (_e, args: { manifestPath: string; orders: Record<number, string[]> }): Promise<number> => {
+      // The Review screen's reordering, applied to the SAVED manifest just
+      // before the run, exactly as duplicate choices are. applyFolderOrders
+      // throws before changing anything if any order does not match its
+      // folder, so a refused list leaves the file as it was -- never half
+      // reordered.
+      const manifest = await loadManifest(args.manifestPath);
+      const reordered = applyFolderOrders(manifest, args.orders);
+      await saveManifest(args.manifestPath, manifest);
+      return reordered;
     },
   );
 

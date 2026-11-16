@@ -390,6 +390,14 @@ export interface OeqApi {
    */
   applyDuplicateChoices(args: { manifestPath: string; skipRows: number[] }): Promise<number>;
 
+  /**
+   * Reorder folder rows in an already-planned manifest, just before running --
+   * the Review screen's ↑/↓ buttons. Keyed by row number. All or nothing: a
+   * list that does not name exactly a folder's files rejects, saving nothing.
+   * Returns how many rows were reordered.
+   */
+  applyFolderOrders(args: { manifestPath: string; orders: Record<number, string[]> }): Promise<number>;
+
   run(args: { manifestPath: string; instanceId: string }): Promise<RunReport>;
   retryFailed(manifestPath: string): Promise<void>;
   loadManifest(manifestPath: string): Promise<Manifest>;
@@ -581,6 +589,7 @@ export const CHANNELS = {
   validate: 'oeq:validate',
   plan: 'oeq:plan',
   applyDuplicateChoices: 'oeq:applyDuplicateChoices',
+  applyFolderOrders: 'oeq:applyFolderOrders',
   run: 'oeq:run',
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',

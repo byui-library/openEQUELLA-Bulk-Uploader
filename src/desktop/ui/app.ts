@@ -30,7 +30,7 @@ import { timeoutSecondsProblem } from '../../core/ai/provider.js';
 import { signOutNotice } from './signout.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
-import { renderReview } from './screens/review.js';
+import { moveFile, renderReview } from './screens/review.js';
 import { renderConfirm } from './screens/confirm.js';
 import { renderProgress, type ProgressLogEntry } from './screens/progress.js';
 import { renderResults, type InterruptedEntry } from './screens/results.js';
@@ -271,6 +271,7 @@ function initialState(): AppState {
     reviewError: null,
     duplicates: [],
     duplicateChoices: {},
+    folderOrders: {},
     itemState: 'draft',
     typedCount: '',
     uploading: false,
@@ -442,6 +443,12 @@ function render(): void {
           // on this screen derives from it, and replacing innerHTML mid-group
           // throws focus to <body> so the operator cannot arrow through it.
           state.duplicateChoices[rowNumber] = choice;
+        },
+        folderOrders: state.folderOrders,
+        onMoveFile: handleMoveFile,
+        onResetOrder: (rowNumber) => {
+          delete state.folderOrders[rowNumber];
+          render();
         },
         onOverrideChange: handleReviewOverrideChange,
         onContinue: handleReviewContinue,
@@ -1692,6 +1699,7 @@ async function loadReviewColumns(): Promise<void> {
   // sheet never passes through it.
   state.duplicates = [];
   state.duplicateChoices = {};
+  state.folderOrders = {};
   render();
   try {
     const columns = await window.oeq.validate({ instanceId: state.instanceId, sheetPath: state.sheetPath! });
@@ -1748,6 +1756,28 @@ async function runReviewCheck(): Promise<void> {
     state.reviewError = errorMessage(err);
     render();
   }
+}
+
+/**
+ * One ↑/↓ click on Review. Held in state and written into the job just
+ * before the run (applyFolderOrders), so it costs no server calls. Moving a
+ * folder back to exactly its planned order forgets the change, so the screen
+ * stops calling it "changed here".
+ */
+function handleMoveFile(rowNumber: number, index: number, delta: -1 | 1): void {
+  const planned = state.reviewPlan?.folders.find((f) => f.rowNumber === rowNumber)?.files;
+  if (planned === undefined) return;
+  const next = moveFile(state.folderOrders[rowNumber] ?? planned, index, delta);
+  if (next.every((name, i) => name === planned[i])) delete state.folderOrders[rowNumber];
+  else state.folderOrders[rowNumber] = next;
+  render();
+  // The screen re-renders by replacing its markup, which would throw focus to
+  // <body> mid-reorder. Follow the moved file, so repeated presses keep
+  // moving it -- falling back to its other arrow at either end.
+  const moved = index + delta;
+  const same = document.getElementById(`order-${delta < 0 ? 'up' : 'down'}-${rowNumber}-${moved}`);
+  const other = document.getElementById(`order-${delta < 0 ? 'down' : 'up'}-${rowNumber}-${moved}`);
+  ((same as HTMLButtonElement | null)?.disabled ? other : (same ?? other))?.focus();
 }
 
 function handleReviewOverrideChange(header: string, xpath: string): void {
@@ -1858,6 +1888,15 @@ async function handleUpload(): Promise<void> {
         // row the operator chose to skip is still going to be uploaded.
         console.warn(`asked to skip ${skipRows.length} row(s), marked ${marked}`);
       }
+    }
+
+    // The order chosen on Review, applied at the same point and for the same
+    // reason as the duplicate choices: it is the operator's decision, made
+    // after seeing the plan. All or nothing -- if a folder changed so a list
+    // no longer matches, this throws, nothing is uploaded, and the operator
+    // is sent back to Confirm with the reason.
+    if (Object.keys(state.folderOrders).length > 0) {
+      await window.oeq.applyFolderOrders({ manifestPath: report.manifestPath, orders: state.folderOrders });
     }
 
     const runReport = await window.oeq.run({ manifestPath: report.manifestPath, instanceId: state.instanceId });

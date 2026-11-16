@@ -58,6 +58,8 @@ interface Harness {
     listCollections: string[];
     /** Every endpoint `window.oeq.listModels` was asked about, in order. */
     listModels: { baseUrl: string; apiKey: string }[];
+    /** Every `orders` map `window.oeq.applyFolderOrders` was given, in order. */
+    folderOrders: Record<number, string[]>[];
     /** Every instance id `window.oeq.signOut` was called with, in order. */
     signOut: string[];
     /**
@@ -136,6 +138,8 @@ interface BootOptions {
   secondSite?: InstanceChoice;
   /** Make the collection list fail, as a refused token or a server fault does. */
   listCollectionsFails?: string;
+  /** What plan() reports. Defaults to a two-item batch of single files. */
+  plan?: Record<string, unknown>;
   /** What `currentUser` reports. `null` means no usable session -- which is
    *  what a REFUSED token looks like, and what a server fault does not. */
   signedIn?: boolean;
@@ -168,6 +172,7 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     signIn: [] as string[],
     listModels: [] as { baseUrl: string; apiKey: string }[],
     modelSaves: [] as Harness['calls']['modelSaves'],
+    folderOrders: [] as Record<number, string[]>[],
   };
   let stored: InstanceChoice = { ...SITE, ...options.site };
   /** Sites signed in to during this run. See the `signIn` fake below. */
@@ -254,8 +259,12 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     // Enough of the upload path to reach the Done screen, which is the other
     // dead end this change closes.
     validate: async () => [{ header: 'MWDL/title', valid: true, suggestions: [] }],
-    plan: async () => PLAN,
+    plan: async () => options.plan ?? PLAN,
     applyDuplicateChoices: async () => 0,
+    applyFolderOrders: async (args: { orders: Record<number, string[]> }) => {
+      calls.folderOrders.push(args.orders);
+      return Object.keys(args.orders).length;
+    },
     run: async () =>
       options.holdRun === true
         ? new Promise((resolve) => {
@@ -2339,5 +2348,61 @@ describe('the collection Choose starts on', () => {
 
     expect(harness.app.innerHTML).toContain('value="coll-1" selected');
     expect(harness.app.innerHTML).not.toContain('value="coll-2" selected');
+  });
+});
+
+/**
+ * The order the operator chose on Review is the order the run is given -- the
+ * seam between a click and the job file, which no unit test crosses.
+ */
+describe('Review -> reordering a folder, in the app', () => {
+  const FOLDER_PLAN = {
+    ...PLAN,
+    entryCount: 1,
+    folders: [{ rowNumber: 2, label: 'Gazette_V2 (3 files)', files: ['No1.pdf', 'No2.pdf', 'No3.pdf'], skipped: [] }],
+  };
+
+  async function reachReview(app: FakeElement): Promise<void> {
+    await reachChoose(app);
+    app.fire('#choose-continue-btn');
+    await flush();
+  }
+
+  it('applies the order chosen on Review just before the run', async () => {
+    harness = await boot({ plan: FOLDER_PLAN });
+    await reachReview(harness.app);
+    harness.app.fire('#order-down-2-0');
+    await flush();
+    expect(harness.app.innerHTML).toContain('order changed here');
+    harness.app.fire('#review-continue-btn');
+    await flush();
+    harness.app.fire('#confirm-upload-btn');
+    await flush();
+    expect(harness.calls.folderOrders).toEqual([{ 2: ['No2.pdf', 'No1.pdf', 'No3.pdf'] }]);
+  });
+
+  it('sends nothing when a folder is moved back to its planned order', async () => {
+    harness = await boot({ plan: FOLDER_PLAN });
+    await reachReview(harness.app);
+    harness.app.fire('#order-down-2-0');
+    await flush();
+    harness.app.fire('#order-up-2-1');
+    await flush();
+    expect(harness.app.innerHTML).not.toContain('order changed here');
+    harness.app.fire('#review-continue-btn');
+    await flush();
+    harness.app.fire('#confirm-upload-btn');
+    await flush();
+    expect(harness.calls.folderOrders).toEqual([]);
+  });
+
+  it('puts the planned order back on request', async () => {
+    harness = await boot({ plan: FOLDER_PLAN });
+    await reachReview(harness.app);
+    harness.app.fire('#order-down-2-0');
+    await flush();
+    harness.app.fire('#order-reset-2');
+    await flush();
+    expect(harness.app.innerHTML).not.toContain('order changed here');
   });
 });
