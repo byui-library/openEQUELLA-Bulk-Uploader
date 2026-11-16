@@ -10,10 +10,12 @@ import { applyPattern, placeholders } from './pattern.js';
  * noticed, and both of which would have become permanent records in a
  * collection with no moderation queue.
  *
- * CHECKING ONLY, by the operator's decision of 2026-11-16 ("Option C"). The
- * order files are attached in is `folderFiles.ts#orderFiles`, untouched; the
- * remedy for a wrong order is renaming. These patterns are what lets the tool
- * SAY something is wrong, never what lets it rearrange anything.
+ * THE PATTERNS CHECK AND ORDER, NEVER MOVE. They began as checking only
+ * ("Option C", 2026-11-16); later that day the operator decided issue numbers
+ * take precedence over names within a folder -- see `orderByIssue`. That order
+ * reaches the upload through the spreadsheet's `attachment order` column,
+ * because `plan` never sees a template. No file is ever moved or renamed here:
+ * a held-back folder waits for a person.
  *
  * NOTHING HERE KNOWS ABOUT ANY JOURNAL. The patterns come from the template,
  * the folder's volume from the template's own `pattern`. PURE -- no I/O.
@@ -103,6 +105,29 @@ function read(
 const listed = (numbers: number[]) => numbers.join(', ');
 
 /**
+ * A folder's files in ISSUE order: numbered files by issue (the lowest, for a
+ * combined `No2&3`), then the files no pattern numbers, last.
+ *
+ * WHY NUMBERS AND NOT NAMES. A volume can run across a year boundary -- one in
+ * the real batch is 1972, 1972-73 and 1973 -- so a year in a name says nothing
+ * about where an issue falls, and name order put issue 3 first. The issue
+ * number is the publisher's own statement of sequence. Operator's decision,
+ * 2026-11-16, superseding "checking only".
+ *
+ * STABLE: `fileNames` arrives in name order (folderFiles.ts#orderFiles), and a
+ * tie, an unnumbered file, or a template with no patterns keeps that order.
+ */
+export function orderByIssue(patterns: readonly string[], fileNames: readonly string[]): string[] {
+  if (patterns.length === 0) return [...fileNames];
+  const compiled = patterns.map(compile);
+  const keyed = fileNames.map((name, index) => {
+    const issues = read(compiled, name)?.issues ?? [];
+    return { name, index, issue: issues.length === 0 ? Infinity : Math.min(...issues) };
+  });
+  return keyed.sort((a, b) => a.issue - b.issue || a.index - b.index).map((k) => k.name);
+}
+
+/**
  * Check one folder's files, in attachment order.
  *
  * `numbered` counts the files a pattern matched, so the caller can tell a
@@ -132,8 +157,8 @@ export function checkIssues(
       findings.push({
         file: name,
         effect: 'note',
-        problem: 'no issue number in its name; it is attached in name order like any other file',
-        fix: 'nothing, if its place in the plan is right; otherwise rename it to move it',
+        problem: 'no issue number in its name; it is attached after the numbered issues',
+        fix: 'nothing, if last is its place; otherwise rename it so a pattern finds its issue number',
       });
       continue;
     }

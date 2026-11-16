@@ -1,6 +1,6 @@
 // tests/extract/issueChecks.test.ts
 import { describe, it, expect } from 'vitest';
-import { checkIssues, folderVolume, parseIssues } from '../../src/core/extract/issueChecks.js';
+import { checkIssues, folderVolume, orderByIssue, parseIssues } from '../../src/core/extract/issueChecks.js';
 
 const PATTERNS = ['V{volume}_No{issue}', 'V{volume}_Num{issue}'];
 
@@ -82,8 +82,8 @@ describe('checkIssues', () => {
       {
         file: 'G_1998_Commemorative.pdf',
         effect: 'note',
-        problem: 'no issue number in its name; it is attached in name order like any other file',
-        fix: 'nothing, if its place in the plan is right; otherwise rename it to move it',
+        problem: 'no issue number in its name; it is attached after the numbered issues',
+        fix: 'nothing, if last is its place; otherwise rename it so a pattern finds its issue number',
       },
     ]);
   });
@@ -137,5 +137,35 @@ describe('checkIssues', () => {
 describe('checkIssues -- a folder of one', () => {
   it('says nothing about an unnumbered file that is alone: there is no order for it to be wrong in', () => {
     expect(checkIssues(PATTERNS, 17, 'Gazette_V17', ['G_1988_V17.pdf'])).toEqual({ findings: [], numbered: 0 });
+  });
+});
+
+describe('orderByIssue', () => {
+  it('orders by issue number across a year boundary in the names', () => {
+    expect(
+      orderByIssue(PATTERNS, ['G_1972-73_V2_No3.pdf', 'G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf', 'G_1973_V2_No4.pdf']),
+    ).toEqual(['G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf', 'G_1972-73_V2_No3.pdf', 'G_1973_V2_No4.pdf']);
+  });
+
+  it('puts files with no issue number last, keeping their name order', () => {
+    expect(orderByIssue(PATTERNS, ['G_Commemorative.pdf', 'G_Index.pdf', 'G_V27_No2.pdf', 'G_V27_No1.pdf'])).toEqual([
+      'G_V27_No1.pdf',
+      'G_V27_No2.pdf',
+      'G_Commemorative.pdf',
+      'G_Index.pdf',
+    ]);
+  });
+
+  it('places a combined issue by its lowest number', () => {
+    expect(orderByIssue(PATTERNS, ['G_V4_No4.pdf', 'G_V4_No2&3.pdf', 'G_V4_No1.pdf'])).toEqual([
+      'G_V4_No1.pdf',
+      'G_V4_No2&3.pdf',
+      'G_V4_No4.pdf',
+    ]);
+  });
+
+  it('keeps the given order for a tie, and for no patterns at all', () => {
+    expect(orderByIssue(PATTERNS, ['b_V1_No1.pdf', 'a_V1_No1.pdf'])).toEqual(['b_V1_No1.pdf', 'a_V1_No1.pdf']);
+    expect(orderByIssue([], ['z.pdf', 'a.pdf'])).toEqual(['z.pdf', 'a.pdf']);
   });
 });
