@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderExtractColumns, type ExtractColumnsProps } from '../../../src/desktop/ui/screens/extractColumns.js';
 import { FakeElement } from '../../helpers/fakeDom.js';
-import { optionsForColumn } from '../../../src/desktop/ui/extract/sources.js';
+import { describeSource, optionsForColumn } from '../../../src/desktop/ui/extract/sources.js';
 import { ATTACHMENT_COLUMN, type Profile, type Source } from '../../../src/core/extract/types.js';
 
 /**
@@ -238,5 +238,38 @@ describe('a column built from text with parts of the name', () => {
     input.value = '   ';
     input.listeners.get('change')!.forEach((fn) => fn({}));
     expect(chosen).toEqual([]);
+  });
+});
+
+describe('checking the typed text before it is saved', () => {
+  const volumes: Profile = {
+    version: 1,
+    pattern: 'SRE_Vol{volume}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ join: '{volume}' }] },
+    ],
+  };
+
+  // Saving a bad text would either write it into every item (a malformed
+  // brace) or be refused and re-render the box with the OLD text, throwing
+  // the typing away. Not saving -- and saying why beside the box -- does neither.
+  it.each(['Quarterly, Volume { volume }', 'Quarterly, Volume {Volume}', 'Quarterly, Volume {volume'])(
+    'does not save %s, and says why beside the box',
+    (typed) => {
+      const chosen: (Source | null)[] = [];
+      const root = render(volumes, { onSourceChange: (_p, s) => chosen.push(s) });
+      const input = root.querySelector('.join-input') as unknown as FakeElement;
+      input.value = typed;
+      input.listeners.get('change')!.forEach((fn) => fn({}));
+      expect(chosen).toEqual([]);
+      expect(root.innerHTML).toContain('class="error join-error"');
+    },
+  );
+
+  it('names a join source the same way everywhere', () => {
+    expect(describeSource({ join: 'Quarterly, Volume {volume}' })).toBe(
+      'Text with parts of the name: "Quarterly, Volume {volume}"',
+    );
   });
 });

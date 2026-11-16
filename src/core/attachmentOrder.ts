@@ -40,6 +40,9 @@ export function canWriteInOrder(name: string): boolean {
   return !name.includes(ORDER_SEPARATOR) && name.trim() === name;
 }
 
+/** Why `canWriteInOrder` refuses a name, in the words an operator reads -- kept beside the rule. */
+export const UNWRITABLE_REASON = `contains '${ORDER_SEPARATOR}' or starts or ends with a space`;
+
 /**
  * `listed` in the order `wanted` names them, or why that cannot be done. ONE
  * rule for every way an order arrives -- the spreadsheet cell and the Review

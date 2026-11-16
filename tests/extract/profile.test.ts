@@ -488,3 +488,26 @@ describe('parseProfile -- dated issue checks', () => {
     expect(p.checks?.sequence?.patterns[0]).toBe('{year}_Vol{group}_No{part}');
   });
 });
+
+describe('parseProfile -- text with parts of the name', () => {
+  const withJoin = (join: string) => ({
+    version: 1,
+    pattern: 'SRE_Vol{volume}',
+    columns: [
+      { path: 'attachment name', sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ join }] },
+    ],
+  });
+
+  it('refuses a malformed brace that would be written literally into every item', () => {
+    expect(() => parseProfile(withJoin('Quarterly, Volume { volume }'))).toThrow(
+      "Column 'MWDL/description': '{ volume }' is not a part",
+    );
+  });
+
+  it('accepts a join of words and a known part', () => {
+    expect(parseProfile(withJoin('Quarterly, Volume {volume}')).columns[1]!.sources).toEqual([
+      { join: 'Quarterly, Volume {volume}' },
+    ]);
+  });
+});

@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { ValidationError } from '../errors.js';
 import { suggest } from '../schema.js';
-import { placeholders } from './pattern.js';
+import { joinProblem, placeholders } from './pattern.js';
 import { ATTACHMENT_COLUMN, type DocumentProperty, type Profile, type Source } from './types.js';
 
 const PROPERTY_NAMES = ['title', 'author', 'subject', 'keywords', 'created'] as const;
@@ -280,6 +280,12 @@ export function parseProfile(input: unknown): Profile {
   const known = new Set(placeholders(profile.pattern));
   for (const column of profile.columns) {
     for (const source of column.sources) {
+      // A join is held to the WHOLE rule -- malformed braces too, which the
+      // narrow name pattern below would leave as literal text in every item.
+      if ('join' in source) {
+        const problem = joinProblem(source.join, [...known]);
+        if (problem !== null) throw new ValidationError(`Column '${column.path}': ${problem}.`);
+      }
       const used =
         'placeholder' in source ? [source.placeholder]
         : 'join' in source ? joinPlaceholders(source.join)

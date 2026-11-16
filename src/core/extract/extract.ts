@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { buildFolderRow, buildRow, type FolderDoc } from './rows.js';
 import { clutterReason, listFolderFiles, orderFiles } from '../folderFiles.js';
-import { canWriteInOrder } from '../attachmentOrder.js';
+import { canWriteInOrder, UNWRITABLE_REASON } from '../attachmentOrder.js';
 import { isSupported, readDocument, type DocumentReader } from './readers/index.js';
 import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from './types.js';
 import {
@@ -299,8 +299,8 @@ export async function extractFolders(
       else {
         row.notes.push(
           `the order by ${rule.labels.part} could not be written to the 'attachment order' column, ` +
-            `because ${unwritable.map((n) => `'${n}'`).join(', ')} contains ';' or starts or ends ` +
-            `with a space; it will upload in name order unless the file is renamed, or the order ` +
+            `because ${unwritable.map((n) => `'${n}'`).join(', ')} ${UNWRITABLE_REASON}; ` +
+            `it will upload in name order unless the file is renamed, or the order ` +
             `is changed on the Review screen`,
         );
       }

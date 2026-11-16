@@ -99,7 +99,7 @@ describe('restOfChain', () => {
 describe('describeSource', () => {
   it('names each kind of source in plain language', () => {
     expect(describeSource({ placeholder: 'last' })).toBe('Filename part: last');
-    expect(describeSource({ join: '{last}, {first}' })).toBe('Filename parts joined as "{last}, {first}"');
+    expect(describeSource({ join: '{last}, {first}' })).toBe('Text with parts of the name: "{last}, {first}"');
     expect(describeSource({ label: 'Performer' })).toBe('Label in document: Performer');
     expect(describeSource({ property: 'title' })).toBe('Document property: title');
     expect(describeSource({ filename: true })).toBe('The file itself');

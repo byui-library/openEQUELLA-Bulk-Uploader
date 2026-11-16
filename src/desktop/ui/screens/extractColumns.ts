@@ -1,8 +1,8 @@
 // src/desktop/ui/screens/extractColumns.ts
 import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
-import { isCurrentOption, optionsForColumn, restOfChain, type SourceEvidence } from '../extract/sources.js';
-import { placeholders } from '../../../core/extract/pattern.js';
+import { isCurrentOption, optionsForColumn, patternParts, restOfChain, type SourceEvidence } from '../extract/sources.js';
+import { joinProblem } from '../../../core/extract/pattern.js';
 import { plainLabel } from '../extract/picker.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
 import { countNeedingReview } from '../../../core/ai/review.js';
@@ -56,8 +56,9 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
   const joinBox =
     current !== undefined && 'join' in current
       ? `<label class="hint" for="join-${index}">Text &mdash; put a part of the name in braces:
-           ${partsOf(props.profile.pattern).map((n) => `<code>{${escapeHtml(n)}}</code>`).join(' ') || 'the pattern has no parts yet'}</label>
-         <input id="join-${index}" class="join-input" type="text" value="${escapeHtml(current.join)}">`
+           ${patternParts(props.profile.pattern).map((n) => `<code>{${escapeHtml(n)}}</code>`).join(' ') || 'the pattern has no parts yet'}</label>
+         <input id="join-${index}" class="join-input" type="text" value="${escapeHtml(current.join)}">
+         <p id="join-${index}-problem" class="error join-error" role="alert"></p>`
       : '';
 
   return `
@@ -283,7 +284,15 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
       // A blank box is ignored, not saved: an empty text could never fill
       // anything, and the profile loader refuses one.
       const text = i.value.trim();
-      if (text !== '') props.onSourceChange(pathOf(i), { join: text });
+      if (text === '') return;
+      // CHECKED HERE, BEFORE SAVING, by the profile loader's own rule. A bad
+      // text saved would be refused, and the re-render would put the OLD text
+      // back in the box -- throwing the typing away. Not saving, and saying why
+      // in the slot beside the box with no re-render, keeps every keystroke.
+      const problem = joinProblem(text, patternParts(props.profile.pattern));
+      const slot = root.querySelector<HTMLElement>(`#${i.id}-problem`);
+      if (slot !== null) slot.textContent = problem ?? '';
+      if (problem === null) props.onSourceChange(pathOf(i), { join: text });
     }),
   );
   root.querySelectorAll<HTMLInputElement>('.default-input').forEach((i) =>
@@ -299,13 +308,4 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
   root.querySelector<HTMLButtonElement>('#extract-save-profile')?.addEventListener('click', props.onSaveProfile);
   root.querySelector<HTMLButtonElement>('#extract-continue')?.addEventListener('click', props.onContinue);
   root.querySelector<HTMLButtonElement>('#extract-back')?.addEventListener('click', props.onBack);
-}
-
-/** The parts a pattern names, for the text box's hint; none for a half-typed pattern. */
-function partsOf(pattern: string): string[] {
-  try {
-    return placeholders(pattern);
-  } catch {
-    return [];
-  }
 }

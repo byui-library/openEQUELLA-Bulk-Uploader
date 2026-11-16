@@ -137,7 +137,7 @@ export async function buildManifest(
     } else {
       const path = resolve(filesDir, actual);
       files = [{ path, name: actual, size: (await stat(path)).size }];
-      if (reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN).trim() !== '') {
+      if (parseAttachmentOrder(reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN)).length > 0) {
         warnings.push(
           `Row ${row.rowNumber}: '${ATTACHMENT_ORDER_COLUMN}' applies only to a row naming a folder; ` +
             `ignored for '${actual}'.`,
