@@ -1,16 +1,19 @@
 // src/core/extract/length.ts
 //
-// IMPORTS NOTHING. The columns screen reads the limit from the sandboxed
-// renderer, and a leaf module cannot grow a `node:` import later.
+// IMPORTS NOTHING. A leaf module, so the renderer can read the limit later
+// without a `node:` import appearing anywhere in its graph.
 
 /**
- * How long text read from inside a document may be, unless a column says
- * otherwise (`Column.maxLength`). About 150 words: one or two paragraphs.
+ * How long a description may be: about 150 words, one or two paragraphs.
  *
  * Chosen by the operator, 2026-11-17, after a batch whose descriptions were
  * 4,000-character passages copied from the middle of a journal's articles. A
  * catalogue description summarises; an extract cut off at an arbitrary length
  * reads as authoritative and is not.
+ *
+ * Expressed in characters rather than paragraphs on purpose: text extracted
+ * from a PDF often has a blank line between every wrapped line, so a
+ * paragraph count would throw away real text.
  */
 export const DESCRIPTION_LIMIT = 1000;
 
@@ -19,22 +22,27 @@ export function limitFor(column: { maxLength?: number }): number {
   return column.maxLength ?? DESCRIPTION_LIMIT;
 }
 
-/** How many paragraphs a shortened text keeps at most. */
-const MAX_PARAGRAPHS = 2;
-
-/** Shorter than this, a cut-back to a sentence end throws too much away. */
+/** Shorter than this, a cut-back to a sentence or word end throws too much away. */
 const MIN_KEPT = 60;
+
+/** Where a shortened text was cut, so the note can say so truthfully. */
+export type CutAt = 'sentence' | 'word' | 'limit';
 
 export interface Shortened {
   text: string;
-  /** True when anything was removed. The caller notes it on the row. */
-  shortened: boolean;
+  /** Null when nothing was removed. */
+  cutAt: CutAt | null;
 }
 
 /**
- * `text` cut to at most `limit` characters and two paragraphs, ending at the
- * last whole sentence that fits -- or the last whole word, when no sentence
- * ends late enough to be worth cutting back to.
+ * `text` cut to at most `limit` characters, ending at the last whole sentence
+ * that fits -- or the last whole word, when no sentence ends late enough to be
+ * worth cutting back to, or at the limit itself when there is no word break.
+ *
+ * A sentence end is a `.`, `!` or `?` (optionally closing a quotation or
+ * bracket) FOLLOWED BY WHITESPACE OR THE END OF THE WHOLE TEXT. The text after
+ * the cut decides, not the cut itself: a full stop that happens to land at the
+ * limit, inside "2.5", is not a sentence end.
  *
  * For text READ FROM A DOCUMENT only. Generated text is never shortened: a
  * model's reply that runs over is refused whole (core/ai/fill.ts), because a
@@ -43,17 +51,18 @@ export interface Shortened {
  * warns about it instead.
  */
 export function shortenText(text: string, limit: number): Shortened {
-  const paragraphs = text.split(/\n\s*\n/);
-  let kept = paragraphs.length > MAX_PARAGRAPHS ? paragraphs.slice(0, MAX_PARAGRAPHS).join('\n\n') : text;
-  if (kept.length <= limit) return { text: kept.trim(), shortened: kept !== text };
+  if (text.length <= limit) return { text, cutAt: null };
 
-  const head = kept.slice(0, limit);
   let sentenceEnd = -1;
-  for (const match of head.matchAll(/[.!?]["')\]]?(?=\s|$)/g)) sentenceEnd = match.index + match[0].length;
-  if (sentenceEnd >= MIN_KEPT) kept = head.slice(0, sentenceEnd);
-  else {
-    const lastSpace = head.lastIndexOf(' ');
-    kept = lastSpace >= MIN_KEPT ? head.slice(0, lastSpace) : head;
+  for (const match of text.matchAll(/[.!?]["')\]]?(?=\s|$)/g)) {
+    const end = match.index + match[0].length;
+    if (end > limit) break;
+    sentenceEnd = end;
   }
-  return { text: kept.trim(), shortened: true };
+  if (sentenceEnd >= MIN_KEPT) return { text: text.slice(0, sentenceEnd).trim(), cutAt: 'sentence' };
+
+  const head = text.slice(0, limit);
+  const lastSpace = head.lastIndexOf(' ');
+  if (lastSpace >= MIN_KEPT) return { text: head.slice(0, lastSpace).trim(), cutAt: 'word' };
+  return { text: head.trim(), cutAt: 'limit' };
 }

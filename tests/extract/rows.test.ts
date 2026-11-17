@@ -433,31 +433,43 @@ describe('buildRow and the description limit', () => {
     ],
   });
 
-  it('cuts a long section that did end back to a whole sentence within 1,000 characters, and flags it', () => {
+  it('cuts a long section that did end back to a whole sentence within 1,000 characters, and notes it', () => {
     const row = buildRow(profileWith({}), 'a.pdf', ended(sentence.repeat(40)));
     const value = row.cells['MWDL/description']!;
     expect(value.length).toBeLessThanOrEqual(1000);
     expect(value.length).toBeGreaterThan(900);
     expect(value.endsWith('upper valley.')).toBe(true);
-    expect(row.flagged['MWDL/description']).toMatch(/shortened to fit the 1000-character limit/);
+    expect(row.notes.join(' ')).toMatch(/shortened to fit the 1000-character limit, ending at a whole sentence/);
+  });
+
+  // NOTED, NOT FLAGGED: the source was sure of the text, only its length was in
+  // question. A flag would make a trimmed real abstract replaceable by a model.
+  it('does not flag a shortened value, so a model may not replace it', () => {
+    const row = buildRow(profileWith({}), 'a.pdf', ended(sentence.repeat(40)));
+    expect(row.flagged['MWDL/description']).toBeUndefined();
   });
 
   it("honours a column's own limit", () => {
     const row = buildRow(profileWith({ maxLength: 200 }), 'a.pdf', ended(sentence.repeat(10)));
     expect(row.cells['MWDL/description']!.length).toBeLessThanOrEqual(200);
-    expect(row.flagged['MWDL/description']).toMatch(/200-character limit/);
+    expect(row.notes.join(' ')).toMatch(/200-character limit/);
   });
 
-  it('keeps at most two paragraphs', () => {
-    const row = buildRow(profileWith({}), 'a.pdf', ended('First part.\n\nSecond part.\n\nThird part. '));
-    expect(row.cells['MWDL/description']).toBe('First part.\n\nSecond part.');
-    expect(row.flagged['MWDL/description']).toMatch(/shortened/);
+  // A label or table cell fills lists of names too; a default cut would drop
+  // some. Only a column that asks is cut.
+  it('leaves a long label alone unless the column sets a limit', () => {
+    const names = Array.from({ length: 120 }, (_, i) => `Aster, Person${i}`).join('; ');
+    const doc: DocumentData = { text: `Creators: ${names}`, hasTextLayer: true, properties: {}, tables: [] };
+    const column = { path: 'MWDL/creators/creator', sources: [{ label: 'Creators' }] };
+    expect(buildRow(profileWith(column), 'a.pdf', doc).cells['MWDL/creators/creator']).toBe(names);
+    const capped = buildRow(profileWith({ ...column, maxLength: 200 }), 'a.pdf', doc);
+    expect(capped.cells['MWDL/creators/creator']!.length).toBeLessThanOrEqual(200);
   });
 
-  it('leaves a short section alone and unflagged', () => {
+  it('leaves a short section alone and says nothing', () => {
     const row = buildRow(profileWith({}), 'a.pdf', ended(sentence));
     expect(row.cells['MWDL/description']).toBe(sentence.trim());
-    expect(row.flagged['MWDL/description']).toBeUndefined();
+    expect(row.notes).toEqual([]);
   });
 
   it('never cuts what the operator wrote', () => {

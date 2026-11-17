@@ -166,15 +166,18 @@ export interface Column {
    */
   each?: boolean;
   /**
-   * The most characters this column may hold when its value comes from inside
-   * a document or from a model. Unset means `DESCRIPTION_LIMIT` (length.ts),
-   * 1,000 -- one or two paragraphs.
+   * The most characters a value read from a document, or written by a model,
+   * may have in this column. Unset: `DESCRIPTION_LIMIT` (length.ts), 1,000 --
+   * one or two paragraphs -- for a `section`, an `opening` and a model, and
+   * no limit for a label, table cell or property (which fill lists of names
+   * too, where a default cut would drop some).
    *
-   * Text read from a document is shortened to the last whole sentence that
-   * fits, and the cell is flagged. A model is told the limit, and a reply over
-   * it is refused whole, never shortened. Text the operator wrote -- a default,
-   * a join, a composed value -- is never cut; `plan` warns about a long
-   * description instead.
+   * Document text is cut back to the last whole sentence that fits, and the
+   * row is noted. A model is told the limit, and a reply over it is refused
+   * whole, never shortened. Text the operator wrote -- a default, a join, a
+   * composed value -- is never cut. With `each`, the limit applies to each
+   * file's value, not to the joined cell. `plan` cannot see this setting: its
+   * long-description warning always uses 1,000.
    */
   maxLength?: number;
 }

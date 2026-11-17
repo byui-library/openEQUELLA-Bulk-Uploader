@@ -3,7 +3,7 @@ import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
 import { readSection } from './sections.js';
 import { readOpening } from './opening.js';
-import { limitFor, shortenText } from './length.js';
+import { limitFor, shortenText, type CutAt } from './length.js';
 import { datesNear, datePair } from './dates.js';
 import { composeValue } from './compose.js';
 import { missingFilenameWords } from './names.js';
@@ -188,13 +188,34 @@ interface Resolved {
 }
 
 /**
- * Sources that copy text out of the document. Only these are shortened to a
- * column's limit: a default, a join or a composed value is the operator's own
- * wording, and cutting it would change what they wrote.
+ * The limit a value from this source is shortened to, or null for none.
+ *
+ * ONLY TEXT COPIED OUT OF THE DOCUMENT is ever shortened: a default, a join or
+ * a composed value is the operator's own wording, and cutting it would change
+ * what they wrote. Of that text, the PROSE sources -- a section, the opening --
+ * are held to a description's length by default, because that is all they are
+ * ever used for. A label, a table cell or a property is cut only when the
+ * column asks with `maxLength`: those fill creators and subjects too, where a
+ * default cut would silently drop names from a list.
  */
-function readsDocumentText(source: Source): boolean {
-  return 'section' in source || 'opening' in source || 'label' in source ||
-    'tableColumn' in source || 'property' in source;
+function limitForSource(source: Source, column: Column): number | null {
+  if ('section' in source || 'opening' in source) return limitFor(column);
+  if ('label' in source || 'tableColumn' in source || 'property' in source) return column.maxLength ?? null;
+  return null;
+}
+
+/** What a row's note says about a cut, by where it fell. */
+function cutNote(limit: number, cutAt: CutAt): string {
+  const where =
+    cutAt === 'sentence' ? 'ending at a whole sentence'
+    : cutAt === 'word' ? 'ending at a whole word, as no sentence ended late enough'
+    : 'cut mid-text, as there was no word break near the limit';
+  return `shortened to fit the ${limit}-character limit, ${where} -- check it still reads well`;
+}
+
+/** A note is said once per row: every issue of a volume can trigger the same one. */
+function noteOnce(notes: string[], note: string): void {
+  if (!notes.includes(note)) notes.push(note);
 }
 
 function resolve(source: Source, context: Context): Resolved {
@@ -341,26 +362,23 @@ function trySources(
 ): { value: string; source: string } | null {
   for (const source of column.sources) {
     const resolved = resolve(source, context);
-    // Once per row: every issue of a volume can carry the same heading.
-    const rejected = resolved.rejected === undefined ? null : `${column.path}: ${resolved.rejected}`;
-    if (rejected !== null && !notes.includes(rejected)) notes.push(rejected);
+    if (resolved.rejected !== undefined) noteOnce(notes, `${column.path}: ${resolved.rejected}`);
     let raw = resolved.value.trim();
     if (raw === '') continue;
-    let note = resolved.note;
-    if (readsDocumentText(source)) {
-      const limit = limitFor(column);
-      const cut = shortenText(raw, limit);
-      if (cut.shortened) {
-        raw = cut.text;
-        const why =
-          `shortened to fit the ${limit}-character limit, ending at a whole sentence -- ` +
-          `check it still reads as a description`;
-        note = note === undefined ? why : `${note}; ${why}`;
-      }
+    if (resolved.note !== undefined) {
+      notes.push(`${column.path}: ${resolved.note}`);
+      flagged[column.path] = resolved.note;
     }
-    if (note !== undefined) {
-      notes.push(`${column.path}: ${note}`);
-      flagged[column.path] = note;
+    // NOTED, NEVER FLAGGED. The source was sure of this text; only its length
+    // is in question, like a transform's note below. Flagging it would make a
+    // real abstract, trimmed, replaceable by a model (eligible.ts).
+    const limit = limitForSource(source, column);
+    if (limit !== null) {
+      const cut = shortenText(raw, limit);
+      if (cut.cutAt !== null) {
+        raw = cut.text;
+        noteOnce(notes, `${column.path}: ${cutNote(limit, cut.cutAt)}`);
+      }
     }
 
     if (column.transform === 'people') {

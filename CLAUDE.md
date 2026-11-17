@@ -540,11 +540,14 @@ shape, never as a value the code may assume.
   journal's articles: no template was chosen, a mid-article 'Description'
   heading matched, the section never ended, and the old code KEPT what the
   cap reached, flagged. A flag did not stop it reaching the catalogue. Now a
-  section with no ending is rejected (noted, next source), document text is
-  cut to a whole sentence within `limitFor(column)` and flagged, the model is
-  told the limit and refused whole over it, and `plan` warns about a long
-  description -- typed by hand too -- without cutting it. **The operator's
-  own wording is never cut**, and neither is generated prose.
+  section with no ending is rejected (noted, next source), a section or
+  opening is cut to a whole sentence within `limitFor(column)` and NOTED --
+  never flagged, or `eligible.ts` would let a model replace a trimmed real
+  abstract -- the model is told the limit and refused whole over it, and
+  `plan` warns about a long description -- typed by hand too -- without
+  cutting it. A label, table cell or property is cut only on an explicit
+  `maxLength`: they fill name lists too. **The operator's own wording is never
+  cut**, and neither is generated prose.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.

@@ -15,12 +15,16 @@ description came from a 'Description'/'Purpose' heading in the middle of a
 journal article, which never ended and was cut at 4,000 characters. Fixed in
 four commits (`79564fc`, `963c1cf`, `e914039`, docs), the operator's design:
 
-- **1,000 characters, two paragraphs** (`core/extract/length.ts`,
+- **1,000 characters, about one or two paragraphs** (`core/extract/length.ts`,
   `DESCRIPTION_LIMIT`; `Column.maxLength` overrides, min 100). Chosen by the
-  operator.
+  operator. Counted in characters, NOT paragraphs: PDF text often has a blank
+  line between wrapped lines, and a paragraph cut lost real text (review).
 - **A section that never ends is not used** -- noted, next source tries.
-- **Document text is cut back to a whole sentence and flagged; the operator's
-  own wording (default, join, compose) is never cut.**
+- **A section or opening is cut back to a whole sentence and NOTED, not
+  flagged** (a flag would let a model replace a trimmed real abstract). A
+  label, table cell or property is cut only when its column sets
+  `maxLength`. The operator's own wording (default, join, compose) is never
+  cut.
 - **The model is told the limit; a reply over it is refused whole.**
 - **`plan` warns** about a long description in the schema's declared
   description field (never cuts), or says once it could not check. Review

@@ -966,26 +966,28 @@ says so, and the next source has its turn.
 
 #### One or two paragraphs at most
 
-A description summarises; it is not an extract. **Text copied out of a document
-— a section, the opening, a label, a table cell, a property — is kept to two
-paragraphs and 1,000 characters**, cut back to the last whole sentence that
-fits, and the cell is flagged so you check it still reads well.
+A description summarises; it is not an extract. **A section or opening
+paragraph copied out of a document is kept to 1,000 characters** — about 150
+words, one or two paragraphs — cut back to the last whole sentence that fits,
+and `_notes` says so, so you can check it still reads well.
 
 - A column can set its own limit with `"maxLength": 600` (100 or more) in the
   profile. Unset, it is 1,000.
+- **A label, table cell or property is cut only when its column sets
+  `maxLength`.** Those fill lists of names too, and a default cut would drop
+  some of them.
 - **Your own wording is never cut**: a default, a "Text with parts of the
   name" value, a composed value.
 - **A language model is told the limit**, and an answer that runs over it is
   discarded whole, never shortened — see below.
 - **`plan` warns about any description over 1,000 characters** before upload,
   including one typed by hand. It never shortens it; the Review screen lists
-  these under *Long descriptions*.
+  these under *Long descriptions*. It reads the schema's declared description
+  field, and cannot see a profile's `maxLength`, so it always uses 1,000.
 
-Always flagged in `_notes`:
-
-- **Anything from the opening paragraph**, every time, with no exception. On a
-  published PDF the opening is as likely to be a masthead as a summary.
-- **Anything shortened to fit the limit.**
+**Anything from the opening paragraph is always flagged** in `_notes`, every
+time, with no exception. On a published PDF the opening is as likely to be a
+masthead as a summary.
 
 `_source` names the tier that filled each cell — `table`, `section`, `opening`.
 It is **one cell per row** holding every column's origin at once

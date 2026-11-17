@@ -95,17 +95,6 @@ async function loadPaths(schemaFile: string): Promise<Set<string>> {
   return parseSchemaPaths(extractDefinition(await readFile(schemaFile, 'utf8')));
 }
 
-/**
- * The title xpath the schema export declares, or null when it declares none.
- *
- * The duplicate check searches on this. Assuming `MWDL/title` would make it
- * match nothing at any institution whose schema says otherwise, and a check
- * that matches nothing reports every row clean. Null is passed through as
- * "could not check" rather than replaced by a guess.
- */
-async function loadTitleHeader(schemaFile: string): Promise<string | null> {
-  return extractItemNamePath(await readFile(schemaFile, 'utf8'));
-}
 
 /**
  * "Credentials" here means the OAuth client id + secret specifically --
@@ -308,14 +297,17 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
   try {
     const cfg = loadConfigForPlanning(env);
     const sheet = await readSheet(resolve(args.sheet));
-    const paths = await loadPaths(schemaFile);
+    // Read ONCE: the paths, the description path and the title path must
+    // describe one schema, as they do in the CLI's planAction.
+    const schemaXml = await readFile(schemaFile, 'utf8');
+    const paths = parseSchemaPaths(extractDefinition(schemaXml));
     const manifest = await buildManifest(sheet, resolve(args.filesDir), paths, {
       baseUrl: cfg.baseUrl,
       collectionUuid: cfg.collectionUuid,
       schemaUuid: cfg.schemaUuid,
       itemState,
       attachmentUuidPath: cfg.attachmentUuidPath,
-      descriptionPath: extractItemDescriptionPath(await readFile(schemaFile, 'utf8')),
+      descriptionPath: extractItemDescriptionPath(schemaXml),
     });
 
     // Mirrors planAction exactly: warnings land in manifest.warnings BEFORE
@@ -335,7 +327,10 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
         // unexpected happening before that point.
         try {
           const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
-          const titleHeader = await loadTitleHeader(schemaFile);
+          // The title path the export declares, or null -- the duplicate check
+          // searches on it, and null reaches it as "could not check", never as
+          // a guessed `MWDL/title` that matches nothing elsewhere.
+          const titleHeader = extractItemNamePath(schemaXml);
           // Identifier path resolved from the schema, never assumed -- see
           // resolveIdentifierPath in plan.ts.
           const dupWarnings = await preflightDuplicates(client, manifest, { titleHeader, paths });
