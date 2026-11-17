@@ -57,6 +57,9 @@ const columnSchema = z
     flagIfEmpty: z.boolean().optional(),
     composeOnly: z.boolean().optional(),
     each: z.boolean().optional(),
+    // At least a sentence or two; a limit of 5 would shorten every value to
+    // nothing and flag every row.
+    maxLength: z.number().int().min(100).optional(),
   })
   .strict();
 

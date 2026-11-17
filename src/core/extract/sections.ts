@@ -173,8 +173,9 @@ export interface SectionText {
    *
    * Reported rather than swallowed because it is the signal that the match was
    * probably spurious: a benefits PDF matched "Summary" mid-page and produced
-   * 3,996 characters of plan tables as its description. The caller keeps the
-   * value and notes it, so the operator sees what happened.
+   * 3,996 characters of plan tables as its description. The caller does NOT
+   * use such a value (rows.ts), and notes why -- a journal's 'Description'
+   * heading mid-article put pages of an article into every volume's record.
    */
   capped: boolean;
   /**

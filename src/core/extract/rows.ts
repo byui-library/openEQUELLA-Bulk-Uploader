@@ -3,6 +3,7 @@ import { applyPattern } from './pattern.js';
 import { findLabels } from './labels.js';
 import { readSection } from './sections.js';
 import { readOpening } from './opening.js';
+import { limitFor, shortenText } from './length.js';
 import { datesNear, datePair } from './dates.js';
 import { composeValue } from './compose.js';
 import { missingFilenameWords } from './names.js';
@@ -181,6 +182,19 @@ interface Context {
 interface Resolved {
   value: string;
   note?: string;
+  /** Why something the source found was NOT used. Noted on the row, never
+   *  flagged -- there is no value to doubt -- and the next source has its turn. */
+  rejected?: string;
+}
+
+/**
+ * Sources that copy text out of the document. Only these are shortened to a
+ * column's limit: a default, a join or a composed value is the operator's own
+ * wording, and cutting it would change what they wrote.
+ */
+function readsDocumentText(source: Source): boolean {
+  return 'section' in source || 'opening' in source || 'label' in source ||
+    'tableColumn' in source || 'property' in source;
 }
 
 function resolve(source: Source, context: Context): Resolved {
@@ -216,10 +230,21 @@ function resolve(source: Source, context: Context): Resolved {
 
   if ('section' in source) {
     const { text, capped, midSentence } = readSection(context.doc.text, source.section);
-    let note: string | undefined;
+    // A SECTION THAT NEVER ENDS IS NOT USED. It is how a journal's 'Description'
+    // heading in the middle of an article became a 4,000-character passage of
+    // that article in every volume's record (2026-11-17). An abstract ends at
+    // the next heading; text that runs on for pages is not one, and a passage
+    // cut off at a limit reads as authoritative while describing nothing.
     if (capped) {
-      note = `the '${source.section}' section never ended and was cut short -- check it is really a description`;
-    } else if (midSentence) {
+      return {
+        value: '',
+        rejected:
+          `the '${source.section}' section ran on without ending, so it is probably not a ` +
+          `description and was not used`,
+      };
+    }
+    let note: string | undefined;
+    if (midSentence) {
       note = `'${source.section}' was a word in a sentence here, not a heading -- the sentence was taken instead`;
     }
     return { value: text, note };
@@ -316,11 +341,26 @@ function trySources(
 ): { value: string; source: string } | null {
   for (const source of column.sources) {
     const resolved = resolve(source, context);
-    const raw = resolved.value.trim();
+    // Once per row: every issue of a volume can carry the same heading.
+    const rejected = resolved.rejected === undefined ? null : `${column.path}: ${resolved.rejected}`;
+    if (rejected !== null && !notes.includes(rejected)) notes.push(rejected);
+    let raw = resolved.value.trim();
     if (raw === '') continue;
-    if (resolved.note !== undefined) {
-      notes.push(`${column.path}: ${resolved.note}`);
-      flagged[column.path] = resolved.note;
+    let note = resolved.note;
+    if (readsDocumentText(source)) {
+      const limit = limitFor(column);
+      const cut = shortenText(raw, limit);
+      if (cut.shortened) {
+        raw = cut.text;
+        const why =
+          `shortened to fit the ${limit}-character limit, ending at a whole sentence -- ` +
+          `check it still reads as a description`;
+        note = note === undefined ? why : `${note}; ${why}`;
+      }
+    }
+    if (note !== undefined) {
+      notes.push(`${column.path}: ${note}`);
+      flagged[column.path] = note;
     }
 
     if (column.transform === 'people') {

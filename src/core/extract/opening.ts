@@ -1,4 +1,5 @@
 // src/core/extract/opening.ts
+import { shortenText } from './length.js';
 
 /**
  * The first substantial run of prose in a document.
@@ -66,14 +67,7 @@ function isProse(block: string): boolean {
 
 /** Trim to the cap, preferring a sentence end and falling back to a word end. */
 function trim(block: string): string {
-  if (block.length <= MAX_OPENING) return block;
-
-  const head = block.slice(0, MAX_OPENING);
-  const lastSentence = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '));
-  if (lastSentence > MIN_PROSE) return head.slice(0, lastSentence + 1).trim();
-
-  const lastWord = head.lastIndexOf(' ');
-  return (lastWord > MIN_PROSE ? head.slice(0, lastWord) : head).trim();
+  return shortenText(block, MAX_OPENING).text;
 }
 
 /**

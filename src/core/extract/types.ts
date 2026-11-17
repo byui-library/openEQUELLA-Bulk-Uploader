@@ -165,6 +165,18 @@ export interface Column {
    * with semicolons in it.
    */
   each?: boolean;
+  /**
+   * The most characters this column may hold when its value comes from inside
+   * a document or from a model. Unset means `DESCRIPTION_LIMIT` (length.ts),
+   * 1,000 -- one or two paragraphs.
+   *
+   * Text read from a document is shortened to the last whole sentence that
+   * fits, and the cell is flagged. A model is told the limit, and a reply over
+   * it is refused whole, never shortened. Text the operator wrote -- a default,
+   * a join, a composed value -- is never cut; `plan` warns about a long
+   * description instead.
+   */
+  maxLength?: number;
 }
 
 export interface Profile {

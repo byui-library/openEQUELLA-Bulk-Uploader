@@ -386,14 +386,84 @@ describe('buildRow reading a section', () => {
   /**
    * A section that ran to the length cap never reached another heading, which
    * on real files means the heading was not one: a benefits PDF matched
-   * "Summary" mid-page and produced 3,996 characters of plan tables. The value
-   * is kept -- it may still be useful -- but it is never kept silently.
+   * "Summary" mid-page and produced 3,996 characters of plan tables, and a
+   * journal's mid-article 'Description' heading put pages of an article into
+   * every volume's record (2026-11-17). It is NOT used, and the row says why.
    */
-  it('flags a section that ran to the cap', () => {
+  it('does not use a section that never ended, and says so', () => {
     const row = buildRow(sectionProfile, 'a.pdf', withSection(`Abstract ${'word '.repeat(3000)}`));
-    expect(row.cells['MWDL/description']?.length).toBeGreaterThan(100);
-    expect(row.notes.join(' ')).toMatch(/Abstract/);
-    expect(row.notes.join(' ')).toMatch(/cut short|too long|never ended/i);
+    expect(row.cells['MWDL/description']).toBe('');
+    expect(row.flagged['MWDL/description']).toBeUndefined();
+    expect(row.notes.join(' ')).toMatch(/'Abstract' section ran on without ending.*not used/);
+  });
+
+  it('moves on to the next source when a section never ended', () => {
+    const profile: Profile = {
+      ...sectionProfile,
+      columns: sectionProfile.columns.map((c) =>
+        c.path === 'MWDL/description' ? { ...c, sources: [{ section: 'Abstract' }, { opening: true }] } : c,
+      ),
+    };
+    const text = `This report describes the jumping study in plain words for every reader.\nAbstract ${'word '.repeat(3000)}`;
+    const row = buildRow(profile, 'a.pdf', withSection(text));
+    expect(row.cells['MWDL/description']).toBe('This report describes the jumping study in plain words for every reader.');
+    expect(row.sources['MWDL/description']).toBe('opening');
+  });
+});
+
+/**
+ * One or two paragraphs at most -- the operator's limit, 2026-11-17. Text read
+ * from a document is cut back to a whole sentence and flagged; text the
+ * operator wrote is never cut.
+ */
+describe('buildRow and the description limit', () => {
+  const sentence = 'The volume gathers local history from the upper valley. ';
+  const ended = (body: string): DocumentData => ({
+    text: `Abstract ${body}Keywords history`,
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  });
+  const profileWith = (column: Partial<Column>): Profile => ({
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ section: 'Abstract' }], ...column },
+    ],
+  });
+
+  it('cuts a long section that did end back to a whole sentence within 1,000 characters, and flags it', () => {
+    const row = buildRow(profileWith({}), 'a.pdf', ended(sentence.repeat(40)));
+    const value = row.cells['MWDL/description']!;
+    expect(value.length).toBeLessThanOrEqual(1000);
+    expect(value.length).toBeGreaterThan(900);
+    expect(value.endsWith('upper valley.')).toBe(true);
+    expect(row.flagged['MWDL/description']).toMatch(/shortened to fit the 1000-character limit/);
+  });
+
+  it("honours a column's own limit", () => {
+    const row = buildRow(profileWith({ maxLength: 200 }), 'a.pdf', ended(sentence.repeat(10)));
+    expect(row.cells['MWDL/description']!.length).toBeLessThanOrEqual(200);
+    expect(row.flagged['MWDL/description']).toMatch(/200-character limit/);
+  });
+
+  it('keeps at most two paragraphs', () => {
+    const row = buildRow(profileWith({}), 'a.pdf', ended('First part.\n\nSecond part.\n\nThird part. '));
+    expect(row.cells['MWDL/description']).toBe('First part.\n\nSecond part.');
+    expect(row.flagged['MWDL/description']).toMatch(/shortened/);
+  });
+
+  it('leaves a short section alone and unflagged', () => {
+    const row = buildRow(profileWith({}), 'a.pdf', ended(sentence));
+    expect(row.cells['MWDL/description']).toBe(sentence.trim());
+    expect(row.flagged['MWDL/description']).toBeUndefined();
+  });
+
+  it('never cuts what the operator wrote', () => {
+    const long = sentence.repeat(30).trim();
+    const row = buildRow(profileWith({ sources: [], default: long }), 'a.pdf', ended(''));
+    expect(row.cells['MWDL/description']).toBe(long);
   });
 });
 
