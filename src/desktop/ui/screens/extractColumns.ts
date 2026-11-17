@@ -118,26 +118,46 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
     </tr>`;
 }
 
+/**
+ * How to use the name's parts -- only when there are some, and with an example
+ * built from THIS pattern's first part, so no collection's wording is shown to
+ * another.
+ */
+function partsHint(described: ReturnType<typeof describeFilename>): string {
+  const first = described.matched ? described.parts[0] : undefined;
+  if (first === undefined) return '';
+  return `
+      <p class="hint">
+        Any column can use these parts: choose <em>Part of the name</em>, or
+        <em>Text with parts of the name&hellip;</em> to put your own words around one &mdash;
+        e.g. <code>Your words {${escapeHtml(first.name)}}</code>.
+      </p>`;
+}
+
 function previewTable(props: ExtractColumnsProps): string {
   const paths = props.profile.columns.map((c) => c.path);
   // A FOLDER BATCH SHOWS WHAT EACH ROW HOLDS, straight after the folder name.
   // Reported by the operator: a row named SRE_Vol1 gave no sign that it is one
   // item carrying four issues. Display only -- never a spreadsheet column.
-  const folders = props.preview.some((row) => row.files !== undefined);
+  const folders = props.perFolder === true;
+  // After the column that names the folder, wherever the profile put it.
+  const filesAfter = Math.max(0, paths.indexOf(ATTACHMENT_COLUMN));
   const cell = (value: string) =>
     `<td>${value === '' ? '<span class="blank">(blank)</span>' : escapeHtml(value)}</td>`;
   const filesCell = (files: string[] | undefined) =>
     cell(files === undefined ? '' : `${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}`);
-  const head = paths
-    .map((p, i) => `<th>${escapeHtml(p)}</th>${folders && i === 0 ? '<th>Files attached, in order</th>' : ''}`)
-    .join('');
+  /** One row's cells, with the files cell spliced in for a folder batch. */
+  const withFiles = (cells: string[], files: string) => {
+    if (!folders) return cells.join('');
+    const at = Math.min(filesAfter + 1, cells.length);
+    return [...cells.slice(0, at), files, ...cells.slice(at)].join('');
+  };
+  const head = withFiles(
+    paths.map((p) => `<th>${escapeHtml(p)}</th>`),
+    '<th>Files attached, in order</th>',
+  );
   const body = props.preview
-    .map(
-      (row) =>
-        `<tr>${paths
-          .map((p, i) => `${cell(row.cells[p] ?? '')}${folders && i === 0 ? filesCell(row.files) : ''}`)
-          .join('')}</tr>`,
-    )
+    .map((row) => `<tr>${withFiles(paths.map((p) => cell(row.cells[p] ?? '')), filesCell(row.files))}</tr>`)
     .join('');
   const flagged = previewReviewCount(props.preview);
 
@@ -231,11 +251,7 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
       <h3>Your ${props.perFolder === true ? 'folders' : 'files'} look like this</h3>
       <p class="sample"><code>${escapeHtml(props.sampleFilename)}</code></p>
       <p class="segments">${segments}</p>
-      <p class="hint">
-        Any column can use these parts: choose <em>Part of the name</em>, or
-        <em>Text with parts of the name&hellip;</em> to put your own words around one &mdash;
-        e.g. <code>Snake River Echoes, Volume {volume}</code>.
-      </p>
+      ${partsHint(described)}
       <details>
         <summary>Edit the pattern</summary>
         <label for="extract-pattern">${props.perFolder === true ? 'Folder name pattern' : 'Filename pattern'}</label>

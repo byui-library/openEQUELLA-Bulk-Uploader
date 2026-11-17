@@ -13,14 +13,13 @@ import {
   extractFolder,
   extractFolders,
   listFolder,
-  folderUploadOrder,
   listSubfolders,
   type SubfolderListing,
 } from '../core/extract/extract.js';
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
 import { evidenceFrom, scanFolderEvidence, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
-import { buildFolderRow, buildRow, type FolderDoc } from '../core/extract/rows.js';
+import { buildRow } from '../core/extract/rows.js';
 import { writeCsv, writeProblemsLog } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
 import { starterProfile, type StarterSchema } from '../core/extract/suggest.js';
@@ -41,8 +40,11 @@ interface CacheEntry {
   /** Which kind of batch this sample is of: the same folder reads differently in each. */
   perFolder: boolean;
   docs: { filename: string; doc: DocumentData }[];
-  /** Per-folder mode only: the first few subfolders -- every file, and the readable ones read. */
-  folders: { name: string; files: string[]; docs: FolderDoc[] }[];
+  /** Per-folder mode only: the first few subfolders, as listed. */
+  folders: SubfolderListing['folders'];
+  /** Per-folder mode only: each readable file's document, or why it would not
+   *  open, keyed by the path `extractFolders` will ask its reader for. */
+  reads: Map<string, DocumentData | Error>;
 }
 let cache: CacheEntry | null = null;
 
@@ -66,20 +68,24 @@ async function sample(dir: string, perFolder = false, listing?: SubfolderListing
     // The scan hands its own listing in, so one scan walks the folder once and
     // the preview is sampled from exactly the folders the scan reported.
     const { folders: listed } = listing ?? (await listSubfolders(dir));
-    const folders: CacheEntry['folders'] = [];
-    for (const folder of listed.slice(0, PREVIEW_ROWS)) {
-      const docs: FolderDoc[] = [];
+    const folders = listed.slice(0, PREVIEW_ROWS);
+    const reads: CacheEntry['reads'] = new Map();
+    const docs: CacheEntry['docs'] = [];
+    for (const folder of folders) {
       for (const name of folder.readable) {
+        const path = join(dir, folder.name, name);
         try {
-          docs.push({ name, doc: await readDocument(join(dir, folder.name, name)) });
-        } catch {
-          // Noted on the row by the real run; the preview carries on without it.
+          const doc = await readDocument(path);
+          reads.set(path, doc);
+          docs.push({ filename: name, doc });
+        } catch (error) {
+          // Kept, not dropped: the preview's rows are built by extractFolders,
+          // which notes an unreadable file exactly as the run does.
+          reads.set(path, error instanceof Error ? error : new Error(String(error)));
         }
       }
-      folders.push({ name: folder.name, files: folder.files, docs });
     }
-    const docs = folders.flatMap((f) => f.docs.map((d) => ({ filename: d.name, doc: d.doc })));
-    cache = { dir, perFolder, docs, folders };
+    cache = { dir, perFolder, docs, folders, reads };
     return cache;
   }
   const { supported } = await listFolder(dir);
@@ -92,7 +98,7 @@ async function sample(dir: string, perFolder = false, listing?: SubfolderListing
       // it must not stop the sample, or one bad file blanks the whole preview.
     }
   }
-  cache = { dir, perFolder, docs, folders: [] };
+  cache = { dir, perFolder, docs, folders: [], reads: new Map() };
   return cache;
 }
 
@@ -230,17 +236,21 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       args: { dir: string; profile: Profile; perFolder?: boolean },
     ): Promise<ExtractedRow[]> => {
       if (args.perFolder === true) {
-        const { folders } = await sample(args.dir, true);
-        return folders.map((f) => {
-          // Built exactly as the run builds it: documents read in UPLOAD order
-          // (the first that answers wins), and the files the row will attach
-          // shown beside it -- an operator asked how one row becomes one item.
-          const order = folderUploadOrder(args.profile, f.files);
-          const docs = [...f.docs].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
-          const row = buildFolderRow(args.profile, f.name, docs);
-          row.files = order;
-          return row;
+        // BUILT BY THE RUN'S OWN FUNCTION, over the sampled folders and the
+        // documents already read. A preview that rebuilt rows by hand showed
+        // folders the run holds back, an order the run could not write, and
+        // no note for a file that would not open.
+        const { folders, reads } = await sample(args.dir, true);
+        const { rows } = await extractFolders(args.dir, args.profile, {
+          listing: { folders, skipped: [] },
+          reader: async (path) => {
+            const read = reads.get(path);
+            if (read === undefined) throw new Error('not read for the preview');
+            if (read instanceof Error) throw read;
+            return read;
+          },
         });
+        return rows;
       }
       const { docs } = await sample(args.dir);
       return docs

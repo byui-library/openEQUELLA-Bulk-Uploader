@@ -102,7 +102,7 @@ describe('describeSource', () => {
     expect(describeSource({ join: '{last}, {first}' })).toBe('Text with parts of the name: "{last}, {first}"');
     expect(describeSource({ label: 'Performer' })).toBe('Label in document: Performer');
     expect(describeSource({ property: 'title' })).toBe('Document property: title');
-    expect(describeSource({ filename: true })).toBe('The file itself');
+    expect(describeSource({ filename: true })).toBe('The file or folder itself');
     expect(describeSource({ tableColumn: 'Job Description' })).toBe('Table column: Job Description');
     expect(describeSource({ section: 'Abstract' })).toBe('Section: Abstract');
   });

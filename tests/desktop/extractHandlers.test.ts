@@ -683,6 +683,30 @@ describe('extract handlers -- one row per subfolder', () => {
     expect((rows[0] as { files?: string[] }).files).toEqual(['No1.pdf']);
   });
 
+  // The preview is built by extractFolders itself, so it cannot show a folder
+  // the run would hold back, or hide a file the run would note as unreadable.
+  it('previews exactly what the run builds: held-back folders out, unreadable files noted', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-folders-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No1.pdf'), makePdf({ text: 'An issue.' }));
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No2.pdf'), 'not a pdf at all');
+    await mkdir(join(dir, 'Gazette_V3'));
+    // Volume 4's issue in volume 3's folder: the run holds the folder back.
+    await writeFile(join(dir, 'Gazette_V3', 'G_V4_No1.pdf'), makePdf({ text: 'An issue.' }));
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const rows = await ipc.call<{ cells: Record<string, string>; notes: string[] }[]>('oeq:extractPreview', {
+      dir,
+      profile: {
+        ...folderProfile,
+        checks: { sequence: { patterns: ['G_V{group}_No{part}'] } },
+      },
+      perFolder: true,
+    });
+    expect(rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2']);
+    expect(rows[0]!.notes.join(' ')).toMatch(/'G_V2_No2\.pdf' could not be read/);
+  });
+
   it('runs one row per subfolder, sends nothing to a model even when approved, and says why', async () => {
     const ipc = fakeIpcMain();
     const fetchImpl = vi.fn();

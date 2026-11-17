@@ -305,7 +305,9 @@ export async function extractFolders(
         );
       }
     }
-    row.files = order;
+    // The order the UPLOAD will use: the cell's when one was written, name
+    // order otherwise -- including when part order could not be written.
+    row.files = row.attachmentOrder ?? folder.files;
     rows.push(row);
     done += 1;
     onProgress?.(done, found.folders.length);

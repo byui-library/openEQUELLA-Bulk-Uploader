@@ -23,7 +23,8 @@ export interface SourceEvidence {
 
 /** Plain-language name for a source, used in the dropdown and the column list. */
 export function describeSource(source: Source): string {
-  if ('filename' in source) return 'The file itself';
+  // A folder batch's row is a folder, so the label names both.
+  if ('filename' in source) return 'The file or folder itself';
   if ('filenameStem' in source) return 'The whole name, without any extension';
   if ('placeholder' in source) return `Part of the name: ${source.placeholder}`;
   if ('join' in source) return `${JOIN_NAME}: "${source.join}"`;

@@ -291,11 +291,27 @@ describe('the preview of a folder batch', () => {
 
   it('shows the files each row will attach, in order, after the folder name', () => {
     const html = render(chained([]), {
+      perFolder: true,
       preview: [folderRow('Gazette_V1', ['G_No1.pdf', 'G_No2.pdf'])],
     }).innerHTML;
     expect(html).toMatch(/<th>attachment name<\/th><th>Files attached, in order<\/th>/);
     expect(html).toContain('2 files: G_No1.pdf, G_No2.pdf');
     expect(html).toContain('first 1 folder(s)');
+  });
+
+  it('puts the files after the folder name wherever the profile put it', () => {
+    const profile = chained([]);
+    profile.columns = [
+      { path: 'MWDL/title', sources: [] },
+      ...profile.columns.filter((c) => c.path !== 'MWDL/title'),
+    ];
+    const html = render(profile, { perFolder: true, preview: [folderRow('Gazette_V1', ['G_No1.pdf'])] }).innerHTML;
+    expect(html).toMatch(/<th>attachment name<\/th><th>Files attached, in order<\/th>/);
+  });
+
+  it('says folders even before any folder has been sampled', () => {
+    const html = render(chained([]), { perFolder: true, preview: [] }).innerHTML;
+    expect(html).toContain('first 0 folder(s)');
   });
 
   it('adds no such column for a batch of single files', () => {
@@ -318,6 +334,16 @@ describe('the columns screen in one-row-per-subfolder mode', () => {
     expect(html).toContain('Your folders look like this');
     expect(html).toContain('Folder name pattern');
     expect(html).not.toContain('Your files look like this');
+  });
+
+  it('gives the parts hint only for a matching name, in that pattern\'s own words', () => {
+    const profile = chained([]);
+    profile.pattern = 'SRE_Vol{group}';
+    const matched = render(profile, { perFolder: true, sampleFilename: 'SRE_Vol1' }).innerHTML;
+    expect(matched).toContain('Your words {group}');
+    expect(matched).not.toContain('Snake River');
+    const unmatched = render(profile, { perFolder: true, sampleFilename: 'Other' }).innerHTML;
+    expect(unmatched).not.toContain('Any column can use these parts');
   });
 
   it('still says files in one-row-per-file mode', () => {

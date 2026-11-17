@@ -318,6 +318,8 @@ describe('extractFolders -- issue order', () => {
     const result = await extractFolders(dir, ordered, { reader: async () => emptyDoc });
     expect(result.rows[0]!.attachmentOrder).toBeUndefined();
     expect(result.rows[0]!.notes.join(' ')).toMatch(/could not be written to the 'attachment order' column/);
+    // And the row reports the order the upload will really use: name order.
+    expect(result.rows[0]!.files).toEqual(['G_1972-73_V2_No3; supplement.pdf', 'G_1972_V2_No1.pdf']);
   });
 });
 
