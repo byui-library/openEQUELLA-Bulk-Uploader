@@ -136,10 +136,11 @@ used to quote the surname it was warning about.
 **Electron 44 is MERGED (PR #17)**, replacing an out-of-support Electron 33
 that ships in every installer up to v1.2.2. Checked by launching the dev and
 packaged builds over CDP, not only by the suite. Not yet in any release, and
-not yet installed on a staff machine; v1.3.0 will be the first to carry it.
+released in v1.3.0 (2026-11-17), the first release to carry it; not yet
+installed on a staff machine.
 
-**Several files on one contribution is BUILT, on `feature/multi-file-items`**
-(2026-11-13), not yet merged or released. A row's `attachment name` may name a
+**Several files on one contribution is MERGED (PR #20) and RELEASED in
+v1.3.0** (2026-11-17; built from 2026-11-13). A row's `attachment name` may name a
 subfolder; every file in it becomes an attachment of one item, in
 `folderFiles.ts#orderFiles` order. Manifest v2 (`files: ManifestFile[]`); v1
 still loads. The extractor gains `--per-folder` / a desktop toggle and the
@@ -153,8 +154,8 @@ folder rows is BUILT** (2026-11-17,
 [spec](docs/superpowers/specs/2026-11-17-folder-descriptions-design.md)): the
 model reads the start of every issue, its claims are checked against all of
 them joined, and `{ "ai": true, "after": true }` writes it after the
-template's fixed sentence, never replacing it. Still to do: the live run with
-the operator's model, then PR, merge, release v1.3.0.
+template's fixed sentence, never replacing it. Run live with the operator's
+model on 2026-11-17 ("worked very well"). Next: the series index page.
 Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at

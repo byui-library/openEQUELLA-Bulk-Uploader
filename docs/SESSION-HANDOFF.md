@@ -2,7 +2,22 @@
 
 Read this first.
 
-## RESUME HERE — 2026-11-17 (later): model descriptions for folder rows BUILT
+## RESUME HERE — 2026-11-17 (latest): v1.3.0 RELEASED
+
+PR #20 merged into `main` (`8b302f8`); CI green, no automated review
+comments, and nothing left behind on the branch (content diff against `main`
+empty). **v1.3.0** tagged and pushed from `main`: the first release carrying
+Electron 44, several files on one contribution, the 1,000-character
+description cap, model descriptions for folder rows, and extract progress.
+
+**The "Snake River Echos Index" folder is a non-issue** -- the operator
+reports it came through fine. The question below about giving it its own row
+values is closed.
+
+**Next: the series index page** -- see "Next, in order", item 3, below.
+Interview done; verify live on content-test first, then the spec.
+
+## 2026-11-17 (later): model descriptions for folder rows BUILT
 
 Built from [the spec](superpowers/specs/2026-11-17-folder-descriptions-design.md)
 and [the plan](superpowers/plans/2026-11-17-folder-descriptions.md), test-first,
