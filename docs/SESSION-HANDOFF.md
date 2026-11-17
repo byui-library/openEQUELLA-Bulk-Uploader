@@ -2,7 +2,87 @@
 
 Read this first.
 
-## RESUME HERE — 2026-11-17 (latest): v1.3.0 RELEASED
+## RESUME HERE — 2026-11-17 (end of day): series index page, design AWAITING APPROVAL
+
+**Where it stopped.** The design below was presented to the operator; they
+stopped for the day before approving it. **Next session: ask whether the
+design is approved (changes welcome), then write the spec to
+`docs/superpowers/specs/YYYY-MM-DD-series-index-design.md`, get it reviewed,
+then the plan (writing-plans), then build.** Nothing is built and no branch
+is cut yet; `main` is at the v1.3.0 release.
+
+### Operator decisions (2026-11-17)
+
+From the earlier interview: an openEQUELLA item, built as a separate step
+after uploading; volume headings link to items with issues beneath linking
+to PDFs; the list comes from a SEARCH of openEQUELLA, not a job file; the
+index's own record comes from the template; a rebuild updates the same
+item; plain and accessible; desktop and command line; preview, then Draft
+or Publish. New today:
+
+- **Two destinations, either or both, from ONE preview**: save as files for
+  a different web server, and/or create/update the openEQUELLA item.
+- **The web-server copy links BACK to openEQUELLA** -- the folder holds only
+  `index.html`, `index.css`, `index.js`; no PDFs are copied.
+- **The JavaScript is a filter box** (type a year or "Vol 12"), progressive
+  enhancement: the full list works with JavaScript off.
+- **Live volumes only by default**; the preview counts drafts left out; an
+  "Include drafts" checkbox exists so it can be tried on content-test, where
+  every Snake River Echoes item is still a draft.
+- **Approach A**: the SAME three files are the openEQUELLA item's three
+  attachments, so both copies are byte-identical. (B -- inline everything for
+  openEQUELLA -- was the fallback and is not needed; see check 3.)
+
+### Live checks, content-test, 2026-11-17 (operator's signed-in Chrome)
+
+1. **List** -- `GET /api/search?q=...&showall=true&info=basic,attachment`
+   returns each item's attachments with `filename` and `uuid`, in upload
+   order. The SRE items are in collection `7b6aea89-e8f1-40c3-9af2-0fd74f107035`
+   on content-test, all `status: draft`. **Eight volumes exist TWICE** (15,
+   22, 25, 27, 31, 35, 36, 37) from earlier test runs -- the duplicate rule
+   below is not hypothetical.
+2. **Addresses** -- `/items/{uuid}/0/` redirects to the latest version's
+   item page; `/items/{uuid}/0/{filename}` redirects to
+   `/file/{uuid}/{v}/{filename}` (the PDF). `/file/{uuid}/0/...` is a 500 and
+   `/items/{uuid}/latest/` a 404 -- use the `/items/.../0/` forms.
+3. **Page** -- a draft test item with `index.html` + `index.css` + `index.js`
+   as attachments (created like the uploader does: staging, 3 PUTs,
+   `POST /api/item?draft=true&file=`): opening `/items/{uuid}/0/index.html`
+   served `text/html`, the relative CSS applied and the relative JS ran.
+4. **Rebuild** -- `PUT /api/item/{uuid}/{v}/?file={newStaging}` with the item
+   bean (same attachment uuids and filenames, changed metadata) returned 200:
+   files replaced, same item, same version 1, same attachment uuids, title
+   updated. The test item was then purged (`DELETE ...?purge=true` -> 204,
+   then GET 404).
+
+**Still unverified** (needs publishing): whether a LIVE item stays live after
+that in-place PUT, and what a signed-out visitor sees of the index item and
+the PDFs. Check both on the first real run.
+
+### The design as presented
+
+1. **Collect** (`core/index/collect.ts`, pure): search the chosen collection
+   (paged), keep items whose files fit the template's patterns (`{group}` =
+   volume, `{part}` = issue); volumes in order, issues in attachment order.
+   Non-fitting items are LISTED in the preview as not part of the series,
+   never guessed at. **Two items claiming one volume: that volume is held
+   back and named** until someone removes the extra.
+2. **Render** (`core/index/render.ts`, pure): the three files; no inline
+   style or script (works under a strict CSP elsewhere); every value escaped;
+   volume headings link to `/items/{uuid}/0/`, issues to
+   `/items/{uuid}/0/{encoded filename}`, labelled from the template's
+   `labels` (e.g. "Issue 2").
+3. **Destinations**: files -> a chosen folder, asking before replacing
+   existing files of those names. openEQUELLA -> record from a new `index`
+   section of the template; find an existing index by its identifier: none ->
+   create (Draft/Publish), one -> update in place, two -> refuse and name both.
+4. **Surfaces**: desktop "Build an index..." on Choose and Results -> preview
+   (volumes, issues, held back, left out, drafts left out) -> the two
+   checkboxes -> Draft/Publish. CLI `oeq-upload index --out DIR --upload
+   --draft|--publish`.
+5. **Client** gains a paged collection search and `editItem` (the PUT above).
+
+## 2026-11-17: v1.3.0 RELEASED
 
 PR #20 merged into `main` (`8b302f8`); CI green, no automated review
 comments, and nothing left behind on the branch (content diff against `main`
