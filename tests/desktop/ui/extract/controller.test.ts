@@ -845,7 +845,7 @@ describe('createExtractController -- one row per subfolder', () => {
   // One request per VOLUME, so the dialog counts folders, and the consent is
   // carried to the run as it is for single files.
   it('asks before sending a folder batch to a hosted model, counting folders', async () => {
-    const confirm = vi.fn(() => true);
+    const confirm = vi.fn((_text: string) => true);
     const a = api({
       getModel: vi.fn(async () => ({ model: 'm', baseUrl: 'https://hosted.example.test/v1', budget: 1000, cap: 100 })),
     });
