@@ -69,28 +69,15 @@ const AMBIGUOUS_ENDINGS = [
 ];
 
 /**
- * How much text to take when a section never reaches another heading.
+ * How far a section may run without reaching another heading and still be
+ * one. Past this, the heading was not a heading -- and the section is empty.
  *
- * Without a cap, a heading near the end of a file would swallow everything
- * after it -- which for a 68,000-character article means the whole paper landing
- * in a description cell.
+ * It used to be a cap: the text up to it was kept, and flagged. A heading near
+ * the end of a 68,000-character article would otherwise swallow the paper; but
+ * keeping what the cap reached put 4,000-character passages from the middle of
+ * a journal's articles into every volume's record (2026-11-17), flag and all.
  */
 const MAX_SECTION = 4000;
-
-/**
- * How far back a word boundary may be and still be worth cutting to.
- *
- * The point of cutting at a space is to avoid ending mid-word, so the space
- * being looked for is the one just before the cut. A space three thousand
- * characters back is not the end of a word -- it means the tail has no spaces
- * in it at all, which is what a failed OCR run, a base64 blob or a long
- * identifier looks like, and cutting there throws the section away.
- *
- * Scanned material is the operator's real corpus, so this is not a hypothetical
- * input. `'Abstract ' + 'A ' + 'X'.repeat(9000)` used to yield a section of
- * length ONE.
- */
-const LONGEST_WORD = 60;
 
 /**
  * The running head a journal stamps on every page — a title, a volume, a DOI, a
@@ -169,13 +156,13 @@ export interface SectionText {
   /** The text under the heading. Empty when the heading is absent. */
   text: string;
   /**
-   * True when the section ran to the cap instead of reaching another heading.
+   * True when the heading was found but the section ran past MAX_SECTION
+   * without reaching another -- and `text` is therefore EMPTY.
    *
-   * Reported rather than swallowed because it is the signal that the match was
-   * probably spurious: a benefits PDF matched "Summary" mid-page and produced
-   * 3,996 characters of plan tables as its description. The caller does NOT
-   * use such a value (rows.ts), and notes why -- a journal's 'Description'
-   * heading mid-article put pages of an article into every volume's record.
+   * Reported, so the extractor can say why the heading was not used rather
+   * than leaving it looking absent: a benefits PDF matched "Summary" mid-page,
+   * and a journal's mid-article 'Description' heading put pages of an article
+   * into every volume's record.
    */
   capped: boolean;
   /**
@@ -234,19 +221,9 @@ export function readSection(text: string, heading: string): SectionText {
     }
   }
 
-  const capped = end > MAX_SECTION;
-  const section = body.slice(0, Math.min(end, MAX_SECTION)).trim();
-  // If the cap cut it, stop at the last whole word rather than mid-word -- but
-  // only when there IS a word boundary near the end. `lastIndexOf` returning
-  // -1 fed `slice(0, -1)`, which drops the last character instead of keeping
-  // the string; and an early space in an otherwise unbroken tail collapsed the
-  // whole section to whatever preceded it. A SHORT NON-EMPTY VALUE IS THE WORST
-  // OUTCOME AVAILABLE HERE: `rows.ts` takes the first non-empty source, so one
-  // stray letter satisfies the cascade and the `opening` fallback that would
-  // have produced something usable never runs.
-  const lastSpace = section.lastIndexOf(' ');
-  const cutBackIsWorthIt = lastSpace >= section.length - LONGEST_WORD;
-  const whole = capped && cutBackIsWorthIt ? section.slice(0, lastSpace).trim() : section;
-
-  return { text: trimFurniture(whole), capped, midSentence };
+  // DECIDED HERE, ONCE, for every reader: the extractor, the evidence that
+  // proposes mappings, and the model's slice. A section with no ending is no
+  // section, so none of them is offered one.
+  if (end > MAX_SECTION) return { text: '', capped: true, midSentence };
+  return { text: trimFurniture(body.slice(0, end).trim()), capped: false, midSentence };
 }

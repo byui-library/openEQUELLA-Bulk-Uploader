@@ -276,7 +276,8 @@ function resolve(source: Source, context: Context): Resolved {
     // rather than reads, and a guess presented like a fact is the failure mode
     // this whole tool is built to avoid.
     return {
-      value: readOpening(context.doc.text),
+      // Uncut here: trySources cuts it to the column's limit, and notes it.
+      value: readOpening(context.doc.text, Number.POSITIVE_INFINITY),
       note: 'taken from the start of the document, which may not be a description -- please check',
     };
   }

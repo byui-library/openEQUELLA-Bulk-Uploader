@@ -69,3 +69,12 @@ describe('spreadAcrossTypes', () => {
     expect(spreadAcrossTypes(['a.pdf', 'b.pdf'], 5)).toEqual(['a.pdf', 'b.pdf']);
   });
 });
+
+// A heading whose section never ends is no section, so it is not proposed as
+// a mapping: a journal's mid-article 'Description' heading was (2026-11-17).
+describe('evidenceFrom -- a section that never ends', () => {
+  it('does not offer it', () => {
+    const found = evidenceFrom([doc({ text: `Description ${'word '.repeat(3000)}` })]);
+    expect(found.sections).not.toContain('Description');
+  });
+});

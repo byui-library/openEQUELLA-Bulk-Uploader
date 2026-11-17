@@ -597,6 +597,8 @@ export async function fillWithModel(
       // one skimming reads a populated description as absent.
       const outcome = (row.cells[path] ?? '').trim() === '' ? 'left blank' : 'not replaced';
 
+      // ONE value for the limit the model is told and the limit it is held to.
+      const limit = limitFor(column);
       let reply: string;
       try {
         reply = await provider.complete(
@@ -604,7 +606,7 @@ export async function fillWithModel(
             field: describeField(path),
             document: slice.text,
             instruction: options.instruction ?? null,
-            maxLength: limitFor(column),
+            maxLength: limit,
           }),
         );
       } catch (error) {
@@ -639,7 +641,6 @@ export async function fillWithModel(
       // limit; cutting its prose back to a sentence would be editing generated
       // text, and a cut-down sentence can read as complete while meaning
       // something else. The cell stays eligible, as for any refusal.
-      const limit = limitFor(column);
       if (cleaned.text.length > limit) {
         const reason =
           `the model's answer was ${cleaned.text.length} characters, over this column's limit of ` +

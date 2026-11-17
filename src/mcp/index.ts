@@ -95,7 +95,6 @@ async function loadPaths(schemaFile: string): Promise<Set<string>> {
   return parseSchemaPaths(extractDefinition(await readFile(schemaFile, 'utf8')));
 }
 
-
 /**
  * "Credentials" here means the OAuth client id + secret specifically --
  * `OEQ_BASE_URL` is target configuration (which instance), not a secret, and

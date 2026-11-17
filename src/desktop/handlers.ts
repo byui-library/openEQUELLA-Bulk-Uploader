@@ -247,28 +247,30 @@ function resourcePathOpts(): { isPackaged: boolean; appPath: string; resourcesPa
 
 /** Schema xpaths, read from the bundled reference export. */
 async function schemaPaths(): Promise<Set<string>> {
-  const p = resolveSchemaPath(resourcePathOpts());
-  return parseSchemaPaths(extractDefinition(await readFile(p, 'utf8')));
+  return (await bundledSchema()).paths;
 }
 
 /**
- * The title xpath the same export declares, or null if it declares none.
+ * Everything plan reads from the bundled export, from ONE read, so the three
+ * describe one schema -- as in the CLI's planAction and MCP's planTool.
  *
- * Read rather than assumed: the duplicate check searches on this path, and a
- * hardcoded `MWDL/title` matches nothing outside BYU-Idaho -- which would
- * report every row clean from a check that never looked. Null reaches
- * findDuplicates as "could not check", never as "clean".
+ * `titleHeader` and `descriptionPath` are read rather than assumed: the
+ * duplicate check searches on the title path, and a hardcoded `MWDL/title`
+ * matches nothing outside BYU-Idaho -- which would report every row clean from
+ * a check that never looked. Null reaches findDuplicates, and plan's
+ * long-description warning, as "could not check", never as "clean".
  */
-async function schemaTitleHeader(): Promise<string | null> {
-  const p = resolveSchemaPath(resourcePathOpts());
-  return extractItemNamePath(await readFile(p, 'utf8'));
-}
-
-/** The description xpath the same export declares, or null -- for plan's
- *  long-description warning, which says "not checked" rather than nothing. */
-async function schemaDescriptionHeader(): Promise<string | null> {
-  const p = resolveSchemaPath(resourcePathOpts());
-  return extractItemDescriptionPath(await readFile(p, 'utf8'));
+async function bundledSchema(): Promise<{
+  paths: Set<string>;
+  titleHeader: string | null;
+  descriptionPath: string | null;
+}> {
+  const xml = await readFile(resolveSchemaPath(resourcePathOpts()), 'utf8');
+  return {
+    paths: parseSchemaPaths(extractDefinition(xml)),
+    titleHeader: extractItemNamePath(xml),
+    descriptionPath: extractItemDescriptionPath(xml),
+  };
 }
 
 /**
@@ -714,17 +716,15 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const client = buildClient(cfg, auth);
 
       const sheet = applyOverrides(await readSheet(args.sheetPath), args.overrides ?? {});
-      const paths = await schemaPaths();
+      const { paths, titleHeader, descriptionPath } = await bundledSchema();
       const manifest = await buildManifest(sheet, args.filesDir, paths, {
         baseUrl: cfg.baseUrl,
         collectionUuid: cfg.collectionUuid,
         schemaUuid: cfg.schemaUuid,
         itemState: args.itemState,
         attachmentUuidPath: cfg.attachmentUuidPath,
-        descriptionPath: await schemaDescriptionHeader(),
+        descriptionPath,
       });
-
-      const titleHeader = await schemaTitleHeader();
 
       // Matches the CLI: fold advisory duplicate-identifier warnings into the
       // manifest at plan time so the reviewer sees them before confirming.
