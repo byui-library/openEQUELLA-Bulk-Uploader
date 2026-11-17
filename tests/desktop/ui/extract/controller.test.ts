@@ -803,12 +803,9 @@ describe('createExtractController -- one row per subfolder', () => {
     expect(c.state().profile?.pattern).toBe('Gazette_V{volume}');
   });
 
-  it('previews and runs per folder, never asking about a model', async () => {
-    const confirm = vi.fn(() => true);
-    const a = api({
-      getModel: vi.fn(async () => ({ model: 'm', baseUrl: 'https://hosted.example.test/v1', budget: 1000, cap: 100 })),
-    });
-    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn(), confirm });
+  it('previews and runs per folder', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
     await c.chooseFolder();
     a.extractScan.mockImplementation(async () => folderScan as never);
     await c.setPerFolder(true);
@@ -816,11 +813,38 @@ describe('createExtractController -- one row per subfolder', () => {
     expect(a.extractPreview).toHaveBeenLastCalledWith(expect.objectContaining({ perFolder: true }));
     await c.continue();
     await c.save();
-    expect(confirm).not.toHaveBeenCalled();
-    expect(a.getModel).not.toHaveBeenCalled();
-    expect(a.extractRun).toHaveBeenCalledWith(
-      expect.objectContaining({ perFolder: true, modelApproved: false }),
+    expect(a.extractRun).toHaveBeenCalledWith(expect.objectContaining({ perFolder: true }));
+  });
+
+  // One request per VOLUME, so the dialog counts folders, and the consent is
+  // carried to the run as it is for single files.
+  it('asks before sending a folder batch to a hosted model, counting folders', async () => {
+    const confirm = vi.fn(() => true);
+    const a = api({
+      getModel: vi.fn(async () => ({ model: 'm', baseUrl: 'https://hosted.example.test/v1', budget: 1000, cap: 100 })),
+    });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn(), confirm });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(
+      async () =>
+        ({
+          ...folderScan,
+          starter: {
+            ...folderScan.starter,
+            columns: [
+              ...folderScan.starter.columns,
+              { path: 'MWDL/description', sources: [{ join: 'Lead.' }, { ai: true, after: true }] },
+            ],
+          },
+        }) as never,
     );
+    await c.setPerFolder(true);
+    await c.continue();
+    await c.continue();
+    await c.save();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0]![0]).toMatch(/About to send up to 2 model requests/);
+    expect(a.extractRun).toHaveBeenCalledWith(expect.objectContaining({ perFolder: true, modelApproved: true }));
   });
 });
 

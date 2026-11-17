@@ -451,8 +451,8 @@ export interface OeqApi {
      */
     modelApproved?: boolean;
     /**
-     * One row per subfolder. Nothing is sent to a model in this mode, whatever
-     * `modelApproved` says -- see core/ai/fill.ts, 'folder-row'.
+     * One row per subfolder. A model column is written from every file in the
+     * folder, one request per folder, under the same `modelApproved` consent.
      */
     perFolder?: boolean;
   }): Promise<ExtractRunReport>;

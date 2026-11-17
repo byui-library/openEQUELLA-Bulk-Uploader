@@ -707,9 +707,14 @@ describe('extract handlers -- one row per subfolder', () => {
     expect(rows[0]!.notes.join(' ')).toMatch(/'G_V2_No2\.pdf' could not be read/);
   });
 
-  it('runs one row per subfolder, sends nothing to a model even when approved, and says why', async () => {
+  it('runs one row per subfolder and, when approved, fills its model column -- one request per folder', async () => {
     const ipc = fakeIpcMain();
-    const fetchImpl = vi.fn();
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: 'Notes on the season.' } }] }), {
+          status: 200,
+        }),
+    );
     const modelFor = vi.fn(async () => ({
       baseUrl: 'http://localhost:11434/v1',
       model: 'm',
@@ -733,10 +738,25 @@ describe('extract handlers -- one row per subfolder', () => {
       perFolder: true,
     });
     expect(report.written).toBe(2);
-    expect(report.aiWritten).toBe(0);
+    expect(report.aiWritten).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(await readFile(out, 'utf8')).toContain('Notes on the season.');
+  });
+
+  it('sends nothing for a folder batch the operator did not approve, and says so', async () => {
+    const ipc = fakeIpcMain();
+    const fetchImpl = vi.fn();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: vi.fn(async () => ({ baseUrl: 'http://localhost:11434/v1', model: 'm', budget: 1000, cap: 100 })) as never,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const dir = await volumes();
+    const out = join(dir, 'out.csv');
+    await ipc.call('oeq:extractRun', { dir, profile: folderProfile, outPath: out, modelApproved: false, perFolder: true });
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(modelFor).not.toHaveBeenCalled();
-    expect(await readFile(out, 'utf8')).toContain('rows built from a folder are not supported by the model pass yet');
+    expect(await readFile(out, 'utf8')).toContain('no model was run for this batch');
   });
 });
 

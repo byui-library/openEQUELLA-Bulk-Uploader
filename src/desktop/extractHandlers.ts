@@ -19,7 +19,7 @@ import {
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
 import { evidenceFrom, scanFolderEvidence, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
-import { buildRow } from '../core/extract/rows.js';
+import { buildRow, type FolderDoc } from '../core/extract/rows.js';
 import { writeCsv, writeProblemsLog } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
 import { starterProfile, type StarterSchema } from '../core/extract/suggest.js';
@@ -277,24 +277,6 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       // keystroke. This is the one place a document is read for real.
       const wantsModel = modelColumns(args.profile).length > 0;
 
-      // ONE ROW PER SUBFOLDER: no model, whatever was approved, and no endpoint
-      // is even read. The model pass checks a value against one document and a
-      // folder row has several (core/ai/fill.ts, 'folder-row'); the cells that
-      // asked for one say so instead of looking like documents that said nothing.
-      if (args.perFolder === true) {
-        const result = await extractFolders(args.dir, args.profile);
-        if (wantsModel) noteMissingModel(result.rows, args.profile, 'folder-row');
-        // The log beside the spreadsheet, written every run -- see writeProblemsCsv.
-        const problems = await writeProblemsLog(args.outPath, result.problems ?? []);
-        await writeCsv(args.outPath, args.profile, result.rows);
-        return {
-          outPath: args.outPath,
-          written: result.rows.length,
-          flagged: countNeedingReview(result.rows),
-          aiWritten: countModelWritten(result.rows),
-          problems,
-        };
-      }
       // CONSENT IS A CONDITION OF RESOLVING THE ENDPOINT AT ALL, not a thing
       // checked after. Without `modelApproved` this handler decided on its own
       // reading of the store whether to send -- so a renderer whose read of that
@@ -307,12 +289,24 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       // four hundred of them for a run that will send none is memory spent on
       // nothing.
       const targets: FillTarget[] = [];
-      const collect =
-        settings === null ? {} : { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } };
+      const keep = settings !== null;
 
       // Deliberately does NOT use the preview cache: the real run reads every
       // file fresh, so what is written can never be stale relative to disk.
-      const result = await extractFolder(args.dir, args.profile, collect);
+      // ONE ROW PER SUBFOLDER hands the pass every issue of a volume; the model
+      // writes from, and is checked against, all of them.
+      const perFolder = args.perFolder === true;
+      const result = perFolder
+        ? await extractFolders(
+            args.dir,
+            args.profile,
+            keep ? { onRow: (row: ExtractedRow, docs: readonly FolderDoc[]) => { targets.push({ row, docs }); } } : {},
+          )
+        : await extractFolder(
+            args.dir,
+            args.profile,
+            keep ? { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } } : {},
+          );
 
       if (wantsModel) {
         if (settings === null) {
@@ -336,8 +330,13 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
         }
       }
 
+      // The problems log beside the spreadsheet, every per-folder run -- see
+      // writeProblemsCsv. Written first, so it exists even when every folder
+      // was held back.
+      const problems = perFolder ? await writeProblemsLog(args.outPath, result.problems ?? []) : undefined;
       await writeCsv(args.outPath, args.profile, result.rows);
       return {
+        ...(problems === undefined ? {} : { problems }),
         outPath: args.outPath,
         written: result.rows.length,
         // NOT `notes.length > 0`. Every model write carries a note, so that

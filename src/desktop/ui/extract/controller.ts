@@ -206,7 +206,8 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       profile,
       // The whole folder, not the preview: the run reads every file fresh
       // (extractHandlers.ts), so the preview's five rows would understate the
-      // count by two orders of magnitude on a real batch.
+      // count by two orders of magnitude on a real batch. In per-folder mode
+      // `supported` holds the SUBFOLDERS -- one request per volume.
       documents: state.scan.supported.length,
       model: model.model,
       baseUrl: model.baseUrl,
@@ -367,15 +368,9 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       // approving a send and then cancelling the save dialog left an approval
       // standing for a run that never happened. A confirmation should be the
       // step immediately before the thing it confirms, with nothing that can
-      // still call the whole thing off in between.
-      // NO QUESTION IS ASKED IN PER-FOLDER MODE, because nothing can be sent:
-      // the model pass does not run on folder rows (core/ai/fill.ts,
-      // 'folder-row'). Asking would collect consent for something that will
-      // not happen. `sendToModel: false` is still carried, so the main process
-      // has a refusal to read even if it ever stopped checking the mode.
-      const approval: ModelApproval = state.perFolder
-        ? { proceed: true, sendToModel: false }
-        : await approveModelRun(state.profile);
+      // still call the whole thing off in between. Asked in per-folder mode
+      // too: each volume is one request.
+      const approval: ModelApproval = await approveModelRun(state.profile);
       if (!approval.proceed) return;
       // Cleared before the run so a line left over from a previous save is
       // never read as this one's progress.
