@@ -164,3 +164,9 @@ describe('text with parts of the name', () => {
     expect(sourceOptions('report.pdf', empty).some((o) => 'join' in o.source)).toBe(false);
   });
 });
+
+describe('describeSource -- a model writing after', () => {
+  it('says it writes after the text above, on every row', () => {
+    expect(describeSource({ ai: true, after: true })).toBe('A language model, writing after the text above (every row)');
+  });
+});

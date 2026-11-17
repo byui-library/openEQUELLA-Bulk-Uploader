@@ -308,6 +308,11 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
             keep ? { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } } : {},
           );
 
+      // The problems log beside the spreadsheet, every per-folder run -- see
+      // writeProblemsCsv. Written BEFORE the model pass, so it exists even when
+      // every folder was held back or the pass fails.
+      const problems = perFolder ? await writeProblemsLog(args.outPath, result.problems ?? []) : undefined;
+
       if (wantsModel) {
         if (settings === null) {
           // A column asked for a model and none ran. Said per cell: a silently
@@ -330,10 +335,6 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
         }
       }
 
-      // The problems log beside the spreadsheet, every per-folder run -- see
-      // writeProblemsCsv. Written first, so it exists even when every folder
-      // was held back.
-      const problems = perFolder ? await writeProblemsLog(args.outPath, result.problems ?? []) : undefined;
       await writeCsv(args.outPath, args.profile, result.rows);
       return {
         ...(problems === undefined ? {} : { problems }),

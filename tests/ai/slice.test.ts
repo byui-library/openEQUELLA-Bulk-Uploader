@@ -262,3 +262,13 @@ describe('sliceFolder', () => {
     expect(() => sliceFolder([issue('No1.pdf', 'x')], Number.NaN)).toThrow(ValidationError);
   });
 });
+
+describe('sliceFolder -- more files than the budget can label', () => {
+  it('sends nothing rather than going over the budget', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      name: `a-long-scanned-page-file-name-number-${i}.pdf`,
+      doc: { text: 'word '.repeat(500), hasTextLayer: true, properties: {}, tables: [] },
+    }));
+    expect(sliceFolder(many, 1000)).toEqual({ text: '', shape: 'empty' });
+  });
+});

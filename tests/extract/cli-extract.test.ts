@@ -947,7 +947,9 @@ describe('runExtract --per-folder', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('without --ai, keeps the fixed sentence and says --ai was not given', async () => {
+  // The fixed sentence is a description on its own; "nothing was written
+  // here" would be false about it on every row (code review, 2026-11-17).
+  it('without --ai, keeps the fixed sentence and does not call the cell empty', async () => {
     const { dir, profilePath, out } = await setupFolders(withSummary);
     await runExtract(
       { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true },
@@ -955,7 +957,7 @@ describe('runExtract --per-folder', () => {
     );
     const csv = await readFile(out, 'utf8');
     expect(csv).toContain('Gazette, Volume 1.');
-    expect(csv).toContain('--ai was not given');
+    expect(csv).not.toContain('nothing was written here');
   });
 
   it('names a loose file beside the subfolders', async () => {

@@ -274,6 +274,10 @@ export function sliceFolder(
   const overhead =
     parts.reduce((n, p) => n + p.label.length, 0) + SEPARATOR.length * (parts.length - 1);
   const share = Math.floor((budget - overhead) / parts.length);
+  // TOO MANY FILES FOR THE BUDGET is reported as nothing to send, never sent
+  // over it: a negative share reaches `slice(0, negative)` and returns nearly
+  // the whole document, breaking the maximum the consent dialog quoted.
+  if (share < MIN_USEFUL) return { text: '', shape: 'empty' };
   const text = parts
     .map((p) => ({ label: p.label, body: fitToBudget(p.body, share) }))
     .filter((p) => p.body !== '')
