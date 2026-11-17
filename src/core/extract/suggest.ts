@@ -26,11 +26,13 @@ function majorityExtension(filenames: string[]): string {
 }
 
 /**
- * Propose a pattern from real filenames. Picks the separator that splits every
- * file into the same number of parts -- consistency is the signal that a
- * separator is structural rather than incidental. Falls back to one
- * placeholder covering the whole name, which always matches and is honest
- * about having found no structure.
+ * Propose a pattern from real filenames. Picks the separator that splits a
+ * STRICT MAJORITY of names into the same number of parts -- consistency is the
+ * signal that a separator is structural rather than incidental. The names
+ * outside that majority do NOT match the result: their rows say so, and the
+ * columns screen counts them. Falls back to one placeholder covering the whole
+ * name, which always matches and is honest about having found no structure,
+ * when no shape has a majority.
  */
 export function detectPattern(allFilenames: string[], options: { folders?: boolean } = {}): string {
   // FOLDER NAMES carry no extension and are not "supported" files, so neither

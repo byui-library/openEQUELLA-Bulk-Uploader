@@ -337,6 +337,22 @@ describe('the columns screen in one-row-per-subfolder mode', () => {
     expect(html).not.toContain('Your files look like this');
   });
 
+  // Code review, 2026-11-17: a fitting example alone would hide a pattern
+  // that fits one name in three hundred.
+  it('says how many names do not fit the pattern, when the example does', () => {
+    const profile = chained([]);
+    profile.pattern = 'SRE_Vol{group}';
+    const html = render(profile, {
+      perFolder: true,
+      sampleFilename: 'SRE_Vol1',
+      unmatchedNames: 1,
+      nameCount: 39,
+    }).innerHTML;
+    expect(html).toContain('1 of 39 folder names do not fit this pattern');
+    const all = render(profile, { perFolder: true, sampleFilename: 'SRE_Vol1', unmatchedNames: 0, nameCount: 38 });
+    expect(all.innerHTML).not.toContain('do not fit this pattern');
+  });
+
   it('gives the parts hint only for a matching name, in that pattern\'s own words', () => {
     const profile = chained([]);
     profile.pattern = 'SRE_Vol{group}';

@@ -122,17 +122,20 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     return `Skipped ${field} for ${event.file}.`;
   }
 
-  // REGISTERED ONCE, not per run: preload's `onModelProgress` adds a new
-  // ipcRenderer listener on every call, so registering it inside `save()`
-  // would fire the handler once per save the operator had ever done.
-  options.api.onModelProgress((event) => {
-    set({ modelStatus: describeModelEvent(event) });
-  });
-  // Registered once, for the same reason. Reading a large batch is the other
-  // long wait, before any model is asked anything.
-  options.api.onExtractProgress((p) => {
-    set({ modelStatus: `Reading ${state.perFolder ? 'folders' : 'files'}: ${p.done} of ${p.total}…` });
-  });
+  // REGISTERED ONCE PER CONTROLLER, not per run: preload adds a new
+  // ipcRenderer listener on every call, so registering inside `save()` would
+  // fire the handler once per save the operator had ever done. AND REMOVED ON
+  // EXIT: app.ts builds a new controller every time the flow is opened, and a
+  // listener left behind re-rendered every screen the operator had left.
+  const stopListening = [
+    options.api.onModelProgress((event) => {
+      set({ modelStatus: describeModelEvent(event) });
+    }),
+    // Reading a large batch is the other long wait, before any model is asked.
+    options.api.onExtractProgress((p) => {
+      set({ modelStatus: `Reading ${state.perFolder ? 'folders' : 'files'}: ${p.done} of ${p.total}…` });
+    }),
+  ];
 
   const guard = async (work: () => Promise<Partial<ExtractState>>): Promise<void> => {
     set({ busy: true, error: null });
@@ -417,6 +420,9 @@ export function createExtractController(options: ExtractControllerOptions): Extr
           savedProblems: report.problems ?? null,
         };
       });
+      // A run that failed is not still "Reading 12 of 38": that line beside
+      // the error would say work is going on when it has stopped.
+      if (state.error !== null) set({ modelStatus: null });
     },
 
     async undoRemove() {
@@ -435,6 +441,9 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     setAddQuery: (addQuery) => set({ addQuery }),
     closeAdd: () => set({ adding: false, addQuery: '' }),
 
-    exit: options.onExit,
+    exit() {
+      for (const stop of stopListening) stop();
+      options.onExit();
+    },
   };
 }

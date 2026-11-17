@@ -501,14 +501,19 @@ export interface OeqApi {
    * real machine, the first call took 48 seconds while the runtime loaded the
    * model, and warm calls about 4. One HTTP call per eligible cell, in
    * sequence -- so a batch is minutes, and the app said nothing for all of it.
+   *
+   * RETURNS THE WAY TO STOP LISTENING. Each call adds a listener, and the
+   * extract flow builds a new controller every time it is opened; without a
+   * way to remove the old one, every progress event re-rendered every screen
+   * the operator had ever left.
    */
-  onModelProgress(cb: (p: ModelProgress) => void): void;
+  onModelProgress(cb: (p: ModelProgress) => void): () => void;
   /**
    * Tell the renderer how far the extract has got reading the batch: files,
    * or folders in one-row-per-subfolder mode. The other long wait -- a large
    * batch of scanned PDFs is minutes of reading before any model is asked.
    */
-  onExtractProgress(cb: (p: ExtractProgress) => void): void;
+  onExtractProgress(cb: (p: ExtractProgress) => void): () => void;
 }
 
 /** How far an extract run has got reading its batch. */

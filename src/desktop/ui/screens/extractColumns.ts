@@ -11,6 +11,11 @@ export interface ExtractColumnsProps {
   profile: Profile;
   profilePath: string | null;
   sampleFilename: string;
+  /** How many of the batch's names the pattern does NOT fit, of how many. The
+   *  example shown is one that fits, so without this a pattern fitting one
+   *  name in three hundred would look fine (mount.ts#nameFit). */
+  unmatchedNames?: number;
+  nameCount?: number;
   /** One row per subfolder: the name split into parts is a FOLDER's, and the screen says so. */
   perFolder: boolean;
   /** Only the evidence the source dropdowns are built from. This screen reads
@@ -116,6 +121,18 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
         warning that always fires is one people learn to ignore.
       -->
     </tr>`;
+}
+
+/**
+ * How many names the pattern leaves out, when the example fits and some do
+ * not. Said here, before saving, rather than discovered afterwards as a
+ * "does not match the pattern" note on each of those rows.
+ */
+function unmatchedLine(props: ExtractColumnsProps, exampleMatched: boolean): string {
+  const unmatched = props.unmatchedNames ?? 0;
+  if (!exampleMatched || unmatched === 0) return '';
+  const kind = props.perFolder ? 'folder names' : 'filenames';
+  return `<p class="warn-inline" id="extract-unmatched">${unmatched} of ${props.nameCount ?? unmatched} ${kind} do not fit this pattern; their rows will have no parts.</p>`;
 }
 
 /**
@@ -251,6 +268,7 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
       <h3>Your ${props.perFolder ? 'folders' : 'files'} look like this</h3>
       <p class="sample"><code>${escapeHtml(props.sampleFilename)}</code></p>
       <p class="segments">${segments}</p>
+      ${unmatchedLine(props, described.matched)}
       ${partsHint(described)}
       <details>
         <summary>Edit the pattern</summary>

@@ -43,8 +43,8 @@ function api(over: Record<string, unknown> = {}) {
     // at construction, which is the right failure -- the controller genuinely
     // depends on it -- but it must be present for every test, not just the
     // ones about progress.
-    onModelProgress: vi.fn(),
-    onExtractProgress: vi.fn(),
+    onModelProgress: vi.fn(() => () => {}),
+    onExtractProgress: vi.fn(() => () => {}),
     ...over,
   };
 }
@@ -729,7 +729,7 @@ describe('the model pass reports itself', () => {
    *  main process and emit an event. */
   const withProgress = () => {
     let emit: ((e: unknown) => void) | null = null;
-    const a = api({ onModelProgress: vi.fn((cb: (e: unknown) => void) => { emit = cb; }) });
+    const a = api({ onModelProgress: vi.fn((cb: (e: unknown) => void) => { emit = cb; return () => {}; }) });
     return { a, fire: (e: unknown) => emit?.(e) };
   };
 
@@ -786,6 +786,20 @@ describe('the model pass reports itself', () => {
     const { a } = withProgress();
     createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
     expect(a.onModelProgress).toHaveBeenCalledTimes(1);
+  });
+
+  // Code review, 2026-11-17: a new controller is built every time the flow is
+  // opened, and the listeners of the old ones were never removed.
+  it('stops listening when the operator leaves the flow', () => {
+    const stopModel = vi.fn();
+    const stopExtract = vi.fn();
+    const a = api({ onModelProgress: vi.fn(() => stopModel), onExtractProgress: vi.fn(() => stopExtract) });
+    const onExit = vi.fn();
+    const c = createExtractController({ api: a as never, onExit, render: vi.fn() });
+    c.exit();
+    expect(stopModel).toHaveBeenCalledTimes(1);
+    expect(stopExtract).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledTimes(1);
   });
 });
 

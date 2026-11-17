@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sampleName, screenFor } from '../../../../src/desktop/ui/extract/mount.js';
+import { nameFit, screenFor } from '../../../../src/desktop/ui/extract/mount.js';
 import { initialExtractState } from '../../../../src/desktop/ui/extract/state.js';
 import { ATTACHMENT_COLUMN, type Profile } from '../../../../src/core/extract/types.js';
 
@@ -26,13 +26,16 @@ describe('screenFor', () => {
 
 // REPORTED BY THE OPERATOR, 2026-11-17: an index folder sorts first, and the
 // columns screen split it -- showing no parts -- as its example.
-describe('sampleName', () => {
-  it('shows the first name that fits the pattern, not simply the first', () => {
-    expect(sampleName('Gazette_V{group}', ['Gazette Index', 'Gazette_V1', 'Gazette_V2'])).toBe('Gazette_V1');
+describe('nameFit', () => {
+  it('shows the first name that fits the pattern, and counts those that do not', () => {
+    expect(nameFit('Gazette_V{group}', ['Gazette Index', 'Gazette_V1', 'Gazette_V2'])).toEqual({
+      sample: 'Gazette_V1',
+      unmatched: 1,
+    });
   });
 
   it('falls back to the first name when none fits, and to nothing when there are none', () => {
-    expect(sampleName('Gazette_V{group}', ['Index', 'Other'])).toBe('Index');
-    expect(sampleName('Gazette_V{group}', [])).toBe('');
+    expect(nameFit('Gazette_V{group}', ['Index', 'Other'])).toEqual({ sample: 'Index', unmatched: 2 });
+    expect(nameFit('Gazette_V{group}', [])).toEqual({ sample: '', unmatched: 0 });
   });
 });

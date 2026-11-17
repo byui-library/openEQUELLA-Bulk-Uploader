@@ -14,13 +14,24 @@ describe('createPace', () => {
     expect(pace.remainingMs(3, 10)).toBe(8 * MINUTE);
   });
 
-  it('counts rows the pass skipped as done at the same pace', () => {
+  // Code review, 2026-11-17: a stretch of skipped rows divided one slow
+  // request across them, and promised "less than a minute" too early.
+  it('does not time a stretch of skipped rows, so it never errs short', () => {
     const pace = createPace();
     pace.started(1, 0);
-    pace.started(3, 2 * MINUTE);
-    pace.started(5, 4 * MINUTE);
-    // One minute a row; rows 5..10 remain.
-    expect(pace.remainingMs(5, 10)).toBe(6 * MINUTE);
+    pace.started(2, 2 * MINUTE);
+    pace.started(3, 4 * MINUTE);
+    pace.started(30, 5 * MINUTE); // 26 skips in a minute: not a pace
+    expect(pace.remainingMs(30, 38)).toBe(9 * 2 * MINUTE);
+  });
+
+  it('takes the true middle of an even number: not simply the slower', () => {
+    const pace = createPace();
+    pace.started(1, 0);
+    pace.started(2, MINUTE);
+    pace.started(3, 4 * MINUTE);
+    // One minute and three minutes: two a row, eight rows left.
+    expect(pace.remainingMs(3, 10)).toBe(8 * 2 * MINUTE);
   });
 
   it('is not thrown by one slow row: it takes the middle of the recent ones', () => {

@@ -16,16 +16,34 @@ export function screenFor(state: ExtractState): 'folder' | 'columns' | 'save' {
   return state.step;
 }
 
+/** The example the columns screen shows, and how many names do NOT fit. */
+export interface NameFit {
+  /** The first name that FITS the pattern, or the first of all when none does. */
+  sample: string;
+  /** Names the pattern does not fit: their rows get no parts. */
+  unmatched: number;
+}
+
+let lastFit: { pattern: string; names: readonly string[]; fit: NameFit } | null = null;
+
 /**
- * The name the columns screen splits into parts as its example: the first that
- * FITS the pattern, or the first of all when none does.
+ * The columns screen's example, and the count of names left out.
  *
- * Not simply the first. An index folder sorts ahead of 38 volume folders
+ * NOT SIMPLY THE FIRST NAME. An index folder sorts ahead of 38 volume folders
  * (operator, 2026-11-17), and showing its parts -- none -- hid the very parts
- * the operator was trying to use.
+ * the operator was trying to use. But a matching example alone would hide a
+ * pattern that fits one name in three hundred, which is why the count comes
+ * with it and the screen states it.
+ *
+ * Remembered for the last pattern and list: the screen redraws on every edit,
+ * and only a pattern change can change the answer.
  */
-export function sampleName(pattern: string, names: readonly string[]): string {
-  return names.find((name) => describeFilename(pattern, name).matched) ?? names[0] ?? '';
+export function nameFit(pattern: string, names: readonly string[]): NameFit {
+  if (lastFit !== null && lastFit.pattern === pattern && lastFit.names === names) return lastFit.fit;
+  const matched = names.filter((name) => describeFilename(pattern, name).matched);
+  const fit = { sample: matched[0] ?? names[0] ?? '', unmatched: names.length - matched.length };
+  lastFit = { pattern, names, fit };
+  return fit;
 }
 
 export function renderExtract(
@@ -66,11 +84,15 @@ export function renderExtract(
       });
       return;
 
-    case 'columns':
+    case 'columns': {
+      const names = state.scan?.supported ?? [];
+      const fit = nameFit(state.profile!.pattern, names);
       renderExtractColumns(root, {
         profile: state.profile!,
         profilePath: state.profilePath,
-        sampleFilename: sampleName(state.profile!.pattern, state.scan?.supported ?? []),
+        sampleFilename: fit.sample,
+        unmatchedNames: fit.unmatched,
+        nameCount: names.length,
         perFolder: state.perFolder,
         scan: state.scan ?? { labels: [], properties: [], tableColumns: [], sections: [] },
         preview: state.preview,
@@ -90,6 +112,7 @@ export function renderExtract(
         onBack: () => controller.back(),
       });
       return;
+    }
 
     case 'save':
       renderExtractSave(root, {

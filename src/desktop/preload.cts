@@ -128,11 +128,20 @@ const api: OeqApi = {
   onProgress: (cb) => {
     ipcRenderer.on(CHANNELS.progress, (_e, p: RunProgress) => cb(p));
   },
+  // Each returns the way to stop listening -- see OeqApi.onModelProgress.
   onModelProgress: (cb) => {
-    ipcRenderer.on(CHANNELS.modelProgress, (_e, p: ModelProgress) => cb(p));
+    const listener = (_e: unknown, p: ModelProgress) => cb(p);
+    ipcRenderer.on(CHANNELS.modelProgress, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.modelProgress, listener);
+    };
   },
   onExtractProgress: (cb) => {
-    ipcRenderer.on(CHANNELS.extractProgress, (_e, p: ExtractProgress) => cb(p));
+    const listener = (_e: unknown, p: ExtractProgress) => cb(p);
+    ipcRenderer.on(CHANNELS.extractProgress, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.extractProgress, listener);
+    };
   },
 };
 
