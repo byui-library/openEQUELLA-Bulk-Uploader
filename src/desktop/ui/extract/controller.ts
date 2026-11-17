@@ -7,6 +7,7 @@ import { aiConfirmation } from '../../../core/ai/confirm.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
 import type { ModelProgress } from '../../../core/ai/fill.js';
 import { plainLabel } from './picker.js';
+import { createPace, describeRemaining } from './pace.js';
 
 export interface ExtractControllerOptions {
   api: OeqApi;
@@ -42,11 +43,15 @@ export interface ExtractControllerOptions {
   onExit(): void;
   /** Called after every state change; the caller decides which screen to draw. */
   render(state: ExtractState): void;
+  /** The clock the time-left estimate reads. Injected so tests can move it. */
+  now?: () => number;
 }
 
 export interface ExtractController {
   state(): ExtractState;
   chooseFolder(): Promise<void>;
+  /** Switch between one row per file and one row per subfolder, rescanning. */
+  setPerFolder(on: boolean): Promise<void>;
   continue(): Promise<void>;
   back(): void;
   setPattern(pattern: string): Promise<void>;
@@ -68,6 +73,8 @@ export interface ExtractController {
 
 export function createExtractController(options: ExtractControllerOptions): ExtractController {
   let state = initialExtractState();
+  let pace = createPace();
+  const now = options.now ?? (() => Date.now());
 
   const set = (patch: Partial<ExtractState>): void => {
     state = { ...state, ...patch };
@@ -99,7 +106,13 @@ export function createExtractController(options: ExtractControllerOptions): Extr
    */
   function describeModelEvent(event: ModelProgress): string {
     const field = plainLabel(event.path);
-    if (event.stage === 'asking') return `Asking the model about ${field} for ${event.file}…`;
+    if (event.stage === 'asking') {
+      // WHERE IT HAS GOT, AND HOW LONG IS LEFT -- the run's own pace, from
+      // the rows already done (pace.ts). Nothing extra is asked for.
+      const left = pace.remainingMs(event.row, event.rows);
+      const where = `${event.row} of ${event.rows}${left === null ? '' : `, ${describeRemaining(left)}`}`;
+      return `Asking the model about ${field} for ${event.file} — ${where}…`;
+    }
     if (event.stage === 'written') return `The model wrote ${field} for ${event.file}.`;
     if (event.stage === 'refused')
       return `Refused the model's ${field} for ${event.file} — the document does not support it.`;
@@ -108,12 +121,30 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     return `Skipped ${field} for ${event.file}.`;
   }
 
-  // REGISTERED ONCE, not per run: preload's `onModelProgress` adds a new
-  // ipcRenderer listener on every call, so registering it inside `save()`
-  // would fire the handler once per save the operator had ever done.
-  options.api.onModelProgress((event) => {
-    set({ modelStatus: describeModelEvent(event) });
-  });
+  // REGISTERED ONCE PER CONTROLLER, not per run: preload adds a new
+  // ipcRenderer listener on every call, so registering inside `save()` would
+  // fire the handler once per save the operator had ever done. AND REMOVED ON
+  // LEAVING, by either way out (`leave`): app.ts builds a new controller every
+  // time the flow is opened, and a listener left behind re-rendered every
+  // screen the operator had left.
+  const stopListening = [
+    options.api.onModelProgress((event) => {
+      // The pace is told first; the line is then only a description of it.
+      if (event.stage === 'asking') pace.started(event.row, now());
+      set({ modelStatus: describeModelEvent(event) });
+    }),
+    // Reading a large batch is the other long wait, before any model is asked.
+    options.api.onExtractProgress((p) => {
+      set({ modelStatus: `Reading ${state.perFolder ? 'folders' : 'files'}: ${p.done} of ${p.total}…` });
+    }),
+  ];
+
+  /** The ONE way out of the flow -- Back from the first screen and Done both
+   *  come here -- so the listeners cannot be left behind by either. */
+  function leave(): void {
+    for (const stop of stopListening) stop();
+    options.onExit();
+  }
 
   const guard = async (work: () => Promise<Partial<ExtractState>>): Promise<void> => {
     set({ busy: true, error: null });
@@ -130,7 +161,10 @@ export function createExtractController(options: ExtractControllerOptions): Extr
 
   const refreshPreview = async (profile: Profile): Promise<Partial<ExtractState>> => {
     if (state.dir === null) return { profile };
-    return { profile, preview: await options.api.extractPreview({ dir: state.dir, profile }) };
+    return {
+      profile,
+      preview: await options.api.extractPreview({ dir: state.dir, profile, perFolder: state.perFolder }),
+    };
   };
 
   /** Apply a pure column operation, then refresh the preview from the result. */
@@ -201,7 +235,8 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       profile,
       // The whole folder, not the preview: the run reads every file fresh
       // (extractHandlers.ts), so the preview's five rows would understate the
-      // count by two orders of magnitude on a real batch.
+      // count by two orders of magnitude on a real batch. In per-folder mode
+      // `supported` holds the SUBFOLDERS -- one request per volume.
       documents: state.scan.supported.length,
       model: model.model,
       baseUrl: model.baseUrl,
@@ -232,7 +267,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
         // are valid.
         const instanceId = options.instanceId ?? '';
         const [scan, schemaPaths, schemaNamePath] = await Promise.all([
-          options.api.extractScan(dir, instanceId),
+          options.api.extractScan(dir, instanceId, state.perFolder),
           options.api.schemaPaths(instanceId),
           options.api.schemaNamePath(instanceId),
         ]);
@@ -250,6 +285,30 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       });
     },
 
+    async setPerFolder(on) {
+      if (on === state.perFolder) return;
+      if (state.dir === null) {
+        set({ perFolder: on });
+        return;
+      }
+      const dir = state.dir;
+      const previous = state.scan;
+      // The mode changes ONLY WITH the scan that matches it. Set first, a
+      // failed rescan left "folders" switched on over a per-file scan and
+      // profile -- the screen counting files as folders, and the run reading a
+      // per-file pattern against folder names.
+      await guard(async () => {
+        const scan = await options.api.extractScan(dir, options.instanceId ?? '', on);
+        // The starter is replaced only while the operator has not touched it:
+        // the old one was proposed for the OTHER kind of batch (a pattern with
+        // an extension, or without), so keeping it would mis-read every row.
+        // A profile they edited, opened or took from a template is theirs, and
+        // stays.
+        const untouched = state.profile === null || state.profile === previous?.starter;
+        return { perFolder: on, scan, profile: untouched ? scan.starter : state.profile };
+      });
+    },
+
     async continue() {
       if (!canContinue(state)) return;
       if (state.step === 'folder' && state.profile !== null) {
@@ -262,7 +321,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     back() {
       if (state.step === 'save') set({ step: 'columns', error: null });
       else if (state.step === 'columns') set({ step: 'folder', error: null });
-      else options.onExit();
+      else leave();
     },
 
     async setPattern(pattern) {
@@ -338,12 +397,14 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       // approving a send and then cancelling the save dialog left an approval
       // standing for a run that never happened. A confirmation should be the
       // step immediately before the thing it confirms, with nothing that can
-      // still call the whole thing off in between.
-      const approval = await approveModelRun(state.profile);
+      // still call the whole thing off in between. Asked in per-folder mode
+      // too: each volume is one request.
+      const approval: ModelApproval = await approveModelRun(state.profile);
       if (!approval.proceed) return;
       // Cleared before the run so a line left over from a previous save is
-      // never read as this one's progress.
+      // never read as this one's progress -- and the pace with it.
       set({ modelStatus: null });
+      pace = createPace();
       await guard(async () => {
         const report = await options.api.extractRun({
           dir: state.dir!,
@@ -358,14 +419,19 @@ export function createExtractController(options: ExtractControllerOptions): Extr
           instanceId: options.instanceId ?? '',
           // The consent, carried rather than re-derived. See `ModelApproval`.
           modelApproved: approval.sendToModel,
+          perFolder: state.perFolder,
         });
         return {
           savedPath: report.outPath,
           savedWritten: report.written,
           savedFlagged: report.flagged,
           savedAiWritten: report.aiWritten,
+          savedProblems: report.problems ?? null,
         };
       });
+      // A run that failed is not still "Reading 12 of 38": that line beside
+      // the error would say work is going on when it has stopped.
+      if (state.error !== null) set({ modelStatus: null });
     },
 
     async undoRemove() {
@@ -384,6 +450,6 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     setAddQuery: (addQuery) => set({ addQuery }),
     closeAdd: () => set({ adding: false, addQuery: '' }),
 
-    exit: options.onExit,
+    exit: leave,
   };
 }

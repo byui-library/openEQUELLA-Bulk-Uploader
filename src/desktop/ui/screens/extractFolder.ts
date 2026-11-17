@@ -11,8 +11,11 @@ export interface ExtractFolderProps {
   templates: { id: string; label: string }[];
   /** The selected template's id, or '' for the generic scanned starter. */
   templateId: string;
+  /** One row per subfolder rather than one per file. */
+  perFolder: boolean;
   onChooseFolder(): void;
   onTemplateChange(id: string): void;
+  onPerFolderChange(on: boolean): void;
   onContinue(): void;
   onCancel(): void;
 }
@@ -29,7 +32,11 @@ export function renderExtractFolder(root: HTMLElement, props: ExtractFolderProps
       ? ''
       : `
       <p class="summary">
-        <strong>${props.scan.supported.length}</strong> file(s) can be read.
+        ${
+          props.perFolder
+            ? `<strong>${props.scan.supported.length}</strong> folder(s) will become items.`
+            : `<strong>${props.scan.supported.length}</strong> file(s) can be read.`
+        }
       </p>
       ${
         props.scan.skipped.length === 0
@@ -43,7 +50,9 @@ export function renderExtractFolder(root: HTMLElement, props: ExtractFolderProps
       }
       ${
         props.scan.supported.length === 0
-          ? `<p class="error" role="alert">Nothing in this folder can be read. The extractor handles PDF and .docx files.</p>`
+          ? props.perFolder
+            ? `<p class="error" role="alert">No subfolder here can become an item. Each item needs a folder of its own, with files in it and no folders inside.</p>`
+            : `<p class="error" role="alert">Nothing in this folder can be read. The extractor handles PDF and .docx files.</p>`
           : ''
       }`;
 
@@ -77,6 +86,17 @@ export function renderExtractFolder(root: HTMLElement, props: ExtractFolderProps
                  A template knows how one collection is written &mdash; where a date sits, what the
                  genre and rights always are. Generic reads whatever the files happen to offer.
                </p>
+             </div>
+             <div class="field">
+               <label>
+                 <input type="checkbox" id="extract-per-folder" ${props.perFolder ? 'checked' : ''} ${props.busy ? 'disabled' : ''}>
+                 One row per subfolder
+               </label>
+               <p class="hint">
+                 Each subfolder becomes one item, with every file in it attached in name order
+                 &mdash; for a journal kept as one folder per volume. Rename files to change the
+                 order; the Review screen shows it before anything is uploaded.
+               </p>
              </div>`
       }
 
@@ -96,6 +116,10 @@ export function renderExtractFolder(root: HTMLElement, props: ExtractFolderProps
   root
     .querySelector<HTMLSelectElement>('#extract-template')
     ?.addEventListener('change', (e) => props.onTemplateChange((e.target as HTMLSelectElement).value));
+  // Nor here: a checkbox fires 'change', and `checked` above restores it.
+  root
+    .querySelector<HTMLInputElement>('#extract-per-folder')
+    ?.addEventListener('change', (e) => props.onPerFolderChange((e.target as HTMLInputElement).checked));
   root.querySelector<HTMLButtonElement>('#extract-continue')?.addEventListener('click', props.onContinue);
   root.querySelector<HTMLButtonElement>('#extract-cancel')?.addEventListener('click', props.onCancel);
 }

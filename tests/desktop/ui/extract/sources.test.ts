@@ -9,7 +9,7 @@ describe('sourceOptions', () => {
   it('offers one option per placeholder in the pattern', () => {
     const options = sourceOptions('{last}_{first}.pdf', scan);
     expect(options.filter((o) => 'placeholder' in o.source).map((o) => o.label))
-      .toEqual(['Filename part: last', 'Filename part: first']);
+      .toEqual(['Part of the name: last', 'Part of the name: first']);
   });
 
   it('offers only labels that were actually found', () => {
@@ -28,8 +28,9 @@ describe('sourceOptions', () => {
   it('offers nothing from an empty scan except the placeholders and the sources that need no evidence', () => {
     const empty = { supported: [], skipped: [], labels: [], properties: [], tableColumns: [], sections: [], starter: { version: 1 as const, pattern: '{part1}.pdf', columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }] } };
     expect(sourceOptions('{a}.pdf', empty).map((o) => o.label)).toEqual([
-      'Filename part: a',
-      'The file name, without its extension',
+      'Part of the name: a',
+      'Text with parts of the name…',
+      'The whole name, without any extension',
       'The start of the document (a guess -- always flagged)',
       'A language model, asked after extraction (only where no source was sure)',
     ]);
@@ -97,11 +98,11 @@ describe('restOfChain', () => {
 
 describe('describeSource', () => {
   it('names each kind of source in plain language', () => {
-    expect(describeSource({ placeholder: 'last' })).toBe('Filename part: last');
-    expect(describeSource({ join: '{last}, {first}' })).toBe('Filename parts joined as "{last}, {first}"');
+    expect(describeSource({ placeholder: 'last' })).toBe('Part of the name: last');
+    expect(describeSource({ join: '{last}, {first}' })).toBe('Text with parts of the name: "{last}, {first}"');
     expect(describeSource({ label: 'Performer' })).toBe('Label in document: Performer');
     expect(describeSource({ property: 'title' })).toBe('Document property: title');
-    expect(describeSource({ filename: true })).toBe('The file itself');
+    expect(describeSource({ filename: true })).toBe('The file or folder itself');
     expect(describeSource({ tableColumn: 'Job Description' })).toBe('Table column: Job Description');
     expect(describeSource({ section: 'Abstract' })).toBe('Section: Abstract');
   });
@@ -154,5 +155,18 @@ describe('optionsForColumn', () => {
     const opts = optionsForColumn('{a}.pdf', scan, [{ compose: '{x}' }, { presence: { any: ['x'], then: 'y' } }]);
     expect(shown(opts)).toContain('Built from other columns: {x}');
     expect(shown(opts).some((l) => l.startsWith('"y" when'))).toBe(false);
+  });
+});
+
+describe('text with parts of the name', () => {
+  const empty = { labels: [], properties: [], tableColumns: [], sections: [] };
+  it('is not offered when the pattern has no parts -- it would only be a default', () => {
+    expect(sourceOptions('report.pdf', empty).some((o) => 'join' in o.source)).toBe(false);
+  });
+});
+
+describe('describeSource -- a model writing after', () => {
+  it('says it writes after the text above, on every row', () => {
+    expect(describeSource({ ai: true, after: true })).toBe('A language model, writing after the text above (every row)');
   });
 });

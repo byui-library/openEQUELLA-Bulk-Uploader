@@ -2,6 +2,7 @@
 import { ValidationError } from '../errors.js';
 import { readSection } from '../extract/sections.js';
 import { readOpening } from '../extract/opening.js';
+import type { FolderDoc } from '../extract/rows.js';
 
 /**
  * How much of the document went.
@@ -18,7 +19,12 @@ import { readOpening } from '../extract/opening.js';
  * the budget, or look at the document -- so the distinction would cost a member
  * of this union and buy a sentence nobody acts on differently.
  */
-export type SliceShape = 'whole' | 'opening+sections' | 'empty';
+export type SliceShape =
+  | 'whole'
+  | 'opening+sections'
+  /** The start of each of several documents -- a folder row. See `sliceFolder`. */
+  | 'issues'
+  | 'empty';
 
 export interface Slice {
   text: string;
@@ -238,4 +244,39 @@ export function sliceForModel(text: string, options: SliceOptions): Slice {
   if (assembled === '') return { text: '', shape: 'empty' };
 
   return { text: assembled, shape: 'opening+sections' };
+}
+
+/**
+ * What the model reads for a row built from a FOLDER: the START of each
+ * document, in attachment order, each labelled with its file name.
+ *
+ * THE START, NOT `readOpening`'s first prose line. A journal issue opens with
+ * its masthead and contents, which are the best summary of what is in it, and
+ * a contents page is exactly what `readOpening`'s prose test rejects.
+ *
+ * THE BUDGET IS DIVIDED EVENLY across the documents that have text, so a
+ * four-issue volume at the default 8,000 sends about 2,000 of each -- one
+ * budget, one setting, and the consent dialog's `requests x budget` stays a
+ * true maximum. A document shorter than its share is sent whole; what it does
+ * not use is not handed on (a short masthead says what it says).
+ *
+ * A document with no text is left out here; `fill.ts` names it in the notes.
+ */
+export function sliceFolder(docs: readonly FolderDoc[], budget: number): Slice {
+  assertUsableBudget(budget);
+  const parts = docs
+    .map((d) => ({ label: `[${d.name}]\n`, body: d.doc.text.trim() }))
+    .filter((p) => p.body !== '');
+  if (parts.length === 0) return { text: '', shape: 'empty' };
+
+  const overhead =
+    parts.reduce((n, p) => n + p.label.length, 0) + SEPARATOR.length * (parts.length - 1);
+  const share = Math.floor((budget - overhead) / parts.length);
+  // TOO MANY FILES FOR THE BUDGET is reported as nothing to send, never sent
+  // over it: a negative share reaches `slice(0, negative)` and returns nearly
+  // the whole document, breaking the maximum the consent dialog quoted.
+  if (share < MIN_USEFUL) return { text: '', shape: 'empty' };
+  // Never empty from here: a body within the share is sent whole, and a cut
+  // one is at least MIN_USEFUL long.
+  return { text: parts.map((p) => p.label + fitToBudget(p.body, share)).join(SEPARATOR), shape: 'issues' };
 }

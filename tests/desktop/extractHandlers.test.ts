@@ -1,6 +1,6 @@
 // tests/desktop/extractHandlers.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerExtractHandlers, __resetExtractCache } from '../../src/desktop/extractHandlers.js';
@@ -628,5 +628,185 @@ describe('extract run and consent', () => {
       modelApproved: true,
     });
     expect(await readFile(out, 'utf8')).toMatch(/no model is configured/i);
+  });
+});
+
+describe('extract handlers -- one row per subfolder', () => {
+  beforeEach(() => __resetExtractCache());
+
+  const folderProfile: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{group}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ join: 'Gazette, Volume {group}' }] },
+      { path: 'MWDL/description', sources: [{ ai: true }] },
+    ],
+  };
+
+  async function volumes(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-folders-'));
+    for (const v of ['Gazette_V10', 'Gazette_V2']) {
+      await mkdir(join(dir, v));
+      await writeFile(join(dir, v, 'No1.pdf'), makePdf({ text: 'An issue of the gazette for the season.' }));
+    }
+    await writeFile(join(dir, 'stray.pdf'), makePdf({ text: 'x' }));
+    return dir;
+  }
+
+  it('scans subfolders as the rows, naming a loose file as skipped', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const scan = await ipc.call<{
+      supported: string[];
+      skipped: { file: string }[];
+      perFolder?: boolean;
+      starter: Profile;
+    }>('oeq:extractScan', await volumes(), '', true);
+    expect(scan.perFolder).toBe(true);
+    expect(scan.supported).toEqual(['Gazette_V2', 'Gazette_V10']);
+    expect(scan.skipped.map((s) => s.file)).toEqual(['stray.pdf']);
+    expect(scan.starter.pattern).not.toMatch(/\.pdf$/);
+  });
+
+  it('previews one row per subfolder', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const rows = await ipc.call<{ cells: Record<string, string> }[]>('oeq:extractPreview', {
+      dir: await volumes(),
+      profile: folderProfile,
+      perFolder: true,
+    });
+    expect(rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2', 'Gazette_V10']);
+    expect(rows[0]!.cells['MWDL/title']).toBe('Gazette, Volume 2');
+    // Each preview row says what the item will hold.
+    expect((rows[0] as { files?: string[] }).files).toEqual(['No1.pdf']);
+  });
+
+  // The preview is built by extractFolders itself, so it cannot show a folder
+  // the run would hold back, or hide a file the run would note as unreadable.
+  it('previews exactly what the run builds: held-back folders out, unreadable files noted', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-eh-folders-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No1.pdf'), makePdf({ text: 'An issue.' }));
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No2.pdf'), 'not a pdf at all');
+    await mkdir(join(dir, 'Gazette_V3'));
+    // Volume 4's issue in volume 3's folder: the run holds the folder back.
+    await writeFile(join(dir, 'Gazette_V3', 'G_V4_No1.pdf'), makePdf({ text: 'An issue.' }));
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const rows = await ipc.call<{ cells: Record<string, string>; notes: string[] }[]>('oeq:extractPreview', {
+      dir,
+      profile: {
+        ...folderProfile,
+        checks: { sequence: { patterns: ['G_V{group}_No{part}'] } },
+      },
+      perFolder: true,
+    });
+    expect(rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2']);
+    expect(rows[0]!.notes.join(' ')).toMatch(/'G_V2_No2\.pdf' could not be read/);
+  });
+
+  it('runs one row per subfolder and, when approved, fills its model column -- one request per folder', async () => {
+    const ipc = fakeIpcMain();
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: 'Notes on the season.' } }] }), {
+          status: 200,
+        }),
+    );
+    const modelFor = vi.fn(async () => ({
+      baseUrl: 'http://localhost:11434/v1',
+      model: 'm',
+      budget: 1000,
+      cap: 100,
+    }));
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: modelFor as never,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const dir = await volumes();
+    const out = join(dir, 'out.csv');
+    const report = await ipc.call<{ written: number; aiWritten: number }>('oeq:extractRun', {
+      dir,
+      profile: folderProfile,
+      outPath: out,
+      instanceId: 'https://oeq.example.edu',
+      modelApproved: true,
+      perFolder: true,
+    });
+    expect(report.written).toBe(2);
+    expect(report.aiWritten).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(await readFile(out, 'utf8')).toContain('Notes on the season.');
+  });
+
+  it('tells the screen how many folders it has read, of how many', async () => {
+    const ipc = fakeIpcMain();
+    const seen: { done: number; total: number }[] = [];
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      onExtractProgress: (p) => seen.push(p),
+    });
+    const dir = await volumes();
+    await ipc.call('oeq:extractRun', { dir, profile: folderProfile, outPath: join(dir, 'out.csv'), perFolder: true });
+    expect(seen).toEqual([{ done: 1, total: 2 }, { done: 2, total: 2 }]);
+  });
+
+  it('sends nothing for a folder batch the operator did not approve, and says so', async () => {
+    const ipc = fakeIpcMain();
+    const fetchImpl = vi.fn();
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      modelFor: vi.fn(async () => ({ baseUrl: 'http://localhost:11434/v1', model: 'm', budget: 1000, cap: 100 })) as never,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const dir = await volumes();
+    const out = join(dir, 'out.csv');
+    await ipc.call('oeq:extractRun', { dir, profile: folderProfile, outPath: out, modelApproved: false, perFolder: true });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await readFile(out, 'utf8')).toContain('no model was run for this batch');
+  });
+});
+
+describe('extract handlers -- the problems log', () => {
+  beforeEach(() => __resetExtractCache());
+
+  it('writes it beside the spreadsheet and reports what it holds', async () => {
+    const ipc = fakeIpcMain();
+    registerExtractHandlers(ipc as never, { schemaFile: 'schema/_entity.xml', templatesDir: 'templates' });
+    const root = await mkdtemp(join(tmpdir(), 'oeq-eh-problems-'));
+    const dir = join(root, 'batch');
+    await mkdir(dir);
+    for (const [folder, files] of [
+      ['Gazette_V2', ['G_V2_No1.pdf']],
+      ['Gazette_V3', ['G_V2_No2.pdf']],
+      ['Gazette_V4', ['G_Special.pdf', 'G_V4_No1.pdf']],
+    ] as const) {
+      await mkdir(join(dir, folder));
+      for (const f of files) await writeFile(join(dir, folder, f), makePdf({ text: 'An issue.' }));
+    }
+    const out = join(root, 'sre.csv');
+    const report = await ipc.call<{ written: number; problems?: { path: string; heldBack: number; looseFiles: number; notes: number } }>(
+      'oeq:extractRun',
+      {
+        dir,
+        profile: {
+          version: 1,
+          pattern: 'Gazette_V{group}',
+          columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+          checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['V{group}_No{part}'] } },
+        },
+        outPath: out,
+        perFolder: true,
+      },
+    );
+    expect(report.written).toBe(2);
+    expect(report.problems).toEqual({ path: join(root, 'sre-problems.csv'), heldBack: 1, looseFiles: 0, notes: 1 });
+    expect(await readFile(join(root, 'sre-problems.csv'), 'utf8')).toContain('Gazette_V3,G_V2_No2.pdf,held back');
   });
 });

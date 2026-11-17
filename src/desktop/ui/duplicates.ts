@@ -49,7 +49,7 @@ export function duplicatesSection(
       return `
       <tr>
         <td>${d.rowNumber}</td>
-        <td>${escapeHtml(d.fileName)}</td>
+        <td>${escapeHtml(d.label)}</td>
         <td>${escapeHtml(label)}<br><small>${escapeHtml(d.detail)}</small>${heldLine}</td>
         <td>
           <label><input type="radio" name="dup-${d.rowNumber}" value="skip"

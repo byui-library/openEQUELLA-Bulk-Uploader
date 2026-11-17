@@ -48,6 +48,12 @@ describe('detectPattern', () => {
     expect(detectPattern(['a-1_b.pdf', 'c-2_d.pdf'])).toBe('{part1}_{part2}.pdf');
   });
 
+  it('follows the majority of files, not every one', () => {
+    expect(detectPattern(['Smith_Jane_Recital.pdf', 'Lee_Anna_Jury.pdf', 'Programme.pdf'])).toBe(
+      '{part1}_{part2}_{part3}.pdf',
+    );
+  });
+
   it('falls back to a single placeholder when parts are inconsistent', () => {
     expect(detectPattern(['a_b.pdf', 'c_d_e.pdf', 'f.pdf'])).toBe('{part1}.pdf');
   });
@@ -486,5 +492,47 @@ describe('starterProfile falling back to the filename for a title', () => {
       if (column.path === 'MWDL/title') continue;
       expect(column.sources).not.toContainEqual({ filenameStem: true });
     }
+  });
+});
+
+describe('detectPattern -- folder names', () => {
+  it('reads folder names whole, with no extension and no supported-file filter', () => {
+    expect(detectPattern(['Gazette_V1', 'Gazette_V2', 'Gazette_V10'], { folders: true })).toBe(
+      '{part1}_{part2}',
+    );
+  });
+
+  it('treats a dot in a folder name as part of the name', () => {
+    expect(detectPattern(['Vol.1', 'Vol.2'], { folders: true })).toBe('{part1}');
+  });
+
+  // REPORTED BY THE OPERATOR, 2026-11-17: one index folder beside 38 volume
+  // folders made every name one part, so a title could not use the volume.
+  it('follows the shape most names share, so one odd name cannot spoil it', () => {
+    expect(
+      detectPattern(['Gazette Index', 'Gazette_V1', 'Gazette_V2', 'Gazette_V10'], { folders: true }),
+    ).toBe('{part1}_{part2}');
+  });
+
+  it('still falls back when no shape has a majority', () => {
+    expect(detectPattern(['a_b', 'c d', 'e-f-g'], { folders: true })).toBe('{part1}');
+  });
+});
+
+describe('starterProfile -- folders', () => {
+  it("titles a folder row from the folder name, never from one document's title or table", () => {
+    const profile = starterProfile(
+      ['Gazette_V1', 'Gazette_V2'],
+      byui,
+      { labels: [], properties: ['title'], tableColumns: ['Title'], sections: [] },
+      { folders: true },
+    );
+    const title = profile.columns.find((c) => c.path === 'MWDL/title');
+    expect(title?.sources).toEqual([{ filenameStem: true }]);
+  });
+
+  it('keeps the document title first for a file row', () => {
+    const title = starterProfile(['a.pdf'], byui).columns.find((c) => c.path === 'MWDL/title');
+    expect(title?.sources[0]).toEqual({ property: 'title' });
   });
 });

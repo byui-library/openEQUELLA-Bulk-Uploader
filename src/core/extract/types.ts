@@ -1,5 +1,13 @@
 // src/core/extract/types.ts
 
+/** A collection's own words for the parts and groups of a folder batch -- see sequenceChecks.ts. */
+export interface SequenceLabels {
+  part: string;
+  parts: string;
+  group: string;
+  groups: string;
+}
+
 /** The reserved column naming the file on disk. Always first, never removable. */
 export const ATTACHMENT_COLUMN = 'attachment name';
 
@@ -91,7 +99,17 @@ export type Source =
    * of docs/superpowers/plans/2026-08-14-llm-provider.md. Placed last in a
    * source list by convention; the rule does not depend on position.
    */
-  | { ai: true };
+  | {
+      ai: true;
+      /**
+       * Write the model's text AFTER what this column's other sources
+       * produced, joined by one space, instead of only into an empty or
+       * flagged cell. The earlier value is never replaced; if the model fails
+       * or is refused, it stands alone. See eligible.ts and fill.ts, and
+       * docs/superpowers/specs/2026-11-17-folder-descriptions-design.md.
+       */
+      after?: true;
+    };
 
 /** How a date column is normalised: automatically, or by a format the profile declares. */
 export type DateTransform = 'date' | { date: string };
@@ -145,6 +163,33 @@ export interface Column {
    * person's birth date into a field that means something else.
    */
   composeOnly?: boolean;
+  /**
+   * In a row built from a folder, run this column's sources against EVERY
+   * file and keep each value, in attachment order, de-duplicated (ignoring
+   * case), joined with the separator `plan` splits repeated values on.
+   * Without it, the first file to answer wins.
+   *
+   * Has no effect on a row built from one file. Note that `plan` splits a
+   * joined value into separate elements only for a field the schema declares
+   * repeatable (metadata.ts#isRepeatable); anywhere else it stays one value
+   * with semicolons in it.
+   */
+  each?: boolean;
+  /**
+   * The most characters a value read from a document, or written by a model,
+   * may have in this column. Unset: `DESCRIPTION_LIMIT` (length.ts), 1,000 --
+   * one or two paragraphs -- for a `section`, an `opening` and a model, and
+   * no limit for a label, table cell or property (which fill lists of names
+   * too, where a default cut would drop some).
+   *
+   * Document text is cut back to the last whole sentence that fits, and the
+   * row is noted. A model is told the limit, and a reply over it is refused
+   * whole, never shortened. Text the operator wrote -- a default, a join, a
+   * composed value -- is never cut. With `each`, the limit applies to each
+   * file's value, not to the joined cell. `plan` cannot see this setting: its
+   * long-description warning always uses 1,000.
+   */
+  maxLength?: number;
 }
 
 export interface Profile {
@@ -195,6 +240,21 @@ export interface Profile {
      * such as "Obituary" in every filename of an obituary batch.
      */
     filenameWordsInText?: { ignore?: string[] };
+    /**
+     * How the files in each FOLDER are numbered, for one-row-per-subfolder
+     * batches. Each pattern finds a `{part}` number -- and optionally the
+     * `{group}` the file belongs to and a `{year}` -- anywhere in a file's
+     * name: `["{year}_Vol{group}_No{part}"]`. The folder's own group is
+     * `{group}` in the profile's `pattern`.
+     *
+     * Parts set the attachment order and are checked: a file of another group,
+     * or two files claiming one part, holds the folder back; an unnumbered
+     * file, a gap, and dates running backwards are notes. `labels` gives the
+     * collection's own words for its messages -- `{ part: "issue", group:
+     * "volume" }` -- and defaults to "part" and "group". Neutral by design: see
+     * sequenceChecks.ts.
+     */
+    sequence?: { patterns: string[]; labels?: Partial<SequenceLabels> };
   };
 }
 
@@ -317,10 +377,57 @@ export interface ExtractedRow {
    * is absent, exactly like `flagged`.
    */
   aiWritten: Record<string, AiWrite>;
+  /**
+   * A folder row's files in issue order, when the template declares issue
+   * patterns -- written to the spreadsheet's `attachment order` column, which
+   * is how the order reaches `plan`. Absent means name order.
+   */
+  attachmentOrder?: string[];
+  /**
+   * A folder row's files -- ALL of them, readable or not -- in the order they
+   * will be attached. For showing an operator what a row will hold; never
+   * written to the spreadsheet (`attachmentOrder` carries an order, and only
+   * where one is needed). Absent for a row built from one file.
+   */
+  files?: string[];
 }
 
 export interface ExtractResult {
   rows: ExtractedRow[];
   /** Files that could not be read at all, with the reason. */
   skipped: { file: string; reason: string }[];
+  /**
+   * One row per subfolder only: everything left out of the spreadsheet and
+   * everything worth a look, for the problems log beside it. Absent for a
+   * one-row-per-file run.
+   */
+  problems?: FolderProblem[];
+}
+
+/** One line of the problems log. */
+export interface FolderProblem {
+  /** The subfolder concerned, or '' for a loose file or the whole batch. */
+  folder: string;
+  /** The file(s) concerned, or '' when it is about the folder or the batch. */
+  file: string;
+  /** `held back`: left out of the spreadsheet, so not uploaded. `note`: still in it. */
+  effect: 'held back' | 'note';
+  problem: string;
+  fix: string;
+}
+
+/**
+ * What a problems log holds and where it is -- the one shape the CLI, the
+ * desktop's run report and its save screen all read. Named once, so a new
+ * count is one edit and cannot be missed on a surface that only passes it on.
+ */
+export interface ProblemsSummary {
+  /** The log, beside the spreadsheet. */
+  path: string;
+  /** Folders left out of the spreadsheet, counted once each. */
+  heldBack: number;
+  /** Loose files beside the folders, also left out. */
+  looseFiles: number;
+  /** Lines to review that held nothing back. */
+  notes: number;
 }

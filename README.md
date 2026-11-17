@@ -1,8 +1,9 @@
 # openEQUELLA Bulk Uploader
 
 A local tool for bulk-creating openEQUELLA contributions from a directory of
-files plus a metadata spreadsheet. One file becomes one attachment on one
-contribution — a strict 1:1 relationship. It works at any openEQUELLA
+files plus a metadata spreadsheet. One spreadsheet row becomes one
+contribution, holding either one file or every file in one folder — see
+[Several files on one contribution](#several-files-on-one-contribution). It works at any openEQUELLA
 installation: the collection, the schema, the field that holds an item's title
 and the field that holds an attachment uuid are all read from the instance or
 supplied as configuration, never assumed. It was built for the BYU-Idaho
@@ -380,6 +381,207 @@ Notes:
 - Unknown headers block `plan` and print nearest-match suggestions; run
   `oeq_list_schema_paths` / `oeq_validate_sheet` (MCP) to find the right
   xpath first if you're not sure.
+
+## Several files on one contribution
+
+A row's `attachment name` may name a **subfolder** of the batch folder instead
+of a file. That row becomes one contribution, and every file in the folder is
+attached to it, in name order. Use it for anything that is one record with
+several parts — a journal volume and its issues, a recital and its programme
+pages.
+
+```text
+batch/
+  SRE_Vol2/
+    SRE_1972_Vol2_No1.pdf
+    SRE_1972_Vol2_No2.pdf
+    SRE_1972-73_Vol2_No3.pdf
+  SRE_Vol27/
+    SRE_1998_Commemorative.pdf
+    SRE_1998_Vol27_No1.pdf
+    SRE_1998_Vol27_No2.pdf
+```
+
+| attachment name | MWDL/title |
+| --- | --- |
+| SRE_Vol2 | Snake River Echoes, Volume 2 |
+| SRE_Vol27 | Snake River Echoes, Volume 27 |
+
+### The order: the `attachment order` column, and how it is filled
+
+**A row's `attachment order` column decides the order**: the folder's files,
+joined by semicolons. `plan` attaches them in exactly that order, and refuses
+the row — listing every stray, repeat and omission — if the cell does not name
+exactly the files in the folder, so a stale order can never upload a different
+set. **Edit the cell in Excel to reorder by hand**, or use the ↑/↓ arrows beside each
+file on the desktop app's Review screen, which apply at upload and leave the
+spreadsheet as it is. Leave the cell blank, or leave the
+column out of a hand-made spreadsheet, and files go in name order.
+
+When the spreadsheet is built with one row per subfolder, the builder fills the
+column in **only for a folder whose order differs from name order**, so renaming a
+file still takes effect everywhere else. Every folder's order, cell or no cell, is
+listed on the desktop's Review screen and in `plan`'s output. The order is:
+
+- **If the template declares sequence patterns** (next section), files go in
+  **part-number order**, and files with no part number go last. A volume whose
+  years cross a boundary still comes out right, because the issue numbers, not
+  the years in the names, decide.
+- **Otherwise, natural name order**, ignoring case and punctuation: `No9`
+  before `No10`. That rule cannot know what a file *means*:
+
+| In the folder | Name order | Part order (with a pattern) |
+| --- | --- | --- |
+| `SRE_1972_Vol2_No1.pdf`, `SRE_1972-73_Vol2_No3.pdf` | **No3 first**: `1972-73` reads as `1972 73`, and digits sort before `Vol` | No1, then No3 |
+| `SRE_1998_Commemorative.pdf`, `SRE_1998_Vol27_No1.pdf` | **Commemorative first** | No1, then Commemorative |
+
+**`plan` prints every folder's files in upload order**, and the desktop app
+shows them on the Review screen, so you can check the order before anything is
+sent:
+
+```text
+Planned 38 item(s) -> job.json
+  Row 3: SRE_Vol2 (4 files), in upload order:
+      1. SRE_1972_Vol2_No1.pdf
+      2. SRE_1972_Vol2_No2.pdf
+      3. SRE_1972-73_Vol2_No3.pdf
+      4. SRE_1973_Vol2_No4.pdf
+```
+
+### What counts as the folder's contents
+
+- **Every file, of any type**, is attached — a PDF, an image, a spreadsheet.
+- **Clutter is skipped and named**, never silently: `Thumbs.db`, `desktop.ini`,
+  `.DS_Store`, any name beginning with `.`, and Office lock files beginning
+  with `~$`.
+- **A folder inside the folder refuses the whole row**, and so does an empty
+  folder. The row is skipped with the reason as a plan warning; it is never
+  uploaded with fewer files than the folder holds, because an item missing an
+  issue reads as complete to everyone who finds it later.
+- In a batch that uses folders, a folder **no row names** is reported, since
+  it is a volume that would silently not be contributed.
+
+### Do not change a folder between planning and running
+
+The plan records each file's name and size. Before a folder row creates
+anything, the run lists the folder again; a file added, removed or resized
+since then fails the row with *"the folder changed since planning (…); plan
+again"*. A 0-byte file fails it too. That is deliberate: what you reviewed is
+what is uploaded, or nothing is.
+
+All of a row's files go into one staging area and are attached in one
+request. If the session expires partway through a folder, the whole row is
+started again once, from its first file.
+
+Job files written before this existed still resume. They never recorded
+sizes, so for those rows the run checks that each file is present, but cannot
+tell a same-named replacement.
+
+### Duplicates
+
+The title search works as for a single file. What an existing item already
+holds decides the verdict:
+
+- it holds **every** file in the folder — *near-certain*, skipped by default;
+- it holds **some** of them — *possible*, uploaded by default, and the reason
+  names which files it holds and which it does not;
+- it holds **none** — *possible*, as for a single file.
+
+### Sequence patterns: ordering and checking a folder's parts
+
+Any collection kept as one folder per item has the same shape: numbered
+**parts** in a folder, the folder being one of a run of **groups**. A journal's
+issues in a volume, a manuscript's folios in a box, an interview's sessions.
+The same shape fails in ways no file listing shows: a part filed in the wrong
+group, two different scans both numbered 3, a gap, dates out of order. A
+template can declare how its file names state these, and the spreadsheet
+builder then orders and checks every folder:
+
+```json
+"pattern": "SRE_Vol{group}",
+"checks": {
+  "sequence": {
+    "patterns": ["{year}_Vol{group}_No{part}", "{year}_Vol{group}_Num{part}"],
+    "labels": { "part": "issue", "group": "volume" }
+  }
+}
+```
+
+- `{part}` is the file's number within its folder. `No2&3` covers parts 2
+  and 3, and `No2-4` covers 2 to 4.
+- `{group}` is the group the file says it belongs to; the folder's own group
+  is `{group}` in `pattern`, read from the folder name.
+- `{year}` is a year, or a span such as `1972-73`.
+- All three are found anywhere in a name, ignoring capitals. Each is optional
+  except `{part}`, and several patterns cover several spellings.
+- **`labels` are the collection's own words** for the messages, so an operator
+  reads "2 files claim issue 3", not "2 files claim part 3". Plurals default
+  to adding "s"; give `parts` or `groups` when that is wrong (`"groups":
+  "boxes"`). Without labels the messages say "part" and "group".
+
+| Finding | Effect |
+| --- | --- |
+| A file's name gives another group | **Held back** — the folder is left out of the spreadsheet |
+| Two files claim the same part | **Held back**, naming both |
+| A file has no part number (e.g. `Commemorative`) | Note — attached after the numbered parts |
+| A gap in the numbering | Note — counted from the lowest part found, so a run numbered straight through its groups is fine; a missing *first* or *last* part cannot be detected, and the note says so |
+| A part dated before the part it follows | Note — the dates run backwards |
+| A group number with no folder, or two folders for one | Note |
+| A group dated before the group it follows | Note |
+| No file in the batch matched any pattern | Note — nothing was checked |
+
+**The patterns order and check, but never move a file.** A misfiled name in
+the right folder looks exactly like a correct name in the wrong one; only a
+person can tell, so the folder is held back until someone does. Fix it on
+disk, by moving or renaming the file, and build the spreadsheet again. Notes
+are for review: each could be the publisher's own irregularity.
+
+Every per-folder build writes **`<spreadsheet>-problems.csv` beside the
+spreadsheet**: folder, file, effect, problem and what to do, one line each,
+including folders refused for being empty or holding a folder. It is rewritten
+on every build — header only when there is nothing to report — so an old log
+can never describe folders you have since fixed. A held-back folder then shows
+up at `plan` as *"Folder '…' has no matching row; not uploaded"*.
+
+The checks run when the spreadsheet is built, because that is where the
+template is; a spreadsheet typed by hand is not checked.
+
+### Building the spreadsheet from a folder of folders
+
+`extract --per-folder` (or **One row per subfolder** on the desktop app's
+folder screen) writes one row per subfolder, with the folder's name in
+`attachment name`. It is never switched on by what the folder happens to
+contain — you choose it.
+
+- The profile's **pattern, `filename` and `filenameStem` read the folder
+  name**, so `"pattern": "SRE_Vol{volume}"` gives every volume its number.
+- Every other source reads the folder's files **in attachment order, and the
+  first file that answers wins**. A value that came from any file but the
+  first is noted in `_notes`, naming the file.
+- A column with **`"each": true`** collects one value from every file instead
+  — in order, without repeats — joined by semicolons, the separator `plan`
+  splits repeated values on.
+- A file the readers cannot open is still attached, and noted on its row.
+- **A language model can describe the whole folder.** It reads the start of
+  every file in it — about 2,000 characters each from a four-issue volume at
+  the default budget of 8,000 — and every date or other checkable claim must be
+  found somewhere in those files, or the answer is discarded. One request per
+  folder; the confirmation counts folders. See *Writing after a fixed
+  sentence* below.
+
+`templates/snake-river-echoes.profile.json` is a worked example: a volume
+title and identifier from the folder name, the collection's fixed values, and
+a description that is a fixed sentence — "Upper Snake River Valley Historical
+Society Quarterly, Volume 2." — followed, with `--ai`, by a model's one- or
+two-sentence summary of the subjects the volume's issues cover. Where the
+model's text is kept, `MWDL/conversionSpecifications` says so beside "Scanned
+to PDF".
+
+```sh
+oeq-upload extract --dir batch --profile templates/snake-river-echoes.profile.json --per-folder --dry-run
+oeq-upload extract --dir batch --profile templates/snake-river-echoes.profile.json --per-folder --out batch.csv
+oeq-upload plan --sheet batch.csv --files batch
+```
 
 ## CLI usage
 
@@ -761,15 +963,38 @@ without mapping anything by hand.
 Headings recognised for tier 2: **Abstract**, **Executive Summary**,
 **Summary**, **Overview**, **Description**, **Purpose**, **Scope**. A section
 ends at the next heading — `Keywords`, `Introduction`, `Methods`, `References`
-and the rest — or at a 4,000-character cap.
+and the rest.
 
-Two things are always flagged in `_notes`:
+**A section that never ends is not used.** If no next heading turns up within
+4,000 characters, the heading was almost certainly not one — a benefits PDF
+matched "Summary" mid-page, and a journal's "Description" heading in the middle
+of an article put pages of that article into every volume's record. `_notes`
+says so, and the next source has its turn.
 
-- **A section that ran to the cap.** It never reached another heading, which
-  usually means the heading was not one. A benefits PDF matched "Summary"
-  mid-page and produced 3,996 characters of plan tables.
-- **Anything from the opening paragraph**, every time, with no exception. On a
-  published PDF the opening is as likely to be a masthead as a summary.
+#### One or two paragraphs at most
+
+A description summarises; it is not an extract. **A section or opening
+paragraph copied out of a document is kept to 1,000 characters** — about 150
+words, one or two paragraphs — cut back to the last whole sentence that fits,
+and `_notes` says so, so you can check it still reads well.
+
+- A column can set its own limit with `"maxLength": 600` (100 or more) in the
+  profile. Unset, it is 1,000.
+- **A label, table cell or property is cut only when its column sets
+  `maxLength`.** Those fill lists of names too, and a default cut would drop
+  some of them.
+- **Your own wording is never cut**: a default, a "Text with parts of the
+  name" value, a composed value.
+- **A language model is told the limit**, and an answer that runs over it is
+  discarded whole, never shortened — see below.
+- **`plan` warns about any description over 1,000 characters** before upload,
+  including one typed by hand. It never shortens it; the Review screen lists
+  these under *Long descriptions*. It reads the schema's declared description
+  field, and cannot see a profile's `maxLength`, so it always uses 1,000.
+
+**Anything from the opening paragraph is always flagged** in `_notes`, every
+time, with no exception. On a published PDF the opening is as likely to be a
+masthead as a summary.
 
 `_source` names the tier that filled each cell — `table`, `section`, `opening`.
 It is **one cell per row** holding every column's origin at once
@@ -1029,6 +1254,30 @@ explanation.
   cell is left exactly as it was and the note names each unsupported claim — see
   below.
 
+#### Writing after a fixed sentence
+
+Normally a model fills only a cell that is empty or that a source flagged.
+`{ "ai": true, "after": true }` instead ADDS the model's text after whatever the
+column's other sources wrote, joined by one space — so a template's fixed
+sentence always comes first:
+
+```json
+{ "path": "MWDL/description",
+  "sources": [
+    { "join": "Upper Snake River Valley Historical Society Quarterly, Volume {group}." },
+    { "ai": true, "after": true }
+  ] }
+```
+
+- **The fixed text is never replaced.** If the model fails, or its answer is
+  refused, the fixed sentence stands alone.
+- **The whole cell stays within the column's limit.** The model is told only
+  the room the fixed text leaves (1,000 minus its length and a space); an
+  answer over that is discarded. If the fixed text leaves fewer than 100
+  characters, nothing is sent.
+- **A row is added to once.** Running the pass again over the same rows does
+  not append a second summary.
+
 #### When the tool refuses the model's answer
 
 Before anything is written, the generated value is checked against the document
@@ -1052,6 +1301,12 @@ and fill this cell in by hand. What it said, which was not used: "Died
 
 There is nothing to retry, because nothing went wrong at the endpoint: the call
 succeeded and the model answered. Read the document and fill the cell in by hand.
+
+**An answer longer than the column's limit is discarded the same way** —
+1,000 characters unless the column sets `maxLength`. The model is told the
+limit in its instructions; when it runs over anyway, the note gives the length
+and quotes what it said. It is never cut back to fit, for the same reason a
+refused claim is never cut out.
 
 **A date is a claim whether or not a year sits beside it.** `He died on January
 6.`, `He died 1/6.` and `Died 1916-01-06T00:00:00Z.` are all checked against the

@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { ValidationError } from './errors.js';
+import { ATTACHMENT_COLUMN, ATTACHMENT_ORDER_COLUMN } from './types.js';
 
 /**
  * The definition text embedded in an _entity.xml export is XML-escaped XML:
@@ -292,8 +293,28 @@ export interface HeaderValidation {
   ignored: string[];
 }
 
-/** The reserved column naming the file on disk; never a metadata xpath. */
-const RESERVED = new Set(['attachment name']);
+/**
+ * The reserved columns -- the file or folder on disk, and a folder's
+ * attachment order. Never metadata. Built from the constants, so a reserved
+ * column is added in ONE place.
+ */
+const RESERVED: ReadonlySet<string> = new Set([ATTACHMENT_COLUMN, ATTACHMENT_ORDER_COLUMN]);
+
+/**
+ * Whether a header is a reserved column, matched CASE-BLIND. The one rule
+ * validation (below) and `plan` share: matched exactly in plan while
+ * validation matched case-blind, a header typed `Attachment Order` passed
+ * validation, was then ignored as an order AND sent to openEQUELLA as metadata.
+ */
+export function isReservedHeader(header: string): boolean {
+  return RESERVED.has(header.toLowerCase());
+}
+
+/** A reserved column's cell in a row, by the same case-blind rule; '' when absent. */
+export function reservedCell(cells: Readonly<Record<string, string>>, name: string): string {
+  const header = Object.keys(cells).find((h) => h.toLowerCase() === name);
+  return header === undefined ? '' : (cells[header] ?? '');
+}
 
 /**
  * A column whose name starts with `_` is an annotation for the person reading
@@ -315,7 +336,7 @@ export function validateHeaders(headers: string[], paths: Set<string>): HeaderVa
   const ignored: string[] = [];
   for (const h of headers) {
     if (isAnnotationHeader(h)) ignored.push(h);
-    else if (RESERVED.has(h.toLowerCase()) || paths.has(h)) valid.push(h);
+    else if (isReservedHeader(h) || paths.has(h)) valid.push(h);
     else invalid.push({ header: h, suggestions: suggest(h, paths) });
   }
   return { valid, invalid, ignored };

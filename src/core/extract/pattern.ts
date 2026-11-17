@@ -1,7 +1,10 @@
 // src/core/extract/pattern.ts
 import { ValidationError } from '../errors.js';
 
-const PLACEHOLDER = /\{([A-Za-z][A-Za-z0-9_]*)\}/g;
+/** What a part's name may be. ONE copy: the placeholder scan and joinProblem both build on it. */
+const PART_NAME_SOURCE = '[A-Za-z][A-Za-z0-9_]*';
+const PART_NAME = new RegExp(`^${PART_NAME_SOURCE}$`);
+const PLACEHOLDER = new RegExp(`\\{(${PART_NAME_SOURCE})\\}`, 'g');
 
 /** The placeholder names in a pattern, in order. Throws if one is repeated. */
 export function placeholders(pattern: string): string[] {
@@ -18,7 +21,8 @@ export function placeholders(pattern: string): string[] {
   return names;
 }
 
-function escapeLiteral(text: string): string {
+/** Escape regex metacharacters in literal pattern text. Shared with sequenceChecks.ts, so one grammar escapes both. */
+export function escapeLiteral(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
@@ -57,4 +61,31 @@ export function applyPattern(pattern: string, filename: string): Record<string, 
     result[name] = match[i + 1] ?? '';
   });
   return result;
+}
+
+/**
+ * Why a `join` text cannot be used, or null when it can.
+ *
+ * A join was written only by developers, in template JSON, until the columns
+ * screen let operators type one. Typed text has typos, and every one of these
+ * would otherwise go into EVERY item of the batch exactly as typed -- the
+ * narrow `{name}` rule simply does not see `{ volume }`, `{volume-no}` or
+ * `{2}`, and leaves them as literal text. So every brace must be a part this
+ * pattern defines, and every brace must have its partner. ONE RULE for the
+ * screen (which checks before saving, so typed text is never thrown away) and
+ * the profile loader (so the command line is held to it too).
+ */
+export function joinProblem(text: string, parts: readonly string[]): string | null {
+  const known = parts.length === 0 ? 'it has no parts yet' : `its parts are ${parts.map((p) => `{${p}}`).join(', ')}`;
+  const example = parts[0] === undefined ? '{name}' : `{${parts[0]}}`;
+  for (const match of text.matchAll(/\{([^{}]*)\}/g)) {
+    const inner = match[1]!;
+    if (!PART_NAME.test(inner)) {
+      return `'${match[0]}' is not a part: write a part as {name}, with no spaces or punctuation, e.g. ${example}`;
+    }
+    if (!parts.includes(inner)) return `{${inner}} is not a part of this pattern; ${known}`;
+  }
+  // Whatever is left once every {...} is removed must hold no brace at all.
+  if (/[{}]/.test(text.replace(/\{[^{}]*\}/g, ''))) return 'a { or } has no partner; write a part as {name}';
+  return null;
 }

@@ -3,8 +3,9 @@ import type { ItemState, Manifest } from '../core/types.js';
 import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
-import type { ExtractedRow } from '../core/extract/types.js';
+import type { ExtractedRow, ProblemsSummary } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
+import type { FolderSummary } from '../core/folderReport.js';
 // `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
 // this module is reachable from the sandboxed renderer. A type-only import is
 // erased at compile time and never becomes a runtime require (see
@@ -130,12 +131,23 @@ export interface PlanReport {
   warnings: string[];
   /** Rows that look like they have been uploaded to this collection before. */
   duplicates: DuplicateFinding[];
+  /**
+   * Each folder row's files in upload order, and what in the folder will not
+   * be uploaded. Empty for a batch of single files. Shown on Review because
+   * the order is a rule and the remedy for a wrong one is renaming files --
+   * which only works if the operator sees the order before the run.
+   */
+  folders: PlanFolder[];
 }
+
+/** Built by `core/folderReport.ts#planFolders`, the CLI's source too. */
+export type PlanFolder = FolderSummary;
 
 export interface RunProgress {
   done: number;
   total: number;
-  fileName: string;
+  /** The row being worked on, as `types.ts#rowLabel` names it. */
+  label: string;
   status: string;
   error?: string;
 }
@@ -146,7 +158,7 @@ export interface RunReport {
   skipped: number;
   incomplete: number;
   interrupted: number;
-  failures: { rowNumber: number; fileName: string; error: string }[];
+  failures: { rowNumber: number; label: string; error: string }[];
 }
 
 export interface OeqApi {
@@ -378,6 +390,14 @@ export interface OeqApi {
    */
   applyDuplicateChoices(args: { manifestPath: string; skipRows: number[] }): Promise<number>;
 
+  /**
+   * Reorder folder rows in an already-planned manifest, just before running --
+   * the Review screen's ↑/↓ buttons. Keyed by row number. All or nothing: a
+   * list that does not name exactly a folder's files rejects, saving nothing.
+   * Returns how many rows were reordered.
+   */
+  applyFolderOrders(args: { manifestPath: string; orders: Record<number, string[]> }): Promise<number>;
+
   run(args: { manifestPath: string; instanceId: string }): Promise<RunReport>;
   retryFailed(manifestPath: string): Promise<void>;
   loadManifest(manifestPath: string): Promise<Manifest>;
@@ -389,9 +409,12 @@ export interface OeqApi {
    * `schemaPaths`, so the starter and the Add-column picker cannot disagree
    * about which columns are valid.
    */
-  extractScan(dir: string, instanceId?: string): Promise<ExtractScan>;
-  /** First few rows for the live preview. Cheap enough to call on every edit. */
-  extractPreview(args: { dir: string; profile: Profile }): Promise<ExtractedRow[]>;
+  extractScan(dir: string, instanceId?: string, perFolder?: boolean): Promise<ExtractScan>;
+  /**
+   * First few rows for the live preview. Cheap enough to call on every edit.
+   * `perFolder` builds one row per subfolder, as the run will.
+   */
+  extractPreview(args: { dir: string; profile: Profile; perFolder?: boolean }): Promise<ExtractedRow[]>;
   /**
    * Write the spreadsheet.
    *
@@ -427,6 +450,11 @@ export interface OeqApi {
      * rather than sending unasked.
      */
     modelApproved?: boolean;
+    /**
+     * One row per subfolder. A model column is written from every file in the
+     * folder, one request per folder, under the same `modelApproved` consent.
+     */
+    perFolder?: boolean;
   }): Promise<ExtractRunReport>;
   /**
    * Every valid schema xpath, for the Add-column picker.
@@ -461,7 +489,7 @@ export interface OeqApi {
   /** Reveal a file in the OS file manager. */
   openPath(path: string): Promise<void>;
 
-  onProgress(cb: (p: RunProgress) => void): void;
+  onProgress(cb: (p: RunProgress) => void): () => void;
 
   /**
    * Told what the model pass is doing, cell by cell, while it runs.
@@ -473,14 +501,33 @@ export interface OeqApi {
    * real machine, the first call took 48 seconds while the runtime loaded the
    * model, and warm calls about 4. One HTTP call per eligible cell, in
    * sequence -- so a batch is minutes, and the app said nothing for all of it.
+   *
+   * RETURNS THE WAY TO STOP LISTENING. Each call adds a listener, and the
+   * extract flow builds a new controller every time it is opened; without a
+   * way to remove the old one, every progress event re-rendered every screen
+   * the operator had ever left.
    */
-  onModelProgress(cb: (p: ModelProgress) => void): void;
+  onModelProgress(cb: (p: ModelProgress) => void): () => void;
+  /**
+   * Tell the renderer how far the extract has got reading the batch: files,
+   * or folders in one-row-per-subfolder mode. The other long wait -- a large
+   * batch of scanned PDFs is minutes of reading before any model is asked.
+   */
+  onExtractProgress(cb: (p: ExtractProgress) => void): () => void;
+}
+
+/** How far an extract run has got reading its batch. */
+export interface ExtractProgress {
+  done: number;
+  total: number;
 }
 
 /** What a folder actually contains, and what evidence is available to map from. */
 export interface ExtractScan {
-  /** Supported files, sorted. */
+  /** Supported files, sorted -- or, with `perFolder`, the subfolders that will become rows. */
   supported: string[];
+  /** Set when the scan was of subfolders, each to become one row. */
+  perFolder?: boolean;
   /** Files that will not be read, each with a reason. */
   skipped: { file: string; reason: string }[];
   /** `Label:` names found in the sampled documents, deduplicated. */
@@ -523,6 +570,12 @@ export interface ExtractRunReport {
   /** Rows a language model wrote into. Its own number rather than hidden: a
    *  machine wrote text that is about to become a permanent record. */
   aiWritten: number;
+  /**
+   * One row per subfolder only: the problems log written beside the
+   * spreadsheet, and what is in it. `heldBack` counts FOLDERS left out of the
+   * spreadsheet -- not uploaded unless fixed; `notes` the lines worth a look.
+   */
+  problems?: ProblemsSummary;
 }
 
 export const CHANNELS = {
@@ -553,11 +606,13 @@ export const CHANNELS = {
   validate: 'oeq:validate',
   plan: 'oeq:plan',
   applyDuplicateChoices: 'oeq:applyDuplicateChoices',
+  applyFolderOrders: 'oeq:applyFolderOrders',
   run: 'oeq:run',
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
   modelProgress: 'oeq:modelProgress',
+  extractProgress: 'oeq:extractProgress',
   extractScan: 'oeq:extractScan',
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',

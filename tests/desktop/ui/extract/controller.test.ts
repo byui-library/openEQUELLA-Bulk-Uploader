@@ -43,7 +43,8 @@ function api(over: Record<string, unknown> = {}) {
     // at construction, which is the right failure -- the controller genuinely
     // depends on it -- but it must be present for every test, not just the
     // ones about progress.
-    onModelProgress: vi.fn(),
+    onModelProgress: vi.fn(() => () => {}),
+    onExtractProgress: vi.fn(() => () => {}),
     ...over,
   };
 }
@@ -61,7 +62,7 @@ describe('createExtractController', () => {
     // The second argument names whose schema the columns are checked against;
     // no instance was given here, so it is empty and the main process falls
     // back to the bundled export.
-    expect(a.extractScan).toHaveBeenCalledWith('C:/files', '');
+    expect(a.extractScan).toHaveBeenCalledWith('C:/files', '', false);
     expect(c.state().dir).toBe('C:/files');
     expect(c.state().profile?.columns[0]?.path).toBe(ATTACHMENT_COLUMN);
   });
@@ -81,7 +82,7 @@ describe('createExtractController', () => {
       render: vi.fn(),
     });
     await c.chooseFolder();
-    expect(a.extractScan).toHaveBeenCalledWith('C:/files', 'https://other.example.edu');
+    expect(a.extractScan).toHaveBeenCalledWith('C:/files', 'https://other.example.edu', false);
     expect(a.schemaPaths).toHaveBeenCalledWith('https://other.example.edu');
     expect(a.schemaNamePath).toHaveBeenCalledWith('https://other.example.edu');
   });
@@ -728,16 +729,41 @@ describe('the model pass reports itself', () => {
    *  main process and emit an event. */
   const withProgress = () => {
     let emit: ((e: unknown) => void) | null = null;
-    const a = api({ onModelProgress: vi.fn((cb: (e: unknown) => void) => { emit = cb; }) });
+    const a = api({ onModelProgress: vi.fn((cb: (e: unknown) => void) => { emit = cb; return () => {}; }) });
     return { a, fire: (e: unknown) => emit?.(e) };
   };
 
   it('names the field and the file it is waiting on', () => {
     const { a, fire } = withProgress();
     const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
-    fire({ stage: 'asking', path: 'MWDL/description', file: 'Fennel_Marcus.pdf' });
+    fire({ stage: 'asking', path: 'MWDL/description', file: 'Fennel_Marcus.pdf', row: 1, rows: 3 });
     expect(c.state().modelStatus).toMatch(/asking the model about/i);
     expect(c.state().modelStatus).toContain('Fennel_Marcus.pdf');
+    expect(c.state().modelStatus).toContain('1 of 3');
+  });
+
+  // The operator asked for an idea of how long a run will take, 2026-11-17.
+  it('says how long is left once two rows have finished, from the run\'s own pace', () => {
+    const { a, fire } = withProgress();
+    let clock = 0;
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn(), now: () => clock });
+    const ask = (row: number) =>
+      fire({ stage: 'asking', path: 'MWDL/description', file: `SRE_Vol${row}`, row, rows: 10 });
+    ask(1);
+    clock = 60_000;
+    ask(2);
+    expect(c.state().modelStatus).not.toMatch(/left/);
+    clock = 120_000;
+    ask(3);
+    expect(c.state().modelStatus).toContain('3 of 10, about 8 minutes left');
+  });
+
+  it('says how far reading the batch has got', () => {
+    let emit: ((p: unknown) => void) | null = null;
+    const a = api({ onExtractProgress: vi.fn((cb: (p: unknown) => void) => { emit = cb; }) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    emit!({ done: 12, total: 38 });
+    expect(c.state().modelStatus).toBe('Reading files: 12 of 38…');
   });
 
   it('says when a value was refused rather than written', () => {
@@ -760,5 +786,133 @@ describe('the model pass reports itself', () => {
     const { a } = withProgress();
     createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
     expect(a.onModelProgress).toHaveBeenCalledTimes(1);
+  });
+
+  // Code review, 2026-11-17: a new controller is built every time the flow is
+  // opened, and the listeners of the old ones were never removed.
+  it('stops listening when the operator leaves the flow', () => {
+    const stopModel = vi.fn();
+    const stopExtract = vi.fn();
+    const a = api({ onModelProgress: vi.fn(() => stopModel), onExtractProgress: vi.fn(() => stopExtract) });
+    const onExit = vi.fn();
+    const c = createExtractController({ api: a as never, onExit, render: vi.fn() });
+    c.exit();
+    expect(stopModel).toHaveBeenCalledTimes(1);
+    expect(stopExtract).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  // The other way out: Back from the first screen. The first fix covered only
+  // exit(), and this path still left both listeners behind (simplify review).
+  it('stops listening when the operator leaves by Back from the first screen', () => {
+    const stopModel = vi.fn();
+    const stopExtract = vi.fn();
+    const a = api({ onModelProgress: vi.fn(() => stopModel), onExtractProgress: vi.fn(() => stopExtract) });
+    const onExit = vi.fn();
+    const c = createExtractController({ api: a as never, onExit, render: vi.fn() });
+    c.back();
+    expect(stopModel).toHaveBeenCalledTimes(1);
+    expect(stopExtract).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createExtractController -- one row per subfolder', () => {
+  const folderScan = {
+    supported: ['Gazette_V1', 'Gazette_V2'],
+    skipped: [],
+    labels: [],
+    properties: [],
+    tableColumns: [],
+    perFolder: true,
+    starter: {
+      version: 1 as const,
+      pattern: '{part1}_{part2}',
+      columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true as const }], locked: true }],
+    },
+  };
+
+  it('starts off, and rescans the chosen folder as subfolders when switched on', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    expect(c.state().perFolder).toBe(false);
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => folderScan as never);
+    await c.setPerFolder(true);
+    expect(a.extractScan).toHaveBeenLastCalledWith('C:/files', '', true);
+    expect(c.state().perFolder).toBe(true);
+    expect(c.state().scan?.supported).toEqual(['Gazette_V1', 'Gazette_V2']);
+  });
+
+  it('replaces an untouched starter profile with the new scan\'s, and keeps an edited one', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => folderScan as never);
+    await c.setPerFolder(true);
+    expect(c.state().profile?.pattern).toBe('{part1}_{part2}');
+
+    await c.setPattern('Gazette_V{volume}');
+    await c.setPerFolder(false);
+    expect(c.state().profile?.pattern).toBe('Gazette_V{volume}');
+  });
+
+  it('previews and runs per folder', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => folderScan as never);
+    await c.setPerFolder(true);
+    await c.continue();
+    expect(a.extractPreview).toHaveBeenLastCalledWith(expect.objectContaining({ perFolder: true }));
+    await c.continue();
+    await c.save();
+    expect(a.extractRun).toHaveBeenCalledWith(expect.objectContaining({ perFolder: true }));
+  });
+
+  // One request per VOLUME, so the dialog counts folders, and the consent is
+  // carried to the run as it is for single files.
+  it('asks before sending a folder batch to a hosted model, counting folders', async () => {
+    const confirm = vi.fn((_text: string) => true);
+    const a = api({
+      getModel: vi.fn(async () => ({ model: 'm', baseUrl: 'https://hosted.example.test/v1', budget: 1000, cap: 100 })),
+    });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn(), confirm });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(
+      async () =>
+        ({
+          ...folderScan,
+          starter: {
+            ...folderScan.starter,
+            columns: [
+              ...folderScan.starter.columns,
+              { path: 'MWDL/description', sources: [{ join: 'Lead.' }, { ai: true, after: true }] },
+            ],
+          },
+        }) as never,
+    );
+    await c.setPerFolder(true);
+    await c.continue();
+    await c.continue();
+    await c.save();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0]![0]).toMatch(/About to send up to 2 model requests/);
+    expect(a.extractRun).toHaveBeenCalledWith(expect.objectContaining({ perFolder: true, modelApproved: true }));
+  });
+});
+
+describe('createExtractController -- a failed switch', () => {
+  it('leaves the mode as it was when the rescan fails, so the scan and the mode agree', async () => {
+    const a = api();
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    await c.chooseFolder();
+    a.extractScan.mockImplementation(async () => {
+      throw new Error('a subfolder could not be read');
+    });
+    await c.setPerFolder(true);
+    expect(c.state().perFolder).toBe(false);
+    expect(c.state().scan?.supported).toEqual(['a.pdf']);
+    expect(c.state().error).toMatch(/could not be read/);
   });
 });

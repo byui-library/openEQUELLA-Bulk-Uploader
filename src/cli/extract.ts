@@ -9,20 +9,25 @@ import {
 } from '../core/schema.js';
 import { loadProfile, saveProfile, validateAgainstSchema } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
-import { extractFolder, listFolder, type FolderListing } from '../core/extract/extract.js';
-import { scanEvidence } from '../core/extract/evidence.js';
-import { writeCsv } from '../core/extract/csv.js';
+import {
+  listFolder,
+  listSubfolders,
+  type FolderListing,
+  type SubfolderListing,
+} from '../core/extract/extract.js';
+import { scanEvidence, scanFolderEvidence } from '../core/extract/evidence.js';
+import { writeCsv, writeProblemsLog } from '../core/extract/csv.js';
 import { aiConfirmation } from '../core/ai/confirm.js';
 import { describeHost } from '../core/ai/endpoint.js';
 import { modelColumns } from '../core/ai/eligible.js';
-import { noteMissingModel, type FillTarget, type MissingModelReason } from '../core/ai/fill.js';
+import { noteMissingModel, type MissingModelReason } from '../core/ai/fill.js';
 import { MODEL_DEFAULTS } from '../core/ai/defaults.js';
-import { assertUsableModelPass, runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
+import { assertUsableModelPass, extractForPass, runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
 import { assertUsableCap } from '../core/ai/fill.js';
 import { assertUsableBudget } from '../core/ai/slice.js';
 import { timeoutSecondsProblem } from '../core/ai/provider.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
-import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
+import type { ExtractResult, FolderProblem, Profile } from '../core/extract/types.js';
 
 export interface ExtractCliOptions {
   dir: string;
@@ -42,6 +47,12 @@ export interface ExtractCliOptions {
   ai?: boolean;
   /** Agree, in advance, to what `--ai` says it is about to send. See `approve`. */
   yes?: boolean;
+  /**
+   * One row per SUBFOLDER of `dir`, each to become one item holding every
+   * file in it. Never inferred from what the folder holds: the operator says
+   * which kind of batch this is.
+   */
+  perFolder?: boolean;
 }
 
 const PREVIEW_ROWS = 5;
@@ -264,9 +275,15 @@ export async function runExtract(
   fetchImpl?: typeof fetch,
 ): Promise<void> {
   if (options.initProfile) {
-    const names = (await readdir(options.dir, { withFileTypes: true }))
-      .filter((e) => e.isFile())
-      .map((e) => e.name);
+    // In per-folder mode the "filenames" a pattern is inferred from are the
+    // FOLDER names, because that is what each row's attachment name will be.
+    const subfolders = options.perFolder === true ? await listSubfolders(options.dir) : null;
+    const names =
+      subfolders !== null
+        ? subfolders.folders.map((f) => f.name)
+        : (await readdir(options.dir, { withFileTypes: true }))
+            .filter((e) => e.isFile())
+            .map((e) => e.name);
     // Read a sample of the documents, not just their names. Without this the
     // description column came out with NO sources at all and the Word files'
     // "Job Description" table was never mapped -- the CLI produced a profile
@@ -283,7 +300,10 @@ export async function runExtract(
         descriptionHeader: extractItemDescriptionPath(schemaXml),
         paths: parseSchemaPaths(extractDefinition(schemaXml)),
       },
-      await scanEvidence(options.dir),
+      subfolders !== null
+        ? await scanFolderEvidence(options.dir, subfolders)
+        : await scanEvidence(options.dir),
+      { folders: subfolders !== null },
     );
     await saveProfile(options.profile, profile);
     log(`Wrote a starter profile to ${options.profile}`);
@@ -375,25 +395,24 @@ export async function runExtract(
     : options.ai === true ? 'not-configured'
     : 'not-requested';
 
-  const targets: FillTarget[] = [];
-  const collect =
-    sending === null
-      ? {}
-      : { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } };
+  const perFolder = options.perFolder === true;
 
   /** Taken once when the operator has to be shown a count, and handed to the
-   *  run so both describe the same batch. See `ExtractOptions.listing`. */
+   *  run so both describe the same batch. See `ExtractOptions.listing`. A
+   *  folder batch counts its SUBFOLDERS: one request per volume. */
   let listing: FolderListing | undefined;
+  let subfolders: SubfolderListing | undefined;
 
   if (sending !== null) {
     // BEFORE A SINGLE FILE IS READ, so an operator who declines has not paid for
-    // anything -- not even the reading. The count comes from `listFolder`, which
-    // `extractFolder` calls again below; ONE listing is taken here and handed
+    // anything -- not even the reading. ONE listing is taken here and handed
     // down, because two walks of the same directory can disagree (a file added
     // or removed in between), and the number the operator agreed to must be the
     // number the run works from rather than a second opinion about it.
-    listing = await listFolder(options.dir);
-    approve(options, profile, sending, listing.supported.length, log);
+    if (perFolder) subfolders = await listSubfolders(options.dir);
+    else listing = await listFolder(options.dir);
+    const count = subfolders?.folders.length ?? listing?.supported.length ?? 0;
+    approve(options, profile, sending, count, log);
   } else if (wantsModel && settings !== null) {
     log(
       // `describeHost`, not the raw address: a gateway's published URL can carry
@@ -405,7 +424,13 @@ export async function runExtract(
     );
   }
 
-  const result = await extractFolder(options.dir, profile, { ...collect, ...(listing ? { listing } : {}) });
+  const { result, targets } = await extractForPass(options.dir, profile, {
+    perFolder,
+    keep: sending !== null,
+    ...(listing ? { listing } : {}),
+    ...(subfolders ? { subfolders } : {}),
+  });
+  if (perFolder) await reportProblems(options, result.problems ?? [], log);
 
   if (sending !== null) {
     await runModelPass(targets, profile, sending, fetchImpl);
@@ -416,8 +441,46 @@ export async function runExtract(
     noteMissingModel(result.rows, profile, unfilled);
   }
 
+  await finishExtract(options, profile, result, log);
+}
+
+/**
+ * The problems log of a per-folder run, written BEFORE the spreadsheet so it
+ * exists even when every folder was held back and there is no spreadsheet to
+ * write -- that is when it is needed most. A dry run writes nothing, so it
+ * prints the lines instead.
+ */
+async function reportProblems(
+  options: ExtractCliOptions,
+  problems: readonly FolderProblem[],
+  log: (message: string) => void,
+): Promise<void> {
+  if (options.dryRun) {
+    for (const p of problems) {
+      const where = [p.folder, p.file].filter((s) => s !== '').join(' -- ');
+      log(`  ${p.effect}: ${where === '' ? '(batch)' : where}: ${p.problem}`);
+    }
+    return;
+  }
+
+  const { path, heldBack, looseFiles, notes } = await writeProblemsLog(options.out, problems);
+  if (heldBack > 0) log(`${heldBack} folder(s) held back -- not in the spreadsheet. See ${path}`);
+  if (looseFiles > 0) {
+    log(`${looseFiles} loose file(s) beside the folders left out -- not in the spreadsheet. See ${path}`);
+  }
+  if (notes > 0) log(`${notes} note(s) to check in ${path}`);
+  if (problems.length === 0) log(`No problems found; the log at ${path} is empty.`);
+}
+
+/** What every run does with its rows: report them, then preview or write. */
+async function finishExtract(
+  options: ExtractCliOptions,
+  profile: Profile,
+  result: ExtractResult,
+  log: (message: string) => void,
+): Promise<void> {
   if (result.skipped.length > 0) {
-    log(`Skipped ${result.skipped.length} file(s):`);
+    log(`Skipped ${result.skipped.length} ${options.perFolder === true ? 'file(s) or folder(s)' : 'file(s)'}:`);
     for (const { file, reason } of result.skipped) log(`  ${file} -- ${reason}`);
   }
 
@@ -447,7 +510,11 @@ export async function runExtract(
   }
 
   if (result.rows.length === 0) {
-    throw new OeqError(`No readable files found in ${options.dir}; nothing to write.`);
+    throw new OeqError(
+      options.perFolder === true
+        ? `No subfolder of ${options.dir} can become a row; nothing to write.`
+        : `No readable files found in ${options.dir}; nothing to write.`,
+    );
   }
 
   await writeCsv(options.out, profile, result.rows);

@@ -11,6 +11,7 @@ import { loadConfig, createAuthProvider, type Config } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import {
   extractDefinition,
+  extractItemDescriptionPath,
   extractItemNamePath,
   parseSchemaPaths,
   validateHeaders,
@@ -18,6 +19,7 @@ import {
 } from '../core/schema.js';
 import { buildManifest, preflightDuplicates } from '../core/plan.js';
 import { findDuplicates, type DuplicateFinding } from '../core/duplicates.js';
+import { folderLines } from '../core/folderReport.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { checkLock, type LockInfo } from '../core/lock.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
@@ -26,7 +28,7 @@ import { redactSecret as redactAllForms } from '../core/redact.js';
 import { OeqClient } from '../core/client.js';
 import { assertNotGuest } from '../core/identity.js';
 import { runPreflight, summarise } from '../core/preflight.js';
-import type { ItemState } from '../core/types.js';
+import { rowLabel, type ItemState } from '../core/types.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -91,18 +93,6 @@ export function redactSecret(message: string, env: Env): string {
 
 async function loadPaths(schemaFile: string): Promise<Set<string>> {
   return parseSchemaPaths(extractDefinition(await readFile(schemaFile, 'utf8')));
-}
-
-/**
- * The title xpath the schema export declares, or null when it declares none.
- *
- * The duplicate check searches on this. Assuming `MWDL/title` would make it
- * match nothing at any institution whose schema says otherwise, and a check
- * that matches nothing reports every row clean. Null is passed through as
- * "could not check" rather than replaced by a guess.
- */
-async function loadTitleHeader(schemaFile: string): Promise<string | null> {
-  return extractItemNamePath(await readFile(schemaFile, 'utf8'));
 }
 
 /**
@@ -306,13 +296,17 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
   try {
     const cfg = loadConfigForPlanning(env);
     const sheet = await readSheet(resolve(args.sheet));
-    const paths = await loadPaths(schemaFile);
+    // Read ONCE: the paths, the description path and the title path must
+    // describe one schema, as they do in the CLI's planAction.
+    const schemaXml = await readFile(schemaFile, 'utf8');
+    const paths = parseSchemaPaths(extractDefinition(schemaXml));
     const manifest = await buildManifest(sheet, resolve(args.filesDir), paths, {
       baseUrl: cfg.baseUrl,
       collectionUuid: cfg.collectionUuid,
       schemaUuid: cfg.schemaUuid,
       itemState,
       attachmentUuidPath: cfg.attachmentUuidPath,
+      descriptionPath: extractItemDescriptionPath(schemaXml),
     });
 
     // Mirrors planAction exactly: warnings land in manifest.warnings BEFORE
@@ -332,7 +326,10 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
         // unexpected happening before that point.
         try {
           const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
-          const titleHeader = await loadTitleHeader(schemaFile);
+          // The title path the export declares, or null -- the duplicate check
+          // searches on it, and null reaches it as "could not check", never as
+          // a guessed `MWDL/title` that matches nothing elsewhere.
+          const titleHeader = extractItemNamePath(schemaXml);
           // Identifier path resolved from the schema, never assumed -- see
           // resolveIdentifierPath in plan.ts.
           const dupWarnings = await preflightDuplicates(client, manifest, { titleHeader, paths });
@@ -348,6 +345,10 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
     const lines = [
       `Planned ${manifest.entries.length} item(s) -> ${manifestPath}`,
       `State: ${manifest.itemState}`,
+      // Each folder's files in upload order: the order is a rule and the
+      // remedy for a wrong one is renaming, so it has to be shown before the
+      // run, not discovered in the collection after it.
+      ...folderLines(manifest.entries).map((l) => `  ${l}`),
       ...manifest.warnings.map((w) => `warning: ${w}`),
     ];
     // Reported, never acted on: this tool plans, validates and monitors --
@@ -359,7 +360,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
           'structuredContent.duplicates.',
       );
       for (const d of duplicates) {
-        lines.push(`  Row ${d.rowNumber}: ${d.fileName} -- ${d.tier}: ${d.detail}`);
+        lines.push(`  Row ${d.rowNumber}: ${d.label} -- ${d.tier}: ${d.detail}`);
       }
     }
     const result = text(redactSecret(lines.join('\n'), env));
@@ -464,14 +465,14 @@ export async function jobStatusTool(args: JobStatusArgs): Promise<ToolResult> {
     const failed = m.entries.filter((e) => e.status === 'failed');
     if (failed.length > 0) {
       lines.push('Failed:');
-      for (const e of failed) lines.push(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'unknown error'}`);
+      for (const e of failed) lines.push(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'unknown error'}`);
     }
 
     // 'uploading' at read time means a prior run died mid-row -- see runner.ts.
     const interrupted = m.entries.filter((e) => e.status === 'uploading');
     if (interrupted.length > 0) {
       lines.push('Interrupted (a prior run died mid-upload; verify in openEQUELLA before retrying):');
-      for (const e of interrupted) lines.push(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'interrupted'}`);
+      for (const e of interrupted) lines.push(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'interrupted'}`);
     }
 
     const lock = await checkLock(args.manifestPath);

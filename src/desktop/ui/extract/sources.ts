@@ -23,10 +23,11 @@ export interface SourceEvidence {
 
 /** Plain-language name for a source, used in the dropdown and the column list. */
 export function describeSource(source: Source): string {
-  if ('filename' in source) return 'The file itself';
-  if ('filenameStem' in source) return 'The file name, without its extension';
-  if ('placeholder' in source) return `Filename part: ${source.placeholder}`;
-  if ('join' in source) return `Filename parts joined as "${source.join}"`;
+  // A folder batch's row is a folder, so the label names both.
+  if ('filename' in source) return 'The file or folder itself';
+  if ('filenameStem' in source) return 'The whole name, without any extension';
+  if ('placeholder' in source) return `Part of the name: ${source.placeholder}`;
+  if ('join' in source) return `${JOIN_NAME}: "${source.join}"`;
   if ('label' in source) return `Label in document: ${source.label}`;
   if ('tableColumn' in source) return `Table column: ${source.tableColumn}`;
   if ('section' in source) return `Section: ${source.section}`;
@@ -37,8 +38,43 @@ export function describeSource(source: Source): string {
   if ('compose' in source) return `Built from other columns: ${source.compose}`;
   if ('presence' in source)
     return `"${source.presence.then}" when the document mentions: ${source.presence.any.join(', ')}`;
-  if ('ai' in source) return 'A language model, asked after extraction (only where no source was sure)';
+  if ('ai' in source) {
+    return source.after === true
+      ? 'A language model, writing after the text above (every row)'
+      : 'A language model, asked after extraction (only where no source was sure)';
+  }
   return `Document property: ${source.property}`;
+}
+
+/** What this screen calls a `join` -- everywhere, so one source has one name. */
+const JOIN_NAME = 'Text with parts of the name';
+
+/** The source-list entry for text with parts of the name. Its text sits in a box, not the label. */
+export const JOIN_LABEL = `${JOIN_NAME}…`;
+
+/**
+ * The parts a pattern names, or none while it is half typed -- ONE answer for
+ * the source list and the hint under the text box, so they cannot disagree.
+ */
+export function patternParts(pattern: string): string[] {
+  try {
+    return placeholders(pattern);
+  } catch {
+    // A half-typed pattern is normal while editing; offer no parts rather
+    // than failing the whole screen.
+    return [];
+  }
+}
+
+/**
+ * Whether `option` is the one the list should show selected for a column whose
+ * first source is `current`. By label, except text-with-parts: the list's
+ * entry never names its text, so any `join` is that one option.
+ */
+export function isCurrentOption(option: SourceOption, current: Source | undefined): boolean {
+  if (current === undefined) return false;
+  if ('join' in current) return 'join' in option.source;
+  return option.label === describeSource(current);
 }
 
 /**
@@ -71,6 +107,14 @@ export function optionsForColumn(
   const offered = sourceOptions(pattern, scan);
   const current = sources[0];
   if (current === undefined) return offered;
+  // A column already built from text keeps ITS text as the option's source, so
+  // choosing the option again does not reset what was typed -- and it is one
+  // option, not a second entry naming the text, which sits in its own box.
+  if ('join' in current) {
+    const at = offered.findIndex((o) => 'join' in o.source);
+    if (at === -1) return [...offered, { label: JOIN_LABEL, source: current }];
+    return offered.map((o, i) => (i === at ? { label: JOIN_LABEL, source: current } : o));
+  }
   const label = describeSource(current);
   if (offered.some((option) => option.label === label)) return offered;
   return [...offered, { label, source: current }];
@@ -103,19 +147,18 @@ export function restOfChain(sources: Source[]): string | null {
  * something that is always blank.
  */
 export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOption[] {
-  let names: string[] = [];
-  try {
-    names = placeholders(pattern);
-  } catch {
-    // A half-typed pattern is normal while editing; offer no filename parts
-    // rather than failing the whole dropdown.
-    names = [];
-  }
+  const names = patternParts(pattern);
 
   const options: SourceOption[] = names.map((name) => ({
-    label: `Filename part: ${name}`,
+    label: `Part of the name: ${name}`,
     source: { placeholder: name },
   }));
+  // Fixed words around parts of the name -- "Society Quarterly, Volume {volume}".
+  // Offered only when the pattern HAS parts: without one it is just a default.
+  // Starts from the first part, so it fills something the moment it is chosen;
+  // the column row then shows a box to type the rest (screens/extractColumns.ts).
+  const first = names[0];
+  if (first !== undefined) options.push({ label: JOIN_LABEL, source: { join: `{${first}}` } });
 
   for (const label of scan.labels) {
     options.push({ label: `Label in document: ${label}`, source: { label } });

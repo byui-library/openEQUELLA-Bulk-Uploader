@@ -132,6 +132,12 @@ export interface MockState {
    * scaffolding, not modelled protocol — see the header comment above.
    */
   expireNextUpload: number;
+  /**
+   * Let this many more `PUT` staging uploads succeed, then refuse the next one
+   * with 401; -1 is off. Test scaffolding, like `expireNextUpload`: it puts the
+   * 401 on the SECOND file of a row, which a 401 on the first cannot reach.
+   */
+  expireNextUploadAfter: number;
   /** Fail the next N item creations with 503, to exercise retry. */
   failItemNext: number;
   /**
@@ -140,6 +146,8 @@ export interface MockState {
    * for the "server ignored our uuid" case — see header comment above.
    */
   mismatchAttachmentNext: number;
+  /** Make the next N item creations report one attachment fewer than were sent. Test scaffolding. */
+  dropAttachmentsNext: number;
   /**
    * Make the next N item creations respond 201 with an empty body and a
    * `Location: /item/{uuid}/{version}` header instead of a JSON body. Test
@@ -193,6 +201,8 @@ export interface MockState {
     /** The `file` query param the item was created with -- CONFIRMED to be
      * a query param, not a body field, against swagger.json. */
     stagingFile: string;
+    /** The attachments the create request declared, in the order sent. */
+    attachments: { type?: string; filename?: string; description?: string; uuid?: string }[];
   }[];
   /** Identifiers that already exist, for the duplicate pre-flight. */
   existingIdentifiers: string[];
@@ -262,8 +272,10 @@ export async function startMockServer(): Promise<MockServer> {
     issuedTokens: [],
     expireNext: 0,
     expireNextUpload: 0,
+    expireNextUploadAfter: -1,
     failItemNext: 0,
     mismatchAttachmentNext: 0,
+    dropAttachmentsNext: 0,
     locationStyleNext: 0,
     expectedRedirectUri: '', // set below once the listening url is known
     validAuthCodes: new Set(),
@@ -355,6 +367,11 @@ export async function startMockServer(): Promise<MockServer> {
 
       const stagingUpload = /^\/api\/staging\/([^/]+)\/(.+)$/.exec(path);
       if (stagingUpload && req.method === 'PUT') {
+        if (state.expireNextUploadAfter === 0) {
+          state.expireNextUploadAfter = -1;
+          return send(res, 401, { error: 'token expired' });
+        }
+        if (state.expireNextUploadAfter > 0) state.expireNextUploadAfter--;
         if (state.expireNextUpload > 0) {
           state.expireNextUpload--;
           return send(res, 401, { error: 'token expired' });
@@ -392,7 +409,7 @@ export async function startMockServer(): Promise<MockServer> {
         }
         const body = JSON.parse((await readBody(req)).toString('utf8')) as {
           metadata: string;
-          attachments?: { uuid?: string }[];
+          attachments?: { type?: string; filename?: string; description?: string; uuid?: string }[];
         };
         const uuid = nextId('item');
         const version = 1;
@@ -402,6 +419,7 @@ export async function startMockServer(): Promise<MockServer> {
           metadata: body.metadata,
           draft: url.searchParams.get('draft') === 'true',
           stagingFile: fileParam,
+          attachments: body.attachments ?? [],
         });
         const mismatch = state.mismatchAttachmentNext > 0;
         if (mismatch) state.mismatchAttachmentNext--;
@@ -414,10 +432,14 @@ export async function startMockServer(): Promise<MockServer> {
           res.writeHead(201, { location: `/item/${uuid}/${version}` });
           return res.end();
         }
+        const drop = state.dropAttachmentsNext > 0;
+        if (drop) state.dropAttachmentsNext--;
         return send(res, 201, {
           uuid,
           version,
-          attachments: (body.attachments ?? []).map((a) => ({
+          attachments: (body.attachments ?? [])
+            .slice(0, drop ? -1 : undefined)
+            .map((a) => ({
             uuid: mismatch ? nextId('att-server-assigned') : a.uuid ?? nextId('att'),
           })),
         });

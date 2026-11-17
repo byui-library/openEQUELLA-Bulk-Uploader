@@ -1,6 +1,302 @@
-# Session handoff — updated 2026-10-02
+# Session handoff — updated 2026-11-17
 
 Read this first.
+
+## RESUME HERE — 2026-11-17 (later): model descriptions for folder rows BUILT
+
+Built from [the spec](superpowers/specs/2026-11-17-folder-descriptions-design.md)
+and [the plan](superpowers/plans/2026-11-17-folder-descriptions.md), test-first,
+pushed. Snake River Echoes now asks a model, after its fixed sentence, for a
+one-or-two-sentence summary of the subjects each volume covers, and discloses
+it in `MWDL/conversionSpecifications`. Offline with no model, the real batch
+gives each volume the fixed sentence alone, noted.
+
+**The live run is DONE (2026-11-17).** Five real volumes (1, 2, 3, 10, 27)
+through the desktop app with the template and the operator's LM Studio model.
+**Operator's verdict: "the description extraction worked very well."** Per-row
+counts of written and refused were not reported.
+
+**Also built that day, from what the run showed:**
+
+- **One odd folder name no longer spoils the name pattern** (`e6914e1`).
+  "Snake River Echos Index" beside the volume folders made `detectPattern`
+  give every name one part, and the columns screen used that folder as its
+  example. Now: the shape a strict majority shares, and the example is the
+  first name that fits.
+- **Progress and time left on the save screen** (`959d2f4`): "Reading
+  folders: 12 of 38", then "... 5 of 38, about 6 minutes left" from the run's
+  own pace (`ui/extract/pace.ts`). No Stop button -- a separate decision.
+
+**Next:** PR, read the automated review comments, merge, release **v1.3.0**;
+then the series index page (below). The "Snake River Echos Index" folder
+(the index to volumes 1-25) gets no title or description from the template;
+it needs its own row values, or moving out of the batch -- ask the operator.
+
+## 2026-11-17: live draft worked; descriptions now capped
+
+**The live check is DONE.** The operator ran a folder batch through the
+desktop app to content-test: contributions were created and their files
+attached as intended. Branch `feature/multi-file-items` is now PUSHED to
+origin; no PR yet.
+
+**What it found: descriptions were far too long.** Not the model -- no model
+runs on folder rows. That batch was extracted with NO template chosen, so the
+description came from a 'Description'/'Purpose' heading in the middle of a
+journal article, which never ended and was cut at 4,000 characters. Fixed in
+four commits (`79564fc`, `963c1cf`, `e914039`, docs), the operator's design:
+
+- **1,000 characters, about one or two paragraphs** (`core/extract/length.ts`,
+  `DESCRIPTION_LIMIT`; `Column.maxLength` overrides, min 100). Chosen by the
+  operator. Counted in characters, NOT paragraphs: PDF text often has a blank
+  line between wrapped lines, and a paragraph cut lost real text (review).
+- **A section that never ends is not used** -- noted, next source tries.
+- **A section or opening is cut back to a whole sentence and NOTED, not
+  flagged** (a flag would let a model replace a trimmed real abstract). A
+  label, table cell or property is cut only when its column sets
+  `maxLength`. The operator's own wording (default, join, compose) is never
+  cut.
+- **The model is told the limit; a reply over it is refused whole.**
+- **`plan` warns** about a long description in the schema's declared
+  description field (never cuts), or says once it could not check. Review
+  groups these under "Long descriptions".
+- NOT built: a limit box on the columns screen -- a profile/template sets
+  `maxLength`. Ask the operator before adding one.
+
+**Next, in order (operator's decisions, 2026-11-17):**
+
+1. **Part 3 -- a model description for a FOLDER row** (one or two paragraphs
+   describing the whole volume). Its own design first: the model is sent the
+   opening ~2,000 characters of EVERY issue (contents and masthead), and
+   `verify.ts` checks claims against all the issues together. **For Snake
+   River Echoes the fixed sentence ("Upper Snake River Valley Historical
+   Society Quarterly, Volume N") ALWAYS comes first, the model's summary
+   after it.** Then a live run against real volumes with the operator's LM
+   Studio model (`http://127.0.0.1:1234/v1` -- the `/v1` is required).
+2. PR, read the automated review comments, merge, release **v1.3.0**.
+3. **The series index page** -- interview complete (2026-11-17), design spec
+   next. Decisions: an openEQUELLA item whose attachment is a plain, self-
+   contained HTML page; built afterwards as its own step ("Build an index",
+   desktop and `oeq-upload index`), from a SEARCH of the collection, not from
+   a job file; volume headings link to items, issues beneath link to PDFs,
+   labelled from the template's patterns; the index's record from an `index`
+   section of the template; a rebuild updates the same item; preview, counts
+   and the Draft/Publish confirmation before saving. Verify live first: stable
+   latest-version and attachment URLs, editing an item's attachment, search
+   by identifier, and whether an HTML attachment renders.
+
+Also on the branch since 2026-11-16: a code review and /simplify of the folder
+preview -- the preview now builds rows with `extractFolders` itself.
+
+## 2026-11-16 — several files on one contribution is BUILT
+
+Branch `feature/multi-file-items`. Built from
+[the plan](superpowers/plans/2026-11-13-multi-file-items.md) and
+[the design](superpowers/specs/2026-11-13-multi-file-items-design.md), whose
+two 2026-11-16 addenda record how ordering and checking were decided. Every
+step test-first with mutation checks; typecheck, full suite and
+`build:desktop` clean.
+
+**What the batch looks like now (offline: extract + plan, nothing sent).** 38
+items, 102 files, no plan warnings; the problems log has ONE line -- Vol 27's
+Commemorative issue, attached last. Order comes from issue numbers through the
+spreadsheet's `attachment order` column, so Vol 2 runs No1-No4 across its year
+boundary. The checks are neutral (`{part}`/`{group}`/`{year}`, template
+`labels` issue/volume) and also flag dates and volume numbers that disagree --
+none do in this batch.
+
+**Fixed on disk by the operator's instruction, 2026-11-16** (the SRE folder is
+outside the repository):
+
+- `SRE_1973_Vol2_No4.pdf` moved from `SRE_Vol3` to `SRE_Vol2` -- its own text
+  reads "Volume II, Number 4, Spring 1973", checked before moving.
+- `SRE_1974_Vol3_Num3.pdf` moved to `Snake River Echoes\SRE_set_aside\`, NOT
+  renamed: renaming would have overwritten `No3`. Compared page by page, the
+  two are one scan of Volume 3 Number 3 (20 pages, identical dimensions,
+  96-100% identical text) with `Num3` an older, poorer OCR pass. `No3` kept.
+
+**Decisions recorded 2026-11-16:**
+
+- The template's constants (genre `Periodical`, rights `Public`, conversion
+  `Scanned to PDF`, source `None`) are CONFIRMED by the operator.
+- **A journal's title is public bibliographic data, not "institutional
+  detail".** A code review flagged "Upper Snake River Valley Historical Society
+  Quarterly" (now in the template, a test and INSTALL.md) against CLAUDE.md's
+  rule for this public repository; the operator decided it STAYS AS WRITTEN,
+  like "Snake River Echoes" before it. Personal data stays forbidden: this is
+  the title of a published serial, nothing more.
+
+**Known issue, NOT YET FIXED -- a click can be swallowed on the columns
+screen.** Typing in one of the screen's text boxes (the name pattern, "when
+blank", or the new "Text with parts of the name" box) and then clicking a
+button straight away: leaving the box saves it, the save re-renders the whole
+screen by replacing `innerHTML`, and the button under the mouse is destroyed
+before its click lands -- so the click does nothing and must be repeated.
+Found by code review 2026-11-16; pre-existing for the pattern and default
+boxes. Deliberately left for its own change, because the fix belongs in how
+the screen re-renders (e.g. not re-rendering on the `busy` flip that `guard`
+in `ui/extract/controller.ts` performs at the start of every edit, or
+patching the changed parts instead of replacing the markup), not in each box.
+Operator's instruction: note it and fix it later.
+
+**Next, in order:**
+
+1. **Live check, operator present:** Vol 2 to content-test as a DRAFT through
+   the desktop app (extract with the toggle, Review shows the order, run). The
+   operator confirms in openEQUELLA that the issues are attached in order and
+   each opens. Ask before running -- it creates a real item.
+2. Push, open the PR, read the automated review comments, merge.
+3. Release **v1.3.0** -- the first release carrying Electron 44 and folder
+   rows. Install it on a staff machine before it reaches the share.
+
+## State on 2026-11-13
+
+- **v1.2.2 is released** (PR #18, tagged 2026-11-12, Electron 33): password
+  sign-in by JSON body. Operator to-do: copy the installer to the network
+  share, and sign in with a password through it on a staff machine.
+- **Electron 44 is merged** (PR #17) **but in no release yet.** The next
+  release is the first to ship it; install that one on a staff machine, signing
+  in with a password, before it reaches the share.
+- **PR #19 is merged:** two real death dates and a likely real name left in the
+  tree after `59aee8f`, found through review of #17. Still in published history.
+- **No PR is open.** `main` is merged into this branch.
+
+## 2026-11-11: RESUME HERE — several files on one contribution
+
+**The operator asked for this feature. It is proven against the live server and
+NOT BUILT** — the tool is still strictly one file per contribution. Everything
+below the next heading is earlier history.
+
+### Why
+
+The operator is publishing *Snake River Echoes*, a historical journal: 103 issue
+PDFs, 1.8 GB in all, 38 volumes, one folder per volume, 1971 to 2015. The
+largest file is 51 MB and the largest volume about 88 MB. They want **one
+contribution per volume**, holding that volume's issues **in issue order**.
+That means 38 items, not 103 and not one. A separate small item will hold an
+HTML index page linking to each volume and issue, so a reader never opens a big
+item just to find something. The index page is not this repository's job.
+
+At present, this tool would create 103 items, one per PDF.
+
+### The operator's stated shape for the feature (2026-11-11)
+
+> "Ideally this new functionality can look at a list of subfolders and create a
+> new contribution for each subfolder and the subfolder's contents."
+
+**One subfolder = one contribution; its files = that item's attachments.** That
+is the primary input model, and it supersedes the repeated-`attachment name`-
+columns idea below as the main route. A spreadsheet row names a FOLDER rather
+than listing its files. Questions to settle with the operator in design
+(brainstorming), not to decide alone:
+
+- **How a row is tied to a subfolder.** A `folder` column naming it, or one row
+  per subfolder found, with metadata filled in afterwards?
+- **Attachment order within a folder.** "Issue order" has to come from
+  somewhere: natural sort of filenames (`Issue 2` before `Issue 10`), or an
+  explicit order? Whichever is chosen, show the operator the order before upload.
+- **What counts as contents.** Nested folders, hidden and system files
+  (`Thumbs.db`, `.DS_Store`), non-PDF files, an empty folder (refuse the row).
+- **Does the extractor build the sheet from the folders?** It already builds
+  rows from files, so one row per subfolder is the natural extension.
+- Note that `upload.ts`'s "missing file refuses the row" rule becomes "the
+  folder's contents changed since planning". The plan should record the file
+  list and sizes, and the run should refuse a row whose folder no longer matches.
+
+### What is already true (checked by reading the code, 2026-11-11)
+
+- **The 1:1 rule is this tool's bookkeeping, not openEQUELLA's.** The README
+  states it outright. `runner.ts#processEntry` sends
+  `attachments: [{ filename: entry.fileName, ... }]`, and `upload.ts` creates a
+  fresh staging area per file.
+- **The client already takes a list.** `CreateItemRequest` in `client.ts` has
+  `stagingUuid` + `attachments: AttachmentSpec[]`, and
+  `uploadToStaging(stagingUuid, filename, body)` names the file within the area.
+  So several files can share one staging area as far as the client is concerned.
+- **Repeated column headers already collapse into lists** for metadata (see
+  `ManifestEntry.metadata`). Repeated `attachment name` columns would follow an
+  existing convention instead of inventing syntax.
+
+### What has to change
+
+| Where | Change |
+| --- | --- |
+| `types.ts` | `ManifestEntry` holds a list of files instead of `filePath`/`fileName`. **The manifest format version goes up, and a v1 manifest must still load and resume**, because interrupted jobs exist on operators' machines. |
+| `plan.ts` | Resolve every file in a row. **If any is missing, the whole row is refused**, never uploaded with fewer files than the spreadsheet names. |
+| `upload.ts` | N files into one staging area. The 401-mid-upload recovery currently deletes and recreates the area. With N files that means restarting the row, not one file, and the code must say so. Keep the 0-byte refusal per file. |
+| `runner.ts` | N attachments in spreadsheet order. The attachment-uuid check compares **every** returned uuid, not `[0]`. With `attachmentUuidPath` set, the field receives N values. |
+| `duplicates.ts` | Verdicts compare every file in the row. Decide what a row means when one of its three files is already in the collection, and **ask the operator rather than choosing**. |
+| CLI, MCP, desktop progress and results screens | Show "3 files" where a single filename is shown now. `rowContext` in `runner.ts` too. |
+
+**Unchanged by design:** the interrupted-row rule. A row found `'uploading'` at
+load is skipped unless forced, whether it holds one file or three.
+
+### Do this first
+
+**Prove it live before building on it.** Against `content-test.byui.edu`, upload
+two files into one staging area and create one item with two attachments. Then
+confirm in openEQUELLA's own interface that both attachments exist, **in the order
+sent**, and that both open. This project's record is that the server refutes the
+swagger file. Order matters here, because the operator wants issues in order on
+each volume's item, and nobody has checked whether openEQUELLA keeps it.
+
+### Probe result, 2026-11-11 (API side DONE; operator's visual check pending)
+
+Branch `feature/multi-file-items` is cut from `main`. Ran against content-test
+through the installed app's stored password credential, using the app's own
+`OeqClient`. Created **one draft item** in Special Collections (`7b6aea89…`),
+titled "PROBE multi-attachment order test - safe to delete":
+`https://content-test.byui.edu/items/4528fe19-39ab-4608-b700-ab571ad80ef6/1/`.
+
+- One staging area, three `PUT`s, one `POST /api/item` with three attachments:
+  **accepted.**
+- **Order is kept as sent, not sorted.** Sent `c-…`, `a-…`, `b-…`; the read-back
+  of `GET /api/item/{uuid}/1` lists them in that order.
+- **Client-supplied attachment uuids are honoured for all three**, and sizes
+  match.
+- `createItem` got a Location-only response, so `attachmentUuids` was `[]` and
+  the runner's uuid check had nothing to compare. A read-back is the only way to
+  see what the server stored.
+- **CONFIRMED by the operator in openEQUELLA's own interface (2026-11-11):**
+  all three attachments are present and displayed in the order sent, and each
+  one opens when clicked. Several files on one contribution, in a chosen
+  order, is proven end to end. The probe item can be deleted.
+
+### FOUND WHILE PROBING: password sign-in is broken on content-test
+
+> **FIXED and RELEASED as v1.2.2** (PR #18, 2026-11-12), no fallback by the
+> operator's decision. **Production has moved too**: both instances answer the
+> query form 415. The fix was verified live with the app's own provider. The
+> text below is the record of how it was found.
+
+**`POST /api/auth/login?username=&password=` now answers 415** ("RESTEASY003065:
+Cannot consume content type"), whatever the content type, except JSON. It
+worked on 2026-08-13. Measured with a made-up username so the real account was
+never at risk:
+
+```text
+no body / form / text  -> 415
+JSON {} + query creds  -> 400  "Missing required field username"
+JSON {username,password} body, no query -> 401 for a bad account, 200 for a real one
+```
+
+The server now wants a JSON `LoginRequest` body. **The released v1.2.1 cannot
+sign in to content-test with a password.** OAuth does not use this endpoint.
+Whether production has changed too is not known. The new form also takes the
+password OUT of the query string, which retires the "password in the query
+string" caveat in CLAUDE.md and SECURITY.md **for servers that accept it**. Fix
+`passwordAuth.ts` before or alongside this feature. Note: decide whether to
+fall back to the query form for older servers, and measure, do not assume,
+whether production accepts the JSON form.
+
+### Process
+
+- **Branch from `main`**, not from `chore/electron-upgrade`, which was checked out
+  when this was written.
+- TDD, as everywhere in this repository. Then drive it through the desktop app
+  before calling it done. Every serious fault here has been found by someone
+  using the app, not by the tests.
+- Bump the version and add a changelog entry. A strict 1:1 relationship is a
+  headline claim in the README, so the README changes too.
 
 ## 2026-10-02: readiness check before sharing with colleagues
 

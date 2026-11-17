@@ -1,9 +1,9 @@
 // tests/extract/extract.test.ts
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { extractFolder } from '../../src/core/extract/extract.js';
+import { basename, join } from 'node:path';
+import { extractFolder, extractFolders, listSubfolders } from '../../src/core/extract/extract.js';
 import { ATTACHMENT_COLUMN, type DocumentData, type Profile } from '../../src/core/extract/types.js';
 
 const profile: Profile = {
@@ -86,5 +86,303 @@ describe('extractFolder', () => {
       signal: controller.signal,
     });
     expect(result.rows).toHaveLength(1);
+  });
+});
+
+describe('extractFolders', () => {
+  const folderProfile: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{group}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [{ property: 'title' }] },
+    ],
+  };
+
+  async function batch(layout: Record<string, string[] | null>): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-folders-'));
+    for (const [name, files] of Object.entries(layout)) {
+      if (files === null) {
+        await writeFile(join(dir, name), 'x');
+        continue;
+      }
+      await mkdir(join(dir, name));
+      for (const f of files) await writeFile(join(dir, name, f), 'x');
+    }
+    return dir;
+  }
+
+  it('builds one row per subfolder, in natural order, reading files in attachment order', async () => {
+    const dir = await batch({
+      Gazette_V10: ['a.pdf'],
+      Gazette_V2: ['b.pdf', 'a.pdf'],
+      Gazette_V3: [],
+      'loose.pdf': null,
+    });
+    const calls: string[] = [];
+    const reader = async (p: string) => {
+      calls.push(p.slice(dir.length + 1).split('\\').join('/'));
+      return { ...emptyDoc, properties: { title: basename(p) } };
+    };
+    const result = await extractFolders(dir, folderProfile, { reader });
+    expect(result.rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2', 'Gazette_V10']);
+    expect(calls).toEqual(['Gazette_V2/a.pdf', 'Gazette_V2/b.pdf', 'Gazette_V10/a.pdf']);
+    expect(result.rows[0]!.cells['MWDL/title']).toBe('a.pdf');
+    expect(result.skipped).toEqual([
+      {
+        file: 'loose.pdf',
+        reason: 'a file directly in the chosen folder -- with one row per subfolder, only subfolders become rows',
+      },
+      { file: 'Gazette_V3', reason: 'the folder is empty' },
+    ]);
+  });
+
+  it('keeps an unreadable file as an attachment and notes it on the row', async () => {
+    const dir = await batch({ Gazette_V2: ['bad.pdf', 'good.pdf'] });
+    const reader = async (p: string) => {
+      if (p.endsWith('bad.pdf')) throw new Error('boom');
+      return emptyDoc;
+    };
+    const result = await extractFolders(dir, folderProfile, { reader });
+    expect(result.rows).toHaveLength(1);
+    expect(result.skipped).toEqual([]);
+    expect(result.rows[0]!.notes).toContain(
+      "'bad.pdf' could not be read (boom); it is still uploaded with the others",
+    );
+  });
+
+  it('reads only supported files; an unsupported one is still an attachment and refuses nothing', async () => {
+    const dir = await batch({ Gazette_V2: ['a.pdf', 'cover.jpg'] });
+    const reader = vi.fn(async () => emptyDoc);
+    const result = await extractFolders(dir, folderProfile, { reader });
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it('lists subfolders the same way the run reads them', async () => {
+    const dir = await batch({ Gazette_V2: ['a.pdf', 'cover.jpg'], 'Thumbs.db': null });
+    expect(await listSubfolders(dir)).toEqual({
+      folders: [{ name: 'Gazette_V2', files: ['a.pdf', 'cover.jpg'], readable: ['a.pdf'] }],
+      skipped: [],
+    });
+  });
+
+  it('reports progress per folder', async () => {
+    const dir = await batch({ Gazette_V1: ['a.pdf'], Gazette_V2: ['a.pdf'] });
+    const seen: [number, number][] = [];
+    await extractFolders(dir, folderProfile, {
+      reader: async () => emptyDoc,
+      onProgress: (d, t) => seen.push([d, t]),
+    });
+    expect(seen).toEqual([
+      [1, 2],
+      [2, 2],
+    ]);
+  });
+});
+
+describe('extractFolders -- issue checks', () => {
+  const checked: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{group}',
+    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['V{group}_No{part}', 'V{group}_Num{part}'] } },
+  };
+
+  async function batch(layout: Record<string, string[]>): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-issues-'));
+    for (const [name, files] of Object.entries(layout)) {
+      await mkdir(join(dir, name));
+      for (const f of files) await writeFile(join(dir, name, f), 'x');
+    }
+    return dir;
+  }
+
+  it('holds a folder back -- no row, no reading -- and reports why', async () => {
+    const dir = await batch({
+      Gazette_V2: ['G_V2_No1.pdf', 'G_V2_No2.pdf'],
+      Gazette_V3: ['G_V2_No3.pdf', 'G_V3_No1.pdf'],
+    });
+    const reader = vi.fn(async () => emptyDoc);
+    const result = await extractFolders(dir, checked, { reader });
+    expect(result.rows.map((r) => r.cells[ATTACHMENT_COLUMN])).toEqual(['Gazette_V2']);
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(result.skipped).toContainEqual({
+      file: 'Gazette_V3',
+      reason: 'held back -- see the problems log',
+    });
+    expect(result.problems).toContainEqual(
+      expect.objectContaining({ folder: 'Gazette_V3', file: 'G_V2_No3.pdf', effect: 'held back' }),
+    );
+  });
+
+  it('keeps a folder with only notes, and puts the notes on its row too', async () => {
+    const dir = await batch({ Gazette_V27: ['G_Commemorative.pdf', 'G_V27_No1.pdf'] });
+    const result = await extractFolders(dir, checked, { reader: async () => emptyDoc });
+    expect(result.rows).toHaveLength(1);
+    expect(result.problems).toEqual([
+      expect.objectContaining({ folder: 'Gazette_V27', file: 'G_Commemorative.pdf', effect: 'note' }),
+    ]);
+    expect(result.rows[0]!.notes.join(' ')).toMatch(/G_Commemorative\.pdf: no issue number/);
+  });
+
+  it('reports refused folders and loose files in the problems log as well', async () => {
+    const dir = await batch({ Gazette_V4: [] });
+    await writeFile(join(dir, 'stray.pdf'), 'x');
+    const result = await extractFolders(dir, checked, { reader: async () => emptyDoc });
+    expect(result.problems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ folder: 'Gazette_V4', file: '', effect: 'held back', problem: 'the folder is empty' }),
+        expect.objectContaining({ folder: '', file: 'stray.pdf', effect: 'held back' }),
+      ]),
+    );
+  });
+
+  it('says once that nothing was checked when no file matched any pattern', async () => {
+    const dir = await batch({ Gazette_V1: ['scan1.pdf', 'scan2.pdf'] });
+    const result = await extractFolders(dir, checked, { reader: async () => emptyDoc });
+    const batchLines = result.problems!.filter((p) => p.folder === '' && p.file === '');
+    expect(batchLines).toEqual([
+      expect.objectContaining({
+        effect: 'note',
+        problem: 'no file in the batch matched the sequence patterns, so the arrangement was not checked',
+      }),
+    ]);
+  });
+
+  it('with no issue patterns, checks nothing and still reports refused folders', async () => {
+    const dir = await batch({ Gazette_V1: ['G_V9_No1.pdf'], Gazette_V2: [] });
+    const result = await extractFolders(dir, { ...checked, checks: undefined }, { reader: async () => emptyDoc });
+    expect(result.rows).toHaveLength(1);
+    expect(result.problems).toEqual([
+      expect.objectContaining({ folder: 'Gazette_V2', effect: 'held back' }),
+    ]);
+  });
+});
+
+describe('extractFolders -- issue order', () => {
+  const ordered: Profile = {
+    version: 1,
+    pattern: 'Gazette_V{group}',
+    columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+    checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['V{group}_No{part}'] } },
+  };
+
+  // What the model pass reads a volume from: every issue, in the order they
+  // will be attached -- issue order here, not name order.
+  it('hands each folder row its documents, in attachment order', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-onrow-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    for (const f of ['G_1972-73_V2_No2.pdf', 'G_1972_V2_No1.pdf']) await writeFile(join(dir, 'Gazette_V2', f), 'x');
+    const seen: string[][] = [];
+    await extractFolders(dir, ordered, {
+      reader: async () => emptyDoc,
+      onRow: (_row, docs) => {
+        seen.push(docs.map((d) => d.name));
+      },
+    });
+    expect(seen).toEqual([['G_1972_V2_No1.pdf', 'G_1972-73_V2_No2.pdf']]);
+  });
+
+  it('records the issue order on the row, and reads the files in it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    for (const f of ['G_1972-73_V2_No3.pdf', 'G_1972_V2_No1.pdf', 'G_Special.pdf', 'G_1973_V2_No4.pdf', 'G_1972_V2_No2.pdf']) {
+      await writeFile(join(dir, 'Gazette_V2', f), 'x');
+    }
+    const calls: string[] = [];
+    const result = await extractFolders(dir, ordered, {
+      reader: async (p: string) => {
+        calls.push(basename(p));
+        return emptyDoc;
+      },
+    });
+    const order = ['G_1972_V2_No1.pdf', 'G_1972_V2_No2.pdf', 'G_1972-73_V2_No3.pdf', 'G_1973_V2_No4.pdf', 'G_Special.pdf'];
+    expect(result.rows[0]!.attachmentOrder).toEqual(order);
+    expect(calls).toEqual(order);
+  });
+
+  // Recorded ONLY where it differs from name order. An always-written order
+  // went stale the moment a file was renamed -- the documented remedy -- and
+  // plan then refused the folder. Name order needs no cell: blank means it.
+  it('records no order where the sequence order is name order anyway', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No1.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'G_V2_No2.pdf'), 'x');
+    const result = await extractFolders(dir, ordered, { reader: async () => emptyDoc });
+    expect(result.rows[0]!.attachmentOrder).toBeUndefined();
+  });
+
+  it('records no order when the template declares no sequence patterns', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'b_No1.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'a_No2.pdf'), 'x');
+    const result = await extractFolders(dir, { ...ordered, checks: undefined }, { reader: async () => emptyDoc });
+    expect(result.rows[0]!.attachmentOrder).toBeUndefined();
+  });
+
+  it('notes, rather than writes, an order a file name would break', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    // Name order puts the 1972-73 issue first; issue order puts it last -- so an
+    // order is needed, and this name cannot be carried by the cell.
+    await writeFile(join(dir, 'Gazette_V2', 'G_1972_V2_No1.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'G_1972-73_V2_No3; supplement.pdf'), 'x');
+    const result = await extractFolders(dir, ordered, { reader: async () => emptyDoc });
+    expect(result.rows[0]!.attachmentOrder).toBeUndefined();
+    expect(result.rows[0]!.notes.join(' ')).toMatch(/could not be written to the 'attachment order' column/);
+    // And the row reports the order the upload will really use: name order.
+    expect(result.rows[0]!.files).toEqual(['G_1972-73_V2_No3; supplement.pdf', 'G_1972_V2_No1.pdf']);
+  });
+});
+
+describe('extractFolders -- the batch-wide checks', () => {
+  it('notes a missing volume and a volume dated before the one it follows', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-batch-'));
+    for (const [folder, file] of [
+      ['Gazette_V1', 'G_1971_V1_No1.pdf'],
+      ['Gazette_V2', 'G_1970_V2_No1.pdf'],
+      ['Gazette_V4', 'G_1974_V4_No1.pdf'],
+    ]) {
+      await mkdir(join(dir, folder!));
+      await writeFile(join(dir, folder!, file!), 'x');
+    }
+    const result = await extractFolders(
+      dir,
+      {
+        version: 1,
+        pattern: 'Gazette_V{group}',
+        columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+        checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['{year}_V{group}_No{part}'] } },
+      },
+      { reader: async () => emptyDoc },
+    );
+    expect(result.rows).toHaveLength(3);
+    expect(result.problems!.map((p) => p.problem)).toEqual([
+      'no folder for volume 3 (volumes 1 to 4 found)',
+      'volume 2 is dated from 1970, before volume 1 (from 1971) -- the dates run backwards',
+    ]);
+  });
+});
+
+describe('extractFolders -- the files a row will attach', () => {
+  it('records every file of the folder, in upload order, including ones no reader opens', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-files-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    for (const f of ['G_V2_No2.pdf', 'G_V2_No1.pdf', 'cover.jpg']) await writeFile(join(dir, 'Gazette_V2', f), 'x');
+    const result = await extractFolders(
+      dir,
+      {
+        version: 1,
+        pattern: 'Gazette_V{group}',
+        columns: [{ path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true }],
+        checks: { sequence: { patterns: ['V{group}_No{part}'] } },
+      },
+      { reader: async () => emptyDoc },
+    );
+    expect(result.rows[0]!.files).toEqual(['G_V2_No1.pdf', 'G_V2_No2.pdf', 'cover.jpg']);
   });
 });

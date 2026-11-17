@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import type { ReadStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { uploadFile } from '../src/core/upload.js';
+import { uploadFiles } from '../src/core/upload.js';
 import { OeqClient } from '../src/core/client.js';
 import { OAuthClientCredentials } from '../src/core/auth.js';
 import { ApiError, ValidationError } from '../src/core/errors.js';
 import { startMockServer, type MockServer } from './helpers/mockServer.js';
+
+// A single-file row, as plan builds one with no recorded size.
+const single = (path: string, name: string) => ({ source: name, files: [{ path, name }] });
 
 /**
  * Every real `fs.ReadStream` upload.ts opens, captured so the fd-leak test
@@ -54,11 +57,11 @@ afterEach(async () => {
   await mock.close();
 });
 
-describe('uploadFile', () => {
+describe('uploadFiles -- one file', () => {
   it('streams the file into a staging area', async () => {
     const p = join(dir, 'clip.mp4');
     await writeFile(p, Buffer.alloc(4096, 7));
-    const staging = await uploadFile(client, p, 'clip.mp4');
+    const staging = await uploadFiles(client, single(p, 'clip.mp4'));
     expect(mock.state.uploads).toEqual([{ staging, filename: 'clip.mp4', bytes: 4096 }]);
   });
 
@@ -66,7 +69,7 @@ describe('uploadFile', () => {
     const name = 'Aster, Juniper 010125.MP4';
     const p = join(dir, name);
     await writeFile(p, Buffer.alloc(16));
-    await uploadFile(client, p, name);
+    await uploadFiles(client, single(p, name));
     expect(mock.state.uploads[0]!.filename).toBe(name);
   });
 
@@ -80,7 +83,7 @@ describe('uploadFile', () => {
       mock.state.stagingAreas.delete(uuid);
       return uuid;
     };
-    await expect(uploadFile(client, p, 'missing-after.mp4')).rejects.toThrow();
+    await expect(uploadFiles(client, single(p, 'missing-after.mp4'))).rejects.toThrow();
     expect(mock.state.stagingAreas.size).toBe(0);
   });
 
@@ -90,7 +93,7 @@ describe('uploadFile', () => {
     const size = 1024 * 1024 + 7;
     const p = join(dir, 'big.mp4');
     await writeFile(p, Buffer.alloc(size, 3));
-    const staging = await uploadFile(client, p, 'big.mp4');
+    const staging = await uploadFiles(client, single(p, 'big.mp4'));
     expect(mock.state.uploads).toEqual([{ staging, filename: 'big.mp4', bytes: size }]);
   });
 
@@ -114,7 +117,7 @@ describe('uploadFile', () => {
     const p = join(dir, 'clip.mp4');
     await writeFile(p, Buffer.alloc(size, 9));
 
-    const staging = await uploadFile(client, p, 'clip.mp4');
+    const staging = await uploadFiles(client, single(p, 'clip.mp4'));
 
     // Exactly one successful upload, carrying the FULL byte count -- not 0,
     // and not a partial write from a drained stream.
@@ -132,7 +135,7 @@ describe('uploadFile', () => {
     mock.state.expireNextUpload = 2;
     const p = join(dir, 'clip.mp4');
     await writeFile(p, Buffer.alloc(64));
-    const err = await uploadFile(client, p, 'clip.mp4').catch((e: unknown) => e);
+    const err = await uploadFiles(client, single(p, 'clip.mp4')).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(401);
     expect(mock.state.uploads.length).toBe(0);
@@ -142,7 +145,7 @@ describe('uploadFile', () => {
 
   it('cleans up the staging area when the local file does not exist', async () => {
     const p = join(dir, 'does-not-exist.mp4');
-    await expect(uploadFile(client, p, 'does-not-exist.mp4')).rejects.toThrow();
+    await expect(uploadFiles(client, single(p, 'does-not-exist.mp4'))).rejects.toThrow();
     expect(mock.state.stagingAreas.size).toBe(0);
     expect(mock.state.uploads.length).toBe(0);
   });
@@ -154,14 +157,14 @@ describe('uploadFile', () => {
     // staging area is created and abandoned for it.
     const p = join(dir, 'empty.mp4');
     await writeFile(p, Buffer.alloc(0));
-    const err = await uploadFile(client, p, 'empty.mp4').catch((e: unknown) => e);
+    const err = await uploadFiles(client, single(p, 'empty.mp4')).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ValidationError);
     expect(mock.state.stagingAreas.size).toBe(0);
     expect(mock.state.uploads.length).toBe(0);
   });
 
   it('cleans up when the file vanishes between the size check and opening the stream', async () => {
-    // uploadFile()'s upfront stat() is not atomic with uploadOnce() later
+    // uploadFiles()'s upfront stat() is not atomic with uploadOnce() later
     // opening the stream -- createStagingArea() in between is a real
     // network round trip. Simulate the file disappearing in exactly that
     // window and confirm the resulting ENOENT (surfaced asynchronously via
@@ -175,7 +178,7 @@ describe('uploadFile', () => {
       await rm(p);
       return uuid;
     };
-    const err = await uploadFile(client, p, 'vanishes.mp4').catch((e: unknown) => e);
+    const err = await uploadFiles(client, single(p, 'vanishes.mp4')).catch((e: unknown) => e);
     expect(err).toBeTruthy();
     expect(mock.state.stagingAreas.size).toBe(0);
     expect(mock.state.uploads.length).toBe(0);
@@ -206,7 +209,7 @@ describe('uploadFile', () => {
       return uuid;
     };
 
-    await expect(uploadFile(client, p, 'big-fail.mp4')).rejects.toThrow();
+    await expect(uploadFiles(client, single(p, 'big-fail.mp4'))).rejects.toThrow();
     expect(mock.state.stagingAreas.size).toBe(0);
 
     // The real assertion: the actual fs.ReadStream upload.ts opened (via
@@ -216,5 +219,125 @@ describe('uploadFile', () => {
     const stream = openedReadStreams[0]!;
     await waitForClosed(stream);
     expect(stream.destroyed).toBe(true);
+  });
+});
+
+describe('uploadFiles -- folder rows', () => {
+  async function folderOf(files: Record<string, string>) {
+    const f = join(dir, 'V2');
+    await mkdir(f);
+    for (const [n, b] of Object.entries(files)) await writeFile(join(f, n), b);
+    return {
+      source: 'V2',
+      folderPath: f,
+      files: Object.entries(files).map(([name, b]) => ({ path: join(f, name), name, size: b.length })),
+    };
+  }
+
+  it('puts every file into ONE staging area, in manifest order', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a', 'No2.pdf': 'bb', 'No3.pdf': 'ccc' });
+    const staging = await uploadFiles(client, unit);
+    expect(mock.state.uploads).toEqual([
+      { staging, filename: 'No1.pdf', bytes: 1 },
+      { staging, filename: 'No2.pdf', bytes: 2 },
+      { staging, filename: 'No3.pdf', bytes: 3 },
+    ]);
+  });
+
+  it('a 401 on the second file restarts the WHOLE row in a fresh staging area', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a', 'No2.pdf': 'bb' });
+    mock.state.expireNextUploadAfter = 1;
+    const staging = await uploadFiles(client, unit);
+    // The first area got No1 and then lost No2; the retry has both.
+    expect(mock.state.uploads.filter((u) => u.staging === staging).map((u) => u.filename)).toEqual([
+      'No1.pdf',
+      'No2.pdf',
+    ]);
+    expect([...mock.state.stagingAreas]).toEqual([staging]);
+  });
+
+  it('propagates a second 401 within the same row', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a', 'No2.pdf': 'bb' });
+    // The first PUT of each attempt is refused: the retry fails too, and stops.
+    mock.state.expireNextUpload = 2;
+    const err = await uploadFiles(client, unit).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(mock.state.stagingAreas.size).toBe(0);
+  });
+
+  it('fails the row when the folder gained a file since planning, creating nothing', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a' });
+    await writeFile(join(unit.folderPath, 'No2.pdf'), 'x');
+    await expect(uploadFiles(client, unit)).rejects.toThrow(
+      "the folder changed since planning ('No2.pdf' was added); plan again",
+    );
+    expect(mock.state.stagingAreas.size).toBe(0);
+  });
+
+  it('fails the row when a file changed size, naming both sizes', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a' });
+    await writeFile(join(unit.folderPath, 'No1.pdf'), 'abcd');
+    await expect(uploadFiles(client, unit)).rejects.toThrow(
+      "'No1.pdf' changed size (1 bytes when planned, 4 now)",
+    );
+  });
+
+  it('fails the row when a file is missing', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a', 'No2.pdf': 'b' });
+    await rm(join(unit.folderPath, 'No2.pdf'));
+    await expect(uploadFiles(client, unit)).rejects.toThrow("'No2.pdf' is missing");
+  });
+
+  it('fails the row when a folder has appeared inside it', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a' });
+    await mkdir(join(unit.folderPath, 'extra'));
+    await expect(uploadFiles(client, unit)).rejects.toThrow(/the folder changed since planning \(it holds a folder/);
+  });
+
+  it('refuses a 0-byte file in a folder, naming it, before creating anything', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a', 'No2.pdf': '' });
+    await expect(uploadFiles(client, unit)).rejects.toThrow(/No2\.pdf.*0 bytes/);
+    expect(mock.state.stagingAreas.size).toBe(0);
+  });
+
+  it('checks presence only when no size was recorded (a v1 manifest)', async () => {
+    const unit = await folderOf({ 'No1.pdf': 'a' });
+    delete (unit.files[0] as { size?: number }).size;
+    await writeFile(join(unit.folderPath, 'No1.pdf'), 'abcd');
+    await expect(uploadFiles(client, unit)).resolves.toBeTypeOf('string');
+  });
+
+  it('fails a single-file row whose file changed size since planning', async () => {
+    const p = join(dir, 'one.pdf');
+    await writeFile(p, 'abcd');
+    const unit = { source: 'one.pdf', files: [{ path: p, name: 'one.pdf', size: 1 }] };
+    await expect(uploadFiles(client, unit)).rejects.toThrow(
+      "'one.pdf' changed since planning (1 bytes when planned, 4 now); plan again",
+    );
+  });
+});
+
+describe('uploadFiles -- staging path encoding', () => {
+  // A filename travels in the staging PUT's URL path. Each of these, sent
+  // raw, would change what the server sees: '&' and '%' break decoding, '#'
+  // truncates at a fragment, '?' starts a query. client.ts encodes the
+  // segment; these pin it.
+  it.each(['A & B.pdf', 'No #3.pdf', '100% done.pdf', 'No2&3.pdf'])(
+    'the server receives %s whole',
+    async (name) => {
+      const p = join(dir, name);
+      await writeFile(p, 'x');
+      await uploadFiles(client, single(p, name));
+      expect(mock.state.uploads.at(-1)!.filename).toBe(name);
+    },
+  );
+
+  // '?' cannot be in a Windows filename, so the file on disk has another
+  // name; the attachment name is what travels in the URL.
+  it('the server receives a ? whole', async () => {
+    const p = join(dir, 'q.pdf');
+    await writeFile(p, 'x');
+    await uploadFiles(client, single(p, 'what?.pdf'));
+    expect(mock.state.uploads.at(-1)!.filename).toBe('what?.pdf');
   });
 });

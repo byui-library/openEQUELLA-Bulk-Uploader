@@ -553,7 +553,7 @@ describe('resolveSchemaPath', () => {
 describe('applyDuplicateChoices', () => {
   function manifestWithRows(rowNumbers: number[]): Manifest {
     return {
-      version: 1,
+      version: 2,
       createdAt: '2026-08-06T00:00:00.000Z',
       baseUrl: 'https://example.test',
       collectionUuid: 'c1',
@@ -563,8 +563,8 @@ describe('applyDuplicateChoices', () => {
       warnings: [],
       entries: rowNumbers.map((rowNumber) => ({
         rowNumber,
-        filePath: `/f/${rowNumber}.pdf`,
-        fileName: `${rowNumber}.pdf`,
+        source: `${rowNumber}.pdf`,
+        files: [{ path: `/f/${rowNumber}.pdf`, name: `${rowNumber}.pdf` }],
         metadata: {},
         status: 'pending' as const,
         attempts: 0,
@@ -830,5 +830,52 @@ describe('the model channels', () => {
     expect(await store().getModel(SITE)).toBeNull();
     expect(await store().getPassword(SITE)).toMatchObject({ username: 'r.thornbury' });
     expect(await store().loadInstance(SITE)).not.toBeNull();
+  });
+});
+
+describe('applyFolderOrders', () => {
+  async function folderJob(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-order-'));
+    const path = join(dir, 'job.json');
+    await saveManifest(path, {
+      version: 2,
+      createdAt: 'x',
+      baseUrl: 'https://example.test',
+      collectionUuid: 'c1',
+      schemaUuid: 's1',
+      itemState: 'draft',
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: [
+        {
+          rowNumber: 2,
+          source: 'V2',
+          folderPath: '/b/V2',
+          files: ['a.pdf', 'b.pdf'].map((name) => ({ path: `/b/V2/${name}`, name, size: 1 })),
+          metadata: {},
+          status: 'pending',
+          attempts: 0,
+        },
+      ],
+    });
+    return path;
+  }
+
+  it('saves the operator\'s order into the job before the run reads it', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    const manifestPath = await folderJob();
+    expect(await ipc.call<number>('oeq:applyFolderOrders', { manifestPath, orders: { 2: ['b.pdf', 'a.pdf'] } })).toBe(1);
+    expect((await loadManifest(manifestPath)).entries[0]!.files.map((f) => f.name)).toEqual(['b.pdf', 'a.pdf']);
+  });
+
+  it('saves nothing when an order does not match the folder', async () => {
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    const manifestPath = await folderJob();
+    await expect(
+      ipc.call<number>('oeq:applyFolderOrders', { manifestPath, orders: { 2: ['b.pdf'] } }),
+    ).rejects.toThrow(/does not match the folder/);
+    expect((await loadManifest(manifestPath)).entries[0]!.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
   });
 });

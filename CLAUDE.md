@@ -1,8 +1,10 @@
 # openEQUELLA Bulk Uploader
 
 A local tool for bulk-creating openEQUELLA contributions from a directory of files
-plus a metadata spreadsheet. One file becomes one attachment on one contribution —
-a strict 1:1 relationship.
+plus a metadata spreadsheet. **One spreadsheet row becomes one contribution**,
+holding either one file or every file in one folder (in `folderFiles.ts` order).
+It was a strict one-file-one-item tool until the folder work of 2026-11-13; much
+of the commentary below predates that and says "file" where it now means "row".
 
 Works at any openEQUELLA institution. BYU-Idaho (`https://content.byui.edu`) is
 one configuration of it, not the only one it fits — but it is the **only** one
@@ -131,10 +133,29 @@ history**, deliberately: the 2026-10-02 rewrite covered third parties only.
 Do not re-introduce a real name to describe the incident — this paragraph
 used to quote the surname it was warning about.
 
-**Electron 44 is on an open PR, `chore/electron-upgrade`** (2026-10-02),
-replacing an out-of-support Electron 33 that ships in every installer. Checked
-by launching the dev and packaged builds over CDP, not only by the suite. Not
-yet in any release, and not yet installed on a staff machine.
+**Electron 44 is MERGED (PR #17)**, replacing an out-of-support Electron 33
+that ships in every installer up to v1.2.2. Checked by launching the dev and
+packaged builds over CDP, not only by the suite. Not yet in any release, and
+not yet installed on a staff machine; v1.3.0 will be the first to carry it.
+
+**Several files on one contribution is BUILT, on `feature/multi-file-items`**
+(2026-11-13), not yet merged or released. A row's `attachment name` may name a
+subfolder; every file in it becomes an attachment of one item, in
+`folderFiles.ts#orderFiles` order. Manifest v2 (`files: ManifestFile[]`); v1
+still loads. The extractor gains `--per-folder` / a desktop toggle and the
+`each` column option; the model pass does NOT run on folder rows. Proven live
+before design (2026-11-11, content-test): one staging area, N PUTs, one
+`POST /api/item` with N attachments is accepted, **order is kept**, client
+uuids are honoured. A live folder batch through the desktop app worked
+(2026-11-17) and showed descriptions far too long, now capped (see the
+description-length fact below). Branch pushed. **A model description for
+folder rows is BUILT** (2026-11-17,
+[spec](docs/superpowers/specs/2026-11-17-folder-descriptions-design.md)): the
+model reads the start of every issue, its claims are checked against all of
+them joined, and `{ "ai": true, "after": true }` writes it after the
+template's fixed sentence, never replacing it. Still to do: the live run with
+the operator's model, then PR, merge, release v1.3.0.
+Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
 both BYU-Idaho sites**, because openEQUELLA now refuses the old query-string
@@ -214,6 +235,11 @@ The spec lives at
 ```text
 files/            Batch inputs — MP4s + spreadsheet. GITIGNORED (size + student names).
 src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by every front end.
+  folderFiles.ts    THE upload order of a folder's files (orderFiles) and what a folder
+                    contributes (listFolderFiles). Plan, run and extractor all use it.
+  folderReport.ts   Pure. How a plan lists each folder row's files -- CLI, MCP and desktop.
+  attachmentOrder.ts  Pure, renderer-safe. Both halves of the `attachment order` cell, and
+                    reorderFiles -- the one rule for matching an order to a folder.
   discovery.ts      Parses /api/collection and /api/schema. PURE — never fetches, so every
                     response shape is pinned against a recorded fixture.
   schemaCache.ts    A fetched schema on disk, keyed (instance url, schema uuid). Exists so
@@ -223,11 +249,14 @@ src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by e
   instanceUrl.ts    Validate/normalise an operator-typed address. HTTPS enforcement lives here.
   redact.ts         One redactor for secrets on the wire. Used by every error path.
 src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
+  length.ts         Imports nothing. DESCRIPTION_LIMIT (1,000), limitFor, shortenText -- the
+                    one length rule for the extractor, the model pass and plan's warning.
 src/core/ai/      The language-model pass. SEPARATE FROM extract/ because it is async and
                   does I/O, which extract/ must never be. Runs AFTER extraction, over the
                   finished rows.
   eligible.ts       Pure. The rule: which cells a model may write. The safety property.
   slice.ts          Pure. How much of a document to send, and how the budget is divided.
+                    sliceFolder: the start of each of a folder row's files, budget split evenly.
   prompt.ts         Pure. Builds the request; cleans and judges the reply.
   verify.ts         Pure. Which claims in a reply the document does not support. The guard.
   provider.ts       One OpenAI-compatible HTTP call. Injectable fetch. Every failure throws.
@@ -476,6 +505,55 @@ shape, never as a value the code may assume.
   would also stop the leak, and is deliberately NOT done**: one long-lived
   session would serve every later request, and a session openEQUELLA has since
   expired is answered as the guest with 200 and empty data, never a 401.
+- **One item may hold several files, and openEQUELLA keeps their order.**
+  Proven live on content-test, 2026-11-11, and checked by the operator in
+  openEQUELLA's own interface: one staging area, several `PUT`s, one
+  `POST /api/item` listing N attachments creates one item whose attachments
+  appear in the order sent, each with the client-supplied uuid. That is the
+  whole mechanism of a folder row. **The order is ONE decision, recorded in
+  the spreadsheet's reserved `attachment order` column** and frozen into the
+  manifest by `plan`, so plan, Review and run cannot disagree. `plan` refuses a
+  row whose column does not name exactly the folder's files; blank means
+  natural name order (`folderFiles.ts#orderFiles`), which puts `1972-73` BEFORE
+  `1972` because digits sort before `Vol`. How the column gets filled went
+  through three decisions on 2026-11-16, and the history matters: rename-only
+  (13 Nov) -> "Option C", patterns CHECK only -> **part numbers ORDER** (a real
+  volume crosses a year boundary, so a year in a name says nothing about
+  sequence). Reviewing and changing the order was the operator's explicit
+  requirement, and there are two ways: the desktop Review screen's ↑/↓
+  (`applyFolderOrders`, written into the job just before the run, as
+  duplicate choices are; moot for a row that will not upload) and the cell in
+  Excel. **The builder writes the cell ONLY where part order differs from
+  name order** -- an always-written list went stale on any rename and plan
+  refused the folder. `core/attachmentOrder.ts` owns the cell's format and
+  `reorderFiles`, the one matching rule the upload and the renderer share. **`extract/sequenceChecks.ts` is deliberately
+  NEUTRAL** -- `{part}`, `{group}`, `{year}` plus per-template `labels` for the
+  messages (Snake River Echoes: issue / volume) -- renamed from journal terms
+  BEFORE the first release so no template is ever written in a journal-only
+  form; the next collection's shape is unknown, so nothing beyond the
+  vocabulary was generalised. A file of another group or two files claiming
+  one part HOLD the folder back (left out of the spreadsheet); unnumbered
+  files, gaps and dates running backwards -- in a folder or across the run of
+  groups -- are NOTES. It NEVER moves a file: a misnamed file in the right
+  folder is indistinguishable from a right name in the wrong one. The checks
+  run at extract time because only the extractor has the template; a
+  hand-made spreadsheet is unchecked, and the docs say so. On the real
+  38-volume batch, after the operator's fixes, the log is one line: Vol 27's
+  unnumbered commemorative issue, attached last.
+- **A description is one or two paragraphs -- 1,000 characters -- and a
+  section that never ends is not one.** The first live folder batch
+  (2026-11-17) uploaded 4,000-character passages from the middle of a
+  journal's articles: no template was chosen, a mid-article 'Description'
+  heading matched, the section never ended, and the old code KEPT what the
+  cap reached, flagged. A flag did not stop it reaching the catalogue. Now a
+  section with no ending is rejected (noted, next source), a section or
+  opening is cut to a whole sentence within `limitFor(column)` and NOTED --
+  never flagged, or `eligible.ts` would let a model replace a trimmed real
+  abstract -- the model is told the limit and refused whole over it, and
+  `plan` warns about a long description -- typed by hand too -- without
+  cutting it. A label, table cell or property is cut only on an explicit
+  `maxLength`: they fill name lists too. **The operator's own wording is never
+  cut**, and neither is generated prose.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.

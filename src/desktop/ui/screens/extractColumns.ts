@@ -1,7 +1,8 @@
 // src/desktop/ui/screens/extractColumns.ts
 import { escapeHtml } from '../dom.js';
 import { describeFilename } from '../extract/segments.js';
-import { describeSource, optionsForColumn, restOfChain, type SourceEvidence } from '../extract/sources.js';
+import { isCurrentOption, optionsForColumn, patternParts, restOfChain, type SourceEvidence } from '../extract/sources.js';
+import { joinProblem } from '../../../core/extract/pattern.js';
 import { plainLabel } from '../extract/picker.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile, type Source } from '../../../core/extract/types.js';
 import { countNeedingReview } from '../../../core/ai/review.js';
@@ -10,6 +11,13 @@ export interface ExtractColumnsProps {
   profile: Profile;
   profilePath: string | null;
   sampleFilename: string;
+  /** How many of the batch's names the pattern does NOT fit, of how many. The
+   *  example shown is one that fits, so without this a pattern fitting one
+   *  name in three hundred would look fine (mount.ts#nameFit). */
+  unmatchedNames: number;
+  nameCount: number;
+  /** One row per subfolder: the name split into parts is a FOLDER's, and the screen says so. */
+  perFolder: boolean;
   /** Only the evidence the source dropdowns are built from. This screen reads
    * neither the file list nor the skipped list, and carrying them meant every
    * caller had to construct fields nobody looked at. */
@@ -39,16 +47,26 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
   // obituary template -- matched nothing and rendered as "(nothing)".
   const options = optionsForColumn(props.profile.pattern, props.scan, column.sources);
   const current = column.sources[0];
-  const currentLabel = current === undefined ? '' : describeSource(current);
   const rest = restOfChain(column.sources);
 
   const optionHtml = [
     `<option value="">(nothing &mdash; fill in Excel)</option>`,
     ...options.map(
       (o, n) =>
-        `<option value="${n}" ${o.label === currentLabel ? 'selected' : ''}>${escapeHtml(o.label)}</option>`,
+        `<option value="${n}" ${isCurrentOption(o, current) ? 'selected' : ''}>${escapeHtml(o.label)}</option>`,
     ),
   ].join('');
+
+  // TEXT WITH PARTS OF THE NAME gets a box for its text, under the list. Saved
+  // on `change` -- when the box is left -- not on every keystroke, so the
+  // screen does not re-render mid-word and needs no caret restoring.
+  const joinBox =
+    current !== undefined && 'join' in current
+      ? `<label class="hint" for="join-${index}">Text &mdash; put a part of the name in braces:
+           ${patternParts(props.profile.pattern).map((n) => `<code>{${escapeHtml(n)}}</code>`).join(' ') || 'the pattern has no parts yet'}</label>
+         <input id="join-${index}" class="join-input" type="text" value="${escapeHtml(current.join)}">
+         <p id="join-${index}-problem" class="error join-error" role="alert"></p>`
+      : '';
 
   return `
     <tr data-path="${escapeHtml(path)}" ${locked ? 'class="locked"' : ''}>
@@ -67,9 +85,10 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
       <td class="source">
         ${
           locked
-            ? '<span class="fixed">the file itself</span>'
+            ? `<span class="fixed">${props.perFolder ? 'the folder itself' : 'the file itself'}</span>`
             : `<label class="sr-only" for="src-${index}">Source for ${escapeHtml(plainLabel(path))}</label>
                <select id="src-${index}" class="source-select">${optionHtml}</select>
+               ${joinBox}
                ${
                  rest === null
                    ? ''
@@ -104,24 +123,64 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
     </tr>`;
 }
 
+/**
+ * How many names the pattern leaves out, when the example fits and some do
+ * not. Said here, before saving, rather than discovered afterwards as a
+ * "does not match the pattern" note on each of those rows.
+ */
+function unmatchedLine(props: ExtractColumnsProps): string {
+  // Nothing to add when every name fits, or none does -- then the example
+  // itself does not match, and the screen already says so.
+  if (props.unmatchedNames === 0 || props.unmatchedNames >= props.nameCount) return '';
+  const kind = props.perFolder ? 'folder names' : 'filenames';
+  return `<p class="warn-inline" id="extract-unmatched">${props.unmatchedNames} of ${props.nameCount} ${kind} do not fit this pattern; their rows will have no parts.</p>`;
+}
+
+/**
+ * How to use the name's parts -- only when there are some, and with an example
+ * built from THIS pattern's first part, so no collection's wording is shown to
+ * another.
+ */
+function partsHint(described: ReturnType<typeof describeFilename>): string {
+  const first = described.matched ? described.parts[0] : undefined;
+  if (first === undefined) return '';
+  return `
+      <p class="hint">
+        Any column can use these parts: choose <em>Part of the name</em>, or
+        <em>Text with parts of the name&hellip;</em> to put your own words around one &mdash;
+        e.g. <code>Your words {${escapeHtml(first.name)}}</code>.
+      </p>`;
+}
+
 function previewTable(props: ExtractColumnsProps): string {
   const paths = props.profile.columns.map((c) => c.path);
-  const head = paths.map((p) => `<th>${escapeHtml(p)}</th>`).join('');
+  // A FOLDER BATCH SHOWS WHAT EACH ROW HOLDS, straight after the folder name.
+  // Reported by the operator: a row named SRE_Vol1 gave no sign that it is one
+  // item carrying four issues. Display only -- never a spreadsheet column.
+  const folders = props.perFolder;
+  // After the column that names the folder, wherever the profile put it.
+  const filesAfter = Math.max(0, paths.indexOf(ATTACHMENT_COLUMN));
+  const cell = (value: string) =>
+    `<td>${value === '' ? '<span class="blank">(blank)</span>' : escapeHtml(value)}</td>`;
+  const filesCell = (files: string[] | undefined) =>
+    cell(files === undefined ? '' : `${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}`);
+  /** One row's cells, with the files cell spliced in for a folder batch. */
+  const withFiles = (cells: string[], files: string) => {
+    if (!folders) return cells.join('');
+    const at = Math.min(filesAfter + 1, cells.length);
+    return [...cells.slice(0, at), files, ...cells.slice(at)].join('');
+  };
+  const head = withFiles(
+    paths.map((p) => `<th>${escapeHtml(p)}</th>`),
+    '<th>Files attached, in order</th>',
+  );
   const body = props.preview
-    .map(
-      (row) =>
-        `<tr>${paths
-          .map((p) => {
-            const value = row.cells[p] ?? '';
-            return `<td>${value === '' ? '<span class="blank">(blank)</span>' : escapeHtml(value)}</td>`;
-          })
-          .join('')}</tr>`,
-    )
+    .map((row) => `<tr>${withFiles(paths.map((p) => cell(row.cells[p] ?? '')), filesCell(row.files))}</tr>`)
     .join('');
   const flagged = previewReviewCount(props.preview);
 
   return `
-    <h3>Preview &mdash; first ${props.preview.length} file(s)
+    <h3>Preview &mdash; first ${props.preview.length} ${folders ? 'folder(s)' : 'file(s)'}
       ${flagged > 0 ? `<span class="warn-inline">${flagged} need review</span>` : ''}
     </h3>
     <div class="preview-scroll"><table class="preview"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
@@ -207,12 +266,14 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
     <section class="screen wide" aria-labelledby="extract-columns-h">
       <h2 id="extract-columns-h">Build a spreadsheet &mdash; step 2 of 3</h2>
 
-      <h3>Your files look like this</h3>
+      <h3>Your ${props.perFolder ? 'folders' : 'files'} look like this</h3>
       <p class="sample"><code>${escapeHtml(props.sampleFilename)}</code></p>
       <p class="segments">${segments}</p>
+      ${unmatchedLine(props)}
+      ${partsHint(described)}
       <details>
         <summary>Edit the pattern</summary>
-        <label for="extract-pattern">Filename pattern</label>
+        <label for="extract-pattern">${props.perFolder ? 'Folder name pattern' : 'Filename pattern'}</label>
         <input id="extract-pattern" type="text" value="${escapeHtml(props.profile.pattern)}">
         <p class="hint">Use <code>{name}</code> for each part you want to capture.</p>
       </details>
@@ -265,6 +326,22 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
       const options = optionsForColumn(props.profile.pattern, props.scan, sources);
       const chosen = s.value === '' ? null : (options[Number(s.value)]?.source ?? null);
       props.onSourceChange(path, chosen);
+    }),
+  );
+  root.querySelectorAll<HTMLInputElement>('.join-input').forEach((i) =>
+    i.addEventListener('change', () => {
+      // A blank box is ignored, not saved: an empty text could never fill
+      // anything, and the profile loader refuses one.
+      const text = i.value.trim();
+      if (text === '') return;
+      // CHECKED HERE, BEFORE SAVING, by the profile loader's own rule. A bad
+      // text saved would be refused, and the re-render would put the OLD text
+      // back in the box -- throwing the typing away. Not saving, and saying why
+      // in the slot beside the box with no re-render, keeps every keystroke.
+      const problem = joinProblem(text, patternParts(props.profile.pattern));
+      const slot = root.querySelector<HTMLElement>(`#${i.id}-problem`);
+      if (slot !== null) slot.textContent = problem ?? '';
+      if (problem === null) props.onSourceChange(pathOf(i), { join: text });
     }),
   );
   root.querySelectorAll<HTMLInputElement>('.default-input').forEach((i) =>

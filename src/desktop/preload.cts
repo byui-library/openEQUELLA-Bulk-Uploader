@@ -5,7 +5,7 @@
 // main process itself stays ESM; only this one bridge file needs the
 // CommonJS extension. See main.ts, which points `preload` at `preload.cjs`.
 import { contextBridge, ipcRenderer } from 'electron';
-import type { OeqApi, RunProgress } from './ipc.js';
+import type { ExtractProgress, OeqApi, RunProgress } from './ipc.js';
 import type { ModelProgress } from '../core/ai/fill.js';
 
 /**
@@ -59,11 +59,13 @@ const CHANNELS = {
   validate: 'oeq:validate',
   plan: 'oeq:plan',
   applyDuplicateChoices: 'oeq:applyDuplicateChoices',
+  applyFolderOrders: 'oeq:applyFolderOrders',
   run: 'oeq:run',
   retryFailed: 'oeq:retryFailed',
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
   modelProgress: 'oeq:modelProgress',
+  extractProgress: 'oeq:extractProgress',
   extractScan: 'oeq:extractScan',
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',
@@ -108,10 +110,11 @@ const api: OeqApi = {
   validate: (args) => invoke(CHANNELS.validate, args),
   plan: (args) => invoke(CHANNELS.plan, args),
   applyDuplicateChoices: (args) => invoke(CHANNELS.applyDuplicateChoices, args),
+  applyFolderOrders: (args) => invoke(CHANNELS.applyFolderOrders, args),
   run: (args) => invoke(CHANNELS.run, args),
   retryFailed: (p) => invoke(CHANNELS.retryFailed, p),
   loadManifest: (p) => invoke(CHANNELS.loadManifest, p),
-  extractScan: (dir, instanceId) => invoke(CHANNELS.extractScan, dir, instanceId),
+  extractScan: (dir, instanceId, perFolder) => invoke(CHANNELS.extractScan, dir, instanceId, perFolder),
   extractPreview: (args) => invoke(CHANNELS.extractPreview, args),
   extractRun: (args) => invoke(CHANNELS.extractRun, args),
   schemaPaths: (instanceId) => invoke(CHANNELS.schemaPaths, instanceId),
@@ -122,12 +125,24 @@ const api: OeqApi = {
   saveProfileAs: (profile) => invoke(CHANNELS.saveProfileAs, profile),
   chooseCsvPath: () => invoke(CHANNELS.chooseCsvPath),
   openPath: (path) => invoke(CHANNELS.openPath, path),
-  onProgress: (cb) => {
-    ipcRenderer.on(CHANNELS.progress, (_e, p: RunProgress) => cb(p));
-  },
-  onModelProgress: (cb) => {
-    ipcRenderer.on(CHANNELS.modelProgress, (_e, p: ModelProgress) => cb(p));
-  },
+  // Each returns the way to stop listening -- see OeqApi.onModelProgress.
+  onProgress: (cb) => subscribe<RunProgress>(CHANNELS.progress, cb),
+  onModelProgress: (cb) => subscribe<ModelProgress>(CHANNELS.modelProgress, cb),
+  onExtractProgress: (cb) => subscribe<ExtractProgress>(CHANNELS.extractProgress, cb),
 };
+
+/**
+ * Listen on a channel, and hand back the way to stop. ONE copy for every
+ * progress channel, so a new one cannot be added without a way to remove it --
+ * a listener nobody can remove is how leaving the extract flow left every old
+ * screen re-rendering on every event.
+ */
+function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
+  const listener = (_e: unknown, payload: T) => cb(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
 
 contextBridge.exposeInMainWorld('oeq', api);

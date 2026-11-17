@@ -28,17 +28,19 @@ import { readSheet } from '../core/sheet.js';
 import { listModelsAt } from '../core/ai/pass.js';
 import {
   extractDefinition,
+  extractItemDescriptionPath,
   extractItemNamePath,
   parseSchemaPaths,
   validateHeaders,
   isAnnotationHeader,
 } from '../core/schema.js';
-import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
+import { buildManifest, preflightDuplicates, markSkipped, applyFolderOrders } from '../core/plan.js';
 import { findDuplicates } from '../core/duplicates.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { runManifest } from '../core/runner.js';
 import { signInInteractive } from './signin.js';
-import type { Sheet } from '../core/types.js';
+import { rowLabel, type Sheet } from '../core/types.js';
+import { planFolders } from '../core/folderReport.js';
 import { OeqError } from '../core/errors.js';
 import { registerExtractHandlers } from './extractHandlers.js';
 
@@ -245,21 +247,30 @@ function resourcePathOpts(): { isPackaged: boolean; appPath: string; resourcesPa
 
 /** Schema xpaths, read from the bundled reference export. */
 async function schemaPaths(): Promise<Set<string>> {
-  const p = resolveSchemaPath(resourcePathOpts());
-  return parseSchemaPaths(extractDefinition(await readFile(p, 'utf8')));
+  return (await bundledSchema()).paths;
 }
 
 /**
- * The title xpath the same export declares, or null if it declares none.
+ * Everything plan reads from the bundled export, from ONE read, so the three
+ * describe one schema -- as in the CLI's planAction and MCP's planTool.
  *
- * Read rather than assumed: the duplicate check searches on this path, and a
- * hardcoded `MWDL/title` matches nothing outside BYU-Idaho -- which would
- * report every row clean from a check that never looked. Null reaches
- * findDuplicates as "could not check", never as "clean".
+ * `titleHeader` and `descriptionPath` are read rather than assumed: the
+ * duplicate check searches on the title path, and a hardcoded `MWDL/title`
+ * matches nothing outside BYU-Idaho -- which would report every row clean from
+ * a check that never looked. Null reaches findDuplicates, and plan's
+ * long-description warning, as "could not check", never as "clean".
  */
-async function schemaTitleHeader(): Promise<string | null> {
-  const p = resolveSchemaPath(resourcePathOpts());
-  return extractItemNamePath(await readFile(p, 'utf8'));
+async function bundledSchema(): Promise<{
+  paths: Set<string>;
+  titleHeader: string | null;
+  descriptionPath: string | null;
+}> {
+  const xml = await readFile(resolveSchemaPath(resourcePathOpts()), 'utf8');
+  return {
+    paths: parseSchemaPaths(extractDefinition(xml)),
+    titleHeader: extractItemNamePath(xml),
+    descriptionPath: extractItemDescriptionPath(xml),
+  };
 }
 
 /**
@@ -705,16 +716,15 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const client = buildClient(cfg, auth);
 
       const sheet = applyOverrides(await readSheet(args.sheetPath), args.overrides ?? {});
-      const paths = await schemaPaths();
+      const { paths, titleHeader, descriptionPath } = await bundledSchema();
       const manifest = await buildManifest(sheet, args.filesDir, paths, {
         baseUrl: cfg.baseUrl,
         collectionUuid: cfg.collectionUuid,
         schemaUuid: cfg.schemaUuid,
         itemState: args.itemState,
         attachmentUuidPath: cfg.attachmentUuidPath,
+        descriptionPath,
       });
-
-      const titleHeader = await schemaTitleHeader();
 
       // Matches the CLI: fold advisory duplicate-identifier warnings into the
       // manifest at plan time so the reviewer sees them before confirming.
@@ -747,6 +757,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         invalidHeaders: invalid,
         warnings: manifest.warnings,
         duplicates,
+        folders: planFolders(manifest.entries),
       };
     },
   );
@@ -770,6 +781,21 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   );
 
   ipcMain.handle(
+    CHANNELS.applyFolderOrders,
+    async (_e, args: { manifestPath: string; orders: Record<number, string[]> }): Promise<number> => {
+      // The Review screen's reordering, applied to the SAVED manifest just
+      // before the run, exactly as duplicate choices are. applyFolderOrders
+      // throws before changing anything if any order does not match its
+      // folder, so a refused list leaves the file as it was -- never half
+      // reordered.
+      const manifest = await loadManifest(args.manifestPath);
+      const reordered = applyFolderOrders(manifest, args.orders);
+      await saveManifest(args.manifestPath, manifest);
+      return reordered;
+    },
+  );
+
+  ipcMain.handle(
     CHANNELS.run,
     async (_e, args: Parameters<OeqApi['run']>[0]): Promise<RunReport> => {
       const { inst, settings } = await requireSettings(args.instanceId);
@@ -780,10 +806,10 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
 
       const summary = await runManifest(client, args.manifestPath, {
         onProgress: (entry, done, total) => {
-          getWindow()?.webContents.send(CHANNELS.progress, {
+          toRenderer(CHANNELS.progress, {
             done,
             total,
-            fileName: entry.fileName,
+            label: rowLabel(entry),
             status: entry.status,
             error: entry.error,
           });
@@ -795,7 +821,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         ...summary,
         failures: done.entries
           .filter((e) => e.status === 'failed')
-          .map((e) => ({ rowNumber: e.rowNumber, fileName: e.fileName, error: e.error ?? 'unknown' })),
+          .map((e) => ({ rowNumber: e.rowNumber, label: rowLabel(e), error: e.error ?? 'unknown' })),
       };
     },
   );
@@ -820,16 +846,22 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     async (_e, p: Parameters<OeqApi['loadManifest']>[0]) => loadManifest(p),
   );
 
+  /**
+   * Send to whichever window is open, if one is. ONE copy for every progress
+   * channel: a run can outlive the window that started it, and a destroyed
+   * webContents throws on send -- a guard the upload's progress used to lack.
+   */
+  function toRenderer(channel: string, payload: unknown): void {
+    const win = getWindow();
+    if (win !== null && !win.isDestroyed()) win.webContents.send(channel, payload);
+  }
+
   // Extract flow. Kept in its own module so this file does not keep growing,
   // and so the schema path is resolved once, here, where packaging is known.
   registerExtractHandlers(ipcMain, {
     schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
-    // Sent to whichever window is open. Guarded: a run can outlive the
-    // window that started it, and a destroyed webContents throws on send.
-    onModelProgress: (event) => {
-      const win = getWindow();
-      if (win !== null && !win.isDestroyed()) win.webContents.send(CHANNELS.modelProgress, event);
-    },
+    onModelProgress: (event) => toRenderer(CHANNELS.modelProgress, event),
+    onExtractProgress: (progress) => toRenderer(CHANNELS.extractProgress, progress),
     templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
     // The site's OWN schema, when one has been fetched and cached, in
     // preference to the bundled export -- which is BYU-Idaho's and correct

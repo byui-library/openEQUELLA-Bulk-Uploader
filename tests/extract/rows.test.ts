@@ -1,7 +1,13 @@
 // tests/extract/rows.test.ts
 import { describe, it, expect } from 'vitest';
-import { buildRow, normaliseDate, normaliseDateWithFormat, splitPeople } from '../../src/core/extract/rows.js';
-import { ATTACHMENT_COLUMN, type DocumentData, type Profile } from '../../src/core/extract/types.js';
+import {
+  buildRow,
+  buildFolderRow,
+  normaliseDate,
+  normaliseDateWithFormat,
+  splitPeople,
+} from '../../src/core/extract/rows.js';
+import { ATTACHMENT_COLUMN, type Column, type DocumentData, type Profile } from '../../src/core/extract/types.js';
 
 const EMPTY_DOC: DocumentData = { text: '', hasTextLayer: true, properties: {}, tables: [] };
 
@@ -380,14 +386,96 @@ describe('buildRow reading a section', () => {
   /**
    * A section that ran to the length cap never reached another heading, which
    * on real files means the heading was not one: a benefits PDF matched
-   * "Summary" mid-page and produced 3,996 characters of plan tables. The value
-   * is kept -- it may still be useful -- but it is never kept silently.
+   * "Summary" mid-page and produced 3,996 characters of plan tables, and a
+   * journal's mid-article 'Description' heading put pages of an article into
+   * every volume's record (2026-11-17). It is NOT used, and the row says why.
    */
-  it('flags a section that ran to the cap', () => {
+  it('does not use a section that never ended, and says so', () => {
     const row = buildRow(sectionProfile, 'a.pdf', withSection(`Abstract ${'word '.repeat(3000)}`));
-    expect(row.cells['MWDL/description']?.length).toBeGreaterThan(100);
-    expect(row.notes.join(' ')).toMatch(/Abstract/);
-    expect(row.notes.join(' ')).toMatch(/cut short|too long|never ended/i);
+    expect(row.cells['MWDL/description']).toBe('');
+    expect(row.flagged['MWDL/description']).toBeUndefined();
+    expect(row.notes.join(' ')).toMatch(/'Abstract' section ran on without ending.*not used/);
+  });
+
+  it('moves on to the next source when a section never ended', () => {
+    const profile: Profile = {
+      ...sectionProfile,
+      columns: sectionProfile.columns.map((c) =>
+        c.path === 'MWDL/description' ? { ...c, sources: [{ section: 'Abstract' }, { opening: true }] } : c,
+      ),
+    };
+    const text = `This report describes the jumping study in plain words for every reader.\nAbstract ${'word '.repeat(3000)}`;
+    const row = buildRow(profile, 'a.pdf', withSection(text));
+    expect(row.cells['MWDL/description']).toBe('This report describes the jumping study in plain words for every reader.');
+    expect(row.sources['MWDL/description']).toBe('opening');
+  });
+});
+
+/**
+ * One or two paragraphs at most -- the operator's limit, 2026-11-17. Text read
+ * from a document is cut back to a whole sentence and flagged; text the
+ * operator wrote is never cut.
+ */
+describe('buildRow and the description limit', () => {
+  const sentence = 'The volume gathers local history from the upper valley. ';
+  const ended = (body: string): DocumentData => ({
+    text: `Abstract ${body}Keywords history`,
+    hasTextLayer: true,
+    properties: {},
+    tables: [],
+  });
+  const profileWith = (column: Partial<Column>): Profile => ({
+    version: 1,
+    pattern: '{name}.pdf',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ section: 'Abstract' }], ...column },
+    ],
+  });
+
+  it('cuts a long section that did end back to a whole sentence within 1,000 characters, and notes it', () => {
+    const row = buildRow(profileWith({}), 'a.pdf', ended(sentence.repeat(40)));
+    const value = row.cells['MWDL/description']!;
+    expect(value.length).toBeLessThanOrEqual(1000);
+    expect(value.length).toBeGreaterThan(900);
+    expect(value.endsWith('upper valley.')).toBe(true);
+    expect(row.notes.join(' ')).toMatch(/shortened to fit the 1000-character limit, ending at a whole sentence/);
+  });
+
+  // NOTED, NOT FLAGGED: the source was sure of the text, only its length was in
+  // question. A flag would make a trimmed real abstract replaceable by a model.
+  it('does not flag a shortened value, so a model may not replace it', () => {
+    const row = buildRow(profileWith({}), 'a.pdf', ended(sentence.repeat(40)));
+    expect(row.flagged['MWDL/description']).toBeUndefined();
+  });
+
+  it("honours a column's own limit", () => {
+    const row = buildRow(profileWith({ maxLength: 200 }), 'a.pdf', ended(sentence.repeat(10)));
+    expect(row.cells['MWDL/description']!.length).toBeLessThanOrEqual(200);
+    expect(row.notes.join(' ')).toMatch(/200-character limit/);
+  });
+
+  // A label or table cell fills lists of names too; a default cut would drop
+  // some. Only a column that asks is cut.
+  it('leaves a long label alone unless the column sets a limit', () => {
+    const names = Array.from({ length: 120 }, (_, i) => `Aster, Person${i}`).join('; ');
+    const doc: DocumentData = { text: `Creators: ${names}`, hasTextLayer: true, properties: {}, tables: [] };
+    const column = { path: 'MWDL/creators/creator', sources: [{ label: 'Creators' }] };
+    expect(buildRow(profileWith(column), 'a.pdf', doc).cells['MWDL/creators/creator']).toBe(names);
+    const capped = buildRow(profileWith({ ...column, maxLength: 200 }), 'a.pdf', doc);
+    expect(capped.cells['MWDL/creators/creator']!.length).toBeLessThanOrEqual(200);
+  });
+
+  it('leaves a short section alone and says nothing', () => {
+    const row = buildRow(profileWith({}), 'a.pdf', ended(sentence));
+    expect(row.cells['MWDL/description']).toBe(sentence.trim());
+    expect(row.notes).toEqual([]);
+  });
+
+  it('never cuts what the operator wrote', () => {
+    const long = sentence.repeat(30).trim();
+    const row = buildRow(profileWith({ sources: [], default: long }), 'a.pdf', ended(''));
+    expect(row.cells['MWDL/description']).toBe(long);
   });
 });
 
@@ -867,5 +955,213 @@ describe('an ai source resolves to nothing', () => {
     const row = buildRow(profile, 'a.pdf', EMPTY_DOC);
     expect(row.cells['MWDL/title']).toBe('a');
     expect(row.sources['MWDL/title']).toBe('filename');
+  });
+});
+
+describe('buildFolderRow', () => {
+  const doc = (text: string, title = ''): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: title ? { title } : {},
+    tables: [],
+  });
+  const profile = (columns: Column[], pattern = 'Gazette_V{volume}'): Profile => ({
+    version: 1,
+    pattern,
+    columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }, ...columns],
+  });
+
+  it('names the folder in attachment name; placeholders and filenameStem read the folder name', () => {
+    const row = buildFolderRow(
+      profile([
+        { path: 'MWDL/title', sources: [{ join: 'Gazette, Volume {volume}' }] },
+        { path: 'MWDL/identifier', sources: [{ filenameStem: true }] },
+      ]),
+      'Gazette_V2',
+      [{ name: 'G_No1.pdf', doc: doc('x') }],
+    );
+    expect(row.cells['attachment name']).toBe('Gazette_V2');
+    expect(row.cells['MWDL/title']).toBe('Gazette, Volume 2');
+    expect(row.cells['MWDL/identifier']).toBe('Gazette_V2');
+    expect(row.notes).toEqual([]);
+  });
+
+  it('takes the first value found in attachment order, noting a later file', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/description', sources: [{ property: 'title' }] }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('a') },
+        { name: 'G_No2.pdf', doc: doc('b', 'Spring issue') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Spring issue');
+    expect(row.notes).toContain(
+      "MWDL/description: taken from 'G_No2.pdf' -- the earlier files in this folder gave nothing",
+    );
+  });
+
+  it('adds no note when the first file answers', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/description', sources: [{ property: 'title' }] }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('a', 'Winter issue') },
+        { name: 'G_No2.pdf', doc: doc('b', 'Spring issue') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Winter issue');
+    expect(row.notes).toEqual([]);
+  });
+
+  it('tries every source on one file before moving to the next file', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/description', sources: [{ property: 'subject' }, { property: 'title' }] }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('a', 'Winter issue') },
+        { name: 'G_No2.pdf', doc: { ...doc('b'), properties: { subject: 'Spring subject' } } },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Winter issue');
+  });
+
+  it("each: collects every file's value in order, de-duplicated ignoring case, and notes it", () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/subjects/subject', sources: [{ property: 'title' }], each: true }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('', 'Winter') },
+        { name: 'G_No2.pdf', doc: doc('', '') },
+        { name: 'G_No3.pdf', doc: doc('', 'winter') },
+        { name: 'G_No4.pdf', doc: doc('', 'Spring') },
+      ],
+    );
+    expect(row.cells['MWDL/subjects/subject']).toBe('Winter; Spring');
+    expect(row.notes).toContain('MWDL/subjects/subject: collected from 3 of 4 files');
+  });
+
+  it('each: falls to the default when no file answers', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/subjects/subject', sources: [{ property: 'title' }], each: true, default: 'None' }]),
+      'Gazette_V2',
+      [{ name: 'G_No1.pdf', doc: doc('') }],
+    );
+    expect(row.cells['MWDL/subjects/subject']).toBe('None');
+  });
+
+  it('falls back to the default only when no file answers', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/genre', sources: [{ property: 'subject' }], default: 'Periodical' }]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('') },
+        { name: 'G_No2.pdf', doc: doc('') },
+      ],
+    );
+    expect(row.cells['MWDL/genre']).toBe('Periodical');
+  });
+
+  it('composes from the finished values of the first pass', () => {
+    const row = buildFolderRow(
+      profile([
+        { path: 'MWDL/coverage', as: 'issue', composeOnly: true, sources: [{ property: 'title' }] },
+        { path: 'MWDL/description', sources: [{ compose: 'First issue: {issue}' }] },
+      ]),
+      'Gazette_V2',
+      [
+        { name: 'G_No1.pdf', doc: doc('') },
+        { name: 'G_No2.pdf', doc: doc('', 'Spring') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('First issue: Spring');
+  });
+
+  it('names each file with no text layer', () => {
+    const row = buildFolderRow(profile([]), 'Gazette_V2', [
+      { name: 'G_No1.pdf', doc: { ...doc(''), hasTextLayer: false } },
+    ]);
+    expect(row.notes).toContain("no text layer in 'G_No1.pdf' -- nothing could be read from inside it");
+  });
+
+  it('says so when no file in the folder could be read, and still builds the row', () => {
+    const row = buildFolderRow(profile([]), 'Gazette_V2', []);
+    expect(row.cells['attachment name']).toBe('Gazette_V2');
+    expect(row.notes).toEqual([
+      'no file in this folder could be read -- the row was built from the folder name alone',
+    ]);
+  });
+
+  it('says folder name, not filename, when the pattern does not match', () => {
+    const row = buildFolderRow(
+      profile([{ path: 'MWDL/title', sources: [{ placeholder: 'volume' }] }]),
+      'Other',
+      [{ name: 'a.pdf', doc: doc('') }],
+    );
+    expect(row.notes).toContain("folder name does not match the pattern 'Gazette_V{volume}'");
+  });
+
+  it('checks folder-name words against the text of every file', () => {
+    const p: Profile = {
+      ...profile([], '{name}'),
+      checks: { filenameWordsInText: {} },
+    };
+    const clean = buildFolderRow(p, 'Larkwood Gazette', [
+      { name: 'a.pdf', doc: doc('the Larkwood region') },
+      { name: 'b.pdf', doc: doc('a Gazette of note') },
+    ]);
+    expect(clean.notes).toEqual([]);
+    const flagged = buildFolderRow(p, 'Larkwod Gazette', [{ name: 'a.pdf', doc: doc('the Larkwood Gazette') }]);
+    expect(flagged.notes.join(' ')).toMatch(/check this folder name/);
+  });
+});
+
+describe('buildFolderRow -- review fixes', () => {
+  const doc = (text: string, title = ''): DocumentData => ({
+    text,
+    hasTextLayer: true,
+    properties: title ? { title } : {},
+    tables: [],
+  });
+  const withColumns = (columns: Column[]): Profile => ({
+    version: 1,
+    pattern: '{name}',
+    columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }, ...columns],
+  });
+
+  it('filenameStem keeps a dot in a folder name -- a folder has no extension', () => {
+    const row = buildFolderRow(
+      withColumns([{ path: 'MWDL/title', sources: [{ filenameStem: true }] }]),
+      'Echoes Vol. 12',
+      [{ name: 'a.pdf', doc: doc('') }],
+    );
+    expect(row.cells['MWDL/title']).toBe('Echoes Vol. 12');
+  });
+
+  it('each: removes a repeated name inside a multi-valued cell, not just a repeated cell', () => {
+    const row = buildFolderRow(
+      withColumns([{ path: 'MWDL/creators/creator', sources: [{ property: 'author' }], each: true }]),
+      'V2',
+      [
+        { name: 'a.pdf', doc: { ...doc(''), properties: { author: 'Aster, A.; Birch, B.' } } },
+        { name: 'b.pdf', doc: { ...doc(''), properties: { author: 'birch, b.' } } },
+      ],
+    );
+    expect(row.cells['MWDL/creators/creator']).toBe('Aster, A.; Birch, B.');
+  });
+
+  it("a composed column's fallback sources still read every file", () => {
+    const row = buildFolderRow(
+      withColumns([
+        { path: 'MWDL/coverage', as: 'x', composeOnly: true, sources: [] },
+        { path: 'MWDL/description', sources: [{ compose: '{x}' }, { property: 'title' }] },
+      ]),
+      'V2',
+      [
+        { name: 'a.pdf', doc: doc('') },
+        { name: 'b.pdf', doc: doc('', 'Spring issue') },
+      ],
+    );
+    expect(row.cells['MWDL/description']).toBe('Spring issue');
   });
 });

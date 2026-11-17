@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { ValidationError } from '../errors.js';
 import { suggest } from '../schema.js';
-import { placeholders } from './pattern.js';
+import { joinProblem, placeholders } from './pattern.js';
 import { ATTACHMENT_COLUMN, type DocumentProperty, type Profile, type Source } from './types.js';
 
 const PROPERTY_NAMES = ['title', 'author', 'subject', 'keywords', 'created'] as const;
@@ -31,7 +31,7 @@ const sourceSchema = z.union([
     presence: z.object({ any: z.array(z.string().min(1)).min(1), then: z.string().min(1) }).strict(),
   }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
-  z.object({ ai: z.literal(true) }).strict(),
+  z.object({ ai: z.literal(true), after: z.literal(true).optional() }).strict(),
 ]);
 
 /**
@@ -56,6 +56,10 @@ const columnSchema = z
     as: z.string().min(1).optional(),
     flagIfEmpty: z.boolean().optional(),
     composeOnly: z.boolean().optional(),
+    each: z.boolean().optional(),
+    // At least a sentence or two; a limit of 5 would shorten every value to
+    // nothing and flag every row.
+    maxLength: z.number().int().min(100).optional(),
   })
   .strict();
 
@@ -72,6 +76,21 @@ const profileSchema = z
     checks: z
       .object({
         filenameWordsInText: z.object({ ignore: z.array(z.string()).optional() }).strict().optional(),
+        sequence: z
+          .object({
+            patterns: z.array(z.string().min(1)).min(1),
+            labels: z
+              .object({
+                part: z.string().min(1).optional(),
+                parts: z.string().min(1).optional(),
+                group: z.string().min(1).optional(),
+                groups: z.string().min(1).optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
@@ -130,10 +149,44 @@ export function parseProfile(input: unknown): Profile {
     throw new ValidationError(`Two columns both use the name '${dupeAlias}'.`);
   }
 
+  // Sequence patterns are checked here, at load, rather than discovered on the
+  // batch: a pattern the checker cannot use would otherwise check nothing
+  // across four hundred folders and say so only at the end, if at all.
+  for (const pattern of profile.checks?.sequence?.patterns ?? []) {
+    const names = placeholders(pattern);
+    if (!names.includes('part')) {
+      throw new ValidationError(
+        `The sequence pattern '${pattern}' has no {part}, so it could never find a part number.`,
+      );
+    }
+    const unknown = names.filter((n) => n !== 'part' && n !== 'group' && n !== 'year');
+    if (unknown.length > 0) {
+      throw new ValidationError(
+        `The sequence pattern '${pattern}' uses ${unknown.map((n) => `{${n}}`).join(', ')}; ` +
+          `only {part}, {group} and {year} mean anything there.`,
+      );
+    }
+    if (names.includes('group') && !placeholders(profile.pattern).includes('group')) {
+      throw new ValidationError(
+        `The sequence pattern '${pattern}' compares {group}, but the profile's "pattern" has no ` +
+          `{group} to read from the folder name, so the check could never run. Add {group} to ` +
+          `"pattern" (e.g. "SRE_Vol{group}") or drop it from the sequence pattern.`,
+      );
+    }
+  }
+
   // A composeOnly column is never written to the sheet, so a compose template
   // reading it by name is the ONLY way its value can leave the extractor. With
   // no name it is extracted on every row and then silently discarded.
   for (const column of profile.columns) {
+    // A row names exactly one file or one folder; "every file's value,
+    // joined" in that cell would name something that does not exist.
+    if (column.each === true && column.path === ATTACHMENT_COLUMN) {
+      throw new ValidationError(
+        `Column '${ATTACHMENT_COLUMN}' cannot use "each": it names the file or folder the row ` +
+          `uploads, and a row names exactly one.`,
+      );
+    }
     if (column.composeOnly === true && column.as === undefined) {
       throw new ValidationError(
         `Column '${column.path}' is composeOnly but has no "as" name, so nothing could read it. ` +
@@ -230,16 +283,16 @@ export function parseProfile(input: unknown): Profile {
   const known = new Set(placeholders(profile.pattern));
   for (const column of profile.columns) {
     for (const source of column.sources) {
-      const used =
-        'placeholder' in source ? [source.placeholder]
-        : 'join' in source ? joinPlaceholders(source.join)
-        : [];
-      for (const name of used) {
-        if (!known.has(name)) {
-          throw new ValidationError(
-            `Column '${column.path}' uses {${name}}, which the pattern '${profile.pattern}' does not define.`,
-          );
-        }
+      // A join is held to the WHOLE rule -- malformed braces too, which a
+      // narrow name scan would leave as literal text in every item.
+      if ('join' in source) {
+        const problem = joinProblem(source.join, [...known]);
+        if (problem !== null) throw new ValidationError(`Column '${column.path}': ${problem}.`);
+      }
+      if ('placeholder' in source && !known.has(source.placeholder)) {
+        throw new ValidationError(
+          `Column '${column.path}' uses {${source.placeholder}}, which the pattern '${profile.pattern}' does not define.`,
+        );
       }
     }
   }

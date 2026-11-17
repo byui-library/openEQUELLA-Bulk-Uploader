@@ -28,7 +28,7 @@ function fakeRoot(): { root: HTMLElement; fill: { style: { width: string } } } {
 const props = (over: Partial<Parameters<typeof progressMarkup>[0]> = {}) => ({
   done: 0,
   total: 37,
-  fileName: 'Smith_Jane.mp4',
+  label: 'Smith_Jane.mp4',
   log: [],
   ...over,
 });
@@ -43,7 +43,7 @@ describe('progressMarkup', () => {
   });
 
   it('escapes a filename containing markup', () => {
-    const html = progressMarkup(props({ fileName: '<img src=x onerror=alert(1)>.mp4' }));
+    const html = progressMarkup(props({ label: '<img src=x onerror=alert(1)>.mp4' }));
     expect(html).not.toContain('<img src=x');
     expect(html).toContain('&lt;img');
   });

@@ -1,10 +1,20 @@
-import { readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import type { Manifest, ManifestEntry, Sheet, ItemState } from './types.js';
+import { readdir, stat } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import type { Manifest, ManifestEntry, ManifestFile, Sheet, ItemState } from './types.js';
 import { splitRepeatable } from './metadata.js';
-import { ATTACHMENT_COLUMN } from './types.js';
-import { validateHeaders, isAnnotationHeader, matchSchemaPath, topSection } from './schema.js';
+import { ATTACHMENT_COLUMN, ATTACHMENT_ORDER_COLUMN, rowLabel } from './types.js';
+import {
+  validateHeaders,
+  isAnnotationHeader,
+  isReservedHeader,
+  matchSchemaPath,
+  reservedCell,
+  topSection,
+} from './schema.js';
 import { ValidationError } from './errors.js';
+import { listFolderFiles } from './folderFiles.js';
+import { parseAttachmentOrder, reorderFiles } from './attachmentOrder.js';
+import { DESCRIPTION_LIMIT } from './extract/length.js';
 import type { OeqClient } from './client.js';
 
 export interface PlanOptions {
@@ -21,6 +31,26 @@ export interface PlanOptions {
    * header is an ordinary column like any other.
    */
   attachmentUuidPath?: string;
+  /**
+   * The schema's declared description path, so a description longer than one
+   * or two paragraphs is warned about before it is uploaded -- including one
+   * typed by hand, which the extractor never saw. Null when the schema
+   * declares none: the batch is then told the length was not checked, never
+   * left to read silence as "checked, all fine". Absent: no check, no warning.
+   */
+  descriptionPath?: string | null;
+}
+
+/** Said once per batch when the schema names no description field. */
+export const NO_DESCRIPTION_PATH_WARNING =
+  'Description lengths were not checked: the schema declares no description field.';
+
+/** One row's description is longer than one or two paragraphs. */
+function longDescriptionWarning(rowNumber: number, path: string, length: number): string {
+  return (
+    `Row ${rowNumber}: the description ('${path}') is ${length} characters, longer than the ` +
+    `${DESCRIPTION_LIMIT} of one or two paragraphs. Shorten it in the spreadsheet, or upload it as it is.`
+  );
 }
 
 /**
@@ -53,13 +83,19 @@ export async function buildManifest(
     throw new ValidationError(`Spreadsheet has invalid column headers:\n${detail}`);
   }
 
-  // withFileTypes + isFile(): filesDir sits next to the batch spreadsheet
-  // itself (and may contain other incidental subfolders); only regular files
-  // are upload candidates. A directory entry must never be "matched" as an
-  // attachment, nor generate a spurious "no matching row" warning.
+  // Files AND folders are candidates: a row may name a subfolder, whose files
+  // become one contribution's attachments (see folderFiles.ts). filesDir sits
+  // next to the batch spreadsheet and may also hold incidental subfolders;
+  // those are reported only in a batch that uses folders at all -- see below.
   const dirEntries = await readdir(filesDir, { withFileTypes: true });
   const onDisk = dirEntries.filter((d) => d.isFile()).map((d) => d.name);
-  const byLower = new Map(onDisk.map((f) => [f.toLowerCase(), f]));
+  const folders = dirEntries.filter((d) => d.isDirectory()).map((d) => d.name);
+  const byLower = new Map<string, { name: string; isFolder: boolean }>([
+    ...folders.map((f) => [f.toLowerCase(), { name: f, isFolder: true }] as const),
+    // Files second, so on a case-sensitive disk a file wins a tie: the
+    // behaviour every existing batch already had.
+    ...onDisk.map((f) => [f.toLowerCase(), { name: f, isFolder: false }] as const),
+  ]);
 
   const entries: ManifestEntry[] = [];
   const warnings: string[] = [];
@@ -70,15 +106,64 @@ export async function buildManifest(
   const claims = new Map<string, number[]>();
 
   for (const row of sheet.rows) {
-    const wanted = (row.cells[ATTACHMENT_COLUMN] ?? '').trim();
+    const wanted = reservedCell(row.cells, ATTACHMENT_COLUMN).trim();
     if (wanted === '') {
       warnings.push(`Row ${row.rowNumber}: no '${ATTACHMENT_COLUMN}' value; skipped.`);
       continue;
     }
-    const actual = byLower.get(wanted.toLowerCase());
-    if (!actual) {
+    const match = byLower.get(wanted.toLowerCase());
+    if (!match) {
       warnings.push(`Row ${row.rowNumber}: file '${wanted}' not found in ${filesDir}; skipped.`);
       continue;
+    }
+    const actual = match.name;
+
+    // Resolved against the current cwd if filesDir isn't already absolute:
+    // the runner reads these paths back out of job.json in a different
+    // process, possibly with a different cwd, so a cwd-relative path would
+    // silently fail to open there.
+    let files: ManifestFile[];
+    let folderPath: string | undefined;
+    let skippedFiles: ManifestEntry['skippedFiles'];
+    if (match.isFolder) {
+      folderPath = resolve(filesDir, actual);
+      const listing = await listFolderFiles(folderPath);
+      if (listing.refusal !== undefined) {
+        // Skipped whole, never planned with fewer files than the folder
+        // holds: an item missing an issue reads as complete to everyone who
+        // later finds it.
+        warnings.push(
+          `Row ${row.rowNumber}: folder '${actual}' cannot be uploaded: ${listing.refusal}; skipped.`,
+        );
+        continue;
+      }
+      const base = folderPath;
+      // Blank means name order -- the listing as it came, from folderFiles.ts.
+      const wantedOrder = parseAttachmentOrder(reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN));
+      const ordered = wantedOrder.length === 0 ? { files: listing.files } : reorderFiles(listing.files, wantedOrder);
+      if ('problem' in ordered) {
+        // Refused whole, like any other folder that cannot be what the plan
+        // says: an order naming files the folder does not hold -- a stale
+        // order, or a typo -- must never upload a different set than the one
+        // the spreadsheet describes.
+        warnings.push(
+          `Row ${row.rowNumber}: folder '${actual}' cannot be uploaded: its '${ATTACHMENT_ORDER_COLUMN}' ` +
+            `does not match the folder (${ordered.problem}) -- fix the column, or clear it to use name ` +
+            `order; skipped.`,
+        );
+        continue;
+      }
+      files = ordered.files.map((f) => ({ path: join(base, f.name), name: f.name, size: f.size }));
+      if (listing.skipped.length > 0) skippedFiles = listing.skipped;
+    } else {
+      const path = resolve(filesDir, actual);
+      files = [{ path, name: actual, size: (await stat(path)).size }];
+      if (parseAttachmentOrder(reservedCell(row.cells, ATTACHMENT_ORDER_COLUMN)).length > 0) {
+        warnings.push(
+          `Row ${row.rowNumber}: '${ATTACHMENT_ORDER_COLUMN}' applies only to a row naming a folder; ` +
+            `ignored for '${actual}'.`,
+        );
+      }
     }
 
     const rowsForFile = claims.get(actual) ?? [];
@@ -87,7 +172,7 @@ export async function buildManifest(
 
     const metadata: Record<string, string[]> = {};
     for (const [header, value] of Object.entries(row.cells)) {
-      if (header === ATTACHMENT_COLUMN) continue;
+      if (isReservedHeader(header)) continue;
       // Filled in with the real uuid once the attachment exists -- but only
       // when a path is configured. The `!== ''` guard matters: without it, an
       // unconfigured batch would silently drop any column whose header is
@@ -103,14 +188,22 @@ export async function buildManifest(
       (metadata[header] ??= []).push(...splitRepeatable(header, value));
     }
 
+    // A WARNING, NEVER A CUT. What is in the spreadsheet is what the operator
+    // approved; shortening it here would upload text nobody has read.
+    if (typeof opts.descriptionPath === 'string') {
+      for (const value of metadata[opts.descriptionPath] ?? []) {
+        if (value.length > DESCRIPTION_LIMIT) {
+          warnings.push(longDescriptionWarning(row.rowNumber, opts.descriptionPath, value.length));
+        }
+      }
+    }
+
     entries.push({
       rowNumber: row.rowNumber,
-      // Resolved against the current cwd if filesDir isn't already absolute:
-      // Task 10's runner reads these paths back out of job.json in a
-      // different process, possibly with a different cwd, so a
-      // cwd-relative path would silently fail to open there.
-      filePath: resolve(filesDir, actual),
-      fileName: actual,
+      source: actual,
+      ...(folderPath !== undefined ? { folderPath } : {}),
+      files,
+      ...(skippedFiles !== undefined ? { skippedFiles } : {}),
       metadata,
       status: 'pending',
       attempts: 0,
@@ -134,7 +227,7 @@ export async function buildManifest(
       .map(([file, rows]) => `  '${file}' is claimed by rows ${rows.join(', ')}`)
       .join('\n');
     throw new ValidationError(
-      `Multiple spreadsheet rows claim the same file; each file may back only one ` +
+      `Multiple spreadsheet rows claim the same file or folder; each may back only one ` +
         `contribution:\n${detail}\nFix the '${ATTACHMENT_COLUMN}' column (or remove the ` +
         `duplicate row) and re-run.`,
     );
@@ -143,6 +236,18 @@ export async function buildManifest(
   for (const f of onDisk) {
     if (!claims.has(f)) warnings.push(`File '${f}' has no matching row; not uploaded.`);
   }
+
+  // Unclaimed folders are reported only when this batch uses folders at all.
+  // A file-only batch's folder routinely holds incidental subfolders and
+  // always has, and naming them would be noise. In a folder batch, an
+  // unclaimed folder is a volume that will silently not be contributed.
+  if (entries.some((e) => e.folderPath !== undefined)) {
+    for (const f of folders) {
+      if (!claims.has(f)) warnings.push(`Folder '${f}' has no matching row; not uploaded.`);
+    }
+  }
+
+  if (opts.descriptionPath === null) warnings.push(NO_DESCRIPTION_PATH_WARNING);
 
   // An empty manifest means the runner would do nothing at all -- almost
   // certainly a wrong filesDir or a wrong 'attachment name' column, not a
@@ -155,13 +260,13 @@ export async function buildManifest(
   if (entries.length === 0) {
     const reason = warnings.length > 0 ? `\n${warnings.join('\n')}` : '';
     throw new ValidationError(
-      `No rows matched any file in ${filesDir}; nothing to upload. Check the directory ` +
+      `No rows matched any file or folder in ${filesDir}; nothing to upload. Check the directory ` +
         `path and the '${ATTACHMENT_COLUMN}' column.${reason}`,
     );
   }
 
   return {
-    version: 1,
+    version: 2,
     createdAt: new Date().toISOString(),
     baseUrl: opts.baseUrl,
     collectionUuid: opts.collectionUuid,
@@ -172,6 +277,40 @@ export async function buildManifest(
     entries,
     warnings,
   };
+}
+
+/**
+ * Reorder planned folder rows -- the desktop Review screen's ↑/↓ buttons,
+ * applied to the manifest just before the run, as duplicate choices are.
+ *
+ * ALL OR NOTHING. Every order is checked before any entry changes: a run
+ * started with half the operator's reordering applied would upload items in
+ * an order nobody chose. Only a PENDING FOLDER row is reordered -- a
+ * created item's attachments are already fixed, and an order for any other row
+ * is ignored as moot rather than refused (see below). Returns how
+ * many rows were reordered.
+ */
+export function applyFolderOrders(manifest: Manifest, orders: Readonly<Record<number, readonly string[]>>): number {
+  const changes: { entry: ManifestEntry; files: ManifestFile[] }[] = [];
+  for (const [row, wanted] of Object.entries(orders)) {
+    const rowNumber = Number(row);
+    const entry = manifest.entries.find((e) => e.rowNumber === rowNumber);
+    // A row that will not upload has no order to apply, and refusing over it
+    // would block the whole batch: a folder reordered AND then marked "Skip"
+    // as a duplicate (skips are applied first), or one the re-plan at upload
+    // time left out. Its order is simply moot.
+    if (entry === undefined || entry.folderPath === undefined || entry.status !== 'pending') continue;
+    const result = reorderFiles(entry.files, wanted);
+    if ('problem' in result) {
+      throw new ValidationError(
+        `Row ${rowNumber} (${rowLabel(entry)}): the new attachment order does not match the folder ` +
+          `(${result.problem})`,
+      );
+    }
+    changes.push({ entry, files: result.files });
+  }
+  for (const { entry, files } of changes) entry.files = files;
+  return changes.length;
 }
 
 /**
@@ -312,14 +451,14 @@ export async function preflightDuplicates(
       if (exists) {
         warnings.push(
           `Row ${entry.rowNumber}: an item with identifier '${identifier}' may already exist ` +
-            `in the collection; verify before uploading '${entry.fileName}'.`,
+            `in the collection; verify before uploading '${rowLabel(entry)}'.`,
         );
       }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       warnings.push(
         `Row ${entry.rowNumber}: could not check whether identifier '${identifier}' already ` +
-          `exists (${detail}); verify manually before uploading '${entry.fileName}'.`,
+          `exists (${detail}); verify manually before uploading '${rowLabel(entry)}'.`,
       );
     }
   }

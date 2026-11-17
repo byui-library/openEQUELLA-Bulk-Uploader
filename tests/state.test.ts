@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveManifest, loadManifest } from '../src/core/state.js';
-import type { Manifest } from '../src/core/types.js';
+import { rowLabel, type Manifest } from '../src/core/types.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -11,7 +11,7 @@ beforeEach(async () => {
 });
 
 const manifest = (): Manifest => ({
-  version: 1,
+  version: 2,
   createdAt: '2026-08-03T00:00:00.000Z',
   baseUrl: 'https://example.test',
   collectionUuid: 'c-uuid',
@@ -21,8 +21,8 @@ const manifest = (): Manifest => ({
   entries: [
     {
       rowNumber: 2,
-      filePath: '/tmp/a.mp4',
-      fileName: 'a.mp4',
+      source: 'a.mp4',
+      files: [{ path: '/tmp/a.mp4', name: 'a.mp4' }],
       metadata: { 'MWDL/title': ['A'] },
       status: 'pending',
       attempts: 0,
@@ -106,8 +106,8 @@ describe('state', () => {
     const m = manifest();
     m.entries.push({
       rowNumber: 3,
-      filePath: '/tmp/b.mp4',
-      fileName: 'b.mp4',
+      source: 'b.mp4',
+      files: [{ path: '/tmp/b.mp4', name: 'b.mp4' }],
       metadata: { 'MWDL/title': ['B'] },
       status: 'failed',
       error: 'network timeout uploading attachment',
@@ -118,5 +118,83 @@ describe('state', () => {
     const failed = loaded.entries.find((e) => e.status === 'failed');
     expect(failed?.error).toBe('network timeout uploading attachment');
     expect(failed?.attempts).toBe(2);
+  });
+});
+
+describe('manifest v1 compatibility', () => {
+  const v1 = (entry: Record<string, unknown>) =>
+    JSON.stringify({
+      version: 1,
+      createdAt: 'x',
+      baseUrl: 'https://h',
+      collectionUuid: 'c',
+      schemaUuid: 's',
+      itemState: 'draft',
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: [entry],
+    });
+
+  it('loads a v1 manifest as v2: one-element files list, no size, uuid as a list', async () => {
+    const path = join(dir, 'v1.json');
+    await writeFile(
+      path,
+      v1({
+        rowNumber: 2,
+        filePath: '/b/clip.mp4',
+        fileName: 'clip.mp4',
+        metadata: {},
+        status: 'created',
+        itemUuid: 'i',
+        itemVersion: 1,
+        attachmentUuid: 'a1',
+        attempts: 1,
+      }),
+    );
+    const m = await loadManifest(path);
+    expect(m.version).toBe(2);
+    expect(m.entries[0]).toEqual({
+      rowNumber: 2,
+      source: 'clip.mp4',
+      files: [{ path: '/b/clip.mp4', name: 'clip.mp4' }],
+      metadata: {},
+      status: 'created',
+      itemUuid: 'i',
+      itemVersion: 1,
+      attachmentUuids: ['a1'],
+      attempts: 1,
+    });
+  });
+
+  it('a v1 row with no attachment uuid gets no attachmentUuids key', async () => {
+    const path = join(dir, 'v1b.json');
+    await writeFile(
+      path,
+      v1({ rowNumber: 2, filePath: '/b/a.pdf', fileName: 'a.pdf', metadata: {}, status: 'pending', attempts: 0 }),
+    );
+    expect('attachmentUuids' in (await loadManifest(path)).entries[0]!).toBe(false);
+  });
+
+  it('a v1 manifest is saved back as v2', async () => {
+    const path = join(dir, 'v1c.json');
+    await writeFile(
+      path,
+      v1({ rowNumber: 2, filePath: '/b/a.pdf', fileName: 'a.pdf', metadata: {}, status: 'pending', attempts: 0 }),
+    );
+    await saveManifest(path, await loadManifest(path));
+    const raw = JSON.parse(await readFile(path, 'utf8'));
+    expect(raw.version).toBe(2);
+    expect(raw.entries[0].fileName).toBeUndefined();
+  });
+});
+
+describe('rowLabel', () => {
+  it('is the filename for a file row', () => {
+    expect(rowLabel({ source: 'a.pdf', files: [{ path: '/a.pdf', name: 'a.pdf' }] })).toBe('a.pdf');
+  });
+  it('counts files for a folder row, singular included', () => {
+    const f = { path: '/v/x', name: 'x' };
+    expect(rowLabel({ source: 'Vol2', folderPath: '/v', files: [f, f, f] })).toBe('Vol2 (3 files)');
+    expect(rowLabel({ source: 'Vol9', folderPath: '/v', files: [f] })).toBe('Vol9 (1 file)');
   });
 });

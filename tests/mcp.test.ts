@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +28,7 @@ beforeEach(async () => {
 });
 
 const manifest = (overrides: Partial<Manifest> = {}): Manifest => ({
-  version: 1,
+  version: 2,
   createdAt: '2026-08-03T00:00:00.000Z',
   baseUrl: 'https://example.test',
   collectionUuid: 'c1',
@@ -317,7 +317,8 @@ describe('oeq_plan duplicate pre-flight', () => {
     const structured = result.structuredContent as { duplicates?: unknown[] } | undefined;
     expect(structured?.duplicates).toHaveLength(1);
     expect(structured?.duplicates?.[0]).toMatchObject({
-      fileName: 'clip1.mp4',
+      source: 'clip1.mp4',
+      fileNames: ['clip1.mp4'],
       tier: 'near-certain',
       rowNumber: expect.any(Number),
     });
@@ -368,8 +369,8 @@ describe('oeq_retry_failed and a live lock', () => {
       entries: [
         {
           rowNumber: 2,
-          filePath: join(dir, 'a.mp4'),
-          fileName: 'a.mp4',
+          source: 'a.mp4',
+          files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
           metadata: {},
           status: 'failed',
           attempts: 3,
@@ -464,8 +465,8 @@ describe('oeq_job_status', () => {
         entries: [
           {
             rowNumber: 2,
-            filePath: join(dir, 'a.mp4'),
-            fileName: 'a.mp4',
+            source: 'a.mp4',
+            files: [{ path: join(dir, 'a.mp4'), name: 'a.mp4' }],
             metadata: {},
             status: 'created',
             attempts: 1,
@@ -473,8 +474,8 @@ describe('oeq_job_status', () => {
           },
           {
             rowNumber: 3,
-            filePath: join(dir, 'b.mp4'),
-            fileName: 'b.mp4',
+            source: 'b.mp4',
+            files: [{ path: join(dir, 'b.mp4'), name: 'b.mp4' }],
             metadata: {},
             status: 'failed',
             attempts: 2,
@@ -758,5 +759,24 @@ describe('mcp redactSecret', () => {
   it('passes text through when no secret is configured', () => {
     expect(redactSecret('nothing configured', {})).toBe('nothing configured');
     expect(redactSecret('empty string', { OEQ_CLIENT_SECRET: '' })).toBe('empty string');
+  });
+});
+
+describe('oeq_plan -- folder rows', () => {
+  it('lists each folder row\'s files in upload order', async () => {
+    await mkdir(join(dir, 'Gazette_V2'));
+    await writeFile(join(dir, 'Gazette_V2', 'G_No2.pdf'), 'x');
+    await writeFile(join(dir, 'Gazette_V2', 'G_No1.pdf'), 'x');
+    const sheetPath = join(dir, 'batch.csv');
+    await writeFile(sheetPath, ['attachment name,MWDL/title', 'Gazette_V2,Gazette Volume 2'].join('\n'));
+
+    const result = await planTool(
+      { sheet: sheetPath, filesDir: dir, manifestPath: join(dir, 'job.json'), skipDuplicateCheck: true },
+      { OEQ_BASE_URL: 'https://example.test', OEQ_COLLECTION_UUID: 'c1' },
+    );
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain(
+      'Row 2: Gazette_V2 (2 files), in upload order:\n      1. G_No1.pdf\n      2. G_No2.pdf',
+    );
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { categorizeWarnings } from '../../../src/desktop/ui/warnings.js';
 // Imported, not paraphrased: this one is a fixed sentence the core exports, so
 // a reworded warning fails here instead of silently falling into `other`.
-import { NO_IDENTIFIER_PATH_WARNING, GUEST_SESSION_WARNING } from '../../../src/core/plan.js';
+import { NO_IDENTIFIER_PATH_WARNING, GUEST_SESSION_WARNING, NO_DESCRIPTION_PATH_WARNING } from '../../../src/core/plan.js';
 
 // Message shapes copied verbatim from src/core/plan.ts (buildManifest,
 // preflightDuplicates) so the regexes are checked against what the core
@@ -19,8 +19,10 @@ describe('categorizeWarnings', () => {
   it('returns all-empty buckets for no warnings', () => {
     expect(categorizeWarnings([])).toEqual({
       missingFile: [],
+      refusedFolder: [],
       unmatchedFile: [],
       duplicateIdentifier: [],
+      longDescription: [],
       other: [],
     });
   });
@@ -97,5 +99,35 @@ describe('categorizeWarnings', () => {
     const copy = [...input];
     categorizeWarnings(input);
     expect(input).toEqual(copy);
+  });
+});
+
+describe('categorizeWarnings -- folder rows', () => {
+  // Verbatim shapes from src/core/plan.ts#buildManifest.
+  const REFUSED = "Row 4: folder 'Gazette_V3' cannot be uploaded: the folder is empty; skipped.";
+  const REFUSED_NESTED =
+    "Row 5: folder 'Gazette_V4' cannot be uploaded: it holds a folder ('extra'); a folder inside a " +
+    'folder is not uploaded -- move its files up into this folder or out of it; skipped.';
+  const UNCLAIMED = "Folder 'Gazette_V9' has no matching row; not uploaded.";
+
+  it('buckets a refused folder on its own, never as a missing file', () => {
+    const c = categorizeWarnings([REFUSED, REFUSED_NESTED]);
+    expect(c.refusedFolder).toEqual([REFUSED, REFUSED_NESTED]);
+    expect(c.missingFile).toEqual([]);
+  });
+
+  it('buckets an unclaimed folder with the unclaimed files', () => {
+    expect(categorizeWarnings([UNCLAIMED]).unmatchedFile).toEqual([UNCLAIMED]);
+  });
+});
+
+describe('categorizeWarnings -- long descriptions', () => {
+  it('groups a long description and the not-checked notice together', () => {
+    const long =
+      "Row 4: the description ('MWDL/description') is 3993 characters, longer than the 1000 of one or two " +
+      'paragraphs. Shorten it in the spreadsheet, or upload it as it is.';
+    const out = categorizeWarnings([long, NO_DESCRIPTION_PATH_WARNING]);
+    expect(out.longDescription).toEqual([long, NO_DESCRIPTION_PATH_WARNING]);
+    expect(out.other).toEqual([]);
   });
 });

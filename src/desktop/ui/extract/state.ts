@@ -1,12 +1,17 @@
 // src/desktop/ui/extract/state.ts
 import type { ExtractScan } from '../../ipc.js';
-import type { Column, ExtractedRow, Profile } from '../../../core/extract/types.js';
+import type { Column, ExtractedRow, ProblemsSummary, Profile } from '../../../core/extract/types.js';
 
 export type ExtractStep = 'folder' | 'columns' | 'save';
 
 export interface ExtractState {
   step: ExtractStep;
   dir: string | null;
+  /**
+   * One row per SUBFOLDER of `dir`, each to become one item holding all its
+   * files. Off by default, and never inferred from what the folder holds.
+   */
+  perFolder: boolean;
   scan: ExtractScan | null;
   profile: Profile | null;
   /** Where the profile came from, shown so the operator knows what they are editing. */
@@ -37,6 +42,8 @@ export interface ExtractState {
    *  inside it -- an expected model write is not a problem to triage, and a
    *  machine writing into a permanent record is not a thing to hide either. */
   savedAiWritten: number;
+  /** The problems log of a one-row-per-subfolder run, or null when there was none. */
+  savedProblems: ProblemsSummary | null;
   /** True while the Add-column picker is open. */
   adding: boolean;
   /** The picker's search box. */
@@ -49,6 +56,7 @@ export function initialExtractState(): ExtractState {
   return {
     step: 'folder',
     dir: null,
+    perFolder: false,
     scan: null,
     profile: null,
     profilePath: null,
@@ -64,6 +72,7 @@ export function initialExtractState(): ExtractState {
     savedWritten: 0,
     savedFlagged: 0,
     savedAiWritten: 0,
+    savedProblems: null,
     adding: false,
     addQuery: '',
     removed: null,

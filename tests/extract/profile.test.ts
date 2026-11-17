@@ -414,3 +414,128 @@ describe('parseProfile and a mistyped provenance placeholder', () => {
     expect(() => parseProfile(withAppend('Written by {model}'))).not.toThrow();
   });
 });
+
+describe('parseProfile -- each', () => {
+  const base = { path: 'attachment name', sources: [{ filename: true }], locked: true };
+
+  it('accepts "each": true on a column', () => {
+    const p = parseProfile({
+      version: 1,
+      pattern: '{v}',
+      columns: [base, { path: 'MWDL/subjects/subject', sources: [{ property: 'title' }], each: true }],
+    });
+    expect(p.columns[1]!.each).toBe(true);
+  });
+
+  it('refuses "each" on the attachment column, which names exactly one file or folder', () => {
+    expect(() =>
+      parseProfile({ version: 1, pattern: '{v}', columns: [{ ...base, each: true }] }),
+    ).toThrow(/'attachment name' cannot use "each"/);
+  });
+
+  it('refuses "each" that is not a boolean', () => {
+    expect(() =>
+      parseProfile({
+        version: 1,
+        pattern: '{v}',
+        columns: [base, { path: 'MWDL/title', sources: [], each: 'yes' }],
+      }),
+    ).toThrow();
+  });
+});
+
+describe('parseProfile -- issue checks', () => {
+  const base = { path: 'attachment name', sources: [{ filename: true }], locked: true };
+  const withChecks = (pattern: string, patterns: unknown) => ({
+    version: 1,
+    pattern,
+    columns: [base],
+    checks: { sequence: { patterns } },
+  });
+
+  it('accepts issue patterns', () => {
+    const p = parseProfile(withChecks('SRE_Vol{group}', ['Vol{group}_No{part}', 'Vol{group}_Num{part}']));
+    expect(p.checks?.sequence?.patterns).toHaveLength(2);
+  });
+
+  it('refuses a pattern with no {part}', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{group}', ['Vol{group}']))).toThrow(/\{part\}/);
+  });
+
+  it('refuses a placeholder other than {part}, {group} and {year}', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{group}', ['No{part}_{season}']))).toThrow(/\{season\}/);
+  });
+
+  it('refuses {group} in a check when the folder pattern has none to compare it with', () => {
+    expect(() => parseProfile(withChecks('{name}', ['Vol{group}_No{part}']))).toThrow(
+      /"pattern" has no \{group\}/,
+    );
+  });
+
+  it('refuses an empty pattern list', () => {
+    expect(() => parseProfile(withChecks('SRE_Vol{group}', []))).toThrow();
+  });
+});
+
+describe('parseProfile -- dated issue checks', () => {
+  it('accepts {year} in an issue check pattern', () => {
+    const p = parseProfile({
+      version: 1,
+      pattern: 'SRE_Vol{group}',
+      columns: [{ path: 'attachment name', sources: [{ filename: true }], locked: true }],
+      checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['{year}_Vol{group}_No{part}'] } },
+    });
+    expect(p.checks?.sequence?.patterns[0]).toBe('{year}_Vol{group}_No{part}');
+  });
+});
+
+describe('parseProfile -- text with parts of the name', () => {
+  const withJoin = (join: string) => ({
+    version: 1,
+    pattern: 'SRE_Vol{volume}',
+    columns: [
+      { path: 'attachment name', sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources: [{ join }] },
+    ],
+  });
+
+  it('refuses a malformed brace that would be written literally into every item', () => {
+    expect(() => parseProfile(withJoin('Quarterly, Volume { volume }'))).toThrow(
+      "Column 'MWDL/description': '{ volume }' is not a part",
+    );
+  });
+
+  it('accepts a join of words and a known part', () => {
+    expect(parseProfile(withJoin('Quarterly, Volume {volume}')).columns[1]!.sources).toEqual([
+      { join: 'Quarterly, Volume {volume}' },
+    ]);
+  });
+});
+
+describe('parseProfile -- a model writing after the other sources', () => {
+  const withSources = (sources: unknown[]): unknown => ({
+    version: 1,
+    pattern: '{name}',
+    columns: [
+      { path: 'attachment name', sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources },
+    ],
+  });
+
+  it('accepts a plain ai source, as before', () => {
+    expect(() => parseProfile(withSources([{ ai: true }]))).not.toThrow();
+  });
+
+  it('accepts "after": true on an ai source', () => {
+    const profile = parseProfile(withSources([{ join: 'Lead.' }, { ai: true, after: true }]));
+    expect(profile.columns[1]!.sources[1]).toEqual({ ai: true, after: true });
+  });
+
+  it('refuses "after": false -- leave it out instead', () => {
+    expect(() => parseProfile(withSources([{ ai: true, after: false }]))).toThrow();
+  });
+
+  it('refuses "after" on any other source', () => {
+    expect(() => parseProfile(withSources([{ opening: true, after: true }]))).toThrow();
+  });
+});

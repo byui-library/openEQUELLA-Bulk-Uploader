@@ -1,12 +1,13 @@
 // src/core/ai/fill.ts
 import { describeReason } from '../errorReason.js';
 import { ValidationError } from '../errors.js';
-import { expectedButEmptyNote } from '../extract/rows.js';
+import { expectedButEmptyNote, type FolderDoc } from '../extract/rows.js';
 import { ATTACHMENT_COLUMN } from '../extract/types.js';
+import { limitFor } from '../extract/length.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Transform } from '../extract/types.js';
-import { eligibleColumns } from './eligible.js';
+import { eligibleColumns, writesAfter } from './eligible.js';
 import { buildPrompt, cleanReply } from './prompt.js';
-import { assertUsableBudget, sliceForModel, type SliceShape } from './slice.js';
+import { assertUsableBudget, sliceFolder, sliceForModel, type SliceShape } from './slice.js';
 import {
   documentEvidence,
   unsupportedClaims,
@@ -62,6 +63,11 @@ export interface ModelProgress {
   /** The column being filled. */
   path: string;
   stage: 'asking' | 'written' | 'refused' | 'discarded' | 'failed' | 'skipped';
+  /** Which row of the batch this is (1-based), and how many there are -- what
+   *  the desktop counts and estimates the time left from. A row with nothing
+   *  to fill sends no event, so the count can jump. */
+  row: number;
+  rows: number;
   /** Why, for the stages that have a reason worth reading. */
   detail?: string;
 }
@@ -108,10 +114,26 @@ export interface FillOptions {
   instruction?: string | null;
 }
 
-export interface FillTarget {
-  row: ExtractedRow;
-  doc: DocumentData;
+/**
+ * One row and what it was built from: ONE document for a file row, or every
+ * document of a FOLDER row -- a volume's issues -- in attachment order. A union
+ * rather than one shape, so the single-document callers did not change.
+ */
+export type FillTarget =
+  | { row: ExtractedRow; doc: DocumentData }
+  | { row: ExtractedRow; docs: readonly FolderDoc[] };
+
+/** A target's documents as a list, whichever form it took. */
+function documentsOf(target: FillTarget, file: string): readonly FolderDoc[] {
+  return 'docs' in target ? target.docs : [{ name: file, doc: target.doc }];
 }
+
+/**
+ * The fewest characters worth asking a model to write after a lead. Below it
+ * the call cannot produce a useful summary, and a call that cannot succeed
+ * should not be paid for.
+ */
+const MIN_ROOM = 100;
 
 /**
  * Refuse a run cap nothing sensible can be counted against.
@@ -178,8 +200,13 @@ export function noteMissingModel(
   profile: Profile,
   reason: MissingModelReason,
 ): void {
+  const after = new Set(profile.columns.filter(writesAfter).map((c) => c.path));
   for (const row of rows) {
     for (const path of eligibleColumns(profile, row)) {
+      // AN `after` CELL HOLDING ITS FIXED TEXT IS NOT EMPTY, and "nothing was
+      // written here" would be false about it -- on every row of the batch,
+      // burying the rows with real problems. It stands as the template wrote it.
+      if (after.has(path) && (row.cells[path] ?? '').trim() !== '') continue;
       row.notes.push(`${path}: ${MISSING_MODEL[reason]}`);
     }
   }
@@ -377,9 +404,9 @@ function writtenNote(column: Column, path: string): string {
  * is exactly the surprising output the recorded shape exists to explain.
  */
 function sentClause(shape: SliceShape): string {
-  return shape === 'whole'
-    ? ''
-    : ' Only part of the document was sent: its opening and any named sections, not all of it.';
+  if (shape === 'whole') return '';
+  if (shape === 'issues') return ' The model was sent the start of each file in this folder, not all of it.';
+  return ' Only part of the document was sent: its opening and any named sections, not all of it.';
 }
 
 /**
@@ -500,11 +527,25 @@ export async function fillWithModel(
 
   let used = 0;
 
-  for (const { row, doc } of targets) {
+  for (const [index, target] of targets.entries()) {
+    const { row } = target;
     const eligible = new Set(eligibleColumns(profile, row));
     // Before the document is touched at all: a row with nothing to fill must
     // not pay to read, slice or measure a file nobody is going to send.
     if (eligible.size === 0) continue;
+
+    // The file this row came from. `ATTACHMENT_COLUMN` is the one cell
+    // guaranteed to name it -- that is what the column is for. For a folder
+    // row it is the folder.
+    const file = (row.cells[ATTACHMENT_COLUMN] ?? '').trim();
+    const docs = documentsOf(target, file);
+    // A FOLDER ROW BY HOW IT WAS BUILT, not by how many of its files could be
+    // read: a volume with one readable issue is still a volume.
+    const folder = 'docs' in target;
+    // How many documents the model is actually SHOWN -- the prompt's count. A
+    // file with no text is left out of the slice; the row already says so
+    // ("no text layer in ..."), from `buildFolderRow`.
+    const shown = docs.filter((d) => d.doc.text.trim() !== '').length;
 
     // SLICED ONCE PER ROW, not once per eligible column. The slice depends on
     // the document alone, so computing it per column repeats the whole of
@@ -515,8 +556,14 @@ export async function fillWithModel(
     // them would pass a mutation that sliced per column while failing a
     // harmless inlining. What IS asserted is that both columns are sent the
     // same document.
-    const text = doc.text;
-    const slice = sliceForModel(text, { budget: options.budget, sections: options.sections });
+    //
+    // What verification reads is EVERY DOCUMENT, WHOLE, JOINED -- never the
+    // slice: a claim another page, or another issue of the volume, supports is
+    // a coincidence rather than a fabrication. Joined only when a reply needs
+    // checking (see `evidence` below), not on every row.
+    const slice = folder
+      ? sliceFolder(docs, options.budget)
+      : sliceForModel(docs[0]!.doc.text, { budget: options.budget, sections: options.sections });
 
     if (slice.shape === 'empty') {
       // The one cause that is knowable, told apart from the two that are not.
@@ -525,8 +572,10 @@ export async function fillWithModel(
       // to survive -- and sending the operator to the file when the fault is a
       // setting is the same wrong-cause defect in a new place.
       const why =
-        text.trim() === ''
-          ? 'this file has no text to read.'
+        shown === 0
+          ? folder
+            ? 'no file in this folder has text to read.'
+            : 'this file has no text to read.'
           : `nothing could be selected to send within the character budget of ${options.budget}. ` +
             `Raising the budget may fix it; the document may also have no opening paragraph and ` +
             `none of the named sections.`;
@@ -536,11 +585,15 @@ export async function fillWithModel(
       continue;
     }
 
-    // The file this row came from. `ATTACHMENT_COLUMN` is the one cell
-    // guaranteed to name it -- that is what the column is for.
-    const file = (row.cells[ATTACHMENT_COLUMN] ?? '').trim();
     const report = (stage: ModelProgress['stage'], path: string, detail?: string): void => {
-      options.onProgress?.({ file, path, stage, ...(detail === undefined ? {} : { detail }) });
+      options.onProgress?.({
+        file,
+        path,
+        stage,
+        row: index + 1,
+        rows: targets.length,
+        ...(detail === undefined ? {} : { detail }),
+      });
     };
 
     // ONE PER ROW, NOT ONE PER CELL. See `discloseInItem`.
@@ -563,6 +616,23 @@ export async function fillWithModel(
     for (const column of profile.columns) {
       if (!eligible.has(column.path)) continue;
       const path = column.path;
+
+      // AN `after` COLUMN KEEPS ITS LEAD AND ADDS TO IT -- a template's fixed
+      // sentence first, the model's text after. The model is given only the
+      // room the lead leaves, so the finished cell is within the column's
+      // limit. ONE value for the limit the model is told and the limit it is
+      // held to.
+      const lead = writesAfter(column) ? (row.cells[path] ?? '').trim() : '';
+      const limit = lead === '' ? limitFor(column) : limitFor(column) - lead.length - 1;
+      if (lead !== '' && limit < MIN_ROOM) {
+        // Before the cap is spent: no call is made. Only where there IS fixed
+        // text: a plain column's own small limit is the operator's choice.
+        row.notes.push(
+          `${path}: not sent to the model -- the fixed text leaves fewer than ${MIN_ROOM} of this ` +
+            `column's ${limitFor(column)} characters`,
+        );
+        continue;
+      }
 
       if (used >= options.cap) {
         report('skipped', path, 'the limit for this run was reached');
@@ -593,6 +663,9 @@ export async function fillWithModel(
             field: describeField(path),
             document: slice.text,
             instruction: options.instruction ?? null,
+            maxLength: limit,
+            // The issues the model is SHOWN, not those that had nothing to read.
+            documents: folder ? shown : 1,
           }),
         );
       } catch (error) {
@@ -623,6 +696,23 @@ export async function fillWithModel(
         continue;
       }
 
+      // OVER THE LIMIT IS REFUSED WHOLE, NEVER SHORTENED. The model was told the
+      // limit; cutting its prose back to a sentence would be editing generated
+      // text, and a cut-down sentence can read as complete while meaning
+      // something else. The cell stays eligible, as for any refusal.
+      if (cleaned.text.length > limit) {
+        const room =
+          lead === ''
+            ? `over this column's limit of ${limit}`
+            : `over the ${limit} this column's limit leaves after the fixed text`;
+        const reason =
+          `the model's answer was ${cleaned.text.length} characters, ${room}, and generated text ` +
+          `is never shortened`;
+        report('discarded', path, reason);
+        row.notes.push(`${path}: ${outcome} -- ${reason}.${quoted(cleaned.text)}${sentClause(slice.shape)}`);
+        continue;
+      }
+
       // THE MODEL PROPOSES; THE TOOL VERIFIES. Between a usable reply and a
       // written cell, and never anywhere else: a check that ran after the write
       // would be a flag rather than a guard, and this tool writes to a permanent
@@ -637,7 +727,7 @@ export async function fillWithModel(
       // ALWAYS, WITH NO SETTING. This project has twice shipped a check that
       // reported success without running, and a switch is how that happens a
       // third time.
-      evidence ??= documentEvidence(text);
+      evidence ??= documentEvidence(docs.map((d) => d.doc.text).join('\n\n'));
       const unsupported = unsupportedClaims(cleaned.text, evidence, profile);
       if (unsupported.length > 0) {
         // THE WHOLE VALUE, never part of it. Stripping the offending clause
@@ -666,8 +756,13 @@ export async function fillWithModel(
       const note = `${writtenNote(column, path)}${sentClause(slice.shape)}`;
       wroteSomething = true;
         report('written', path);
-      row.cells[path] = cleaned.text;
-      row.sources[path] = AI_SOURCE;
+      // After the lead, when there is one: the lead is never replaced.
+      row.cells[path] = lead === '' ? cleaned.text : `${lead} ${cleaned.text}`;
+      // BOTH ORIGINS where there was a lead: its first part is the template's,
+      // not the model's, and `_source` is how a reviewer finds what a machine
+      // composed. Searching for `ai` still finds it.
+      const leadSource = row.sources[path];
+      row.sources[path] = lead !== '' && leadSource !== undefined ? `${leadSource}+${AI_SOURCE}` : AI_SOURCE;
       row.notes.push(note);
       // The structural record. See `aiWritten` in types.ts: it is what lets a
       // counter separate "a model wrote here, as designed" from "this row has a
@@ -680,8 +775,10 @@ export async function fillWithModel(
       row.aiWritten[path] = { note, factField: factKind(column) !== null };
       // The source's doubt has been acted on. Leaving it would keep the cell
       // eligible for ever, and the note it holds describes a value that is no
-      // longer in the cell.
-      delete row.flagged[path];
+      // longer in the cell. NOT where there was a lead: the lead is still in the
+      // cell, kept rather than replaced, so a source's doubt about it stands.
+      // (An `after` column stays ineligible by `aiWritten`, not by this.)
+      if (lead === '') delete row.flagged[path];
       // "Fill that cell in by hand" is now false -- the cell has content, and
       // the note just pushed already asks for it to be checked. Removed by the
       // string `rows.ts` itself produces rather than by matching a prefix, so

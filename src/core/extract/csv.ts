@@ -2,7 +2,9 @@
 import { writeFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import { guardFormula } from '../formulaGuard.js';
-import type { ExtractedRow, Profile } from './types.js';
+import { ATTACHMENT_ORDER_COLUMN } from '../types.js';
+import { formatAttachmentOrder } from '../attachmentOrder.js';
+import type { ExtractedRow, FolderProblem, ProblemsSummary, Profile } from './types.js';
 
 /** Where each value came from. Underscore-prefixed, so the uploader ignores it. */
 export const SOURCE_COLUMN = '_source';
@@ -27,8 +29,17 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
   // ordinary column pointed at a schema field that means something else.
   const columns = profile.columns.filter((c) => !c.composeOnly);
 
-  const headers = [...columns.map((c) => c.path), SOURCE_COLUMN, NOTES_COLUMN];
-  sheet.addRow(headers);
+  // A folder batch's rows carry their attachment order, and it goes straight
+  // after `attachment name` -- beside the folder it orders, where someone
+  // reviewing it will look, and where they edit it to reorder by hand. Only
+  // when a row has one: a file batch's spreadsheet is unchanged.
+  const ordered = rows.some((r) => r.attachmentOrder !== undefined);
+  // ONE layout for the header and every row: the order cell, when present,
+  // goes in at index 1, straight after `attachment name` (which profile.ts
+  // pins to the first column).
+  const withOrder = (cells: string[], order: string): string[] =>
+    ordered ? [...cells.slice(0, 1), order, ...cells.slice(1)] : cells;
+  sheet.addRow([...withOrder(columns.map((c) => c.path), ATTACHMENT_ORDER_COLUMN), SOURCE_COLUMN, NOTES_COLUMN]);
 
   for (const row of rows) {
     const sources = Object.entries(row.sources)
@@ -45,7 +56,10 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
     // `_`-prefixed annotation names, none of which can begin with a trigger --
     // and guarding one would stop `plan` matching the column at all.
     sheet.addRow([
-      ...columns.map((c) => guardFormula(row.cells[c.path] ?? '')),
+      ...withOrder(
+        columns.map((c) => row.cells[c.path] ?? ''),
+        row.attachmentOrder === undefined ? '' : formatAttachmentOrder(row.attachmentOrder),
+      ).map(guardFormula),
       guardFormula(sources),
       guardFormula(row.notes.join('; ')),
     ]);
@@ -64,6 +78,76 @@ export async function writeCsv(path: string, profile: Profile, rows: ExtractedRo
   // src/core/sheet.ts passes `bom: true` to csv-parse so the mark never reaches
   // the first column name. That matters: a BOM corrupts the FIRST field only,
   // which is how it once broke .env parsing here in a thoroughly confusing way.
+  await writeWithBom(path, workbook);
+}
+
+/** A workbook's CSV, written with the UTF-8 byte-order mark Excel needs -- see writeCsv. */
+async function writeWithBom(path: string, workbook: ExcelJS.Workbook): Promise<void> {
   const body = await workbook.csv.writeBuffer();
   await writeFile(path, Buffer.concat([Buffer.from('﻿', 'utf8'), Buffer.from(body as ArrayBuffer)]));
+}
+
+/**
+ * Where the problems log for a spreadsheet goes: beside it, named after it.
+ * `sre.csv` -> `sre-problems.csv`. Beside the spreadsheet on both surfaces,
+ * because that is the folder the operator is already working in.
+ */
+export function problemsPathFor(spreadsheetPath: string): string {
+  return `${spreadsheetPath.replace(/\.csv$/i, '')}-problems.csv`;
+}
+
+/**
+ * The problems log of a one-row-per-subfolder build: every folder left out of
+ * the spreadsheet and every note worth a look, one line each.
+ *
+ * WRITTEN EVERY TIME, header alone when there is nothing to say. A log left
+ * over from an earlier build would describe folders that have since been
+ * fixed, and an operator has no way to tell a stale log from a current one.
+ *
+ * Guarded like the spreadsheet: the file names and folder names in it came
+ * off a disk nobody vetted, and Excel executes a cell that begins `=`.
+ */
+export async function writeProblemsCsv(path: string, problems: readonly FolderProblem[]): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('problems');
+  sheet.addRow(['folder', 'file', 'effect', 'problem', 'what to do']);
+  for (const p of problems) {
+    sheet.addRow([p.folder, p.file, p.effect, p.problem, p.fix].map(guardFormula));
+  }
+  // The same byte-order mark as writeCsv, for the same reason: Excel reads a
+  // CSV without one in the system codepage and mangles every accent.
+  await writeWithBom(path, workbook);
+}
+
+/**
+ * What a problems log holds, as both surfaces report it: FOLDERS held back
+ * (a folder with two problems is one folder left out) and note lines. One
+ * count, so the CLI and the desktop cannot tell an operator different numbers.
+ */
+export function countProblems(
+  problems: readonly FolderProblem[],
+): Omit<ProblemsSummary, 'path'> {
+  const held = problems.filter((p) => p.effect === 'held back');
+  return {
+    // Folders, counted once each however many problems they have. A loose file
+    // is not a folder, so it gets its own count -- folded into neither, a log
+    // holding only loose files read as "no problems" on the save screen.
+    heldBack: new Set(held.filter((p) => p.folder !== '').map((p) => p.folder)).size,
+    looseFiles: held.filter((p) => p.folder === '').length,
+    notes: problems.length - held.length,
+  };
+}
+
+/**
+ * Write a per-folder build's problems log beside its spreadsheet, and say what
+ * is in it. The one composition the CLI and the desktop both use, so the log's
+ * name, its writing and its counts cannot drift apart between them.
+ */
+export async function writeProblemsLog(
+  spreadsheetPath: string,
+  problems: readonly FolderProblem[],
+): Promise<ProblemsSummary> {
+  const path = problemsPathFor(spreadsheetPath);
+  await writeProblemsCsv(path, problems);
+  return { path, ...countProblems(problems) };
 }

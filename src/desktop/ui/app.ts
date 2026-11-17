@@ -8,7 +8,7 @@ import type {
   RunReport,
 } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
-import type { ItemState } from '../../core/types.js';
+import { rowLabel, type ItemState } from '../../core/types.js';
 import { initialScreen, nextScreen, settingsReturnTo, type Screen } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
@@ -30,7 +30,7 @@ import { timeoutSecondsProblem } from '../../core/ai/provider.js';
 import { signOutNotice } from './signout.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
-import { renderReview } from './screens/review.js';
+import { moveFile, ordersStillValid, renderReview } from './screens/review.js';
 import { renderConfirm } from './screens/confirm.js';
 import { renderProgress, type ProgressLogEntry } from './screens/progress.js';
 import { renderResults, type InterruptedEntry } from './screens/results.js';
@@ -271,6 +271,7 @@ function initialState(): AppState {
     reviewError: null,
     duplicates: [],
     duplicateChoices: {},
+    folderOrders: {},
     itemState: 'draft',
     typedCount: '',
     uploading: false,
@@ -443,6 +444,12 @@ function render(): void {
           // throws focus to <body> so the operator cannot arrow through it.
           state.duplicateChoices[rowNumber] = choice;
         },
+        folderOrders: state.folderOrders,
+        onMoveFile: handleMoveFile,
+        onResetOrder: (rowNumber) => {
+          delete state.folderOrders[rowNumber];
+          render();
+        },
         onOverrideChange: handleReviewOverrideChange,
         onContinue: handleReviewContinue,
         onBack: handleReviewBack,
@@ -467,7 +474,7 @@ function render(): void {
       renderProgress(app, {
         done: state.progress?.done ?? 0,
         total: state.progress?.total ?? state.reviewPlan?.entryCount ?? 0,
-        fileName: state.progress?.fileName ?? '',
+        label: state.progress?.label ?? '',
         log: state.progressLog,
       });
       break;
@@ -1692,6 +1699,7 @@ async function loadReviewColumns(): Promise<void> {
   // sheet never passes through it.
   state.duplicates = [];
   state.duplicateChoices = {};
+  state.folderOrders = {};
   render();
   try {
     const columns = await window.oeq.validate({ instanceId: state.instanceId, sheetPath: state.sheetPath! });
@@ -1735,6 +1743,9 @@ async function runReviewCheck(): Promise<void> {
       overrides: { ...state.reviewOverrides },
     });
     state.reviewPlan = report;
+    // An arrow order made against the previous plan survives only if its
+    // folder still holds exactly those files -- see ordersStillValid.
+    state.folderOrders = ordersStillValid(state.folderOrders, report.folders);
     state.duplicates = report.duplicates;
     state.reviewChecked = true;
     state.reviewChecking = false;
@@ -1748,6 +1759,28 @@ async function runReviewCheck(): Promise<void> {
     state.reviewError = errorMessage(err);
     render();
   }
+}
+
+/**
+ * One ↑/↓ click on Review. Held in state and written into the job just
+ * before the run (applyFolderOrders), so it costs no server calls. Moving a
+ * folder back to exactly its planned order forgets the change, so the screen
+ * stops calling it "changed here".
+ */
+function handleMoveFile(rowNumber: number, index: number, delta: -1 | 1): void {
+  const planned = state.reviewPlan?.folders.find((f) => f.rowNumber === rowNumber)?.files;
+  if (planned === undefined) return;
+  const next = moveFile(state.folderOrders[rowNumber] ?? planned, index, delta);
+  if (next.every((name, i) => name === planned[i])) delete state.folderOrders[rowNumber];
+  else state.folderOrders[rowNumber] = next;
+  render();
+  // The screen re-renders by replacing its markup, which would throw focus to
+  // <body> mid-reorder. Follow the moved file, so repeated presses keep
+  // moving it -- falling back to its other arrow at either end.
+  const moved = index + delta;
+  const same = document.getElementById(`order-${delta < 0 ? 'up' : 'down'}-${rowNumber}-${moved}`);
+  const other = document.getElementById(`order-${delta < 0 ? 'down' : 'up'}-${rowNumber}-${moved}`);
+  ((same as HTMLButtonElement | null)?.disabled ? other : (same ?? other))?.focus();
 }
 
 function handleReviewOverrideChange(header: string, xpath: string): void {
@@ -1860,6 +1893,15 @@ async function handleUpload(): Promise<void> {
       }
     }
 
+    // The order chosen on Review, applied at the same point and for the same
+    // reason as the duplicate choices: it is the operator's decision, made
+    // after seeing the plan. All or nothing -- if a folder changed so a list
+    // no longer matches, this throws, nothing is uploaded, and the operator
+    // is sent back to Confirm with the reason.
+    if (Object.keys(state.folderOrders).length > 0) {
+      await window.oeq.applyFolderOrders({ manifestPath: report.manifestPath, orders: state.folderOrders });
+    }
+
     const runReport = await window.oeq.run({ manifestPath: report.manifestPath, instanceId: state.instanceId });
     await finishRun(report.manifestPath, runReport);
   } catch (err) {
@@ -1877,7 +1919,7 @@ async function handleUpload(): Promise<void> {
 
 function handleProgress(p: RunProgress): void {
   state.progress = p;
-  state.progressLog.push({ fileName: p.fileName, status: p.status, error: p.error });
+  state.progressLog.push({ label: p.label, status: p.status, error: p.error });
   // Cap memory for an unusually large batch; the log is a convenience, not a
   // record of truth -- the manifest on disk is that.
   if (state.progressLog.length > 500) state.progressLog.shift();
@@ -1898,7 +1940,7 @@ async function finishRun(manifestPath: string, report: RunReport): Promise<void>
     const manifest = await window.oeq.loadManifest(manifestPath);
     state.interruptedEntries = manifest.entries
       .filter((e) => e.status === 'uploading')
-      .map((e) => ({ rowNumber: e.rowNumber, fileName: e.fileName }));
+      .map((e) => ({ rowNumber: e.rowNumber, label: rowLabel(e) }));
   } catch (err) {
     state.interruptedEntries = [];
     state.resultsError = errorMessage(err);

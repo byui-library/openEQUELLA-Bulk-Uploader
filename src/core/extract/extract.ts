@@ -1,9 +1,21 @@
 // src/core/extract/extract.ts
 import { readdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { buildRow } from './rows.js';
+import { buildFolderRow, buildRow, type FolderDoc } from './rows.js';
+import { clutterReason, listFolderFiles, orderFiles } from '../folderFiles.js';
+import { canWriteInOrder, UNWRITABLE_REASON } from '../attachmentOrder.js';
 import { isSupported, readDocument, type DocumentReader } from './readers/index.js';
-import type { DocumentData, ExtractResult, ExtractedRow, Profile } from './types.js';
+import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from './types.js';
+import {
+  checkBatch,
+  checkSequence,
+  folderGroup,
+  orderBySequence,
+  resolveLabels,
+  type GroupSummary,
+  type SequenceFinding,
+  type SequenceRule,
+} from './sequenceChecks.js';
 
 export interface ExtractOptions {
   /** Injectable so orchestration can be tested without real files. */
@@ -125,4 +137,202 @@ export async function extractFolder(
   }
 
   return { rows, skipped };
+}
+
+export interface SubfolderListing {
+  /**
+   * Each subfolder that can become a row, in natural order. `files` is every
+   * file it will upload, in attachment order; `readable` the ones a reader
+   * can open, which are the only ones whose contents feed the row.
+   */
+  folders: { name: string; files: string[]; readable: string[] }[];
+  /** Loose files and refused subfolders, each with a reason. `kind` says which,
+   *  as data -- never read back out of the reason's wording. */
+  skipped: { file: string; reason: string; kind: 'file' | 'folder' }[];
+}
+
+/**
+ * What a batch folder holds when each SUBFOLDER is to become one row.
+ *
+ * Uses folderFiles.ts for every subfolder, so the extractor sees exactly the
+ * files -- and the order -- that `plan` will upload. A loose file is named
+ * rather than ignored: the operator chose "one row per subfolder", and a file
+ * beside the subfolders is either a mistake or a sign the wrong mode is on.
+ */
+/** Why a file beside the subfolders is not a row. One constant, so the log can tell it from a refused folder. */
+const LOOSE_FILE_REASON =
+  'a file directly in the chosen folder -- with one row per subfolder, only subfolders become rows';
+
+/** What the problems log says a held-back folder's skipped entry means. */
+const HELD_BACK_REASON = 'held back -- see the problems log';
+
+export async function listSubfolders(dir: string): Promise<SubfolderListing> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const skipped: SubfolderListing['skipped'] = [];
+  for (const entry of entries) {
+    if (entry.isFile() && clutterReason(entry.name) === null) {
+      skipped.push({ file: entry.name, reason: LOOSE_FILE_REASON, kind: 'file' });
+    }
+  }
+
+  const names = orderFiles(
+    entries.filter((e) => e.isDirectory() && clutterReason(e.name) === null).map((e) => e.name),
+  );
+  const folders: SubfolderListing['folders'] = [];
+  for (const name of names) {
+    const listing = await listFolderFiles(join(dir, name));
+    if (listing.refusal !== undefined) {
+      skipped.push({ file: name, reason: listing.refusal, kind: 'folder' });
+      continue;
+    }
+    const files = listing.files.map((f) => f.name);
+    folders.push({ name, files, readable: files.filter(isSupported) });
+  }
+  return { folders, skipped };
+}
+
+/**
+ * One row per subfolder of `dir`.
+ *
+ * A subfolder's files become ONE item's attachments at upload, so a file the
+ * readers cannot open is still part of that item: it is noted on the row,
+ * never dropped from it, and never refuses it. That is the difference from
+ * `extractFolder`, where an unreadable file has no row at all.
+ *
+ * `onRow` hands the model pass each row with the documents it read, in
+ * attachment order, as `extractFolder`'s does with its one document -- so a
+ * volume's description can be written from, and checked against, every issue.
+ * A held-back folder has no row, and is not handed out.
+ */
+export async function extractFolders(
+  dir: string,
+  profile: Profile,
+  options: Pick<ExtractOptions, 'reader' | 'onProgress' | 'signal'> & {
+    listing?: SubfolderListing;
+    onRow?: (row: ExtractedRow, docs: readonly FolderDoc[]) => void;
+  } = {},
+): Promise<ExtractResult> {
+  const { reader = readDocument, onProgress, signal, onRow } = options;
+  const found = options.listing ?? (await listSubfolders(dir));
+  // Copied, never appended to in place -- the same reason as extractFolder.
+  const skipped: ExtractResult['skipped'] = found.skipped.map(({ file, reason }) => ({ file, reason }));
+  const rows: ExtractedRow[] = [];
+
+  // THE PROBLEMS LOG IS THE WHOLE ACCOUNT of what was left out and why: the
+  // folders and files the listing refused are in it as well as what the sequence
+  // check found, so an operator reading it needs no other list.
+  const problems: FolderProblem[] = found.skipped.map(({ file, reason, kind }) =>
+    kind === 'file'
+      ? {
+          folder: '',
+          file,
+          effect: 'held back' as const,
+          problem: reason,
+          fix: 'move it into the folder of the item it belongs to, or out of the batch folder',
+        }
+      : {
+          folder: file,
+          file: '',
+          effect: 'held back' as const,
+          problem: reason,
+          fix: 'correct the folder, then build the spreadsheet again',
+        },
+  );
+
+  const rule: SequenceRule = {
+    patterns: profile.checks?.sequence?.patterns ?? [],
+    labels: resolveLabels(profile.checks?.sequence?.labels),
+  };
+  let numbered = 0;
+  // Every folder's group and years, held back or not, for the checks across
+  // the run of groups (sequenceChecks.ts#checkBatch).
+  const groups: GroupSummary[] = [];
+
+  let done = 0;
+  for (const folder of found.folders) {
+    if (signal?.aborted) break;
+
+    // CHECKED BEFORE ANYTHING IS READ: a folder held back costs no reading,
+    // and is left out of the spreadsheet altogether -- which is what holds it
+    // back, since `plan` then finds no row for it and says so.
+    let findings: SequenceFinding[] = [];
+    if (rule.patterns.length > 0) {
+      const group = folderGroup(profile.pattern, folder.name);
+      const result = checkSequence(rule, group, folder.name, folder.files);
+      numbered += result.numbered;
+      groups.push({ folder: folder.name, group, years: result.years });
+      findings = result.findings;
+    }
+    problems.push(...findings.map((f) => ({ folder: folder.name, ...f })));
+    if (findings.some((f) => f.effect === 'held back')) {
+      skipped.push({ file: folder.name, reason: HELD_BACK_REASON });
+      done += 1;
+      onProgress?.(done, found.folders.length);
+      continue;
+    }
+
+    // Read in ATTACHMENT order -- part order when the template declares it --
+    // because "the first file that answers wins" means the first part.
+    const order = orderBySequence(rule.patterns, folder.files);
+    const readable = new Set(folder.readable);
+    const docs: FolderDoc[] = [];
+    const unreadable: string[] = [];
+    for (const name of order.filter((n) => readable.has(n))) {
+      try {
+        docs.push({ name, doc: await reader(join(dir, folder.name, name)) });
+      } catch (error) {
+        unreadable.push(
+          `'${name}' could not be read (${(error as Error).message}); it is still uploaded with the others`,
+        );
+      }
+    }
+    const row = buildFolderRow(profile, folder.name, docs);
+    row.notes.push(...unreadable);
+    // The notes go on the row as well, so `_notes` and the log agree.
+    row.notes.push(...findings.map((f) => (f.file === '' ? f.problem : `${f.file}: ${f.problem}`)));
+    // RECORDED ONLY WHERE IT DIFFERS FROM NAME ORDER. Blank means name order,
+    // so a folder that needs no cell gets none -- and a rename, the documented
+    // remedy for an order, then takes effect instead of leaving a stale list
+    // that plan must refuse. Every folder's order is still reviewed, and can be
+    // changed, on the desktop Review screen.
+    if (order.some((name, i) => name !== folder.files[i])) {
+      // A name the cell cannot carry (attachmentOrder.ts#canWriteInOrder) would be
+      // refused by plan; say so here instead of writing a list that cannot work.
+      const unwritable = order.filter((n) => !canWriteInOrder(n));
+      if (unwritable.length === 0) row.attachmentOrder = order;
+      else {
+        row.notes.push(
+          `the order by ${rule.labels.part} could not be written to the 'attachment order' column, ` +
+            `because ${unwritable.map((n) => `'${n}'`).join(', ')} ${UNWRITABLE_REASON}; ` +
+            `it will upload in name order unless the file is renamed, or the order ` +
+            `is changed on the Review screen`,
+        );
+      }
+    }
+    // The order the UPLOAD will use: the cell's when one was written, name
+    // order otherwise -- including when part order could not be written.
+    row.files = row.attachmentOrder ?? folder.files;
+    rows.push(row);
+    onRow?.(row, docs);
+    done += 1;
+    onProgress?.(done, found.folders.length);
+  }
+
+  // Across the whole run: a missing group, two folders for one, dates that
+  // run backwards from one group to the next. Notes for review, never holds.
+  problems.push(...checkBatch(rule.labels, groups));
+
+  // A check that matched nothing did not run, and must not read as clean --
+  // the failure this codebase has had three times. Once, for the batch.
+  if (rule.patterns.length > 0 && found.folders.length > 0 && numbered === 0) {
+    problems.push({
+      folder: '',
+      file: '',
+      effect: 'note',
+      problem: 'no file in the batch matched the sequence patterns, so the arrangement was not checked',
+      fix: "compare the profile's checks.sequence.patterns with the file names",
+    });
+  }
+
+  return { rows, skipped, problems };
 }

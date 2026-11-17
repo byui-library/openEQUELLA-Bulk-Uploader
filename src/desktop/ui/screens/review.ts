@@ -1,8 +1,9 @@
-import type { ColumnReport, PlanReport } from '../../ipc.js';
+import type { ColumnReport, PlanFolder, PlanReport } from '../../ipc.js';
 import type { DuplicateChoice, DuplicateFinding } from '../../../core/duplicates.js';
 import { canContinueReview } from '../review.js';
 import { categorizeWarnings } from '../warnings.js';
 import { escapeHtml } from '../dom.js';
+import { reorderFiles } from '../../../core/attachmentOrder.js';
 import { duplicatesSection } from '../duplicates.js';
 
 export interface ReviewProps {
@@ -26,6 +27,12 @@ export interface ReviewProps {
   duplicates: DuplicateFinding[];
   duplicateChoices: Record<number, DuplicateChoice>;
   onDuplicateChoice(rowNumber: number, choice: DuplicateChoice): void;
+  /** Row number -> a folder's file order chosen here. Absent means the planned order. */
+  folderOrders: Record<number, string[]>;
+  /** Move the file at `index` of a folder row one place up (-1) or down (+1). */
+  onMoveFile(rowNumber: number, index: number, delta: -1 | 1): void;
+  /** Put a folder row back to its planned order. */
+  onResetOrder(rowNumber: number): void;
   onOverrideChange(originalHeader: string, xpath: string): void;
   onContinue(): void;
   onBack(): void;
@@ -46,6 +53,110 @@ export interface ReviewProps {
  * response is proof every column is now valid; that's what unlocks the
  * second "Continue to Confirm" click.
  */
+/**
+ * `files` with the one at `index` moved one place (`delta` -1 up, +1 down).
+ * A copy; unchanged past either end. Pure, so the screen and its tests agree
+ * on what a click does.
+ */
+export function moveFile(files: readonly string[], index: number, delta: -1 | 1): string[] {
+  const to = index + delta;
+  if (index < 0 || index >= files.length || to < 0 || to >= files.length) return [...files];
+  const next = [...files];
+  [next[index], next[to]] = [next[to]!, next[index]!];
+  return next;
+}
+
+/**
+ * The orders chosen here that still fit a fresh plan: a folder that gained,
+ * lost or renamed a file since the order was chosen -- or is no longer in the
+ * plan -- drops its order and shows the planned one again. Kept, a stale order
+ * would hide the new file on screen and then refuse the whole run at upload.
+ */
+export function ordersStillValid(
+  orders: Readonly<Record<number, readonly string[]>>,
+  folders: readonly PlanFolder[],
+): Record<number, string[]> {
+  const kept: Record<number, string[]> = {};
+  for (const folder of folders) {
+    const order = orders[folder.rowNumber];
+    if (order === undefined) continue;
+    // The SAME rule the upload applies (attachmentOrder.ts#reorderFiles), so
+    // the screen never keeps an order the run would refuse, or the reverse.
+    const result = reorderFiles(
+      folder.files.map((name) => ({ name })),
+      order,
+    );
+    if ('files' in result) kept[folder.rowNumber] = result.files.map((f) => f.name);
+  }
+  return kept;
+}
+
+/**
+ * Each folder row's files, in the order they will be attached, with ↑/↓ to
+ * change it here. Empty for a batch of single files.
+ *
+ * REORDERING IN THE APP was the operator's requirement: the order had to be
+ * reviewable and changeable without leaving the program for Excel. A change
+ * here is held on screen and written into the job just before the run, as
+ * duplicate choices are (app.ts), so moving a file costs no server calls.
+ * The spreadsheet is not modified; its `attachment order` column remains the
+ * other way to set an order.
+ *
+ * `orders` is the order chosen here, by row, for the folders that have one;
+ * a folder absent from it shows the planned order. Open by default: the
+ * order has to be in front of the operator BEFORE the run -- in a collection
+ * with no moderation queue, after is too late.
+ */
+export function foldersSection(
+  folders: readonly PlanFolder[],
+  orders: Readonly<Record<number, readonly string[]>> = {},
+): string {
+  if (folders.length === 0) return '';
+  return `
+    <div class="warning-group">
+      <h3>Folders: files in upload order (${folders.length})</h3>
+      <p class="note">
+        Each folder becomes one item, with its files attached in this order. Use the arrows to
+        change it here, or edit the folder's <code>attachment order</code> cell in your
+        spreadsheet and check again.
+      </p>
+      ${folders
+        .map((f) => {
+          const chosen = orders[f.rowNumber];
+          const files = chosen ?? f.files;
+          const last = files.length - 1;
+          const items = files
+            .map(
+              (n, i) => `<li>${escapeHtml(n)}
+                <button type="button" class="secondary" id="order-up-${f.rowNumber}-${i}"
+                  aria-label="Move ${escapeHtml(n)} up" ${i === 0 ? 'disabled' : ''}>&uarr;</button>
+                <button type="button" class="secondary" id="order-down-${f.rowNumber}-${i}"
+                  aria-label="Move ${escapeHtml(n)} down" ${i === last ? 'disabled' : ''}>&darr;</button>
+              </li>`,
+            )
+            .join('');
+          return `
+        <details open>
+          <summary>Row ${f.rowNumber}: ${escapeHtml(f.label)}${chosen === undefined ? '' : ' &mdash; order changed here'}</summary>
+          <ol>${items}</ol>
+          ${
+            chosen === undefined
+              ? ''
+              : `<p><button type="button" class="secondary" id="order-reset-${f.rowNumber}">Put back the planned order</button></p>`
+          }
+          ${
+            f.skipped.length === 0
+              ? ''
+              : `<p class="note">Not uploaded: ${f.skipped
+                  .map((s) => `${escapeHtml(s.name)} (${escapeHtml(s.reason)})`)
+                  .join(', ')}</p>`
+          }
+        </details>`;
+        })
+        .join('')}
+    </div>`;
+}
+
 export function renderReview(root: HTMLElement, props: ReviewProps): void {
   if (props.loadingColumns || props.columns === null) {
     root.innerHTML = `
@@ -136,19 +247,22 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
         `;
     const allGroups =
       section('Rows whose file could not be found', groups.missingFile) +
-      section('Files with no matching row', groups.unmatchedFile) +
+      section('Folders that cannot be uploaded', groups.refusedFolder) +
+      section('Files or folders with no matching row', groups.unmatchedFile) +
       // Not "Identifiers that may already exist": this group also carries the
       // cases where the check could NOT run -- a failed request, or a schema
       // with no identifier field. A heading that promises hits would make
       // "nobody looked" read as "we looked and found something".
       section('Duplicate identifiers', groups.duplicateIdentifier) +
+      section('Long descriptions', groups.longDescription) +
       section('Other warnings', groups.other);
 
     warningsSection = `
       <fieldset>
         <legend>Plan summary</legend>
         <p><strong>${props.report.entryCount}</strong> item(s) will be created from this spreadsheet.</p>
-        ${allGroups || '<p class="note">No warnings -- every row matched a file with no issues found.</p>'}
+        ${foldersSection(props.report.folders, props.folderOrders)}
+        ${allGroups || '<p class="note">No warnings -- every row matched a file or folder with no issues found.</p>'}
       </fieldset>
     `;
   }
@@ -235,6 +349,23 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
   root
     .querySelector<HTMLButtonElement>('#review-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
+
+  // One listener per arrow, found by id -- the ids carry the row and the
+  // position, so nothing has to be parsed back out of the markup.
+  for (const folder of props.checked ? (props.report?.folders ?? []) : []) {
+    const files = props.folderOrders[folder.rowNumber] ?? folder.files;
+    files.forEach((_, i) => {
+      root
+        .querySelector<HTMLButtonElement>(`#order-up-${folder.rowNumber}-${i}`)
+        ?.addEventListener('click', () => props.onMoveFile(folder.rowNumber, i, -1));
+      root
+        .querySelector<HTMLButtonElement>(`#order-down-${folder.rowNumber}-${i}`)
+        ?.addEventListener('click', () => props.onMoveFile(folder.rowNumber, i, 1));
+    });
+    root
+      .querySelector<HTMLButtonElement>(`#order-reset-${folder.rowNumber}`)
+      ?.addEventListener('click', () => props.onResetOrder(folder.rowNumber));
+  }
 
   root.querySelectorAll<HTMLInputElement>('input[name^="dup-"]').forEach((input) => {
     input.addEventListener('change', () => {

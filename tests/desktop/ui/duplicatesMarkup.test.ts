@@ -4,7 +4,9 @@ import type { DuplicateFinding } from '../../../src/core/duplicates.js';
 
 const finding = (over: Partial<DuplicateFinding> = {}): DuplicateFinding => ({
   rowNumber: 4,
-  fileName: 'Smith_Jane.pdf',
+  source: 'Smith_Jane.pdf',
+  label: 'Smith_Jane.pdf',
+  fileNames: ['Smith_Jane.pdf'],
   tier: 'near-certain',
   detail: "an item with this title already holds a file called 'Smith_Jane.pdf'",
   existing: [],
@@ -55,7 +57,7 @@ describe('duplicatesSection', () => {
    * trustworthy input for a template that is assigned to innerHTML.
    */
   it('escapes a filename containing markup', () => {
-    const html = duplicatesSection([finding({ fileName: '<img src=x onerror=alert(1)>.pdf' })], {});
+    const html = duplicatesSection([finding({ label: '<img src=x onerror=alert(1)>.pdf' })], {});
     expect(html).not.toContain('<img src=x');
     expect(html).toContain('&lt;img');
   });

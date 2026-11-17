@@ -26,35 +26,57 @@ function majorityExtension(filenames: string[]): string {
 }
 
 /**
- * Propose a pattern from real filenames. Picks the separator that splits every
- * file into the same number of parts -- consistency is the signal that a
- * separator is structural rather than incidental. Falls back to one
- * placeholder covering the whole name, which always matches and is honest
- * about having found no structure.
+ * Propose a pattern from real filenames. Picks the separator that splits a
+ * STRICT MAJORITY of names into the same number of parts -- consistency is the
+ * signal that a separator is structural rather than incidental. The names
+ * outside that majority do NOT match the result: their rows say so, and the
+ * columns screen counts them. Falls back to one placeholder covering the whole
+ * name, which always matches and is honest about having found no structure,
+ * when no shape has a majority.
  */
-export function detectPattern(allFilenames: string[]): string {
+export function detectPattern(allFilenames: string[], options: { folders?: boolean } = {}): string {
+  // FOLDER NAMES carry no extension and are not "supported" files, so neither
+  // the filter nor the extension applies: every name votes, whole. A dot in a
+  // folder name is part of the name, not the start of an extension.
+  const folders = options.folders === true;
   // Only files the extractor can actually read may influence the pattern. A
   // folder routinely contains other things -- the profile .json itself,
   // Thumbs.db, a stray .txt -- and letting those vote produced a pattern
   // built around the wrong extension entirely. Filtering here rather than in
   // each caller keeps every front end correct by construction.
-  const filenames = allFilenames.filter(isSupported);
-  const extension = majorityExtension(filenames);
-  const stems = filenames
-    .filter((n) => extname(n).toLowerCase() === extension)
-    .map((n) => n.slice(0, n.length - extname(n).length));
+  const filenames = folders ? allFilenames : allFilenames.filter(isSupported);
+  const extension = folders ? '' : majorityExtension(filenames);
+  const stems = folders
+    ? filenames
+    : filenames
+        .filter((n) => extname(n).toLowerCase() === extension)
+        .map((n) => n.slice(0, n.length - extname(n).length));
 
   if (stems.length === 0) return `{part1}${extension}`;
 
+  // THE SHAPE MOST NAMES SHARE, not one every name shares. Requiring all of
+  // them let a single odd name spoil the batch: one index folder beside 38
+  // volume folders (operator, 2026-11-17) made every name one part, so no
+  // column could use the volume number. The odd ones out still get their
+  // "does not match the pattern" note on their rows (rows.ts). A STRICT
+  // majority, so a batch with no prevailing shape still falls back.
   let bestSeparator: string | null = null;
   let bestCount = 1;
+  let bestAgree = 0;
   for (const separator of SEPARATORS) {
-    const counts = new Set(stems.map((s) => s.split(separator).length));
-    if (counts.size !== 1) continue;
-    const count = [...counts][0]!;
-    if (count > bestCount) {
-      bestSeparator = separator;
-      bestCount = count;
+    const tally = new Map<number, number>();
+    for (const stem of stems) {
+      const parts = stem.split(separator).length;
+      tally.set(parts, (tally.get(parts) ?? 0) + 1);
+    }
+    for (const [count, agree] of tally) {
+      if (count < 2 || agree * 2 <= stems.length) continue;
+      // More names agreeing wins; among equals, more parts -- as before.
+      if (agree > bestAgree || (agree === bestAgree && count > bestCount)) {
+        bestSeparator = separator;
+        bestCount = count;
+        bestAgree = agree;
+      }
     }
   }
 
@@ -141,6 +163,8 @@ export function starterProfile(
   filenames: string[],
   schema: StarterSchema,
   evidence?: StarterEvidence,
+  /** `folders: true` when `filenames` are the subfolder names of a per-folder batch. */
+  options: { folders?: boolean } = {},
 ): Profile {
   const section = topSection(schema.titleHeader);
   const titlePath = declaredColumn(schema.titleHeader, schema.paths);
@@ -158,15 +182,24 @@ export function starterProfile(
   // The filename last, so a document that states its title keeps it. Two of
   // twelve real journal PDFs state none, and this field becomes the item's
   // NAME -- an empty one contributes a nameless item.
+  //
+  // A FOLDER ROW IS TITLED FROM THE FOLDER. Its documents are its PARTS -- an
+  // issue's embedded title ("Issue 1", or a scanner default) describes one
+  // file, and the first file to answer wins silently, so the whole volume
+  // would be catalogued under one issue's name. The folder name names the
+  // item; a template or the operator can do better from there.
   if (titlePath) {
-    columns.push({ path: titlePath, sources: [{ property: 'title' }, { filenameStem: true }] });
+    columns.push({
+      path: titlePath,
+      sources: options.folders === true ? [{ filenameStem: true }] : [{ property: 'title' }, { filenameStem: true }],
+    });
   }
   if (creatorPath) {
     columns.push({ path: creatorPath, sources: [{ property: 'author' }], transform: 'people' });
   }
   if (descriptionPath) columns.push({ path: descriptionPath, sources: [] });
 
-  if (evidence === undefined) return { version: 1, pattern: detectPattern(filenames), columns };
+  if (evidence === undefined) return { version: 1, pattern: detectPattern(filenames, options), columns };
 
   const byPath = new Map(columns.map((c) => [c.path, c]));
 
@@ -185,6 +218,9 @@ export function starterProfile(
     .filter((m) => m.path !== '' && m.path !== ATTACHMENT_COLUMN);
 
   for (const { source, path } of found) {
+    // A folder row's title stays the folder's -- see where the title column
+    // is built. A table cell is one document's title, not the item's.
+    if (options.folders === true && path === titlePath) continue;
     const existing = byPath.get(path);
     if (existing) {
       // Prepended, NOT replacing. A mixed folder needs both: the Word files
@@ -228,5 +264,5 @@ export function starterProfile(
     ];
   }
 
-  return { version: 1, pattern: detectPattern(filenames), columns };
+  return { version: 1, pattern: detectPattern(filenames, options), columns };
 }

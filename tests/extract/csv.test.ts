@@ -4,7 +4,14 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'csv-parse/sync';
-import { writeCsv, NOTES_COLUMN, SOURCE_COLUMN } from '../../src/core/extract/csv.js';
+import {
+  writeCsv,
+  writeProblemsCsv,
+  countProblems,
+  problemsPathFor,
+  NOTES_COLUMN,
+  SOURCE_COLUMN,
+} from '../../src/core/extract/csv.js';
 import { ATTACHMENT_COLUMN, type ExtractedRow, type Profile } from '../../src/core/extract/types.js';
 import { readSheet } from '../../src/core/sheet.js';
 
@@ -203,5 +210,101 @@ describe('formula injection', () => {
 
     const sheet = await readSheet(path);
     expect(sheet.rows[0]?.cells['MWDL/title']).toBe(dangerous);
+  });
+});
+
+describe('the problems log', () => {
+  it('is named after the spreadsheet it sits beside', () => {
+    expect(problemsPathFor(join('C:', 'batch', 'sre.csv'))).toBe(join('C:', 'batch', 'sre-problems.csv'));
+    expect(problemsPathFor(join('C:', 'batch', 'sre.CSV'))).toBe(join('C:', 'batch', 'sre-problems.csv'));
+    expect(problemsPathFor(join('C:', 'batch', 'sre'))).toBe(join('C:', 'batch', 'sre-problems.csv'));
+  });
+
+  it('writes one line per problem under a header an operator can read', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-problems-'));
+    const path = join(dir, 'p.csv');
+    await writeProblemsCsv(path, [
+      { folder: 'Gazette_V3', file: 'G_V2_No4.pdf', effect: 'held back', problem: 'wrong volume', fix: 'move it' },
+    ]);
+    const text = (await readFile(path, 'utf8')).replace(/^﻿/, '');
+    const lines = text.trim().split(/\r?\n/);
+    expect(lines[0]).toBe('folder,file,effect,problem,what to do');
+    expect(lines[1]).toBe('Gazette_V3,G_V2_No4.pdf,held back,wrong volume,move it');
+  });
+
+  it('writes the header alone when there is nothing to report, so an old log is never left standing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-problems-'));
+    const path = join(dir, 'p.csv');
+    await writeProblemsCsv(path, []);
+    expect((await readFile(path, 'utf8')).replace(/^﻿/, '').trim()).toBe('folder,file,effect,problem,what to do');
+  });
+
+  it('guards a cell Excel would execute', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-problems-'));
+    const path = join(dir, 'p.csv');
+    await writeProblemsCsv(path, [
+      { folder: 'V1', file: '=HYPERLINK("x").pdf', effect: 'note', problem: 'p', fix: 'f' },
+    ]);
+    expect(await readFile(path, 'utf8')).not.toMatch(/,=HYPERLINK/);
+  });
+});
+
+describe('the attachment order column', () => {
+  const p: Profile = {
+    version: 1,
+    pattern: '{x}',
+    columns: [
+      { path: ATTACHMENT_COLUMN, sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/title', sources: [] },
+    ],
+  };
+  const row = (over: Partial<ExtractedRow> = {}): ExtractedRow => ({
+    cells: { [ATTACHMENT_COLUMN]: 'Gazette_V2', 'MWDL/title': 'T' },
+    sources: {},
+    notes: [],
+    flagged: {},
+    aiWritten: {},
+    ...over,
+  });
+
+  it('follows attachment name when any row carries an order, joined by semicolons', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-order-'));
+    const path = join(dir, 'o.csv');
+    await writeCsv(path, p, [row({ attachmentOrder: ['No1.pdf', 'No2.pdf'] })]);
+    const records = parse((await readFile(path, 'utf8')).replace(/^﻿/, ''), { columns: true }) as Record<string, string>[];
+    expect(Object.keys(records[0]!).slice(0, 3)).toEqual([ATTACHMENT_COLUMN, 'attachment order', 'MWDL/title']);
+    expect(records[0]!['attachment order']).toBe('No1.pdf; No2.pdf');
+  });
+
+  it('is absent when no row carries one', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-order-'));
+    const path = join(dir, 'o.csv');
+    await writeCsv(path, p, [row()]);
+    expect(await readFile(path, 'utf8')).not.toContain('attachment order');
+  });
+});
+
+describe('countProblems', () => {
+  const line = (folder: string, file: string, effect: 'held back' | 'note') => ({
+    folder,
+    file,
+    effect,
+    problem: 'p',
+    fix: 'f',
+  });
+
+  it('counts held-back folders once each, loose files separately, and notes', () => {
+    expect(
+      countProblems([
+        line('V3', 'a.pdf', 'held back'),
+        line('V3', 'b.pdf', 'held back'),
+        line('', 'stray.pdf', 'held back'),
+        line('V27', 'c.pdf', 'note'),
+      ]),
+    ).toEqual({ heldBack: 1, looseFiles: 1, notes: 1 });
+  });
+
+  it('never reads as clean while a loose file was left out', () => {
+    expect(countProblems([line('', 'stray.pdf', 'held back')])).toEqual({ heldBack: 0, looseFiles: 1, notes: 0 });
   });
 });

@@ -2,7 +2,7 @@ import { progressPercent } from '../progress.js';
 import { escapeHtml } from '../dom.js';
 
 export interface ProgressLogEntry {
-  fileName: string;
+  label: string;
   status: string;
   error?: string;
 }
@@ -10,7 +10,7 @@ export interface ProgressLogEntry {
 export interface ProgressProps {
   done: number;
   total: number;
-  fileName: string;
+  label: string;
   /** Most recent last. app.ts caps this so a very large batch can't grow it
    *  unbounded in memory. */
   log: ProgressLogEntry[];
@@ -31,7 +31,7 @@ export function progressMarkup(props: ProgressProps): string {
     .map((e) => {
       const label = e.error ? `${e.status} — ${e.error}` : e.status;
       const cls = e.status === 'failed' ? ' log-line--failed' : '';
-      return `<li class="log-line${cls}">${escapeHtml(e.fileName)}: ${escapeHtml(label)}</li>`;
+      return `<li class="log-line${cls}">${escapeHtml(e.label)}: ${escapeHtml(label)}</li>`;
     })
     .join('');
 
@@ -51,7 +51,7 @@ export function progressMarkup(props: ProgressProps): string {
       </div>
 
       <p class="progress-current">
-        ${props.done < props.total ? `Working on: <strong>${escapeHtml(props.fileName || '…')}</strong>` : 'Finishing up…'}
+        ${props.done < props.total ? `Working on: <strong>${escapeHtml(props.label || '…')}</strong>` : 'Finishing up…'}
       </p>
 
       <ul class="progress-log">${logItems}</ul>

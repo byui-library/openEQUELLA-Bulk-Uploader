@@ -8,9 +8,10 @@ import { createInterface } from 'node:readline/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
+import { extractDefinition, extractItemDescriptionPath, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
+import { folderLines } from '../core/folderReport.js';
 import { saveManifest, loadManifest } from '../core/state.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
@@ -21,7 +22,7 @@ import { runManifest } from '../core/runner.js';
 import { runPreflight, summarise } from '../core/preflight.js';
 import { checkLock } from '../core/lock.js';
 import { OeqError, ValidationError } from '../core/errors.js';
-import type { ItemState } from '../core/types.js';
+import { rowLabel, type ItemState } from '../core/types.js';
 import { runExtract, type ExtractCliOptions } from './extract.js';
 
 type Env = Record<string, string | undefined>;
@@ -71,6 +72,7 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
     schemaUuid: cfg.schemaUuid,
     itemState,
     attachmentUuidPath: cfg.attachmentUuidPath,
+    descriptionPath: extractItemDescriptionPath(schemaXml),
   });
 
   if (!o.skipDuplicateCheck) {
@@ -83,7 +85,7 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
 
     const findings = await findDuplicates(client, manifest, titleHeader);
     for (const f of findings) {
-      console.log(`  Row ${f.rowNumber}: ${f.fileName} -- ${f.tier}: ${f.detail}`);
+      console.log(`  Row ${f.rowNumber}: ${f.label} -- ${f.tier}: ${f.detail}`);
     }
 
     // markSkipped MUST run before saveManifest below, or the skip never
@@ -105,6 +107,8 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
 
   await saveManifest(o.manifest, manifest);
   console.log(`Planned ${manifest.entries.length} item(s) -> ${o.manifest}`);
+  // Each folder's files in upload order -- see folderReport.ts for why it is shown.
+  for (const line of folderLines(manifest.entries)) console.log(`  ${line}`);
   for (const w of manifest.warnings) console.log(`  warning: ${w}`);
 }
 
@@ -135,7 +139,7 @@ export async function runAction(o: RunCliOptions, env: Env = process.env): Promi
     forceInterrupted: o.forceInterrupted,
     maxAttempts: o.maxAttempts,
     onProgress: (e, done, total) =>
-      console.log(`[${done}/${total}] ${e.fileName} -> ${e.status}${e.error ? `: ${e.error}` : ''}`),
+      console.log(`[${done}/${total}] ${rowLabel(e)} -> ${e.status}${e.error ? `: ${e.error}` : ''}`),
   });
 
   console.log(
@@ -169,14 +173,14 @@ export async function statusAction(o: StatusCliOptions): Promise<void> {
   const failed = m.entries.filter((e) => e.status === 'failed');
   if (failed.length > 0) {
     console.log('\nFailed:');
-    for (const e of failed) console.log(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'unknown error'}`);
+    for (const e of failed) console.log(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'unknown error'}`);
   }
 
   const interrupted = m.entries.filter((e) => e.status === 'uploading');
   if (interrupted.length > 0) {
     console.log('\nInterrupted (a prior run died mid-upload; verify in openEQUELLA before retrying):');
     for (const e of interrupted)
-      console.log(`  row ${e.rowNumber} ${e.fileName}: ${e.error ?? 'interrupted'}`);
+      console.log(`  row ${e.rowNumber} ${rowLabel(e)}: ${e.error ?? 'interrupted'}`);
   }
 
   const lock = await checkLock(o.manifest);
@@ -792,13 +796,21 @@ export function buildProgram(env: Env = process.env): Command {
 
   program
     .command('extract')
-    .description('build a spreadsheet from a folder of PDFs and .docx files')
+    .description(
+      'build a spreadsheet from a folder of PDFs and .docx files -- one row per file, or with ' +
+        '--per-folder one row per subfolder',
+    )
     .requiredOption('--dir <path>', 'folder of files to read')
     .requiredOption('--profile <path>', 'extraction profile (.profile.json)')
     .option('--out <path>', 'where to write the spreadsheet', 'extracted.csv')
     .option('--schema-file <path>', 'local schema export', 'schema/_entity.xml')
     .option('--dry-run', 'show the first few rows without writing anything')
     .option('--init-profile', 'write a starter profile for this folder, then stop')
+    .option(
+      '--per-folder',
+      'one row per SUBFOLDER: each subfolder becomes one item, with every file in it attached ' +
+        'in name order',
+    )
     .option(
       '--ai',
       'let a language model fill the columns whose profile asks for one, using ' +

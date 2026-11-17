@@ -1,4 +1,5 @@
 // src/core/extract/opening.ts
+import { DESCRIPTION_LIMIT, shortenText } from './length.js';
 
 /**
  * The first substantial run of prose in a document.
@@ -34,13 +35,6 @@ const BOILERPLATE: RegExp[] = [
 /** Shorter than this is a heading, a caption or a fragment, not a paragraph. */
 const MIN_PROSE = 60;
 
-/**
- * How much to keep. A PDF's extracted text often has no line breaks at all, so
- * the whole document arrives as a single block -- without a cap, a 68,000
- * character article would land in a description cell.
- */
-const MAX_OPENING = 1000;
-
 /** Words that are not entirely capitals, as a share of all words. */
 function lowercaseShare(block: string): number {
   const words = block.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
@@ -64,29 +58,23 @@ function isProse(block: string): boolean {
   return words.length >= 10 && lowercaseShare(block) >= 0.6;
 }
 
-/** Trim to the cap, preferring a sentence end and falling back to a word end. */
-function trim(block: string): string {
-  if (block.length <= MAX_OPENING) return block;
-
-  const head = block.slice(0, MAX_OPENING);
-  const lastSentence = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '));
-  if (lastSentence > MIN_PROSE) return head.slice(0, lastSentence + 1).trim();
-
-  const lastWord = head.lastIndexOf(' ');
-  return (lastWord > MIN_PROSE ? head.slice(0, lastWord) : head).trim();
-}
-
 /**
  * The document's opening prose, or an empty string.
  *
  * Empty is a real answer: a document of headings and table fragments has no
  * opening paragraph, and a blank cell the operator can see beats a line of
  * timeline labels presented as a description.
+ *
+ * Cut to `limit` at a sentence end, because a PDF's extracted text often has
+ * no line breaks at all and the whole document arrives as one block. The
+ * extractor passes Infinity and cuts to the COLUMN's limit itself, so the cut
+ * is noted and `maxLength` reaches this source too; the model's slice takes
+ * the default.
  */
-export function readOpening(text: string): string {
+export function readOpening(text: string, limit: number = DESCRIPTION_LIMIT): string {
   for (const line of text.split(/\r?\n/)) {
     const block = line.trim();
-    if (isProse(block)) return trim(block);
+    if (isProse(block)) return shortenText(block, limit).text;
   }
   return '';
 }

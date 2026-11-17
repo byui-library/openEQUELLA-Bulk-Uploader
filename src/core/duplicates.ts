@@ -1,6 +1,6 @@
 // src/core/duplicates.ts
 
-import { sameFileName, type Manifest } from './types.js';
+import { rowLabel, sameFileName, type Manifest } from './types.js';
 
 /**
  * One item already in the collection, as the rules below need to see it.
@@ -30,7 +30,16 @@ export type DuplicateChoice = 'skip' | 'upload';
 
 export interface DuplicateFinding {
   rowNumber: number;
-  fileName: string;
+  /** The row's source: a filename, or a folder name for a folder row. */
+  source: string;
+  /**
+   * The row as `types.ts#rowLabel` names it everywhere else -- computed from
+   * the entry, never re-derived from the file count, so a one-file folder
+   * reads "Vol9 (1 file)" here exactly as in the plan and the run.
+   */
+  label: string;
+  /** Every file the row would attach, in upload order. One for a file row. */
+  fileNames: string[];
   tier: DuplicateTier;
   /** Plain-language reason, shown to the operator as-is. */
   detail: string;
@@ -45,16 +54,21 @@ export interface DuplicateFinding {
  * row itself, which is what keeps it testable without a manifest. Omitting
  * it from the type (rather than defaulting it to 0, which does not exist as
  * a spreadsheet row) makes the compiler enforce that every caller supplies
- * the real row number.
+ * the real row number. `source` and `label` are omitted for the same reason: they label a
+ * row, and the rule does not depend on it.
+ *
+ * `fileNames` is every file the row would attach -- one for a file row, the
+ * folder's files for a folder row.
  */
 export function verdictFor(
-  fileName: string,
+  fileNames: readonly string[],
   title: string,
   hits: readonly ExistingItemHit[],
-): Omit<DuplicateFinding, 'rowNumber'> | null {
+): Omit<DuplicateFinding, 'rowNumber' | 'source' | 'label'> | null {
+  const names = [...fileNames];
   if (title.trim() === '') {
     return {
-      fileName,
+      fileNames: names,
       existing: [],
       tier: 'not-checkable',
       detail: 'this row has no title, so it could not be checked for duplicates',
@@ -82,23 +96,46 @@ export function verdictFor(
     attachmentNames: h.attachmentNames,
   }));
 
-  const holdsThisFile = matching.some((h) =>
-    h.attachmentNames.some((n) => sameFileName(n, fileName)),
-  );
+  // The ONE hit holding the most of this row's files decides; holdings are
+  // never added up across items. An item holding all of them is this row
+  // already uploaded. One holding some is worth a look but not a default
+  // skip -- skipping would leave the missing files in no item at all, and
+  // a silent omission is worse than a visible duplicate (see defaultChoice).
+  const heldBy = (h: ExistingItemHit) =>
+    names.filter((f) => h.attachmentNames.some((n) => sameFileName(n, f)));
+  const held = matching
+    .map(heldBy)
+    .reduce((best, next) => (next.length > best.length ? next : best), [] as string[]);
+  const quote = (list: readonly string[]) => list.map((n) => `'${n}'`).join(', ');
 
-  return holdsThisFile
-    ? {
-        fileName,
-        existing,
-        tier: 'near-certain',
-        detail: `an item with this title already holds a file called '${fileName}'`,
-      }
-    : {
-        fileName,
-        existing,
-        tier: 'possible',
-        detail: 'an item with this title already exists, but holds a different file',
-      };
+  if (held.length === names.length) {
+    return {
+      fileNames: names,
+      existing,
+      tier: 'near-certain',
+      detail:
+        names.length === 1
+          ? `an item with this title already holds a file called '${names[0]}'`
+          : `an item with this title already holds all ${names.length} of these files`,
+    };
+  }
+  if (held.length > 0) {
+    const missing = names.filter((f) => !held.includes(f));
+    return {
+      fileNames: names,
+      existing,
+      tier: 'possible',
+      detail:
+        `an item with this title already holds ${held.length} of these ${names.length} files ` +
+        `(${quote(held)}); it does not hold ${quote(missing)}`,
+    };
+  }
+  return {
+    fileNames: names,
+    existing,
+    tier: 'possible',
+    detail: 'an item with this title already exists, but holds a different file',
+  };
 }
 
 /**
@@ -193,7 +230,9 @@ export async function findDuplicates(
   if (!titleHeader) {
     return pending.map((entry) => ({
       rowNumber: entry.rowNumber,
-      fileName: entry.fileName,
+      source: entry.source,
+      label: rowLabel(entry),
+      fileNames: entry.files.map((f) => f.name),
       tier: 'could-not-check' as const,
       detail: UNKNOWN_TITLE_PATH_DETAIL,
       existing: [],
@@ -216,7 +255,9 @@ export async function findDuplicates(
   if (unchecked) {
     return pending.map((entry) => ({
       rowNumber: entry.rowNumber,
-      fileName: entry.fileName,
+      source: entry.source,
+      label: rowLabel(entry),
+      fileNames: entry.files.map((f) => f.name),
       tier: 'could-not-check' as const,
       detail: unchecked,
       existing: [],
@@ -234,13 +275,17 @@ export async function findDuplicates(
             title === ''
               ? []
               : await client.searchByTitle(manifest.collectionUuid, title, titleHeader);
-          const verdict = verdictFor(entry.fileName, title, hits);
-          return verdict ? { ...verdict, rowNumber: entry.rowNumber } : null;
+          const verdict = verdictFor(entry.files.map((f) => f.name), title, hits);
+          return verdict
+            ? { ...verdict, rowNumber: entry.rowNumber, source: entry.source, label: rowLabel(entry) }
+            : null;
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           return {
             rowNumber: entry.rowNumber,
-            fileName: entry.fileName,
+            source: entry.source,
+            label: rowLabel(entry),
+            fileNames: entry.files.map((f) => f.name),
             tier: 'could-not-check' as const,
             detail: `could not check whether this already exists (${detail})`,
             existing: [],

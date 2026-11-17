@@ -1,8 +1,8 @@
 import type { OeqClient } from './client.js';
-import type { Manifest, ManifestEntry, RowStatus } from './types.js';
+import { rowLabel, type Manifest, type ManifestEntry, type RowStatus } from './types.js';
 import { loadManifest, saveManifest } from './state.js';
 import { buildMetadataXml } from './metadata.js';
-import { uploadFile } from './upload.js';
+import { uploadFiles } from './upload.js';
 import { ApiError } from './errors.js';
 import { randomUUID } from 'node:crypto';
 import { acquireLock, releaseLock } from './lock.js';
@@ -50,7 +50,7 @@ const isRetryable = (err: unknown): boolean => (err instanceof ApiError ? err.re
 /**
  * Statuses that mean "this row's item already exists (or was deliberately
  * left alone) and must never be reprocessed automatically". Reprocessing any
- * of these would call `uploadFile`/`createItem` again against a row that
+ * of these would call `uploadFiles`/`createItem` again against a row that
  * already produced a real openEQUELLA item, creating a duplicate
  * contribution -- exactly the failure mode the manifest/resume design exists
  * to prevent.
@@ -68,7 +68,7 @@ const TERMINAL_STATUSES: ReadonlySet<RowStatus> = new Set(['created', 'skipped',
 
 /** `Row 14 (Sears, Rivka 072126.MP4)` -- prefix for every error this runner records. */
 function rowContext(entry: ManifestEntry): string {
-  return `Row ${entry.rowNumber} (${entry.fileName})`;
+  return `Row ${entry.rowNumber} (${rowLabel(entry)})`;
 }
 
 function describeError(err: unknown): string {
@@ -81,19 +81,21 @@ function describeError(err: unknown): string {
  * (`created` or `incomplete`); throws on a genuine failure so the caller's
  * retry loop can decide whether to retry.
  *
+ * A row carries one file or a whole folder's worth; either way it becomes ONE
+ * item, with one attachment per file in `entry.files` order.
+ *
  * ---- Attachment uuid verification ----
- * The attachment uuid is generated here, client-side, so it can be embedded
- * in `manifest.attachmentUuidPath` and sent in the *same* `createItem`
- * request that also declares the attachment -- avoiding a second round trip
- * to patch the metadata after the fact. `client.ts` flags this as an
- * unverified assumption: "VERIFY the server honours a supplied uuid". If it
- * doesn't -- if openEQUELLA silently assigns its own uuid instead of the one
- * we asked for -- then the metadata XML already sent to the server (and now
- * baked into the item) references a uuid that does not match the item's
- * actual attachment. Reporting that row as `created` would hide a real,
- * silent data problem behind a success status. Instead this compares the uuid
- * the server echoes back (`result.attachmentUuids[0]`) against the one we
- * asked for; a mismatch marks the row `incomplete` (a status that exists for
+ * The attachment uuids are generated here, client-side, so they can be
+ * embedded in `manifest.attachmentUuidPath` and sent in the *same*
+ * `createItem` request that also declares the attachments -- avoiding a
+ * second round trip to patch the metadata after the fact. If openEQUELLA
+ * silently assigned its own uuids instead of the ones we asked for, the
+ * metadata XML already sent to the server (and now baked into the item)
+ * would reference uuids that do not match the item's actual attachments.
+ * Reporting that row as `created` would hide a real, silent data problem
+ * behind a success status. Instead this compares the uuids the server echoes
+ * back against the ones we asked for, position by position; a mismatch
+ * marks the row `incomplete` (a status that exists for
  * exactly this) with an explanation, and -- critically -- does NOT throw,
  * so the caller's retry loop does not attempt this row again. The item and
  * its file attachment already exist on the server at this point; retrying
@@ -116,44 +118,73 @@ async function processEntry(
   manifest: Manifest,
   entry: ManifestEntry,
 ): Promise<'created' | 'incomplete'> {
-  const stagingUuid = await uploadFile(client, entry.filePath, entry.fileName);
+  const stagingUuid = await uploadFiles(client, entry);
 
-  const attachmentUuid = randomUUID();
+  // One client uuid per file, in upload order. openEQUELLA keeps both the
+  // order and the uuids it is sent -- proven live on 2026-11-11.
+  const attachments = entry.files.map((f) => ({
+    filename: f.name,
+    description: f.name,
+    uuid: randomUUID(),
+  }));
+  const requested = attachments.map((a) => a.uuid);
   // Spread only when a path is configured: an unset path must leave NO trace
   // in the document, not an empty element or a placeholder under some
-  // fallback name.
+  // fallback name. Every uuid goes in, in order -- one element each.
   const uuidPath = manifest.attachmentUuidPath ?? '';
   const metadata =
-    uuidPath === ''
-      ? entry.metadata
-      : { ...entry.metadata, [uuidPath]: [attachmentUuid] };
+    uuidPath === '' ? entry.metadata : { ...entry.metadata, [uuidPath]: requested };
 
   const result = await client.createItem({
     collectionUuid: manifest.collectionUuid,
     metadata: buildMetadataXml(metadata),
     stagingUuid,
-    attachments: [{ filename: entry.fileName, description: entry.fileName, uuid: attachmentUuid }],
+    attachments,
     draft: manifest.itemState === 'draft',
   });
 
   entry.itemUuid = result.uuid;
   entry.itemVersion = result.version;
 
-  const actualUuid = result.attachmentUuids[0];
-  if (uuidPath !== '' && actualUuid !== undefined && actualUuid !== attachmentUuid) {
-    entry.attachmentUuid = actualUuid;
+  // Compared POSITION BY POSITION wherever the server returns any. The
+  // metadata lists the uuids in order, so even the same set in a different
+  // order would leave it describing the wrong files. The live server returns
+  // none at all (Location only), which is trusted below.
+  const returned = result.attachmentUuids;
+
+  // A COUNT THAT DIFFERS IS A MISSING FILE, whatever is configured. Unlike a
+  // uuid the server chose itself -- which only matters when the metadata
+  // records uuids -- an attachment fewer than was sent means the item does not
+  // hold everything the plan said it would, and an item missing an issue reads
+  // as complete to everyone who finds it later. Never retried: the item exists.
+  if (returned.length > 0 && returned.length !== requested.length) {
+    entry.attachmentUuids = returned;
     entry.status = 'incomplete';
     entry.error =
-      `${rowContext(entry)}: item ${result.uuid} and its attachment were created, but ` +
-      `openEQUELLA assigned attachment uuid '${actualUuid}' instead of the requested ` +
-      `'${attachmentUuid}'. The metadata already sent to the server still references the ` +
-      `requested uuid, so '${uuidPath}' is now stale on this item. This needs ` +
+      `${rowContext(entry)}: item ${result.uuid} was created, but openEQUELLA reported ` +
+      `${returned.length} attachment(s) on the item, but ${requested.length} file(s) were sent. ` +
+      `Check the item in openEQUELLA for the missing files -- do not re-run this row, it would ` +
+      `create a duplicate item.`;
+    return 'incomplete';
+  }
+
+  const differs =
+    returned.length > 0 &&
+    (returned.length !== requested.length || requested.some((u, i) => returned[i] !== u));
+  if (uuidPath !== '' && differs) {
+    entry.attachmentUuids = returned;
+    entry.status = 'incomplete';
+    entry.error =
+      `${rowContext(entry)}: item ${result.uuid} and its ${requested.length === 1 ? 'attachment was' : 'attachments were'} ` +
+      `created, but openEQUELLA assigned attachment uuid(s) [${returned.join(', ')}] instead of ` +
+      `the requested [${requested.join(', ')}]. The metadata already sent to the server still ` +
+      `references the requested uuid(s), so '${uuidPath}' is now stale on this item. This needs ` +
       `manual correction in openEQUELLA -- do not re-run this row, it would create a ` +
       `duplicate item.`;
     return 'incomplete';
   }
 
-  entry.attachmentUuid = actualUuid ?? attachmentUuid;
+  entry.attachmentUuids = returned.length > 0 ? returned : requested;
   entry.status = 'created';
   delete entry.error;
   return 'created';

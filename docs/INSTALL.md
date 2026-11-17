@@ -290,6 +290,13 @@ It works in three steps:
    they are left alone rather than put somewhere that looks plausible. Add them
    yourself if you want them.
 
+   To fill a column with **your own words plus a part of the name** (for
+   example *Upper Snake River Valley Historical Society Quarterly, Volume 2*),
+   choose **Text with parts of the name…** as its source. A box appears: type
+   the words, and put the part in braces where it belongs, such as
+   `…Quarterly, Volume {volume}`. The box lists the parts you can use, and the
+   preview updates when you click away.
+
    Where a column shows **two** sources, it tries them in order and takes the
    first that isn't empty. That is how one setup can serve a folder holding both
    Word files and PDFs: the Word files have a *Job Title* cell, the PDFs record
@@ -507,6 +514,60 @@ why every cell a model wrote stays flagged for you to read.
 **What it will never do is overwrite something your document actually said.** A
 model may fill a cell that came out empty, or replace one the program had
 already flagged as a guess. A value the document stated is left alone.
+
+## Uploading a folder of files as one item
+
+Sometimes one item should hold several files: a journal volume and each of its
+issues, say. The program does this one folder at a time — **every file in a
+folder becomes one item**.
+
+1. **Give each item a folder of its own**, inside your batch folder. Put
+   nothing else in it: no folder inside a folder, and no empty folders. The
+   program refuses a folder like that rather than uploading part of it, and
+   tells you which one and why.
+2. **Build the spreadsheet with one row per folder.** On the first screen of
+   *I don't have a spreadsheet yet…*, choose your batch folder, pick the
+   template if there is one (for example *Snake River Echoes*), and tick
+   **One row per subfolder**. The program counts folders instead of files, and
+   each row's `attachment name` is the folder's name. With the *Snake River
+   Echoes* template and a language model set up, each volume's description is
+   the template's fixed sentence followed by a short summary the model writes
+   from the start of every issue. If the model is a hosted service, the program
+   asks before sending anything, counting one request per folder. Every summary
+   is flagged for you to read before you upload.
+3. **When you save, read what the last screen says about held-back folders.**
+   If the template knows how its files are numbered, the program checks every
+   folder. A file that belongs to another volume, or two files with the same
+   issue number, keeps that folder out of the spreadsheet so it is not
+   uploaded. Click **Show problem list**: a spreadsheet beside yours says what
+   is wrong in each folder and what to do. Fix the folders on disk, then build
+   the spreadsheet again. Notes are worth a look but don't stop anything: a
+   file with no issue number, a gap in the numbering, or dates that run
+   backwards.
+4. **On the Review screen, read *Folders: files in upload order* for every
+   folder before you continue, and change any order you don't want right
+   there.** It lists each folder's files, numbered, in exactly the order they
+   will be attached, plus anything that will not be uploaded (such as
+   `Thumbs.db`). With a template that knows the numbering, that is issue
+   order, with any unnumbered file (such as a commemorative issue) last.
+   Otherwise it is name order. Use the **↑** and **↓** beside a file to move
+   it. A changed folder says *order changed here*, and **Put back the planned
+   order** undoes it. Your changes are used when you upload; your spreadsheet
+   is not changed.
+
+   You can also set an order in the spreadsheet itself, in the `attachment order`
+   column next to each folder's name. It is filled in only for a folder whose
+   order is not simply name order; type the file names in any other, separated by
+   semicolons and naming every file exactly once, and check again. The program
+   refuses a row whose list doesn't match the folder, and says what is wrong.
+5. **Do not touch the folders until the upload finishes.** The program checks
+   each folder again just before uploading it. If a file was added, removed or
+   changed since Review, that item is not uploaded, and the reason ends with
+   *plan again*. Go back, check again, and run the upload once more.
+
+If an item with the same title already holds **all** of a folder's files, the
+row is skipped as a likely duplicate. If it holds only **some**, the row is
+flagged so you can look, and it names which files are already there.
 
 ## What happens when you upload
 

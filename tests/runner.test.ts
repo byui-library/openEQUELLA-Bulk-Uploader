@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runManifest, checkLock } from '../src/core/runner.js';
@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 const manifest = (): Manifest => ({
-  version: 1,
+  version: 2,
   createdAt: '2026-08-03T00:00:00.000Z',
   baseUrl: mock.url,
   collectionUuid: 'c1',
@@ -40,8 +40,8 @@ const manifest = (): Manifest => ({
   warnings: [],
   entries: ['a.mp4', 'b.mp4'].map((f, i) => ({
     rowNumber: i + 2,
-    filePath: join(dir, f),
-    fileName: f,
+    source: f,
+    files: [{ path: join(dir, f), name: f }],
     metadata: { 'MWDL/title': [f] },
     status: 'pending' as const,
     attempts: 0,
@@ -118,7 +118,7 @@ describe('runManifest', () => {
   it('isolates a permanent failure without stopping the batch', async () => {
     const path = join(dir, 'job.json');
     const m = manifest();
-    m.entries[0]!.filePath = join(dir, 'does-not-exist.mp4');
+    m.entries[0]!.files[0]!.path = join(dir, 'does-not-exist.mp4');
     await saveManifest(path, m);
     const summary = await runManifest(client, path, { retryDelayMs: 1 });
     expect(summary.failed).toBe(1);
@@ -131,7 +131,7 @@ describe('runManifest', () => {
   it('identifies the row and file in a failure message', async () => {
     const path = join(dir, 'job.json');
     const m = manifest();
-    m.entries[0]!.filePath = join(dir, 'does-not-exist.mp4');
+    m.entries[0]!.files[0]!.path = join(dir, 'does-not-exist.mp4');
     await saveManifest(path, m);
     await runManifest(client, path, { retryDelayMs: 1 });
     const done = await loadManifest(path);
@@ -207,7 +207,7 @@ describe('runManifest', () => {
     expect(done.entries[0]!.error).toBeUndefined();
     // The uuid recorded is the one the server actually assigned, so the
     // manifest still describes what exists.
-    expect(done.entries[0]!.attachmentUuid).toBeTruthy();
+    expect(done.entries[0]!.attachmentUuids?.[0]).toBeTruthy();
   });
 
   it('does not reprocess an incomplete entry on a later run (would duplicate the item)', async () => {
@@ -340,11 +340,119 @@ describe('runManifest job lock', () => {
   it('releases the lock after a run with a mix of created and failed entries', async () => {
     const path = join(dir, 'job.json');
     const m = manifest();
-    m.entries[0]!.filePath = join(dir, 'does-not-exist.mp4');
+    m.entries[0]!.files[0]!.path = join(dir, 'does-not-exist.mp4');
     await saveManifest(path, m);
     const summary = await runManifest(client, path, { retryDelayMs: 1 });
     expect(summary.created).toBe(1);
     expect(summary.failed).toBe(1);
     expect(await checkLock(path)).toBeNull();
+  });
+});
+
+describe('runManifest -- folder rows', () => {
+  async function folderManifest(uuidPath = ''): Promise<string> {
+    const f = join(dir, 'V2');
+    await mkdir(f);
+    await writeFile(join(f, 'No1.pdf'), 'a');
+    await writeFile(join(f, 'No2.pdf'), 'bb');
+    const m = manifest();
+    m.attachmentUuidPath = uuidPath;
+    m.entries = [
+      {
+        rowNumber: 2,
+        source: 'V2',
+        folderPath: f,
+        files: [
+          { path: join(f, 'No1.pdf'), name: 'No1.pdf', size: 1 },
+          { path: join(f, 'No2.pdf'), name: 'No2.pdf', size: 2 },
+        ],
+        metadata: { 'MWDL/title': ['Gazette, Volume 2'] },
+        status: 'pending',
+        attempts: 0,
+      },
+    ];
+    const path = join(dir, 'job.json');
+    await saveManifest(path, m);
+    return path;
+  }
+
+  it('creates ONE item with every file as an attachment, in order', async () => {
+    const path = await folderManifest();
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.created).toBe(1);
+    expect(mock.state.items).toHaveLength(1);
+    const atts = mock.state.items[0]!.attachments;
+    expect(atts.map((a) => [a.type, a.filename, a.description])).toEqual([
+      ['file', 'No1.pdf', 'No1.pdf'],
+      ['file', 'No2.pdf', 'No2.pdf'],
+    ]);
+    expect(new Set(atts.map((a) => a.uuid)).size).toBe(2);
+    const saved = await loadManifest(path);
+    expect(saved.entries[0]!.attachmentUuids).toEqual(atts.map((a) => a.uuid));
+  });
+
+  it('writes every attachment uuid, in order, to the configured path', async () => {
+    const path = await folderManifest(ATTACHMENT_PATH);
+    await runManifest(client, path, { retryDelayMs: 1 });
+    const item = mock.state.items[0]!;
+    const [first, second] = item.attachments.map((a) => a.uuid!);
+    expect(item.metadata).toContain(first);
+    expect(item.metadata).toContain(second);
+    expect(item.metadata.indexOf(first!)).toBeLessThan(item.metadata.indexOf(second!));
+  });
+
+  it('marks the row incomplete when the server assigns different uuids and the path is set', async () => {
+    const path = await folderManifest(ATTACHMENT_PATH);
+    mock.state.mismatchAttachmentNext = 1;
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.incomplete).toBe(1);
+    expect(mock.state.items).toHaveLength(1);
+    expect((await loadManifest(path)).entries[0]!.error).toMatch(/^Row 2 \(V2 \(2 files\)\): item /);
+  });
+
+  it('fails a folder that changed since planning, creating nothing, and does not retry it', async () => {
+    const path = await folderManifest();
+    await writeFile(join(dir, 'V2', 'No3.pdf'), 'x');
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.failed).toBe(1);
+    expect(mock.state.items).toHaveLength(0);
+    expect(mock.state.stagingAreas.size).toBe(0);
+    const entry = (await loadManifest(path)).entries[0]!;
+    expect(entry.attempts).toBe(1);
+    expect(entry.error).toBe(
+      "Row 2 (V2 (2 files)): the folder changed since planning ('No3.pdf' was added); plan again",
+    );
+  });
+});
+
+describe('runManifest -- a server that reports fewer attachments', () => {
+  it('marks the row incomplete even with no uuid path configured', async () => {
+    const f = join(dir, 'V3');
+    await mkdir(f);
+    await writeFile(join(f, 'No1.pdf'), 'a');
+    await writeFile(join(f, 'No2.pdf'), 'bb');
+    const m = manifest();
+    m.entries = [
+      {
+        rowNumber: 2,
+        source: 'V3',
+        folderPath: f,
+        files: [
+          { path: join(f, 'No1.pdf'), name: 'No1.pdf', size: 1 },
+          { path: join(f, 'No2.pdf'), name: 'No2.pdf', size: 2 },
+        ],
+        metadata: { 'MWDL/title': ['Gazette, Volume 3'] },
+        status: 'pending',
+        attempts: 0,
+      },
+    ];
+    const path = join(dir, 'job.json');
+    await saveManifest(path, m);
+    mock.state.dropAttachmentsNext = 1;
+    const summary = await runManifest(client, path, { retryDelayMs: 1 });
+    expect(summary.incomplete).toBe(1);
+    const entry = (await loadManifest(path)).entries[0]!;
+    expect(entry.status).toBe('incomplete');
+    expect(entry.error).toMatch(/reported 1 attachment\(s\) on the item, but 2 file\(s\) were sent/);
   });
 });
