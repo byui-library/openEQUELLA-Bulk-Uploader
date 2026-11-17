@@ -1352,14 +1352,100 @@ describe('fillWithModel progress', () => {
   });
 });
 
-describe('noteMissingModel -- folder rows', () => {
-  it("notes a folder row's model column instead of leaving it silently blank", async () => {
-    const { noteMissingModel } = await import('../../src/core/ai/fill.js');
-    const rows = [row()];
-    noteMissingModel(rows, profile, 'folder-row');
-    expect(rows[0]!.notes).toContain(
-      'MWDL/description: not sent to the model -- rows built from a folder are not supported by ' +
-        'the model pass yet',
-    );
+/**
+ * A FOLDER row -- a volume of several issues -- written AFTER the template's
+ * fixed sentence (docs/superpowers/specs/2026-11-17-folder-descriptions-design.md).
+ * Every name, place and date below is invented.
+ */
+describe('fillWithModel -- a folder row, written after a lead', () => {
+  const lead = 'Valley Quarterly, Volume 2.';
+  const afterProfile: Profile = {
+    version: 1,
+    pattern: '{name}',
+    columns: [{ path: 'MWDL/description', sources: [{ join: lead }, { ai: true, after: true }] }],
+  };
+  const issues = [
+    { name: 'No1.pdf', doc: doc('Spring issue. The Aster ferry crossing opened in 1884.') },
+    { name: 'No2.pdf', doc: doc('Summer issue. Notes on the Birch irrigation canal.') },
+    { name: 'No3.pdf', doc: doc('Autumn issue. The Cedar Creek school, built in 1902.') },
+  ];
+  const target = () => ({ row: row({ cells: { 'MWDL/description': lead } }), docs: issues });
+
+  it('keeps the lead and adds the summary after one space', async () => {
+    const t = target();
+    await fillWithModel([t], afterProfile, provider('The issues cover river crossings and schools.'), options());
+    expect(t.row.cells['MWDL/description']).toBe(`${lead} The issues cover river crossings and schools.`);
+  });
+
+  it('sends every issue, labelled, and names the volume', async () => {
+    const p = provider('Summary.');
+    await fillWithModel([target()], afterProfile, p, options({ budget: 3000 }));
+    const prompt = promptsOf(p)[0]!;
+    expect(prompt).toContain('made up of 3 issues');
+    for (const name of ['[No1.pdf]', '[No2.pdf]', '[No3.pdf]']) expect(prompt).toContain(name);
+  });
+
+  it('tells the model only the room left after the lead', async () => {
+    const p = provider('Summary.');
+    await fillWithModel([target()], afterProfile, p, options());
+    expect(promptsOf(p)[0]).toContain(`no more than ${1000 - lead.length - 1} characters`);
+  });
+
+  it('refuses a reply that would take the whole cell past the limit', async () => {
+    const t = target();
+    await fillWithModel([t], afterProfile, provider('x '.repeat(490).trim()), options());
+    expect(t.row.cells['MWDL/description']).toBe(lead);
+  });
+
+  it('accepts a date only the third issue supports', async () => {
+    const t = target();
+    await fillWithModel([t], afterProfile, provider('Includes a school built in 1902.'), options());
+    expect(t.row.cells['MWDL/description']).toBe(`${lead} Includes a school built in 1902.`);
+  });
+
+  it('refuses a date no issue supports, and leaves the lead alone', async () => {
+    const t = target();
+    await fillWithModel([t], afterProfile, provider('A school built in 1907.'), options());
+    expect(t.row.cells['MWDL/description']).toBe(lead);
+    expect(t.row.aiWritten).toEqual({});
+  });
+
+  it('sends nothing when the lead leaves too little room', async () => {
+    const t = { row: row({ cells: { 'MWDL/description': 'x'.repeat(950) } }), docs: issues };
+    const p = provider('Summary.');
+    await fillWithModel([t], afterProfile, p, options());
+    expect(p.complete).not.toHaveBeenCalled();
+    expect(t.row.notes.join(' ')).toMatch(/leaves fewer than 100 of this column's 1000 characters/);
+  });
+
+  it('writes the summary alone into an empty cell', async () => {
+    const t = { row: row(), docs: issues };
+    await fillWithModel([t], afterProfile, provider('Summary.'), options());
+    expect(t.row.cells['MWDL/description']).toBe('Summary.');
+  });
+
+  it('records the write, so a second pass does not append again', async () => {
+    const t = target();
+    const p = provider('Summary.');
+    await fillWithModel([t], afterProfile, p, options());
+    await fillWithModel([t], afterProfile, p, options());
+    expect(p.complete).toHaveBeenCalledTimes(1);
+    expect(t.row.cells['MWDL/description']).toBe(`${lead} Summary.`);
+  });
+
+  it('names an issue with no text, and still sends the others', async () => {
+    const t = {
+      row: row({ cells: { 'MWDL/description': lead } }),
+      docs: [...issues, { name: 'No4.pdf', doc: doc('') }],
+    };
+    await fillWithModel([t], afterProfile, provider('Summary.'), options());
+    expect(t.row.notes.join(' ')).toMatch(/'No4\.pdf' has no text to read, so it was not sent/);
+    expect(t.row.cells['MWDL/description']).toBe(`${lead} Summary.`);
+  });
+
+  it('says the model was sent the start of each file', async () => {
+    const t = target();
+    await fillWithModel([t], afterProfile, provider('Summary.'), options());
+    expect(t.row.notes.join(' ')).toMatch(/sent the start of each file in this folder/);
   });
 });
