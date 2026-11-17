@@ -901,32 +901,61 @@ describe('runExtract --per-folder', () => {
     expect(csv).not.toContain('attachment order');
   });
 
-  it('refuses --ai with --per-folder before reading anything', async () => {
-    const { dir, profilePath, out } = await setupFolders();
-    const fetchImpl = vi.fn();
+  const withSummary: Profile = {
+    ...folderProfile,
+    columns: [
+      ...folderProfile.columns,
+      { path: 'MWDL/description', sources: [{ join: 'Gazette, Volume {group}.' }, { ai: true, after: true }] },
+    ],
+  };
+  const reply = () =>
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: 'Notes on the season.' } }] }), {
+          status: 200,
+        }),
+    );
+
+  // A volume's description, written after the template's fixed sentence, one
+  // request per volume -- docs/superpowers/specs/2026-11-17-folder-descriptions-design.md.
+  it('with --ai, writes each volume a summary after its fixed sentence, one request per volume', async () => {
+    const { dir, profilePath, out } = await setupFolders(withSummary);
+    const fetchImpl = reply();
+    await runExtract(
+      { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true, ai: true },
+      () => {},
+      { OEQ_MODEL_BASE_URL: 'http://localhost:11434/v1', OEQ_MODEL: 'm' },
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const csv = await readFile(out, 'utf8');
+    expect(csv).toContain('Gazette, Volume 1. Notes on the season.');
+    expect(csv).toContain('Gazette, Volume 2. Notes on the season.');
+  });
+
+  it('asks before sending a folder batch to a hosted model, counting volumes', async () => {
+    const { dir, profilePath, out } = await setupFolders(withSummary);
+    const fetchImpl = reply();
     await expect(
       runExtract(
         { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true, ai: true },
         () => {},
-        { OEQ_MODEL_BASE_URL: 'http://localhost:11434/v1', OEQ_MODEL: 'm' },
+        { OEQ_MODEL_BASE_URL: 'https://api.example.test/v1', OEQ_MODEL: 'm', OEQ_MODEL_KEY: 'k' },
         fetchImpl as unknown as typeof fetch,
       ),
-    ).rejects.toThrow(/--ai cannot be used with --per-folder/);
+    ).rejects.toThrow(/About to send up to 2 model requests[\s\S]*Re-run with --yes/);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("says why a model column is empty on a folder row, and does not blame a missing --ai", async () => {
-    const { dir, profilePath, out } = await setupFolders({
-      ...folderProfile,
-      columns: [...folderProfile.columns, { path: 'MWDL/description', sources: [{ ai: true }] }],
-    });
+  it('without --ai, keeps the fixed sentence and says --ai was not given', async () => {
+    const { dir, profilePath, out } = await setupFolders(withSummary);
     await runExtract(
       { dir, profile: profilePath, out, schemaFile: 'schema/_entity.xml', perFolder: true },
       () => {},
     );
     const csv = await readFile(out, 'utf8');
-    expect(csv).toContain('rows built from a folder are not supported by the model pass yet');
-    expect(csv).not.toContain('--ai was not given');
+    expect(csv).toContain('Gazette, Volume 1.');
+    expect(csv).toContain('--ai was not given');
   });
 
   it('names a loose file beside the subfolders', async () => {

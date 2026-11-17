@@ -809,7 +809,7 @@ export function buildProgram(env: Env = process.env): Command {
     .option(
       '--per-folder',
       'one row per SUBFOLDER: each subfolder becomes one item, with every file in it attached ' +
-        'in name order (cannot be combined with --ai)',
+        'in name order',
     )
     .option(
       '--ai',

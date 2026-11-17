@@ -9,12 +9,14 @@ import {
 } from '../core/schema.js';
 import { loadProfile, saveProfile, validateAgainstSchema } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
+import type { FolderDoc } from '../core/extract/rows.js';
 import {
   extractFolder,
   extractFolders,
   listFolder,
   listSubfolders,
   type FolderListing,
+  type SubfolderListing,
 } from '../core/extract/extract.js';
 import { scanEvidence, scanFolderEvidence } from '../core/extract/evidence.js';
 import { writeCsv, writeProblemsLog } from '../core/extract/csv.js';
@@ -275,17 +277,6 @@ export async function runExtract(
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof fetch,
 ): Promise<void> {
-  // REFUSED BEFORE ANYTHING IS READ. An explicit instruction that cannot be
-  // carried out, exactly as `--ai` with no endpoint is: the model pass checks
-  // what it writes against ONE document, and a folder row has several.
-  if (options.perFolder === true && options.ai === true) {
-    throw new ValidationError(
-      `--ai cannot be used with --per-folder: the model pass checks what it writes against ONE ` +
-        `document, and a row built from a folder has several. Drop --ai; the model columns will ` +
-        `say why they are empty.`,
-    );
-  }
-
   if (options.initProfile) {
     // In per-folder mode the "filenames" a pattern is inferred from are the
     // FOLDER names, because that is what each row's attachment name will be.
@@ -344,17 +335,6 @@ export async function runExtract(
   // could -- see its docblock for the two that qualify by a quirk and are
   // excluded.
   const wantsModel = modelColumns(profile).length > 0;
-
-  // ONE ROW PER SUBFOLDER. No model branch at all: --ai was refused above, and
-  // the cells that asked for one say why they are empty instead of looking
-  // like documents with nothing to say.
-  if (options.perFolder === true) {
-    const result = await extractFolders(options.dir, profile);
-    if (wantsModel) noteMissingModel(result.rows, profile, 'folder-row');
-    await reportProblems(options, result.problems ?? [], log);
-    await finishExtract(options, profile, result, log);
-    return;
-  }
 
   // `--ai` ON A PROFILE NO MODEL COULD WRITE IS REFUSED, exactly as `--ai` with
   // no endpoint is. Both are an explicit instruction that cannot be carried
@@ -419,24 +399,27 @@ export async function runExtract(
     : 'not-requested';
 
   const targets: FillTarget[] = [];
-  const collect =
-    sending === null
-      ? {}
-      : { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } };
+  const perFolder = options.perFolder === true;
 
   /** Taken once when the operator has to be shown a count, and handed to the
-   *  run so both describe the same batch. See `ExtractOptions.listing`. */
+   *  run so both describe the same batch. See `ExtractOptions.listing`. A
+   *  folder batch counts its SUBFOLDERS: one request per volume. */
   let listing: FolderListing | undefined;
+  let subfolders: SubfolderListing | undefined;
 
   if (sending !== null) {
     // BEFORE A SINGLE FILE IS READ, so an operator who declines has not paid for
-    // anything -- not even the reading. The count comes from `listFolder`, which
-    // `extractFolder` calls again below; ONE listing is taken here and handed
+    // anything -- not even the reading. ONE listing is taken here and handed
     // down, because two walks of the same directory can disagree (a file added
     // or removed in between), and the number the operator agreed to must be the
     // number the run works from rather than a second opinion about it.
-    listing = await listFolder(options.dir);
-    approve(options, profile, sending, listing.supported.length, log);
+    if (perFolder) {
+      subfolders = await listSubfolders(options.dir);
+      approve(options, profile, sending, subfolders.folders.length, log);
+    } else {
+      listing = await listFolder(options.dir);
+      approve(options, profile, sending, listing.supported.length, log);
+    }
   } else if (wantsModel && settings !== null) {
     log(
       // `describeHost`, not the raw address: a gateway's published URL can carry
@@ -448,7 +431,18 @@ export async function runExtract(
     );
   }
 
-  const result = await extractFolder(options.dir, profile, { ...collect, ...(listing ? { listing } : {}) });
+  // Documents are kept only when there is a pass to feed: holding four hundred
+  // of them for a run that will send none is memory spent on nothing.
+  const result = perFolder
+    ? await extractFolders(options.dir, profile, {
+        ...(subfolders ? { listing: subfolders } : {}),
+        ...(sending === null ? {} : { onRow: (row: ExtractedRow, docs: readonly FolderDoc[]) => { targets.push({ row, docs }); } }),
+      })
+    : await extractFolder(options.dir, profile, {
+        ...(listing ? { listing } : {}),
+        ...(sending === null ? {} : { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } }),
+      });
+  if (perFolder) await reportProblems(options, result.problems ?? [], log);
 
   if (sending !== null) {
     await runModelPass(targets, profile, sending, fetchImpl);
