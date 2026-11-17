@@ -856,6 +856,10 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const win = getWindow();
       if (win !== null && !win.isDestroyed()) win.webContents.send(CHANNELS.modelProgress, event);
     },
+    onExtractProgress: (progress) => {
+      const win = getWindow();
+      if (win !== null && !win.isDestroyed()) win.webContents.send(CHANNELS.extractProgress, progress);
+    },
     templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
     // The site's OWN schema, when one has been fetched and cached, in
     // preference to the bundled export -- which is BYU-Idaho's and correct

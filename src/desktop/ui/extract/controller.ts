@@ -7,6 +7,7 @@ import { aiConfirmation } from '../../../core/ai/confirm.js';
 import { initialExtractState, canContinue, type ExtractState } from './state.js';
 import type { ModelProgress } from '../../../core/ai/fill.js';
 import { plainLabel } from './picker.js';
+import { createPace, describeRemaining } from './pace.js';
 
 export interface ExtractControllerOptions {
   api: OeqApi;
@@ -42,6 +43,8 @@ export interface ExtractControllerOptions {
   onExit(): void;
   /** Called after every state change; the caller decides which screen to draw. */
   render(state: ExtractState): void;
+  /** The clock the time-left estimate reads. Injected so tests can move it. */
+  now?: () => number;
 }
 
 export interface ExtractController {
@@ -70,6 +73,8 @@ export interface ExtractController {
 
 export function createExtractController(options: ExtractControllerOptions): ExtractController {
   let state = initialExtractState();
+  const pace = createPace();
+  const now = options.now ?? (() => Date.now());
 
   const set = (patch: Partial<ExtractState>): void => {
     state = { ...state, ...patch };
@@ -101,7 +106,14 @@ export function createExtractController(options: ExtractControllerOptions): Extr
    */
   function describeModelEvent(event: ModelProgress): string {
     const field = plainLabel(event.path);
-    if (event.stage === 'asking') return `Asking the model about ${field} for ${event.file}…`;
+    if (event.stage === 'asking') {
+      // WHERE IT HAS GOT, AND HOW LONG IS LEFT -- the run's own pace, from
+      // the rows already done (pace.ts). Nothing extra is asked for.
+      pace.started(event.row, now());
+      const left = pace.remainingMs(event.row, event.rows);
+      const where = `${event.row} of ${event.rows}${left === null ? '' : `, ${describeRemaining(left)}`}`;
+      return `Asking the model about ${field} for ${event.file} — ${where}…`;
+    }
     if (event.stage === 'written') return `The model wrote ${field} for ${event.file}.`;
     if (event.stage === 'refused')
       return `Refused the model's ${field} for ${event.file} — the document does not support it.`;
@@ -115,6 +127,11 @@ export function createExtractController(options: ExtractControllerOptions): Extr
   // would fire the handler once per save the operator had ever done.
   options.api.onModelProgress((event) => {
     set({ modelStatus: describeModelEvent(event) });
+  });
+  // Registered once, for the same reason. Reading a large batch is the other
+  // long wait, before any model is asked anything.
+  options.api.onExtractProgress((p) => {
+    set({ modelStatus: `Reading ${state.perFolder ? 'folders' : 'files'}: ${p.done} of ${p.total}…` });
   });
 
   const guard = async (work: () => Promise<Partial<ExtractState>>): Promise<void> => {
@@ -373,8 +390,9 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       const approval: ModelApproval = await approveModelRun(state.profile);
       if (!approval.proceed) return;
       // Cleared before the run so a line left over from a previous save is
-      // never read as this one's progress.
+      // never read as this one's progress -- and the pace with it.
       set({ modelStatus: null });
+      pace.reset();
       await guard(async () => {
         const report = await options.api.extractRun({
           dir: state.dir!,

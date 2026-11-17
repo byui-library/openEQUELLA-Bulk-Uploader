@@ -743,6 +743,19 @@ describe('extract handlers -- one row per subfolder', () => {
     expect(await readFile(out, 'utf8')).toContain('Notes on the season.');
   });
 
+  it('tells the screen how many folders it has read, of how many', async () => {
+    const ipc = fakeIpcMain();
+    const seen: { done: number; total: number }[] = [];
+    registerExtractHandlers(ipc as never, {
+      schemaFile: 'schema/_entity.xml',
+      templatesDir: 'templates',
+      onExtractProgress: (p) => seen.push(p),
+    });
+    const dir = await volumes();
+    await ipc.call('oeq:extractRun', { dir, profile: folderProfile, outPath: join(dir, 'out.csv'), perFolder: true });
+    expect(seen).toEqual([{ done: 1, total: 2 }, { done: 2, total: 2 }]);
+  });
+
   it('sends nothing for a folder batch the operator did not approve, and says so', async () => {
     const ipc = fakeIpcMain();
     const fetchImpl = vi.fn();

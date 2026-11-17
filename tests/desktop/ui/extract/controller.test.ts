@@ -44,6 +44,7 @@ function api(over: Record<string, unknown> = {}) {
     // depends on it -- but it must be present for every test, not just the
     // ones about progress.
     onModelProgress: vi.fn(),
+    onExtractProgress: vi.fn(),
     ...over,
   };
 }
@@ -735,9 +736,34 @@ describe('the model pass reports itself', () => {
   it('names the field and the file it is waiting on', () => {
     const { a, fire } = withProgress();
     const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
-    fire({ stage: 'asking', path: 'MWDL/description', file: 'Fennel_Marcus.pdf' });
+    fire({ stage: 'asking', path: 'MWDL/description', file: 'Fennel_Marcus.pdf', row: 1, rows: 3 });
     expect(c.state().modelStatus).toMatch(/asking the model about/i);
     expect(c.state().modelStatus).toContain('Fennel_Marcus.pdf');
+    expect(c.state().modelStatus).toContain('1 of 3');
+  });
+
+  // The operator asked for an idea of how long a run will take, 2026-11-17.
+  it('says how long is left once two rows have finished, from the run\'s own pace', () => {
+    const { a, fire } = withProgress();
+    let clock = 0;
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn(), now: () => clock });
+    const ask = (row: number) =>
+      fire({ stage: 'asking', path: 'MWDL/description', file: `SRE_Vol${row}`, row, rows: 10 });
+    ask(1);
+    clock = 60_000;
+    ask(2);
+    expect(c.state().modelStatus).not.toMatch(/left/);
+    clock = 120_000;
+    ask(3);
+    expect(c.state().modelStatus).toContain('3 of 10, about 8 minutes left');
+  });
+
+  it('says how far reading the batch has got', () => {
+    let emit: ((p: unknown) => void) | null = null;
+    const a = api({ onExtractProgress: vi.fn((cb: (p: unknown) => void) => { emit = cb; }) });
+    const c = createExtractController({ api: a as never, onExit: vi.fn(), render: vi.fn() });
+    emit!({ done: 12, total: 38 });
+    expect(c.state().modelStatus).toBe('Reading files: 12 of 38…');
   });
 
   it('says when a value was refused rather than written', () => {

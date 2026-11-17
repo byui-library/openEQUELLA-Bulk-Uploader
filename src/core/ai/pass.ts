@@ -160,15 +160,26 @@ export async function runModelPass(
 export async function extractForPass(
   dir: string,
   profile: Profile,
-  options: { perFolder: boolean; keep: boolean; listing?: FolderListing; subfolders?: SubfolderListing },
+  options: {
+    perFolder: boolean;
+    keep: boolean;
+    listing?: FolderListing;
+    subfolders?: SubfolderListing;
+    /** Files or folders read so far, of how many: reading a large batch is
+     *  the other long wait. */
+    onProgress?: (done: number, total: number) => void;
+  },
 ): Promise<{ result: ExtractResult; targets: FillTarget[] }> {
   const targets: FillTarget[] = [];
+  const progress = options.onProgress ? { onProgress: options.onProgress } : {};
   const result = options.perFolder
     ? await extractFolders(dir, profile, {
+        ...progress,
         ...(options.subfolders ? { listing: options.subfolders } : {}),
         ...(options.keep ? { onRow: (row, docs) => { targets.push({ row, docs }); } } : {}),
       })
     : await extractFolder(dir, profile, {
+        ...progress,
         ...(options.listing ? { listing: options.listing } : {}),
         ...(options.keep ? { onRow: (row, doc) => { targets.push({ row, doc }); } } : {}),
       });

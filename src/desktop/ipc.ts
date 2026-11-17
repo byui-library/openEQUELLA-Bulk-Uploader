@@ -503,6 +503,18 @@ export interface OeqApi {
    * sequence -- so a batch is minutes, and the app said nothing for all of it.
    */
   onModelProgress(cb: (p: ModelProgress) => void): void;
+  /**
+   * Tell the renderer how far the extract has got reading the batch: files,
+   * or folders in one-row-per-subfolder mode. The other long wait -- a large
+   * batch of scanned PDFs is minutes of reading before any model is asked.
+   */
+  onExtractProgress(cb: (p: ExtractProgress) => void): void;
+}
+
+/** How far an extract run has got reading its batch. */
+export interface ExtractProgress {
+  done: number;
+  total: number;
 }
 
 /** What a folder actually contains, and what evidence is available to map from. */
@@ -595,6 +607,7 @@ export const CHANNELS = {
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
   modelProgress: 'oeq:modelProgress',
+  extractProgress: 'oeq:extractProgress',
   extractScan: 'oeq:extractScan',
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',

@@ -1308,6 +1308,18 @@ describe('fillWithModel progress', () => {
     expect(t.seen[0]!.path).toBe('MWDL/description');
   });
 
+  // What the screen counts and estimates from: which row of how many.
+  it('says which row of how many each event belongs to', async () => {
+    const seen: { row: number; rows: number }[] = [];
+    const rows = [
+      { row: row(), doc: doc('A document.') },
+      { row: row({ cells: { 'MWDL/description': 'held' } }), doc: doc('Nothing to fill.') },
+      { row: row(), doc: doc('Another document.') },
+    ];
+    await fillWithModel(rows, profile, provider('A description.'), options({ onProgress: (e) => seen.push(e) }));
+    expect(seen.filter((_, i) => i % 2 === 0).map((e) => [e.row, e.rows])).toEqual([[1, 3], [3, 3]]);
+  });
+
   /** The event has to name the file, or "row 3" means nothing in a folder. */
   it('names the file each event belongs to', async () => {
     const t = trace();

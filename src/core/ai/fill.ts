@@ -63,6 +63,11 @@ export interface ModelProgress {
   /** The column being filled. */
   path: string;
   stage: 'asking' | 'written' | 'refused' | 'discarded' | 'failed' | 'skipped';
+  /** Which row of the batch this is (1-based), and how many there are -- what
+   *  the desktop counts and estimates the time left from. A row with nothing
+   *  to fill sends no event, so the count can jump. */
+  row: number;
+  rows: number;
   /** Why, for the stages that have a reason worth reading. */
   detail?: string;
 }
@@ -522,7 +527,7 @@ export async function fillWithModel(
 
   let used = 0;
 
-  for (const target of targets) {
+  for (const [index, target] of targets.entries()) {
     const { row } = target;
     const eligible = new Set(eligibleColumns(profile, row));
     // Before the document is touched at all: a row with nothing to fill must
@@ -581,7 +586,14 @@ export async function fillWithModel(
     }
 
     const report = (stage: ModelProgress['stage'], path: string, detail?: string): void => {
-      options.onProgress?.({ file, path, stage, ...(detail === undefined ? {} : { detail }) });
+      options.onProgress?.({
+        file,
+        path,
+        stage,
+        row: index + 1,
+        rows: targets.length,
+        ...(detail === undefined ? {} : { detail }),
+      });
     };
 
     // ONE PER ROW, NOT ONE PER CELL. See `discloseInItem`.

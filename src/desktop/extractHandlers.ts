@@ -30,7 +30,7 @@ import { extractForPass, runModelPass, type ModelPassSettings } from '../core/ai
 import type { ModelProgress } from '../core/ai/fill.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
 import type { SchemaInfo } from '../core/discovery.js';
-import { CHANNELS, type ExtractScan, type ExtractRunReport } from './ipc.js';
+import { CHANNELS, type ExtractProgress, type ExtractScan, type ExtractRunReport } from './ipc.js';
 
 const PREVIEW_ROWS = 5;
 
@@ -131,6 +131,9 @@ export interface ExtractHandlerOptions {
    * is listening -- a run must never depend on somebody watching it.
    */
   onModelProgress?: (event: ModelProgress) => void;
+  /** Tell the renderer how many files -- or folders -- have been read, of how
+   *  many. Optional for the same reason. */
+  onExtractProgress?: (progress: ExtractProgress) => void;
   /** Path to the schema export. Resolved by the caller, which knows if the app is packaged. */
   schemaFile: string;
   /** Directory of shipped template profiles. Resolved by the caller, same as schemaFile. */
@@ -293,6 +296,9 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       const { result, targets } = await extractForPass(args.dir, args.profile, {
         perFolder,
         keep: settings !== null,
+        ...(options.onExtractProgress
+          ? { onProgress: (done: number, total: number) => options.onExtractProgress!({ done, total }) }
+          : {}),
       });
 
       // The problems log beside the spreadsheet, every per-folder run -- see

@@ -5,7 +5,7 @@
 // main process itself stays ESM; only this one bridge file needs the
 // CommonJS extension. See main.ts, which points `preload` at `preload.cjs`.
 import { contextBridge, ipcRenderer } from 'electron';
-import type { OeqApi, RunProgress } from './ipc.js';
+import type { ExtractProgress, OeqApi, RunProgress } from './ipc.js';
 import type { ModelProgress } from '../core/ai/fill.js';
 
 /**
@@ -65,6 +65,7 @@ const CHANNELS = {
   loadManifest: 'oeq:loadManifest',
   progress: 'oeq:progress',
   modelProgress: 'oeq:modelProgress',
+  extractProgress: 'oeq:extractProgress',
   extractScan: 'oeq:extractScan',
   extractPreview: 'oeq:extractPreview',
   extractRun: 'oeq:extractRun',
@@ -129,6 +130,9 @@ const api: OeqApi = {
   },
   onModelProgress: (cb) => {
     ipcRenderer.on(CHANNELS.modelProgress, (_e, p: ModelProgress) => cb(p));
+  },
+  onExtractProgress: (cb) => {
+    ipcRenderer.on(CHANNELS.extractProgress, (_e, p: ExtractProgress) => cb(p));
   },
 };
 
