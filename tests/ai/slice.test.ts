@@ -1,6 +1,6 @@
 // tests/ai/slice.test.ts
 import { describe, it, expect } from 'vitest';
-import { sliceForModel } from '../../src/core/ai/slice.js';
+import { sliceFolder, sliceForModel } from '../../src/core/ai/slice.js';
 import { ValidationError } from '../../src/core/errors.js';
 
 /**
@@ -219,5 +219,46 @@ describe('sliceForModel', () => {
       text: '',
       shape: 'empty',
     });
+  });
+});
+
+describe('sliceFolder', () => {
+  const issue = (name: string, text: string) => ({
+    name,
+    doc: { text, hasTextLayer: true, properties: {}, tables: [] },
+  });
+  const words = (word: string, n: number) => Array.from({ length: n }, () => word).join(' ');
+
+  it('gives each issue an equal share of the budget, in order, labelled', () => {
+    const s = sliceFolder([issue('No1.pdf', words('alpha', 500)), issue('No2.pdf', words('beta', 500))], 2000);
+    expect(s.shape).toBe('issues');
+    expect(s.text.indexOf('[No1.pdf]')).toBeLessThan(s.text.indexOf('[No2.pdf]'));
+    expect(s.text.length).toBeLessThanOrEqual(2000);
+    expect(s.text.split('[No2.pdf]')[1]!.length).toBeGreaterThan(800);
+  });
+
+  it('sends a short issue whole', () => {
+    const s = sliceFolder([issue('No1.pdf', 'A short masthead.'), issue('No2.pdf', words('beta', 50))], 2000);
+    expect(s.text).toContain('[No1.pdf]\nA short masthead.');
+  });
+
+  it('cuts each share at a word boundary', () => {
+    const s = sliceFolder([issue('No1.pdf', words('alphabet', 400))], 300);
+    expect(s.text.endsWith('alphabet')).toBe(true);
+    expect(s.text.length).toBeLessThanOrEqual(300);
+  });
+
+  it('leaves out an issue with no text', () => {
+    const s = sliceFolder([issue('No1.pdf', ''), issue('No2.pdf', words('beta', 50))], 2000);
+    expect(s.text).not.toContain('[No1.pdf]');
+    expect(s.text).toContain('[No2.pdf]');
+  });
+
+  it('is empty when no issue has text', () => {
+    expect(sliceFolder([issue('No1.pdf', '  ')], 2000)).toEqual({ text: '', shape: 'empty' });
+  });
+
+  it('refuses an unusable budget, as sliceForModel does', () => {
+    expect(() => sliceFolder([issue('No1.pdf', 'x')], Number.NaN)).toThrow(ValidationError);
   });
 });
