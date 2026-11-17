@@ -1,7 +1,10 @@
 // src/core/extract/pattern.ts
 import { ValidationError } from '../errors.js';
 
-const PLACEHOLDER = /\{([A-Za-z][A-Za-z0-9_]*)\}/g;
+/** What a part's name may be. ONE copy: the placeholder scan and joinProblem both build on it. */
+const PART_NAME_SOURCE = '[A-Za-z][A-Za-z0-9_]*';
+const PART_NAME = new RegExp(`^${PART_NAME_SOURCE}$`);
+const PLACEHOLDER = new RegExp(`\\{(${PART_NAME_SOURCE})\\}`, 'g');
 
 /** The placeholder names in a pattern, in order. Throws if one is repeated. */
 export function placeholders(pattern: string): string[] {
@@ -77,7 +80,7 @@ export function joinProblem(text: string, parts: readonly string[]): string | nu
   const example = parts[0] === undefined ? '{name}' : `{${parts[0]}}`;
   for (const match of text.matchAll(/\{([^{}]*)\}/g)) {
     const inner = match[1]!;
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(inner)) {
+    if (!PART_NAME.test(inner)) {
       return `'${match[0]}' is not a part: write a part as {name}, with no spaces or punctuation, e.g. ${example}`;
     }
     if (!parts.includes(inner)) return `{${inner}} is not a part of this pattern; ${known}`;

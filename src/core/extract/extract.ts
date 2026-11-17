@@ -269,7 +269,7 @@ export async function extractFolders(
 
     // Read in ATTACHMENT order -- part order when the template declares it --
     // because "the first file that answers wins" means the first part.
-    const order = folderUploadOrder(profile, folder.files);
+    const order = orderBySequence(rule.patterns, folder.files);
     const readable = new Set(folder.readable);
     const docs: FolderDoc[] = [];
     const unreadable: string[] = [];
@@ -330,14 +330,4 @@ export async function extractFolders(
   }
 
   return { rows, skipped, problems };
-}
-
-/**
- * A folder's files in the order they will be attached: part order where the
- * profile declares sequence patterns, name order otherwise. ONE call for the
- * run and the desktop preview, so the files a preview row shows are the files
- * the spreadsheet will carry, in the same order.
- */
-export function folderUploadOrder(profile: Profile, files: readonly string[]): string[] {
-  return orderBySequence(profile.checks?.sequence?.patterns ?? [], files);
 }

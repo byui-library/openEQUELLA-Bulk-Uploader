@@ -280,22 +280,16 @@ export function parseProfile(input: unknown): Profile {
   const known = new Set(placeholders(profile.pattern));
   for (const column of profile.columns) {
     for (const source of column.sources) {
-      // A join is held to the WHOLE rule -- malformed braces too, which the
-      // narrow name pattern below would leave as literal text in every item.
+      // A join is held to the WHOLE rule -- malformed braces too, which a
+      // narrow name scan would leave as literal text in every item.
       if ('join' in source) {
         const problem = joinProblem(source.join, [...known]);
         if (problem !== null) throw new ValidationError(`Column '${column.path}': ${problem}.`);
       }
-      const used =
-        'placeholder' in source ? [source.placeholder]
-        : 'join' in source ? joinPlaceholders(source.join)
-        : [];
-      for (const name of used) {
-        if (!known.has(name)) {
-          throw new ValidationError(
-            `Column '${column.path}' uses {${name}}, which the pattern '${profile.pattern}' does not define.`,
-          );
-        }
+      if ('placeholder' in source && !known.has(source.placeholder)) {
+        throw new ValidationError(
+          `Column '${column.path}' uses {${source.placeholder}}, which the pattern '${profile.pattern}' does not define.`,
+        );
       }
     }
   }

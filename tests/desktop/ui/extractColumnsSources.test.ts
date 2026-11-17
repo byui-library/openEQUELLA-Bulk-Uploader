@@ -36,6 +36,7 @@ function render(profile: Profile, over: Partial<ExtractColumnsProps> = {}): Fake
     profile,
     profilePath: null,
     sampleFilename: 'a.pdf',
+    perFolder: false,
     scan: { labels: [], properties: [], tableColumns: [], sections: ['Abstract'] },
     preview: [],
     busy: false,

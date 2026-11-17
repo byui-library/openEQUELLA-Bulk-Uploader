@@ -12,7 +12,7 @@ export interface ExtractColumnsProps {
   profilePath: string | null;
   sampleFilename: string;
   /** One row per subfolder: the name split into parts is a FOLDER's, and the screen says so. */
-  perFolder?: boolean;
+  perFolder: boolean;
   /** Only the evidence the source dropdowns are built from. This screen reads
    * neither the file list nor the skipped list, and carrying them meant every
    * caller had to construct fields nobody looked at. */
@@ -80,7 +80,7 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
       <td class="source">
         ${
           locked
-            ? `<span class="fixed">${props.perFolder === true ? 'the folder itself' : 'the file itself'}</span>`
+            ? `<span class="fixed">${props.perFolder ? 'the folder itself' : 'the file itself'}</span>`
             : `<label class="sr-only" for="src-${index}">Source for ${escapeHtml(plainLabel(path))}</label>
                <select id="src-${index}" class="source-select">${optionHtml}</select>
                ${joinBox}
@@ -139,7 +139,7 @@ function previewTable(props: ExtractColumnsProps): string {
   // A FOLDER BATCH SHOWS WHAT EACH ROW HOLDS, straight after the folder name.
   // Reported by the operator: a row named SRE_Vol1 gave no sign that it is one
   // item carrying four issues. Display only -- never a spreadsheet column.
-  const folders = props.perFolder === true;
+  const folders = props.perFolder;
   // After the column that names the folder, wherever the profile put it.
   const filesAfter = Math.max(0, paths.indexOf(ATTACHMENT_COLUMN));
   const cell = (value: string) =>
@@ -248,13 +248,13 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
     <section class="screen wide" aria-labelledby="extract-columns-h">
       <h2 id="extract-columns-h">Build a spreadsheet &mdash; step 2 of 3</h2>
 
-      <h3>Your ${props.perFolder === true ? 'folders' : 'files'} look like this</h3>
+      <h3>Your ${props.perFolder ? 'folders' : 'files'} look like this</h3>
       <p class="sample"><code>${escapeHtml(props.sampleFilename)}</code></p>
       <p class="segments">${segments}</p>
       ${partsHint(described)}
       <details>
         <summary>Edit the pattern</summary>
-        <label for="extract-pattern">${props.perFolder === true ? 'Folder name pattern' : 'Filename pattern'}</label>
+        <label for="extract-pattern">${props.perFolder ? 'Folder name pattern' : 'Filename pattern'}</label>
         <input id="extract-pattern" type="text" value="${escapeHtml(props.profile.pattern)}">
         <p class="hint">Use <code>{name}</code> for each part you want to capture.</p>
       </details>

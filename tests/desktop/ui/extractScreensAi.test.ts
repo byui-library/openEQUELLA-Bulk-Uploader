@@ -52,6 +52,7 @@ function columns(preview: ExtractedRow[]): string {
     profile,
     profilePath: null,
     sampleFilename: 'a.pdf',
+    perFolder: false,
     scan: { labels: [], properties: [], tableColumns: [], sections: [] },
     preview,
     busy: false,
