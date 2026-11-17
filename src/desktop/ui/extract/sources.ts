@@ -24,8 +24,8 @@ export interface SourceEvidence {
 /** Plain-language name for a source, used in the dropdown and the column list. */
 export function describeSource(source: Source): string {
   if ('filename' in source) return 'The file itself';
-  if ('filenameStem' in source) return 'The file name, without its extension';
-  if ('placeholder' in source) return `Filename part: ${source.placeholder}`;
+  if ('filenameStem' in source) return 'The whole name, without any extension';
+  if ('placeholder' in source) return `Part of the name: ${source.placeholder}`;
   if ('join' in source) return `${JOIN_NAME}: "${source.join}"`;
   if ('label' in source) return `Label in document: ${source.label}`;
   if ('tableColumn' in source) return `Table column: ${source.tableColumn}`;
@@ -145,7 +145,7 @@ export function sourceOptions(pattern: string, scan: SourceEvidence): SourceOpti
   const names = patternParts(pattern);
 
   const options: SourceOption[] = names.map((name) => ({
-    label: `Filename part: ${name}`,
+    label: `Part of the name: ${name}`,
     source: { placeholder: name },
   }));
   // Fixed words around parts of the name -- "Society Quarterly, Volume {volume}".

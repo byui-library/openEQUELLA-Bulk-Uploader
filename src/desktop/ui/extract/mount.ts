@@ -58,6 +58,7 @@ export function renderExtract(
         profile: state.profile!,
         profilePath: state.profilePath,
         sampleFilename: state.scan?.supported[0] ?? '',
+        perFolder: state.perFolder,
         scan: state.scan ?? { labels: [], properties: [], tableColumns: [], sections: [] },
         preview: state.preview,
         busy: state.busy,

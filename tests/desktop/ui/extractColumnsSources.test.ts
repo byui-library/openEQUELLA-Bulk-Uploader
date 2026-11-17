@@ -208,7 +208,7 @@ describe('a column built from text with parts of the name', () => {
     expect(html).toMatch(/class="join-input"[^>]*value="Quarterly, Volume \{volume\}"/);
     expect(html).toContain('{volume}');
     // Listed once: the text is in the box, not as a second option.
-    expect(html.match(/Text with parts of the name/g)).toHaveLength(1);
+    expect(html.match(/<option[^>]*>Text with parts of the name/g)).toHaveLength(1);
   });
 
   it('saves what is typed when the box is left', () => {
@@ -304,5 +304,25 @@ describe('the preview of a folder batch', () => {
     }).innerHTML;
     expect(html).not.toContain('Files attached');
     expect(html).toContain('first 1 file(s)');
+  });
+});
+
+/**
+ * REPORTED BY THE OPERATOR, who wanted the title built from the folder name
+ * and asked whether folder names could be "broken into parts like the file
+ * name". They already were -- the screen just called everything a file.
+ */
+describe('the columns screen in one-row-per-subfolder mode', () => {
+  it('says folders, not files, about the name it splits into parts', () => {
+    const html = render(chained([]), { perFolder: true, sampleFilename: 'SRE_Vol1' }).innerHTML;
+    expect(html).toContain('Your folders look like this');
+    expect(html).toContain('Folder name pattern');
+    expect(html).not.toContain('Your files look like this');
+  });
+
+  it('still says files in one-row-per-file mode', () => {
+    const html = render(chained([])).innerHTML;
+    expect(html).toContain('Your files look like this');
+    expect(html).toContain('Filename pattern');
   });
 });

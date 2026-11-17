@@ -11,6 +11,8 @@ export interface ExtractColumnsProps {
   profile: Profile;
   profilePath: string | null;
   sampleFilename: string;
+  /** One row per subfolder: the name split into parts is a FOLDER's, and the screen says so. */
+  perFolder?: boolean;
   /** Only the evidence the source dropdowns are built from. This screen reads
    * neither the file list nor the skipped list, and carrying them meant every
    * caller had to construct fields nobody looked at. */
@@ -78,7 +80,7 @@ function columnRow(props: ExtractColumnsProps, path: string, index: number): str
       <td class="source">
         ${
           locked
-            ? '<span class="fixed">the file itself</span>'
+            ? `<span class="fixed">${props.perFolder === true ? 'the folder itself' : 'the file itself'}</span>`
             : `<label class="sr-only" for="src-${index}">Source for ${escapeHtml(plainLabel(path))}</label>
                <select id="src-${index}" class="source-select">${optionHtml}</select>
                ${joinBox}
@@ -226,12 +228,17 @@ export function renderExtractColumns(root: HTMLElement, props: ExtractColumnsPro
     <section class="screen wide" aria-labelledby="extract-columns-h">
       <h2 id="extract-columns-h">Build a spreadsheet &mdash; step 2 of 3</h2>
 
-      <h3>Your files look like this</h3>
+      <h3>Your ${props.perFolder === true ? 'folders' : 'files'} look like this</h3>
       <p class="sample"><code>${escapeHtml(props.sampleFilename)}</code></p>
       <p class="segments">${segments}</p>
+      <p class="hint">
+        Any column can use these parts: choose <em>Part of the name</em>, or
+        <em>Text with parts of the name&hellip;</em> to put your own words around one &mdash;
+        e.g. <code>Snake River Echoes, Volume {volume}</code>.
+      </p>
       <details>
         <summary>Edit the pattern</summary>
-        <label for="extract-pattern">Filename pattern</label>
+        <label for="extract-pattern">${props.perFolder === true ? 'Folder name pattern' : 'Filename pattern'}</label>
         <input id="extract-pattern" type="text" value="${escapeHtml(props.profile.pattern)}">
         <p class="hint">Use <code>{name}</code> for each part you want to capture.</p>
       </details>
