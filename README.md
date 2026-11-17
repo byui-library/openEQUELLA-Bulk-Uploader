@@ -956,15 +956,36 @@ without mapping anything by hand.
 Headings recognised for tier 2: **Abstract**, **Executive Summary**,
 **Summary**, **Overview**, **Description**, **Purpose**, **Scope**. A section
 ends at the next heading — `Keywords`, `Introduction`, `Methods`, `References`
-and the rest — or at a 4,000-character cap.
+and the rest.
 
-Two things are always flagged in `_notes`:
+**A section that never ends is not used.** If no next heading turns up within
+4,000 characters, the heading was almost certainly not one — a benefits PDF
+matched "Summary" mid-page, and a journal's "Description" heading in the middle
+of an article put pages of that article into every volume's record. `_notes`
+says so, and the next source has its turn.
 
-- **A section that ran to the cap.** It never reached another heading, which
-  usually means the heading was not one. A benefits PDF matched "Summary"
-  mid-page and produced 3,996 characters of plan tables.
+#### One or two paragraphs at most
+
+A description summarises; it is not an extract. **Text copied out of a document
+— a section, the opening, a label, a table cell, a property — is kept to two
+paragraphs and 1,000 characters**, cut back to the last whole sentence that
+fits, and the cell is flagged so you check it still reads well.
+
+- A column can set its own limit with `"maxLength": 600` (100 or more) in the
+  profile. Unset, it is 1,000.
+- **Your own wording is never cut**: a default, a "Text with parts of the
+  name" value, a composed value.
+- **A language model is told the limit**, and an answer that runs over it is
+  discarded whole, never shortened — see below.
+- **`plan` warns about any description over 1,000 characters** before upload,
+  including one typed by hand. It never shortens it; the Review screen lists
+  these under *Long descriptions*.
+
+Always flagged in `_notes`:
+
 - **Anything from the opening paragraph**, every time, with no exception. On a
   published PDF the opening is as likely to be a masthead as a summary.
+- **Anything shortened to fit the limit.**
 
 `_source` names the tier that filled each cell — `table`, `section`, `opening`.
 It is **one cell per row** holding every column's origin at once
@@ -1247,6 +1268,12 @@ and fill this cell in by hand. What it said, which was not used: "Died
 
 There is nothing to retry, because nothing went wrong at the endpoint: the call
 succeeded and the model answered. Read the document and fill the cell in by hand.
+
+**An answer longer than the column's limit is discarded the same way** —
+1,000 characters unless the column sets `maxLength`. The model is told the
+limit in its instructions; when it runs over anyway, the note gives the length
+and quotes what it said. It is never cut back to fit, for the same reason a
+refused claim is never cut out.
 
 **A date is a claim whether or not a year sits beside it.** `He died on January
 6.`, `He died 1/6.` and `Died 1916-01-06T00:00:00Z.` are all checked against the

@@ -1,10 +1,61 @@
-# Session handoff — updated 2026-11-16
+# Session handoff — updated 2026-11-17
 
 Read this first.
 
-## RESUME HERE — several files on one contribution is BUILT (2026-11-16)
+## RESUME HERE — 2026-11-17: live draft worked; descriptions now capped
 
-Branch `feature/multi-file-items`, not pushed, no PR yet. Built from
+**The live check is DONE.** The operator ran a folder batch through the
+desktop app to content-test: contributions were created and their files
+attached as intended. Branch `feature/multi-file-items` is now PUSHED to
+origin; no PR yet.
+
+**What it found: descriptions were far too long.** Not the model -- no model
+runs on folder rows. That batch was extracted with NO template chosen, so the
+description came from a 'Description'/'Purpose' heading in the middle of a
+journal article, which never ended and was cut at 4,000 characters. Fixed in
+four commits (`79564fc`, `963c1cf`, `e914039`, docs), the operator's design:
+
+- **1,000 characters, two paragraphs** (`core/extract/length.ts`,
+  `DESCRIPTION_LIMIT`; `Column.maxLength` overrides, min 100). Chosen by the
+  operator.
+- **A section that never ends is not used** -- noted, next source tries.
+- **Document text is cut back to a whole sentence and flagged; the operator's
+  own wording (default, join, compose) is never cut.**
+- **The model is told the limit; a reply over it is refused whole.**
+- **`plan` warns** about a long description in the schema's declared
+  description field (never cuts), or says once it could not check. Review
+  groups these under "Long descriptions".
+- NOT built: a limit box on the columns screen -- a profile/template sets
+  `maxLength`. Ask the operator before adding one.
+
+**Next, in order (operator's decisions, 2026-11-17):**
+
+1. **Part 3 -- a model description for a FOLDER row** (one or two paragraphs
+   describing the whole volume). Its own design first: the model is sent the
+   opening ~2,000 characters of EVERY issue (contents and masthead), and
+   `verify.ts` checks claims against all the issues together. **For Snake
+   River Echoes the fixed sentence ("Upper Snake River Valley Historical
+   Society Quarterly, Volume N") ALWAYS comes first, the model's summary
+   after it.** Then a live run against real volumes with the operator's LM
+   Studio model (`http://127.0.0.1:1234/v1` -- the `/v1` is required).
+2. PR, read the automated review comments, merge, release **v1.3.0**.
+3. **The series index page** -- interview complete (2026-11-17), design spec
+   next. Decisions: an openEQUELLA item whose attachment is a plain, self-
+   contained HTML page; built afterwards as its own step ("Build an index",
+   desktop and `oeq-upload index`), from a SEARCH of the collection, not from
+   a job file; volume headings link to items, issues beneath link to PDFs,
+   labelled from the template's patterns; the index's record from an `index`
+   section of the template; a rebuild updates the same item; preview, counts
+   and the Draft/Publish confirmation before saving. Verify live first: stable
+   latest-version and attachment URLs, editing an item's attachment, search
+   by identifier, and whether an HTML attachment renders.
+
+Also on the branch since 2026-11-16: a code review and /simplify of the folder
+preview -- the preview now builds rows with `extractFolders` itself.
+
+## 2026-11-16 — several files on one contribution is BUILT
+
+Branch `feature/multi-file-items`. Built from
 [the plan](superpowers/plans/2026-11-13-multi-file-items.md) and
 [the design](superpowers/specs/2026-11-13-multi-file-items-design.md), whose
 two 2026-11-16 addenda record how ordering and checking were decided. Every

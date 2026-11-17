@@ -146,8 +146,10 @@ still loads. The extractor gains `--per-folder` / a desktop toggle and the
 `each` column option; the model pass does NOT run on folder rows. Proven live
 before design (2026-11-11, content-test): one staging area, N PUTs, one
 `POST /api/item` with N attachments is accepted, **order is kept**, client
-uuids are honoured. Still to do: a live Vol 2 draft through the desktop app,
-the operator's review of the 38-volume plan, merge, release v1.3.0.
+uuids are honoured. A live folder batch through the desktop app worked
+(2026-11-17) and showed descriptions far too long, now capped (see the
+description-length fact below). Branch pushed. Still to do: a model description
+for folder rows, then PR, merge, release v1.3.0.
 Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
@@ -242,6 +244,8 @@ src/core/         All logic. Free of CLI, MCP and Electron concerns. Reused by e
   instanceUrl.ts    Validate/normalise an operator-typed address. HTTPS enforcement lives here.
   redact.ts         One redactor for secrets on the wire. Used by every error path.
 src/core/extract/ Build the spreadsheet from a folder of files. Never touches the network.
+  length.ts         Imports nothing. DESCRIPTION_LIMIT (1,000), limitFor, shortenText -- the
+                    one length rule for the extractor, the model pass and plan's warning.
 src/core/ai/      The language-model pass. SEPARATE FROM extract/ because it is async and
                   does I/O, which extract/ must never be. Runs AFTER extraction, over the
                   finished rows.
@@ -530,6 +534,17 @@ shape, never as a value the code may assume.
   hand-made spreadsheet is unchecked, and the docs say so. On the real
   38-volume batch, after the operator's fixes, the log is one line: Vol 27's
   unnumbered commemorative issue, attached last.
+- **A description is one or two paragraphs -- 1,000 characters -- and a
+  section that never ends is not one.** The first live folder batch
+  (2026-11-17) uploaded 4,000-character passages from the middle of a
+  journal's articles: no template was chosen, a mid-article 'Description'
+  heading matched, the section never ended, and the old code KEPT what the
+  cap reached, flagged. A flag did not stop it reaching the catalogue. Now a
+  section with no ending is rejected (noted, next source), document text is
+  cut to a whole sentence within `limitFor(column)` and flagged, the model is
+  told the limit and refused whole over it, and `plan` warns about a long
+  description -- typed by hand too -- without cutting it. **The operator's
+  own wording is never cut**, and neither is generated prose.
 - **Shared owners are not ACLs.** The legacy `currentItem.addSharedOwner(...)`
   script sets collaborators (`item/collaborativeowners/collaborator`), which is
   a different mechanism from access control. Out of scope for v1.
