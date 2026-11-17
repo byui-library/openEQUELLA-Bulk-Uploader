@@ -358,3 +358,17 @@ describe('the result says which of three things happened', () => {
     expect(new Set(reasons).size).toBe(3);
   });
 });
+
+describe('buildPrompt -- several documents', () => {
+  it('describes a volume made of the issues below', () => {
+    const p = buildPrompt({ field: 'a description', document: 'x', instruction: null, maxLength: 900, documents: 4 });
+    expect(p).toMatch(/^Write a description of the volume below, made up of 4 issues, for a library catalogue\./);
+  });
+
+  it('keeps the single-document wording for one document, or when not said', () => {
+    for (const documents of [1, undefined]) {
+      const p = buildPrompt({ field: 'a description', document: 'x', instruction: null, maxLength: 900, documents });
+      expect(p).toMatch(/^Write a description for the document below, for a library catalogue\./);
+    }
+  });
+});

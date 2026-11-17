@@ -9,6 +9,9 @@ export interface PromptInput {
   /** The most characters the reply may be (length.ts#limitFor). A longer
    *  reply is refused whole, so the model is told before it writes. */
   maxLength: number;
+  /** How many documents the slice holds. More than one is a folder row: one
+   *  item -- a volume -- whose files are its issues. Absent means one. */
+  documents?: number;
 }
 
 /** The fence the document sits inside. Both ends, so nothing after the document
@@ -58,7 +61,9 @@ function defangMarkers(document: string): string {
  */
 export function buildPrompt(input: PromptInput): string {
   return [
-    `Write ${input.field} for the document below, for a library catalogue.`,
+    (input.documents ?? 1) > 1
+      ? `Write ${input.field} of the volume below, made up of ${input.documents} issues, for a library catalogue.`
+      : `Write ${input.field} for the document below, for a library catalogue.`,
     '',
     'Use only what the document states. Do not invent names, dates, places or',
     'events. If the document does not support a claim, leave it out. If you',
