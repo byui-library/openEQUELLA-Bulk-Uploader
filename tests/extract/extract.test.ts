@@ -269,6 +269,22 @@ describe('extractFolders -- issue order', () => {
     checks: { sequence: { labels: { part: 'issue', group: 'volume' }, patterns: ['V{group}_No{part}'] } },
   };
 
+  // What the model pass reads a volume from: every issue, in the order they
+  // will be attached -- issue order here, not name order.
+  it('hands each folder row its documents, in attachment order', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-onrow-'));
+    await mkdir(join(dir, 'Gazette_V2'));
+    for (const f of ['G_1972-73_V2_No2.pdf', 'G_1972_V2_No1.pdf']) await writeFile(join(dir, 'Gazette_V2', f), 'x');
+    const seen: string[][] = [];
+    await extractFolders(dir, ordered, {
+      reader: async () => emptyDoc,
+      onRow: (_row, docs) => {
+        seen.push(docs.map((d) => d.name));
+      },
+    });
+    expect(seen).toEqual([['G_1972_V2_No1.pdf', 'G_1972-73_V2_No2.pdf']]);
+  });
+
   it('records the issue order on the row, and reads the files in it', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'oeq-extract-order-'));
     await mkdir(join(dir, 'Gazette_V2'));

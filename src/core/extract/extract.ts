@@ -199,16 +199,20 @@ export async function listSubfolders(dir: string): Promise<SubfolderListing> {
  * never dropped from it, and never refuses it. That is the difference from
  * `extractFolder`, where an unreadable file has no row at all.
  *
- * THERE IS NO `onRow` HOOK, deliberately: the model pass does not run on
- * folder rows (see core/ai/fill.ts, 'folder-row'). A caller with model
- * columns notes them with `noteMissingModel(rows, profile, 'folder-row')`.
+ * `onRow` hands the model pass each row with the documents it read, in
+ * attachment order, as `extractFolder`'s does with its one document -- so a
+ * volume's description can be written from, and checked against, every issue.
+ * A held-back folder has no row, and is not handed out.
  */
 export async function extractFolders(
   dir: string,
   profile: Profile,
-  options: Pick<ExtractOptions, 'reader' | 'onProgress' | 'signal'> & { listing?: SubfolderListing } = {},
+  options: Pick<ExtractOptions, 'reader' | 'onProgress' | 'signal'> & {
+    listing?: SubfolderListing;
+    onRow?: (row: ExtractedRow, docs: readonly FolderDoc[]) => void;
+  } = {},
 ): Promise<ExtractResult> {
-  const { reader = readDocument, onProgress, signal } = options;
+  const { reader = readDocument, onProgress, signal, onRow } = options;
   const found = options.listing ?? (await listSubfolders(dir));
   // Copied, never appended to in place -- the same reason as extractFolder.
   const skipped: ExtractResult['skipped'] = found.skipped.map(({ file, reason }) => ({ file, reason }));
@@ -309,6 +313,7 @@ export async function extractFolders(
     // order otherwise -- including when part order could not be written.
     row.files = row.attachmentOrder ?? folder.files;
     rows.push(row);
+    onRow?.(row, docs);
     done += 1;
     onProgress?.(done, found.folders.length);
   }
