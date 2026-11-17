@@ -31,7 +31,7 @@ const sourceSchema = z.union([
     presence: z.object({ any: z.array(z.string().min(1)).min(1), then: z.string().min(1) }).strict(),
   }).strict(),
   z.object({ filename: z.literal(true) }).strict(),
-  z.object({ ai: z.literal(true) }).strict(),
+  z.object({ ai: z.literal(true), after: z.literal(true).optional() }).strict(),
 ]);
 
 /**

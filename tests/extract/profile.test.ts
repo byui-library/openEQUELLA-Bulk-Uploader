@@ -511,3 +511,31 @@ describe('parseProfile -- text with parts of the name', () => {
     ]);
   });
 });
+
+describe('parseProfile -- a model writing after the other sources', () => {
+  const withSources = (sources: unknown[]): unknown => ({
+    version: 1,
+    pattern: '{name}',
+    columns: [
+      { path: 'attachment name', sources: [{ filename: true }], locked: true },
+      { path: 'MWDL/description', sources },
+    ],
+  });
+
+  it('accepts a plain ai source, as before', () => {
+    expect(() => parseProfile(withSources([{ ai: true }]))).not.toThrow();
+  });
+
+  it('accepts "after": true on an ai source', () => {
+    const profile = parseProfile(withSources([{ join: 'Lead.' }, { ai: true, after: true }]));
+    expect(profile.columns[1]!.sources[1]).toEqual({ ai: true, after: true });
+  });
+
+  it('refuses "after": false -- leave it out instead', () => {
+    expect(() => parseProfile(withSources([{ ai: true, after: false }]))).toThrow();
+  });
+
+  it('refuses "after" on any other source', () => {
+    expect(() => parseProfile(withSources([{ opening: true, after: true }]))).toThrow();
+  });
+});

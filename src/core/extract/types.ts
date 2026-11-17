@@ -99,7 +99,17 @@ export type Source =
    * of docs/superpowers/plans/2026-08-14-llm-provider.md. Placed last in a
    * source list by convention; the rule does not depend on position.
    */
-  | { ai: true };
+  | {
+      ai: true;
+      /**
+       * Write the model's text AFTER what this column's other sources
+       * produced, joined by one space, instead of only into an empty or
+       * flagged cell. The earlier value is never replaced; if the model fails
+       * or is refused, it stands alone. See eligible.ts and fill.ts, and
+       * docs/superpowers/specs/2026-11-17-folder-descriptions-design.md.
+       */
+      after?: true;
+    };
 
 /** How a date column is normalised: automatically, or by a format the profile declares. */
 export type DateTransform = 'date' | { date: string };
