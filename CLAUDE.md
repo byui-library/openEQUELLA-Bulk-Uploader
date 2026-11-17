@@ -148,8 +148,13 @@ before design (2026-11-11, content-test): one staging area, N PUTs, one
 `POST /api/item` with N attachments is accepted, **order is kept**, client
 uuids are honoured. A live folder batch through the desktop app worked
 (2026-11-17) and showed descriptions far too long, now capped (see the
-description-length fact below). Branch pushed. Still to do: a model description
-for folder rows, then PR, merge, release v1.3.0.
+description-length fact below). Branch pushed. **A model description for
+folder rows is BUILT** (2026-11-17,
+[spec](docs/superpowers/specs/2026-11-17-folder-descriptions-design.md)): the
+model reads the start of every issue, its claims are checked against all of
+them joined, and `{ "ai": true, "after": true }` writes it after the
+template's fixed sentence, never replacing it. Still to do: the live run with
+the operator's model, then PR, merge, release v1.3.0.
 Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
@@ -251,6 +256,7 @@ src/core/ai/      The language-model pass. SEPARATE FROM extract/ because it is 
                   finished rows.
   eligible.ts       Pure. The rule: which cells a model may write. The safety property.
   slice.ts          Pure. How much of a document to send, and how the budget is divided.
+                    sliceFolder: the start of each of a folder row's files, budget split evenly.
   prompt.ts         Pure. Builds the request; cleans and judges the reply.
   verify.ts         Pure. Which claims in a reply the document does not support. The guard.
   provider.ts       One OpenAI-compatible HTTP call. Injectable fetch. Every failure throws.

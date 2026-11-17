@@ -2,7 +2,24 @@
 
 Read this first.
 
-## RESUME HERE — 2026-11-17: live draft worked; descriptions now capped
+## RESUME HERE — 2026-11-17 (later): model descriptions for folder rows BUILT
+
+Built from [the spec](superpowers/specs/2026-11-17-folder-descriptions-design.md)
+and [the plan](superpowers/plans/2026-11-17-folder-descriptions.md), test-first,
+pushed. Snake River Echoes now asks a model, after its fixed sentence, for a
+one-or-two-sentence summary of the subjects each volume covers, and discloses
+it in `MWDL/conversionSpecifications`. Offline with no model, the real batch
+gives each volume the fixed sentence alone, noted.
+
+**Next, operator present -- ask before running:** the live run. Copy four or
+five real volume folders from `Snake River Echoes\SRE` to the scratchpad;
+desktop extract with the template, one row per subfolder, the operator's LM
+Studio model (`http://127.0.0.1:1234/v1`). The operator reads every summary
+against its volume. Record here -- counts and reasons only, NO document text:
+written, refused (why), any wrong refusal, the operator's verdict. Then PR,
+merge, release v1.3.0; then the series index page (below).
+
+## 2026-11-17: live draft worked; descriptions now capped
 
 **The live check is DONE.** The operator ran a folder batch through the
 desktop app to content-test: contributions were created and their files

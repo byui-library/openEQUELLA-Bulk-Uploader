@@ -562,13 +562,20 @@ contain — you choose it.
   — in order, without repeats — joined by semicolons, the separator `plan`
   splits repeated values on.
 - A file the readers cannot open is still attached, and noted on its row.
-- **The language model does not fill rows built from a folder** in this
-  release. Its safety check compares a generated value against one document,
-  and which document that should be for a whole volume is a separate design.
-  Those cells say so in `_notes`; `--ai --per-folder` is refused.
+- **A language model can describe the whole folder.** It reads the start of
+  every file in it — about 2,000 characters each from a four-issue volume at
+  the default budget of 8,000 — and every date or other checkable claim must be
+  found somewhere in those files, or the answer is discarded. One request per
+  folder; the confirmation counts folders. See *Writing after a fixed
+  sentence* below.
 
 `templates/snake-river-echoes.profile.json` is a worked example: a volume
-title and identifier from the folder name, and the collection's fixed values.
+title and identifier from the folder name, the collection's fixed values, and
+a description that is a fixed sentence — "Upper Snake River Valley Historical
+Society Quarterly, Volume 2." — followed, with `--ai`, by a model's one- or
+two-sentence summary of the subjects the volume's issues cover. Where the
+model's text is kept, `MWDL/conversionSpecifications` says so beside "Scanned
+to PDF".
 
 ```sh
 oeq-upload extract --dir batch --profile templates/snake-river-echoes.profile.json --per-folder --dry-run
@@ -1246,6 +1253,30 @@ explanation.
 - **A refusal, where the answer states something the document does not.** The
   cell is left exactly as it was and the note names each unsupported claim — see
   below.
+
+#### Writing after a fixed sentence
+
+Normally a model fills only a cell that is empty or that a source flagged.
+`{ "ai": true, "after": true }` instead ADDS the model's text after whatever the
+column's other sources wrote, joined by one space — so a template's fixed
+sentence always comes first:
+
+```json
+{ "path": "MWDL/description",
+  "sources": [
+    { "join": "Upper Snake River Valley Historical Society Quarterly, Volume {group}." },
+    { "ai": true, "after": true }
+  ] }
+```
+
+- **The fixed text is never replaced.** If the model fails, or its answer is
+  refused, the fixed sentence stands alone.
+- **The whole cell stays within the column's limit.** The model is told only
+  the room the fixed text leaves (1,000 minus its length and a space); an
+  answer over that is discarded. If the fixed text leaves fewer than 100
+  characters, nothing is sent.
+- **A row is added to once.** Running the pass again over the same rows does
+  not append a second summary.
 
 #### When the tool refuses the model's answer
 

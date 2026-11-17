@@ -529,8 +529,12 @@ folder becomes one item**.
    *I don't have a spreadsheet yet…*, choose your batch folder, pick the
    template if there is one (for example *Snake River Echoes*), and tick
    **One row per subfolder**. The program counts folders instead of files, and
-   each row's `attachment name` is the folder's name. The language model is not
-   used for rows built this way; those cells say so in `_notes`.
+   each row's `attachment name` is the folder's name. With the *Snake River
+   Echoes* template and a language model set up, each volume's description is
+   the template's fixed sentence followed by a short summary the model writes
+   from the start of every issue. If the model is a hosted service, the program
+   asks before sending anything, counting one request per folder. Every summary
+   is flagged for you to read before you upload.
 3. **When you save, read what the last screen says about held-back folders.**
    If the template knows how its files are numbered, the program checks every
    folder. A file that belongs to another volume, or two files with the same
