@@ -65,12 +65,24 @@ export function modelColumns(profile: Profile): Column[] {
  * model-replaceable with nobody having to remember, and this function cannot
  * drift out of step with the sources. Note the question is asked about THIS
  * column: a guess elsewhere on the row says nothing about this cell.
+ *
+ * AN `after` COLUMN HAS ITS OWN RULE, and it does not weaken the one above: it
+ * never replaces anything. Its model text is ADDED after whatever the other
+ * sources wrote -- a template's fixed sentence -- so whether that value is
+ * empty or flagged does not decide it. What does is whether a model has added
+ * to it already: a second pass over the same rows must not pay to append twice.
  */
 export function eligibleColumns(profile: Profile, row: ExtractedRow): string[] {
   return modelColumns(profile)
     .filter((column) => {
+      if (writesAfter(column)) return row.aiWritten[column.path] === undefined;
       const value = (row.cells[column.path] ?? '').trim();
       return value === '' || row.flagged[column.path] !== undefined;
     })
     .map((column) => column.path);
+}
+
+/** True when this column's model writes AFTER its other sources (`{ ai: true, after: true }`). */
+export function writesAfter(column: Column): boolean {
+  return column.sources.some((s) => 'ai' in s && s.after === true);
 }

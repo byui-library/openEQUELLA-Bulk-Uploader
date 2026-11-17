@@ -131,3 +131,34 @@ describe('columns the model may never write, whatever the profile says', () => {
     expect(eligibleColumns(composeOnlyProfile, built)).toStrictEqual([]);
   });
 });
+
+describe('eligibleColumns -- a model writing after', () => {
+  const afterProfile: Profile = {
+    version: 1,
+    pattern: '{name}',
+    columns: [{ path: 'MWDL/description', sources: [{ join: 'Lead.' }, { ai: true, after: true }] }],
+  };
+  const afterRow = (cell: string, over: Partial<ExtractedRow> = {}): ExtractedRow => ({
+    cells: { 'MWDL/description': cell },
+    sources: {},
+    notes: [],
+    flagged: {},
+    aiWritten: {},
+    ...over,
+  });
+
+  it('is eligible when the cell already holds the lead, unflagged', () => {
+    expect(eligibleColumns(afterProfile, afterRow('Lead.'))).toEqual(['MWDL/description']);
+  });
+
+  it('is eligible when the cell is empty', () => {
+    expect(eligibleColumns(afterProfile, afterRow(''))).toEqual(['MWDL/description']);
+  });
+
+  it('is not eligible once a model has written it', () => {
+    const written = afterRow('Lead. Summary.', {
+      aiWritten: { 'MWDL/description': { note: 'n', factField: false } },
+    });
+    expect(eligibleColumns(afterProfile, written)).toEqual([]);
+  });
+});
