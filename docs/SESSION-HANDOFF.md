@@ -11,13 +11,26 @@ one-or-two-sentence summary of the subjects each volume covers, and discloses
 it in `MWDL/conversionSpecifications`. Offline with no model, the real batch
 gives each volume the fixed sentence alone, noted.
 
-**Next, operator present -- ask before running:** the live run. Copy four or
-five real volume folders from `Snake River Echoes\SRE` to the scratchpad;
-desktop extract with the template, one row per subfolder, the operator's LM
-Studio model (`http://127.0.0.1:1234/v1`). The operator reads every summary
-against its volume. Record here -- counts and reasons only, NO document text:
-written, refused (why), any wrong refusal, the operator's verdict. Then PR,
-merge, release v1.3.0; then the series index page (below).
+**The live run is DONE (2026-11-17).** Five real volumes (1, 2, 3, 10, 27)
+through the desktop app with the template and the operator's LM Studio model.
+**Operator's verdict: "the description extraction worked very well."** Per-row
+counts of written and refused were not reported.
+
+**Also built that day, from what the run showed:**
+
+- **One odd folder name no longer spoils the name pattern** (`e6914e1`).
+  "Snake River Echos Index" beside the volume folders made `detectPattern`
+  give every name one part, and the columns screen used that folder as its
+  example. Now: the shape a strict majority shares, and the example is the
+  first name that fits.
+- **Progress and time left on the save screen** (`959d2f4`): "Reading
+  folders: 12 of 38", then "... 5 of 38, about 6 minutes left" from the run's
+  own pace (`ui/extract/pace.ts`). No Stop button -- a separate decision.
+
+**Next:** PR, read the automated review comments, merge, release **v1.3.0**;
+then the series index page (below). The "Snake River Echos Index" folder
+(the index to volumes 1-25) gets no title or description from the template;
+it needs its own row values, or moving out of the batch -- ask the operator.
 
 ## 2026-11-17: live draft worked; descriptions now capped
 
