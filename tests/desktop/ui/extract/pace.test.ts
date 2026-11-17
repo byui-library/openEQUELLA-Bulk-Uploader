@@ -45,14 +45,13 @@ describe('createPace', () => {
     expect(pace.remainingMs(6, 10)).toBe(5 * MINUTE);
   });
 
-  it('starts again when a new run begins', () => {
+  it('ignores a row it has already seen', () => {
     const pace = createPace();
     pace.started(1, 0);
     pace.started(2, MINUTE);
+    pace.started(2, 5 * MINUTE);
     pace.started(3, 2 * MINUTE);
-    pace.reset();
-    pace.started(1, 10 * MINUTE);
-    expect(pace.remainingMs(1, 10)).toBeNull();
+    expect(pace.remainingMs(3, 10)).toBe(8 * MINUTE);
   });
 });
 

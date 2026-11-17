@@ -125,24 +125,24 @@ const api: OeqApi = {
   saveProfileAs: (profile) => invoke(CHANNELS.saveProfileAs, profile),
   chooseCsvPath: () => invoke(CHANNELS.chooseCsvPath),
   openPath: (path) => invoke(CHANNELS.openPath, path),
-  onProgress: (cb) => {
-    ipcRenderer.on(CHANNELS.progress, (_e, p: RunProgress) => cb(p));
-  },
   // Each returns the way to stop listening -- see OeqApi.onModelProgress.
-  onModelProgress: (cb) => {
-    const listener = (_e: unknown, p: ModelProgress) => cb(p);
-    ipcRenderer.on(CHANNELS.modelProgress, listener);
-    return () => {
-      ipcRenderer.removeListener(CHANNELS.modelProgress, listener);
-    };
-  },
-  onExtractProgress: (cb) => {
-    const listener = (_e: unknown, p: ExtractProgress) => cb(p);
-    ipcRenderer.on(CHANNELS.extractProgress, listener);
-    return () => {
-      ipcRenderer.removeListener(CHANNELS.extractProgress, listener);
-    };
-  },
+  onProgress: (cb) => subscribe<RunProgress>(CHANNELS.progress, cb),
+  onModelProgress: (cb) => subscribe<ModelProgress>(CHANNELS.modelProgress, cb),
+  onExtractProgress: (cb) => subscribe<ExtractProgress>(CHANNELS.extractProgress, cb),
 };
+
+/**
+ * Listen on a channel, and hand back the way to stop. ONE copy for every
+ * progress channel, so a new one cannot be added without a way to remove it --
+ * a listener nobody can remove is how leaving the extract flow left every old
+ * screen re-rendering on every event.
+ */
+function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
+  const listener = (_e: unknown, payload: T) => cb(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
 
 contextBridge.exposeInMainWorld('oeq', api);

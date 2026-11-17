@@ -73,7 +73,7 @@ export interface ExtractController {
 
 export function createExtractController(options: ExtractControllerOptions): ExtractController {
   let state = initialExtractState();
-  const pace = createPace();
+  let pace = createPace();
   const now = options.now ?? (() => Date.now());
 
   const set = (patch: Partial<ExtractState>): void => {
@@ -109,7 +109,6 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     if (event.stage === 'asking') {
       // WHERE IT HAS GOT, AND HOW LONG IS LEFT -- the run's own pace, from
       // the rows already done (pace.ts). Nothing extra is asked for.
-      pace.started(event.row, now());
       const left = pace.remainingMs(event.row, event.rows);
       const where = `${event.row} of ${event.rows}${left === null ? '' : `, ${describeRemaining(left)}`}`;
       return `Asking the model about ${field} for ${event.file} — ${where}…`;
@@ -125,10 +124,13 @@ export function createExtractController(options: ExtractControllerOptions): Extr
   // REGISTERED ONCE PER CONTROLLER, not per run: preload adds a new
   // ipcRenderer listener on every call, so registering inside `save()` would
   // fire the handler once per save the operator had ever done. AND REMOVED ON
-  // EXIT: app.ts builds a new controller every time the flow is opened, and a
-  // listener left behind re-rendered every screen the operator had left.
+  // LEAVING, by either way out (`leave`): app.ts builds a new controller every
+  // time the flow is opened, and a listener left behind re-rendered every
+  // screen the operator had left.
   const stopListening = [
     options.api.onModelProgress((event) => {
+      // The pace is told first; the line is then only a description of it.
+      if (event.stage === 'asking') pace.started(event.row, now());
       set({ modelStatus: describeModelEvent(event) });
     }),
     // Reading a large batch is the other long wait, before any model is asked.
@@ -136,6 +138,13 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       set({ modelStatus: `Reading ${state.perFolder ? 'folders' : 'files'}: ${p.done} of ${p.total}…` });
     }),
   ];
+
+  /** The ONE way out of the flow -- Back from the first screen and Done both
+   *  come here -- so the listeners cannot be left behind by either. */
+  function leave(): void {
+    for (const stop of stopListening) stop();
+    options.onExit();
+  }
 
   const guard = async (work: () => Promise<Partial<ExtractState>>): Promise<void> => {
     set({ busy: true, error: null });
@@ -312,7 +321,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     back() {
       if (state.step === 'save') set({ step: 'columns', error: null });
       else if (state.step === 'columns') set({ step: 'folder', error: null });
-      else options.onExit();
+      else leave();
     },
 
     async setPattern(pattern) {
@@ -395,7 +404,7 @@ export function createExtractController(options: ExtractControllerOptions): Extr
       // Cleared before the run so a line left over from a previous save is
       // never read as this one's progress -- and the pace with it.
       set({ modelStatus: null });
-      pace.reset();
+      pace = createPace();
       await guard(async () => {
         const report = await options.api.extractRun({
           dir: state.dir!,
@@ -441,9 +450,6 @@ export function createExtractController(options: ExtractControllerOptions): Extr
     setAddQuery: (addQuery) => set({ addQuery }),
     closeAdd: () => set({ adding: false, addQuery: '' }),
 
-    exit() {
-      for (const stop of stopListening) stop();
-      options.onExit();
-    },
+    exit: leave,
   };
 }

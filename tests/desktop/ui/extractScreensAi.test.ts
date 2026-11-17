@@ -53,6 +53,8 @@ function columns(preview: ExtractedRow[]): string {
     profilePath: null,
     sampleFilename: 'a.pdf',
     perFolder: false,
+    unmatchedNames: 0,
+    nameCount: 1,
     scan: { labels: [], properties: [], tableColumns: [], sections: [] },
     preview,
     busy: false,

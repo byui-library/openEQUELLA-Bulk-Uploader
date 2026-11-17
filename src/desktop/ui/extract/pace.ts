@@ -28,8 +28,6 @@ export interface Pace {
   started(row: number, now: number): void;
   /** Milliseconds left, counting the current row, or null when too little is known. */
   remainingMs(row: number, rows: number): number | null;
-  /** Forget everything: a new run is starting. */
-  reset(): void;
 }
 
 /** How many recent rows the estimate looks at. */
@@ -61,11 +59,6 @@ export function createPace(): Pace {
       const half = Math.floor(sorted.length / 2);
       const middle = sorted.length % 2 === 1 ? sorted[half]! : (sorted[half - 1]! + sorted[half]!) / 2;
       return middle * Math.max(0, rows - row + 1);
-    },
-    reset() {
-      lastRow = null;
-      lastAt = 0;
-      perRow = [];
     },
   };
 }

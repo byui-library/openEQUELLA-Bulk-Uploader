@@ -806,7 +806,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
 
       const summary = await runManifest(client, args.manifestPath, {
         onProgress: (entry, done, total) => {
-          getWindow()?.webContents.send(CHANNELS.progress, {
+          toRenderer(CHANNELS.progress, {
             done,
             total,
             label: rowLabel(entry),
@@ -846,20 +846,22 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     async (_e, p: Parameters<OeqApi['loadManifest']>[0]) => loadManifest(p),
   );
 
+  /**
+   * Send to whichever window is open, if one is. ONE copy for every progress
+   * channel: a run can outlive the window that started it, and a destroyed
+   * webContents throws on send -- a guard the upload's progress used to lack.
+   */
+  function toRenderer(channel: string, payload: unknown): void {
+    const win = getWindow();
+    if (win !== null && !win.isDestroyed()) win.webContents.send(channel, payload);
+  }
+
   // Extract flow. Kept in its own module so this file does not keep growing,
   // and so the schema path is resolved once, here, where packaging is known.
   registerExtractHandlers(ipcMain, {
     schemaFile: resolveResourcePath(resourcePathOpts(), 'schema', '_entity.xml'),
-    // Sent to whichever window is open. Guarded: a run can outlive the
-    // window that started it, and a destroyed webContents throws on send.
-    onModelProgress: (event) => {
-      const win = getWindow();
-      if (win !== null && !win.isDestroyed()) win.webContents.send(CHANNELS.modelProgress, event);
-    },
-    onExtractProgress: (progress) => {
-      const win = getWindow();
-      if (win !== null && !win.isDestroyed()) win.webContents.send(CHANNELS.extractProgress, progress);
-    },
+    onModelProgress: (event) => toRenderer(CHANNELS.modelProgress, event),
+    onExtractProgress: (progress) => toRenderer(CHANNELS.extractProgress, progress),
     templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
     // The site's OWN schema, when one has been fetched and cached, in
     // preference to the bundled export -- which is BYU-Idaho's and correct

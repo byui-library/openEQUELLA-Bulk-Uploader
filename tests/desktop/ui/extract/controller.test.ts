@@ -801,6 +801,20 @@ describe('the model pass reports itself', () => {
     expect(stopExtract).toHaveBeenCalledTimes(1);
     expect(onExit).toHaveBeenCalledTimes(1);
   });
+
+  // The other way out: Back from the first screen. The first fix covered only
+  // exit(), and this path still left both listeners behind (simplify review).
+  it('stops listening when the operator leaves by Back from the first screen', () => {
+    const stopModel = vi.fn();
+    const stopExtract = vi.fn();
+    const a = api({ onModelProgress: vi.fn(() => stopModel), onExtractProgress: vi.fn(() => stopExtract) });
+    const onExit = vi.fn();
+    const c = createExtractController({ api: a as never, onExit, render: vi.fn() });
+    c.back();
+    expect(stopModel).toHaveBeenCalledTimes(1);
+    expect(stopExtract).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('createExtractController -- one row per subfolder', () => {

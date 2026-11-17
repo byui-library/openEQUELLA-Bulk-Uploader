@@ -489,7 +489,7 @@ export interface OeqApi {
   /** Reveal a file in the OS file manager. */
   openPath(path: string): Promise<void>;
 
-  onProgress(cb: (p: RunProgress) => void): void;
+  onProgress(cb: (p: RunProgress) => void): () => void;
 
   /**
    * Told what the model pass is doing, cell by cell, while it runs.

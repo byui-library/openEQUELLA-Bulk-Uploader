@@ -24,8 +24,6 @@ export interface NameFit {
   unmatched: number;
 }
 
-let lastFit: { pattern: string; names: readonly string[]; fit: NameFit } | null = null;
-
 /**
  * The columns screen's example, and the count of names left out.
  *
@@ -33,17 +31,12 @@ let lastFit: { pattern: string; names: readonly string[]; fit: NameFit } | null 
  * (operator, 2026-11-17), and showing its parts -- none -- hid the very parts
  * the operator was trying to use. But a matching example alone would hide a
  * pattern that fits one name in three hundred, which is why the count comes
- * with it and the screen states it.
- *
- * Remembered for the last pattern and list: the screen redraws on every edit,
- * and only a pattern change can change the answer.
+ * with it and the screen states it. Pure, and cheap at a batch's size: a few
+ * hundred names checked against one pattern.
  */
 export function nameFit(pattern: string, names: readonly string[]): NameFit {
-  if (lastFit !== null && lastFit.pattern === pattern && lastFit.names === names) return lastFit.fit;
   const matched = names.filter((name) => describeFilename(pattern, name).matched);
-  const fit = { sample: matched[0] ?? names[0] ?? '', unmatched: names.length - matched.length };
-  lastFit = { pattern, names, fit };
-  return fit;
+  return { sample: matched[0] ?? names[0] ?? '', unmatched: names.length - matched.length };
 }
 
 export function renderExtract(
