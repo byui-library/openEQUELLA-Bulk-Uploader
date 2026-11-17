@@ -2,6 +2,7 @@
 import { ValidationError } from '../errors.js';
 import { readSection } from '../extract/sections.js';
 import { readOpening } from '../extract/opening.js';
+import type { FolderDoc } from '../extract/rows.js';
 
 /**
  * How much of the document went.
@@ -261,10 +262,7 @@ export function sliceForModel(text: string, options: SliceOptions): Slice {
  *
  * A document with no text is left out here; `fill.ts` names it in the notes.
  */
-export function sliceFolder(
-  docs: readonly { name: string; doc: { text: string } }[],
-  budget: number,
-): Slice {
+export function sliceFolder(docs: readonly FolderDoc[], budget: number): Slice {
   assertUsableBudget(budget);
   const parts = docs
     .map((d) => ({ label: `[${d.name}]\n`, body: d.doc.text.trim() }))
@@ -278,10 +276,7 @@ export function sliceFolder(
   // over it: a negative share reaches `slice(0, negative)` and returns nearly
   // the whole document, breaking the maximum the consent dialog quoted.
   if (share < MIN_USEFUL) return { text: '', shape: 'empty' };
-  const text = parts
-    .map((p) => ({ label: p.label, body: fitToBudget(p.body, share) }))
-    .filter((p) => p.body !== '')
-    .map((p) => `${p.label}${p.body}`)
-    .join(SEPARATOR);
-  return text === '' ? { text: '', shape: 'empty' } : { text, shape: 'issues' };
+  // Never empty from here: a body within the share is sent whole, and a cut
+  // one is at least MIN_USEFUL long.
+  return { text: parts.map((p) => p.label + fitToBudget(p.body, share)).join(SEPARATOR), shape: 'issues' };
 }

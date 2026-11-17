@@ -1433,13 +1433,17 @@ describe('fillWithModel -- a folder row, written after a lead', () => {
     expect(t.row.cells['MWDL/description']).toBe(`${lead} Summary.`);
   });
 
-  it('names an issue with no text, and still sends the others', async () => {
+  // The row already says a file has no text ("no text layer in ...",
+  // buildFolderRow); the pass leaves it out and counts only what it shows.
+  it('leaves out an issue with no text, and still sends the others', async () => {
     const t = {
       row: row({ cells: { 'MWDL/description': lead } }),
       docs: [...issues, { name: 'No4.pdf', doc: doc('') }],
     };
-    await fillWithModel([t], afterProfile, provider('Summary.'), options());
-    expect(t.row.notes.join(' ')).toMatch(/'No4\.pdf' has no text to read, so it was not sent/);
+    const p = provider('Summary.');
+    await fillWithModel([t], afterProfile, p, options());
+    expect(promptsOf(p)[0]).not.toContain('[No4.pdf]');
+    expect(promptsOf(p)[0]).toContain('made up of 3 issues');
     expect(t.row.cells['MWDL/description']).toBe(`${lead} Summary.`);
   });
 

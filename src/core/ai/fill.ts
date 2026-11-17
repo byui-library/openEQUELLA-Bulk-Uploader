@@ -537,15 +537,10 @@ export async function fillWithModel(
     // A FOLDER ROW BY HOW IT WAS BUILT, not by how many of its files could be
     // read: a volume with one readable issue is still a volume.
     const folder = 'docs' in target;
-    // What the model is actually shown, for the prompt's count and the notes.
-    const shown = docs.filter((d) => d.doc.text.trim() !== '');
-    const unread = folder
-      ? docs
-          .filter((d) => d.doc.text.trim() === '')
-          .map((d) => `'${d.name}' has no text to read, so it was not sent to the model`)
-      : [];
-    // Said once, and only when a request is actually made.
-    let unreadNoted = false;
+    // How many documents the model is actually SHOWN -- the prompt's count. A
+    // file with no text is left out of the slice; the row already says so
+    // ("no text layer in ..."), from `buildFolderRow`.
+    const shown = docs.filter((d) => d.doc.text.trim() !== '').length;
 
     // SLICED ONCE PER ROW, not once per eligible column. The slice depends on
     // the document alone, so computing it per column repeats the whole of
@@ -557,13 +552,13 @@ export async function fillWithModel(
     // harmless inlining. What IS asserted is that both columns are sent the
     // same document.
     //
-    // `text` IS EVERY DOCUMENT, WHOLE, JOINED -- what verification reads, never
-    // the slice. A claim another page, or another issue of the volume,
-    // supports is a coincidence rather than a fabrication.
-    const text = docs.map((d) => d.doc.text).join('\n\n');
+    // What verification reads is EVERY DOCUMENT, WHOLE, JOINED -- never the
+    // slice: a claim another page, or another issue of the volume, supports is
+    // a coincidence rather than a fabrication. Joined only when a reply needs
+    // checking (see `evidence` below), not on every row.
     const slice = folder
       ? sliceFolder(docs, options.budget)
-      : sliceForModel(text, { budget: options.budget, sections: options.sections });
+      : sliceForModel(docs[0]!.doc.text, { budget: options.budget, sections: options.sections });
 
     if (slice.shape === 'empty') {
       // The one cause that is knowable, told apart from the two that are not.
@@ -572,7 +567,7 @@ export async function fillWithModel(
       // to survive -- and sending the operator to the file when the fault is a
       // setting is the same wrong-cause defect in a new place.
       const why =
-        text.trim() === ''
+        shown === 0
           ? folder
             ? 'no file in this folder has text to read.'
             : 'this file has no text to read.'
@@ -585,7 +580,7 @@ export async function fillWithModel(
       continue;
     }
 
-    const report =(stage: ModelProgress['stage'], path: string, detail?: string): void => {
+    const report = (stage: ModelProgress['stage'], path: string, detail?: string): void => {
       options.onProgress?.({ file, path, stage, ...(detail === undefined ? {} : { detail }) });
     };
 
@@ -638,10 +633,6 @@ export async function fillWithModel(
       // whatever the endpoint charged for accepting it.
       used += 1;
       report('asking', path);
-      if (!unreadNoted) {
-        row.notes.push(...unread.filter((note) => !row.notes.includes(note)));
-        unreadNoted = true;
-      }
 
       // WHICH FAILURE SENTENCE IS TRUE DEPENDS ON WHAT IS IN THE CELL. The
       // eligible set is "empty OR flagged", so on the design's headline case --
@@ -662,7 +653,7 @@ export async function fillWithModel(
             instruction: options.instruction ?? null,
             maxLength: limit,
             // The issues the model is SHOWN, not those that had nothing to read.
-            documents: folder ? shown.length : 1,
+            documents: folder ? shown : 1,
           }),
         );
       } catch (error) {
@@ -724,7 +715,7 @@ export async function fillWithModel(
       // ALWAYS, WITH NO SETTING. This project has twice shipped a check that
       // reported success without running, and a switch is how that happens a
       // third time.
-      evidence ??= documentEvidence(text);
+      evidence ??= documentEvidence(docs.map((d) => d.doc.text).join('\n\n'));
       const unsupported = unsupportedClaims(cleaned.text, evidence, profile);
       if (unsupported.length > 0) {
         // THE WHOLE VALUE, never part of it. Stripping the offending clause

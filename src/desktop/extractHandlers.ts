@@ -10,7 +10,6 @@ import {
   parseSchemaPaths,
 } from '../core/schema.js';
 import {
-  extractFolder,
   extractFolders,
   listFolder,
   listSubfolders,
@@ -19,15 +18,15 @@ import {
 import { readDocument } from '../core/extract/readers/index.js';
 import { findLabels } from '../core/extract/labels.js';
 import { evidenceFrom, scanFolderEvidence, spreadAcrossTypes, SAMPLE_DOCS } from '../core/extract/evidence.js';
-import { buildRow, type FolderDoc } from '../core/extract/rows.js';
+import { buildRow } from '../core/extract/rows.js';
 import { writeCsv, writeProblemsLog } from '../core/extract/csv.js';
 import { loadProfile, saveProfile, parseProfile } from '../core/extract/profile.js';
 import { starterProfile, type StarterSchema } from '../core/extract/suggest.js';
 import { listTemplates, loadTemplate } from '../core/extract/templates.js';
 import type { DocumentData, ExtractedRow, Profile } from '../core/extract/types.js';
 import { modelColumns } from '../core/ai/eligible.js';
-import { noteMissingModel, type FillTarget } from '../core/ai/fill.js';
-import { runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
+import { noteMissingModel } from '../core/ai/fill.js';
+import { extractForPass, runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
 import type { ModelProgress } from '../core/ai/fill.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
 import type { SchemaInfo } from '../core/discovery.js';
@@ -285,28 +284,16 @@ export function registerExtractHandlers(ipcMain: IpcMain, options: ExtractHandle
       const settings =
         wantsModel && args.modelApproved === true ? await modelSettingsFor(args.instanceId) : null;
 
-      // Documents are kept only when something is going to read them: holding
-      // four hundred of them for a run that will send none is memory spent on
-      // nothing.
-      const targets: FillTarget[] = [];
-      const keep = settings !== null;
-
       // Deliberately does NOT use the preview cache: the real run reads every
       // file fresh, so what is written can never be stale relative to disk.
       // ONE ROW PER SUBFOLDER hands the pass every issue of a volume; the model
-      // writes from, and is checked against, all of them.
+      // writes from, and is checked against, all of them. The same helper as
+      // the CLI, so the two cannot extract a batch differently.
       const perFolder = args.perFolder === true;
-      const result = perFolder
-        ? await extractFolders(
-            args.dir,
-            args.profile,
-            keep ? { onRow: (row: ExtractedRow, docs: readonly FolderDoc[]) => { targets.push({ row, docs }); } } : {},
-          )
-        : await extractFolder(
-            args.dir,
-            args.profile,
-            keep ? { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } } : {},
-          );
+      const { result, targets } = await extractForPass(args.dir, args.profile, {
+        perFolder,
+        keep: settings !== null,
+      });
 
       // The problems log beside the spreadsheet, every per-folder run -- see
       // writeProblemsCsv. Written BEFORE the model pass, so it exists even when

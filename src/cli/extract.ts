@@ -9,10 +9,7 @@ import {
 } from '../core/schema.js';
 import { loadProfile, saveProfile, validateAgainstSchema } from '../core/extract/profile.js';
 import { starterProfile } from '../core/extract/suggest.js';
-import type { FolderDoc } from '../core/extract/rows.js';
 import {
-  extractFolder,
-  extractFolders,
   listFolder,
   listSubfolders,
   type FolderListing,
@@ -23,14 +20,14 @@ import { writeCsv, writeProblemsLog } from '../core/extract/csv.js';
 import { aiConfirmation } from '../core/ai/confirm.js';
 import { describeHost } from '../core/ai/endpoint.js';
 import { modelColumns } from '../core/ai/eligible.js';
-import { noteMissingModel, type FillTarget, type MissingModelReason } from '../core/ai/fill.js';
+import { noteMissingModel, type MissingModelReason } from '../core/ai/fill.js';
 import { MODEL_DEFAULTS } from '../core/ai/defaults.js';
-import { assertUsableModelPass, runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
+import { assertUsableModelPass, extractForPass, runModelPass, type ModelPassSettings } from '../core/ai/pass.js';
 import { assertUsableCap } from '../core/ai/fill.js';
 import { assertUsableBudget } from '../core/ai/slice.js';
 import { timeoutSecondsProblem } from '../core/ai/provider.js';
 import { countModelWritten, countNeedingReview } from '../core/ai/review.js';
-import type { DocumentData, ExtractResult, ExtractedRow, FolderProblem, Profile } from '../core/extract/types.js';
+import type { ExtractResult, FolderProblem, Profile } from '../core/extract/types.js';
 
 export interface ExtractCliOptions {
   dir: string;
@@ -398,7 +395,6 @@ export async function runExtract(
     : options.ai === true ? 'not-configured'
     : 'not-requested';
 
-  const targets: FillTarget[] = [];
   const perFolder = options.perFolder === true;
 
   /** Taken once when the operator has to be shown a count, and handed to the
@@ -413,13 +409,10 @@ export async function runExtract(
     // down, because two walks of the same directory can disagree (a file added
     // or removed in between), and the number the operator agreed to must be the
     // number the run works from rather than a second opinion about it.
-    if (perFolder) {
-      subfolders = await listSubfolders(options.dir);
-      approve(options, profile, sending, subfolders.folders.length, log);
-    } else {
-      listing = await listFolder(options.dir);
-      approve(options, profile, sending, listing.supported.length, log);
-    }
+    if (perFolder) subfolders = await listSubfolders(options.dir);
+    else listing = await listFolder(options.dir);
+    const count = subfolders?.folders.length ?? listing?.supported.length ?? 0;
+    approve(options, profile, sending, count, log);
   } else if (wantsModel && settings !== null) {
     log(
       // `describeHost`, not the raw address: a gateway's published URL can carry
@@ -431,17 +424,12 @@ export async function runExtract(
     );
   }
 
-  // Documents are kept only when there is a pass to feed: holding four hundred
-  // of them for a run that will send none is memory spent on nothing.
-  const result = perFolder
-    ? await extractFolders(options.dir, profile, {
-        ...(subfolders ? { listing: subfolders } : {}),
-        ...(sending === null ? {} : { onRow: (row: ExtractedRow, docs: readonly FolderDoc[]) => { targets.push({ row, docs }); } }),
-      })
-    : await extractFolder(options.dir, profile, {
-        ...(listing ? { listing } : {}),
-        ...(sending === null ? {} : { onRow: (row: ExtractedRow, doc: DocumentData) => { targets.push({ row, doc }); } }),
-      });
+  const { result, targets } = await extractForPass(options.dir, profile, {
+    perFolder,
+    keep: sending !== null,
+    ...(listing ? { listing } : {}),
+    ...(subfolders ? { subfolders } : {}),
+  });
   if (perFolder) await reportProblems(options, result.problems ?? [], log);
 
   if (sending !== null) {

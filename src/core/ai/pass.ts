@@ -4,7 +4,13 @@
 // half that builds a provider and makes requests, which belongs to the main
 // process and the CLI. The renderer's only interest was the two default
 // numbers, and those live in `defaults.ts`, a leaf that imports nothing.
-import type { Profile } from '../extract/types.js';
+import type { ExtractResult, Profile } from '../extract/types.js';
+import {
+  extractFolder,
+  extractFolders,
+  type FolderListing,
+  type SubfolderListing,
+} from '../extract/extract.js';
 import { fillWithModel, modelSections, type FillTarget } from './fill.js';
 import { OpenAiCompatibleProvider } from './provider.js';
 import type { ModelProgress } from './fill.js';
@@ -135,4 +141,36 @@ export async function runModelPass(
     instruction: profile.aiInstruction ?? null,
     model: settings.model,
   });
+}
+
+/**
+ * Extract a batch -- one row per file, or one per subfolder -- and, when
+ * `keep` is set, collect each row with what it was read from for the model
+ * pass.
+ *
+ * ONE COPY FOR BOTH FRONT ENDS, as `runModelPass` is: the CLI and the desktop
+ * each used to carry the same four-way branch (file or folder, keep or not),
+ * and two copies of a rule drift. Documents are kept only when a pass will
+ * read them -- holding four hundred for a run that sends none is memory spent
+ * on nothing.
+ *
+ * `listing` / `subfolders`: the listing the operator's count was taken from,
+ * so the run works from the batch they agreed to (see `ExtractOptions.listing`).
+ */
+export async function extractForPass(
+  dir: string,
+  profile: Profile,
+  options: { perFolder: boolean; keep: boolean; listing?: FolderListing; subfolders?: SubfolderListing },
+): Promise<{ result: ExtractResult; targets: FillTarget[] }> {
+  const targets: FillTarget[] = [];
+  const result = options.perFolder
+    ? await extractFolders(dir, profile, {
+        ...(options.subfolders ? { listing: options.subfolders } : {}),
+        ...(options.keep ? { onRow: (row, docs) => { targets.push({ row, docs }); } } : {}),
+      })
+    : await extractFolder(dir, profile, {
+        ...(options.listing ? { listing: options.listing } : {}),
+        ...(options.keep ? { onRow: (row, doc) => { targets.push({ row, doc }); } } : {}),
+      });
+  return { result, targets };
 }
