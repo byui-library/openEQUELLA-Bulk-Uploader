@@ -23,6 +23,9 @@ export interface CategorizedWarnings {
   /** An identifier that may already exist in the target collection (or
    *  couldn't be checked) -- advisory, never a silent skip. */
   duplicateIdentifier: string[];
+  /** A description longer than one or two paragraphs -- or the batch-wide
+   *  word that lengths could not be checked. Advisory; nothing is cut. */
+  longDescription: string[];
   /** Anything that doesn't match a known shape. Shown, not dropped, so a
    *  future warning the UI hasn't been taught about is still visible. */
   other: string[];
@@ -39,12 +42,16 @@ const REFUSED_FOLDER_RE = /^Row \d+: folder '.*' cannot be uploaded: .*; skipped
 const DUPLICATE_RE =
   /identifier '.*' may already exist|could not check whether identifier|Duplicate identifiers were not checked/;
 
+const LONG_DESCRIPTION_RE =
+  /^Row \d+: the description \('.*'\) is \d+ characters, longer than|^Description lengths were not checked/;
+
 export function categorizeWarnings(warnings: readonly string[]): CategorizedWarnings {
   const out: CategorizedWarnings = {
     missingFile: [],
     refusedFolder: [],
     unmatchedFile: [],
     duplicateIdentifier: [],
+    longDescription: [],
     other: [],
   };
 
@@ -53,6 +60,7 @@ export function categorizeWarnings(warnings: readonly string[]): CategorizedWarn
     else if (REFUSED_FOLDER_RE.test(w)) out.refusedFolder.push(w);
     else if (MISSING_FILE_RE.test(w)) out.missingFile.push(w);
     else if (DUPLICATE_RE.test(w)) out.duplicateIdentifier.push(w);
+    else if (LONG_DESCRIPTION_RE.test(w)) out.longDescription.push(w);
     else out.other.push(w);
   }
 

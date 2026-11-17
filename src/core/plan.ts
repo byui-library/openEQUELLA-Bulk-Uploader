@@ -14,6 +14,7 @@ import {
 import { ValidationError } from './errors.js';
 import { listFolderFiles } from './folderFiles.js';
 import { parseAttachmentOrder, reorderFiles } from './attachmentOrder.js';
+import { DESCRIPTION_LIMIT } from './extract/length.js';
 import type { OeqClient } from './client.js';
 
 export interface PlanOptions {
@@ -30,6 +31,26 @@ export interface PlanOptions {
    * header is an ordinary column like any other.
    */
   attachmentUuidPath?: string;
+  /**
+   * The schema's declared description path, so a description longer than one
+   * or two paragraphs is warned about before it is uploaded -- including one
+   * typed by hand, which the extractor never saw. Null when the schema
+   * declares none: the batch is then told the length was not checked, never
+   * left to read silence as "checked, all fine". Absent: no check, no warning.
+   */
+  descriptionPath?: string | null;
+}
+
+/** Said once per batch when the schema names no description field. */
+export const NO_DESCRIPTION_PATH_WARNING =
+  'Description lengths were not checked: the schema declares no description field.';
+
+/** One row's description is longer than one or two paragraphs. */
+function longDescriptionWarning(rowNumber: number, path: string, length: number): string {
+  return (
+    `Row ${rowNumber}: the description ('${path}') is ${length} characters, longer than the ` +
+    `${DESCRIPTION_LIMIT} of one or two paragraphs. Shorten it in the spreadsheet, or upload it as it is.`
+  );
 }
 
 /**
@@ -167,6 +188,16 @@ export async function buildManifest(
       (metadata[header] ??= []).push(...splitRepeatable(header, value));
     }
 
+    // A WARNING, NEVER A CUT. What is in the spreadsheet is what the operator
+    // approved; shortening it here would upload text nobody has read.
+    if (typeof opts.descriptionPath === 'string') {
+      for (const value of metadata[opts.descriptionPath] ?? []) {
+        if (value.length > DESCRIPTION_LIMIT) {
+          warnings.push(longDescriptionWarning(row.rowNumber, opts.descriptionPath, value.length));
+        }
+      }
+    }
+
     entries.push({
       rowNumber: row.rowNumber,
       source: actual,
@@ -215,6 +246,8 @@ export async function buildManifest(
       if (!claims.has(f)) warnings.push(`Folder '${f}' has no matching row; not uploaded.`);
     }
   }
+
+  if (opts.descriptionPath === null) warnings.push(NO_DESCRIPTION_PATH_WARNING);
 
   // An empty manifest means the runner would do nothing at all -- almost
   // certainly a wrong filesDir or a wrong 'attachment name' column, not a

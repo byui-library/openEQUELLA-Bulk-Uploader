@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { categorizeWarnings } from '../../../src/desktop/ui/warnings.js';
 // Imported, not paraphrased: this one is a fixed sentence the core exports, so
 // a reworded warning fails here instead of silently falling into `other`.
-import { NO_IDENTIFIER_PATH_WARNING, GUEST_SESSION_WARNING } from '../../../src/core/plan.js';
+import { NO_IDENTIFIER_PATH_WARNING, GUEST_SESSION_WARNING, NO_DESCRIPTION_PATH_WARNING } from '../../../src/core/plan.js';
 
 // Message shapes copied verbatim from src/core/plan.ts (buildManifest,
 // preflightDuplicates) so the regexes are checked against what the core
@@ -22,6 +22,7 @@ describe('categorizeWarnings', () => {
       refusedFolder: [],
       unmatchedFile: [],
       duplicateIdentifier: [],
+      longDescription: [],
       other: [],
     });
   });
@@ -117,5 +118,16 @@ describe('categorizeWarnings -- folder rows', () => {
 
   it('buckets an unclaimed folder with the unclaimed files', () => {
     expect(categorizeWarnings([UNCLAIMED]).unmatchedFile).toEqual([UNCLAIMED]);
+  });
+});
+
+describe('categorizeWarnings -- long descriptions', () => {
+  it('groups a long description and the not-checked notice together', () => {
+    const long =
+      "Row 4: the description ('MWDL/description') is 3993 characters, longer than the 1000 of one or two " +
+      'paragraphs. Shorten it in the spreadsheet, or upload it as it is.';
+    const out = categorizeWarnings([long, NO_DESCRIPTION_PATH_WARNING]);
+    expect(out.longDescription).toEqual([long, NO_DESCRIPTION_PATH_WARNING]);
+    expect(out.other).toEqual([]);
   });
 });

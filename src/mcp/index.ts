@@ -11,6 +11,7 @@ import { loadConfig, createAuthProvider, type Config } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
 import {
   extractDefinition,
+  extractItemDescriptionPath,
   extractItemNamePath,
   parseSchemaPaths,
   validateHeaders,
@@ -314,6 +315,7 @@ export async function planTool(args: PlanArgs, env: Env = process.env): Promise<
       schemaUuid: cfg.schemaUuid,
       itemState,
       attachmentUuidPath: cfg.attachmentUuidPath,
+      descriptionPath: extractItemDescriptionPath(await readFile(schemaFile, 'utf8')),
     });
 
     // Mirrors planAction exactly: warnings land in manifest.warnings BEFORE

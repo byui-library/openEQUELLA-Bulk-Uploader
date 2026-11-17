@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { loadConfig, createAuthProvider } from '../core/config.js';
 import { readSheet } from '../core/sheet.js';
-import { extractDefinition, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
+import { extractDefinition, extractItemDescriptionPath, extractItemNamePath, parseSchemaPaths } from '../core/schema.js';
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { folderLines } from '../core/folderReport.js';
@@ -72,6 +72,7 @@ export async function planAction(o: PlanCliOptions, env: Env = process.env): Pro
     schemaUuid: cfg.schemaUuid,
     itemState,
     attachmentUuidPath: cfg.attachmentUuidPath,
+    descriptionPath: extractItemDescriptionPath(schemaXml),
   });
 
   if (!o.skipDuplicateCheck) {

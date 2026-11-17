@@ -254,6 +254,7 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
       // with no identifier field. A heading that promises hits would make
       // "nobody looked" read as "we looked and found something".
       section('Duplicate identifiers', groups.duplicateIdentifier) +
+      section('Long descriptions', groups.longDescription) +
       section('Other warnings', groups.other);
 
     warningsSection = `

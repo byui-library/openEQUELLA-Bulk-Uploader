@@ -11,6 +11,7 @@ import {
   resolveIdentifierPath,
   NO_IDENTIFIER_PATH_WARNING,
   GUEST_SESSION_WARNING,
+  NO_DESCRIPTION_PATH_WARNING,
 } from '../src/core/plan.js';
 import {
   extractDefinition,
@@ -680,5 +681,41 @@ describe('buildManifest -- reserved headers, any case', () => {
     );
     expect(m.entries[0]!.files.map((f) => f.name)).toEqual(['b.pdf', 'a.pdf']);
     expect(Object.keys(m.entries[0]!.metadata)).toEqual(['MWDL/title']);
+  });
+});
+
+/**
+ * One or two paragraphs -- the operator's limit, 2026-11-17. plan WARNS and
+ * never cuts: what is in the spreadsheet is what the operator approved, and a
+ * description typed by hand never went near the extractor's limit.
+ */
+describe('buildManifest -- long descriptions', () => {
+  const withDescription = (description: string): Sheet => ({
+    headers: ['attachment name', 'MWDL/title', 'MWDL/description'],
+    rows: [{ rowNumber: 2, cells: { 'attachment name': 'a.mp4', 'MWDL/title': 'A', 'MWDL/description': description } }],
+  });
+  const described = new Set([...paths, 'MWDL/description']);
+
+  it('warns about a description over 1,000 characters, and uploads it untouched', async () => {
+    const long = 'x'.repeat(1001);
+    const m = await buildManifest(withDescription(long), dir, described, { ...opts, descriptionPath: 'MWDL/description' });
+    expect(m.warnings).toContain(
+      "Row 2: the description ('MWDL/description') is 1001 characters, longer than the 1000 of one or two " +
+        'paragraphs. Shorten it in the spreadsheet, or upload it as it is.',
+    );
+    expect(m.entries[0]!.metadata['MWDL/description']).toEqual([long]);
+  });
+
+  it('says nothing about a description within the limit', async () => {
+    const m = await buildManifest(withDescription('x'.repeat(1000)), dir, described, {
+      ...opts,
+      descriptionPath: 'MWDL/description',
+    });
+    expect(m.warnings.filter((w) => /description/i.test(w))).toEqual([]);
+  });
+
+  it('says the lengths were not checked when the schema declares no description field', async () => {
+    const m = await buildManifest(withDescription('x'.repeat(2000)), dir, described, { ...opts, descriptionPath: null });
+    expect(m.warnings).toContain(NO_DESCRIPTION_PATH_WARNING);
   });
 });

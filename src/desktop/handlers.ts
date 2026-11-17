@@ -28,6 +28,7 @@ import { readSheet } from '../core/sheet.js';
 import { listModelsAt } from '../core/ai/pass.js';
 import {
   extractDefinition,
+  extractItemDescriptionPath,
   extractItemNamePath,
   parseSchemaPaths,
   validateHeaders,
@@ -261,6 +262,13 @@ async function schemaPaths(): Promise<Set<string>> {
 async function schemaTitleHeader(): Promise<string | null> {
   const p = resolveSchemaPath(resourcePathOpts());
   return extractItemNamePath(await readFile(p, 'utf8'));
+}
+
+/** The description xpath the same export declares, or null -- for plan's
+ *  long-description warning, which says "not checked" rather than nothing. */
+async function schemaDescriptionHeader(): Promise<string | null> {
+  const p = resolveSchemaPath(resourcePathOpts());
+  return extractItemDescriptionPath(await readFile(p, 'utf8'));
 }
 
 /**
@@ -713,6 +721,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         schemaUuid: cfg.schemaUuid,
         itemState: args.itemState,
         attachmentUuidPath: cfg.attachmentUuidPath,
+        descriptionPath: await schemaDescriptionHeader(),
       });
 
       const titleHeader = await schemaTitleHeader();
