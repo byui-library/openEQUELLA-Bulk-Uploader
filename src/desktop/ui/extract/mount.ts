@@ -2,6 +2,7 @@ import { renderExtractFolder } from '../screens/extractFolder.js';
 import { renderExtractColumns } from '../screens/extractColumns.js';
 import { renderExtractSave } from '../screens/extractSave.js';
 import { renderExtractAddColumn } from '../screens/extractAddColumn.js';
+import { describeFilename } from './segments.js';
 import { canContinue, type ExtractState } from './state.js';
 import type { ExtractController } from './controller.js';
 
@@ -13,6 +14,18 @@ import type { ExtractController } from './controller.js';
 export function screenFor(state: ExtractState): 'folder' | 'columns' | 'save' {
   if (state.step !== 'folder' && state.profile === null) return 'folder';
   return state.step;
+}
+
+/**
+ * The name the columns screen splits into parts as its example: the first that
+ * FITS the pattern, or the first of all when none does.
+ *
+ * Not simply the first. An index folder sorts ahead of 38 volume folders
+ * (operator, 2026-11-17), and showing its parts -- none -- hid the very parts
+ * the operator was trying to use.
+ */
+export function sampleName(pattern: string, names: readonly string[]): string {
+  return names.find((name) => describeFilename(pattern, name).matched) ?? names[0] ?? '';
 }
 
 export function renderExtract(
@@ -57,7 +70,7 @@ export function renderExtract(
       renderExtractColumns(root, {
         profile: state.profile!,
         profilePath: state.profilePath,
-        sampleFilename: state.scan?.supported[0] ?? '',
+        sampleFilename: sampleName(state.profile!.pattern, state.scan?.supported ?? []),
         perFolder: state.perFolder,
         scan: state.scan ?? { labels: [], properties: [], tableColumns: [], sections: [] },
         preview: state.preview,

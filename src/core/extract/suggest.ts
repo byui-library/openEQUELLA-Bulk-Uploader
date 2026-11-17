@@ -52,15 +52,29 @@ export function detectPattern(allFilenames: string[], options: { folders?: boole
 
   if (stems.length === 0) return `{part1}${extension}`;
 
+  // THE SHAPE MOST NAMES SHARE, not one every name shares. Requiring all of
+  // them let a single odd name spoil the batch: one index folder beside 38
+  // volume folders (operator, 2026-11-17) made every name one part, so no
+  // column could use the volume number. The odd ones out still get their
+  // "does not match the pattern" note on their rows (rows.ts). A STRICT
+  // majority, so a batch with no prevailing shape still falls back.
   let bestSeparator: string | null = null;
   let bestCount = 1;
+  let bestAgree = 0;
   for (const separator of SEPARATORS) {
-    const counts = new Set(stems.map((s) => s.split(separator).length));
-    if (counts.size !== 1) continue;
-    const count = [...counts][0]!;
-    if (count > bestCount) {
-      bestSeparator = separator;
-      bestCount = count;
+    const tally = new Map<number, number>();
+    for (const stem of stems) {
+      const parts = stem.split(separator).length;
+      tally.set(parts, (tally.get(parts) ?? 0) + 1);
+    }
+    for (const [count, agree] of tally) {
+      if (count < 2 || agree * 2 <= stems.length) continue;
+      // More names agreeing wins; among equals, more parts -- as before.
+      if (agree > bestAgree || (agree === bestAgree && count > bestCount)) {
+        bestSeparator = separator;
+        bestCount = count;
+        bestAgree = agree;
+      }
     }
   }
 
