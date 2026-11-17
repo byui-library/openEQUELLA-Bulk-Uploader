@@ -81,6 +81,36 @@ const options = (over: Partial<Parameters<typeof fillWithModel>[3]> = {}) => ({
   ...over,
 });
 
+/**
+ * One or two paragraphs -- the operator's limit, 2026-11-17. The model is told
+ * it, and a reply over it is refused WHOLE: generated prose is never cut.
+ */
+describe('fillWithModel and the column limit', () => {
+  it("tells the model the column's limit", async () => {
+    const p = provider('Short.');
+    const limited: Profile = {
+      ...profile,
+      columns: [{ ...profile.columns[0]!, maxLength: 400 }],
+    };
+    await fillWithModel([{ row: row(), doc: doc('A document.') }], limited, p, options());
+    expect(promptsOf(p)[0]).toContain('no more than 400 characters');
+  });
+
+  it('refuses a reply over the limit, writes nothing, and says why', async () => {
+    const rows = [{ row: row(), doc: doc('A document.') }];
+    await fillWithModel(rows, profile, provider(`${'A sentence about the volume. '.repeat(40)}`), options());
+    expect(rows[0]!.row.cells['MWDL/description']).toBe('');
+    expect(rows[0]!.row.aiWritten).toEqual({});
+    expect(rows[0]!.row.notes.join(' ')).toMatch(/over this column's limit of 1000, and generated text is never shortened/);
+  });
+
+  it('writes a reply within the limit', async () => {
+    const rows = [{ row: row(), doc: doc('A document.') }];
+    await fillWithModel(rows, profile, provider('A sentence about the volume.'), options());
+    expect(rows[0]!.row.cells['MWDL/description']).toBe('A sentence about the volume.');
+  });
+});
+
 describe('fillWithModel', () => {
   it('writes the model value into an eligible cell', async () => {
     const rows = [{ row: row(), doc: doc('A document.') }];

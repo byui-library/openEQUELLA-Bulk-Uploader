@@ -3,6 +3,7 @@ import { describeReason } from '../errorReason.js';
 import { ValidationError } from '../errors.js';
 import { expectedButEmptyNote } from '../extract/rows.js';
 import { ATTACHMENT_COLUMN } from '../extract/types.js';
+import { limitFor } from '../extract/length.js';
 import type { Column, DocumentData, ExtractedRow, Profile, Transform } from '../extract/types.js';
 import { eligibleColumns } from './eligible.js';
 import { buildPrompt, cleanReply } from './prompt.js';
@@ -603,6 +604,7 @@ export async function fillWithModel(
             field: describeField(path),
             document: slice.text,
             instruction: options.instruction ?? null,
+            maxLength: limitFor(column),
           }),
         );
       } catch (error) {
@@ -630,6 +632,20 @@ export async function fillWithModel(
           `${path}: ${outcome} -- ${cleaned.reason}.` +
             `${quoted(cleaned.discarded)}${sentClause(slice.shape)}`,
         );
+        continue;
+      }
+
+      // OVER THE LIMIT IS REFUSED WHOLE, NEVER SHORTENED. The model was told the
+      // limit; cutting its prose back to a sentence would be editing generated
+      // text, and a cut-down sentence can read as complete while meaning
+      // something else. The cell stays eligible, as for any refusal.
+      const limit = limitFor(column);
+      if (cleaned.text.length > limit) {
+        const reason =
+          `the model's answer was ${cleaned.text.length} characters, over this column's limit of ` +
+          `${limit}, and generated text is never shortened`;
+        report('discarded', path, reason);
+        row.notes.push(`${path}: ${outcome} -- ${reason}.${quoted(cleaned.text)}${sentClause(slice.shape)}`);
         continue;
       }
 

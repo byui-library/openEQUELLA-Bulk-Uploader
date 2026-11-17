@@ -6,6 +6,9 @@ export interface PromptInput {
   document: string;
   /** House style from the profile, or null. */
   instruction: string | null;
+  /** The most characters the reply may be (length.ts#limitFor). A longer
+   *  reply is refused whole, so the model is told before it writes. */
+  maxLength: number;
 }
 
 /** The fence the document sits inside. Both ends, so nothing after the document
@@ -60,6 +63,8 @@ export function buildPrompt(input: PromptInput): string {
     'Use only what the document states. Do not invent names, dates, places or',
     'events. If the document does not support a claim, leave it out. If you',
     'cannot write anything from the document, reply with nothing at all.',
+    '',
+    `Keep it to one or two short paragraphs, no more than ${input.maxLength} characters.`,
     ...(input.instruction ? ['', `House style: ${input.instruction}`] : []),
     '',
     'Reply with the text only -- no preamble, no quotation marks, no explanation.',
