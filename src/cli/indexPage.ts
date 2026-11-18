@@ -58,12 +58,10 @@ export async function indexAction(o: IndexCliOptions, env: Env = process.env): P
   const cfg = loadConfig(env);
   // Before signing in: a record of another site is refused without a request.
   // OEQ_SCHEMA_UUID describes the CONFIGURED collection; it is never lent to a record's other one.
-  const { collectionUuid, source, fallbackSchemaUuid } = await resolveIndexSource(flags.records, {
-    baseUrl: cfg.baseUrl,
-    collectionUuid: cfg.collectionUuid,
-    configuredCollectionUuid: cfg.collectionUuid,
-    configuredSchemaUuid: cfg.schemaUuid,
-  });
+  const { collectionUuid, source, fallbackSchemaUuid } = await resolveIndexSource(
+    flags.records === null ? { collectionUuid: cfg.collectionUuid } : { records: flags.records },
+    { baseUrl: cfg.baseUrl, configuredCollectionUuid: cfg.collectionUuid, configuredSchemaUuid: cfg.schemaUuid },
+  );
   const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
   assertNotGuest(await client.currentUser(), 'Run `oeq-upload login` first.');
 

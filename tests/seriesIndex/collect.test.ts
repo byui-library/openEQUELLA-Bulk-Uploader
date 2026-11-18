@@ -49,12 +49,26 @@ describe('collectIndex', () => {
       BASE,
     );
     expect(index.missing).toEqual([10, 11, 12, 14, 17]);
+    expect(index.missingCount).toBe(5);
+  });
+
+  it('names at most 20 missing numbers and counts the rest without walking the span', () => {
+    const started = Date.now();
+    const index = collectIndex(
+      [hit('a', ['FQ_1971_Vol1_No1.pdf']), hit('b', ['FQ_1972_Vol3_No1.pdf']), hit('c', ['FQ_1973_Vol2147483647_No1.pdf'])],
+      RULE,
+      BASE,
+    );
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(index.missing).toEqual([2, ...Array.from({ length: 19 }, (_, i) => 4 + i)]);
+    expect(index.missingCount).toBe(2147483647 - 3);
   });
 
   it('names nothing missing for a run with no gaps, one volume, or none', () => {
     expect(collectIndex([hit('a', ['FQ_1971_Vol1_No1.pdf']), hit('b', ['FQ_1972_Vol2_No1.pdf'])], RULE, BASE).missing).toEqual([]);
     expect(collectIndex([hit('a', ['FQ_1971_Vol5_No1.pdf'])], RULE, BASE).missing).toEqual([]);
     expect(collectIndex([], RULE, BASE).missing).toEqual([]);
+    expect(collectIndex([], RULE, BASE).missingCount).toBe(0);
   });
 
   it('lists draft and live alike', () => {

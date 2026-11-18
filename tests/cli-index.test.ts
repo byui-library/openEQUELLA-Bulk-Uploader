@@ -75,14 +75,13 @@ describe('oeq-upload index --from-record', () => {
   // As the CLI calls it: the configured collection is both the default and the one OEQ_SCHEMA_UUID describes.
   const site = (baseUrl: string, collectionUuid: string) => ({
     baseUrl,
-    collectionUuid,
     configuredCollectionUuid: collectionUuid,
     configuredSchemaUuid: 'schema-configured',
   });
 
   it('builds from the record, in its collection, whatever OEQ_COLLECTION_UUID says', async () => {
     const path = await save(record());
-    const got = await resolveIndexSource([path], site('https://oeq.example.edu/', 'coll-configured'));
+    const got = await resolveIndexSource({ records: [path] }, site('https://oeq.example.edu/', 'coll-configured'));
     expect(got.collectionUuid).toBe('coll-from-record');
     expect(got.source.kind).toBe('record');
     if (got.source.kind === 'record') expect(got.source.record.items.map((i) => i.uuid)).toEqual(['item-1']);
@@ -91,25 +90,25 @@ describe('oeq-upload index --from-record', () => {
   });
 
   it('searches the configured collection without it, lending it the configured schema', async () => {
-    const got = await resolveIndexSource(null, site('https://oeq.example.edu', 'coll-configured'));
+    const got = await resolveIndexSource({ collectionUuid: 'coll-configured' }, site('https://oeq.example.edu', 'coll-configured'));
     expect(got).toEqual({ collectionUuid: 'coll-configured', source: { kind: 'collection' }, fallbackSchemaUuid: 'schema-configured' });
   });
 
   it('lends the configured schema to a record of the configured collection', async () => {
     const path = await save(record());
-    const got = await resolveIndexSource([path], site('https://oeq.example.edu', 'coll-from-record'));
+    const got = await resolveIndexSource({ records: [path] }, site('https://oeq.example.edu', 'coll-from-record'));
     expect(got.fallbackSchemaUuid).toBe('schema-configured');
   });
 
   it("matches the site however it is spelt: a trailing slash or the host's case", async () => {
     const path = await save(record({ baseUrl: 'https://OEQ.example.edu/' }));
-    await expect(resolveIndexSource([path], site('https://oeq.example.edu', 'c'))).resolves.toBeDefined();
+    await expect(resolveIndexSource({ records: [path] }, site('https://oeq.example.edu', 'c'))).resolves.toBeDefined();
   });
 
   it('refuses a record of another site: its links would point at the wrong server', async () => {
     const path = await save(record({ baseUrl: 'https://oeq-test.example.edu' }));
-    await expect(resolveIndexSource([path], site('https://oeq.example.edu', 'c'))).rejects.toThrow(ValidationError);
-    await expect(resolveIndexSource([path], site('https://oeq.example.edu', 'c'))).rejects.toThrow(
+    await expect(resolveIndexSource({ records: [path] }, site('https://oeq.example.edu', 'c'))).rejects.toThrow(ValidationError);
+    await expect(resolveIndexSource({ records: [path] }, site('https://oeq.example.edu', 'c'))).rejects.toThrow(
       /oeq-test\.example\.edu.*oeq\.example\.edu/,
     );
   });

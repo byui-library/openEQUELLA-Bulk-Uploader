@@ -120,10 +120,9 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
       // then drives everything below -- the schema, the existing-item search
       // and the upload.
       const { collectionUuid, source, fallbackSchemaUuid } = await resolveIndexSource(
-        'recordPaths' in args ? args.recordPaths : null,
+        'recordPaths' in args ? { records: args.recordPaths } : { collectionUuid: args.collectionUuid },
         {
           baseUrl: connection.baseUrl,
-          collectionUuid: 'collectionUuid' in args ? args.collectionUuid : '',
           configuredCollectionUuid: connection.setupCollectionUuid,
           configuredSchemaUuid: connection.fallbackSchemaUuid,
         },
@@ -154,6 +153,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         heldBack: build.index.heldBack.map((h) => ({ reason: h.reason, items: h.items.map((i) => i.name) })),
         notInSeries: build.index.notInSeries.map((l) => ({ name: l.name, reason: l.reason })),
         missing: build.index.missing,
+        missingCount: build.index.missingCount,
         labels: { ...build.labels },
         existing:
           e.kind === 'one'
@@ -161,7 +161,11 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
             : e.kind === 'many'
               ? { kind: 'many', items: e.items.map(({ name }) => ({ name })) }
               : e,
-        notCreated: build.notCreated,
+        notCreated: build.notCreated.map((n) => ({
+          label: n.label,
+          status: n.status,
+          ...(n.error !== undefined ? { error: n.error } : {}),
+        })),
       };
     },
 

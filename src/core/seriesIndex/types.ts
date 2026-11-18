@@ -57,11 +57,14 @@ export interface SeriesIndex {
   heldBack: HeldBack[];
   notInSeries: LeftOut[];
   /**
-   * Every whole number strictly between the lowest and highest group listed
-   * or held back that is neither: a volume the page silently lacks. Told to
-   * the operator; the page itself does not mention it.
+   * The whole numbers strictly between the lowest and highest group listed
+   * or held back that are neither -- a volume the page silently lacks -- at
+   * most `NOT_IN_SERIES_SHOWN` of them. Told to the operator; the page itself
+   * does not mention it.
    */
   missing: number[];
+  /** How many such numbers there are in all; `missing` names the first of them. */
+  missingCount: number;
 }
 
 /** The three files, by the names they are saved and attached under. */

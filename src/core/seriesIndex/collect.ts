@@ -3,6 +3,7 @@ import { nameReader, resolveLabels, type NameRead } from '../extract/sequenceChe
 import type { SequenceLabels } from '../extract/types.js';
 import { instanceEndpoint } from '../instanceUrl.js';
 import type { HeldBack, IndexHit, IndexVolume, LeftOut, SeriesIndex } from './types.js';
+import { NOT_IN_SERIES_SHOWN } from './words.js';
 
 /**
  * Search hits -> the series' volumes. PURE.
@@ -135,20 +136,28 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
     });
   }
   for (const group of byGroup.keys()) present.add(group);
-  return { volumes, heldBack, notInSeries, missing: gaps(present) };
+  return { volumes, heldBack, notInSeries, ...gaps(present) };
 }
 
 /**
- * Every whole number strictly between the lowest and highest present group
- * that is not present. A volume that exists only as a withdrawn item is a
- * gap like any other: the page silently lacks it, so the operator is told.
+ * The whole numbers strictly between the lowest and highest present group
+ * that are not present: the first `NOT_IN_SERIES_SHOWN` of them, and how many
+ * there are. A volume that exists only as a withdrawn item is a gap like any
+ * other: the page silently lacks it, so the operator is told.
+ *
+ * NEVER WALKS THE SPAN. One stray group (`Vol2147483647`) would otherwise
+ * loop for billions of steps in the main process; the count is arithmetic,
+ * and the list stops at the cap.
  */
-function gaps(present: ReadonlySet<number>): number[] {
-  if (present.size === 0) return [];
+function gaps(present: ReadonlySet<number>): { missing: number[]; missingCount: number } {
   const sorted = [...present].sort((a, b) => a - b);
   const missing: number[] = [];
-  for (let n = sorted[0]! + 1; n < sorted[sorted.length - 1]!; n++) {
-    if (!present.has(n)) missing.push(n);
+  let missingCount = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const low = sorted[i - 1]!;
+    const high = sorted[i]!;
+    missingCount += high - low - 1;
+    for (let n = low + 1; n < high && missing.length < NOT_IN_SERIES_SHOWN; n++) missing.push(n);
   }
-  return missing;
+  return { missing, missingCount };
 }

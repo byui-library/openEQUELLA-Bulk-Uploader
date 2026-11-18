@@ -123,6 +123,20 @@ describe('buildIndex', () => {
     expect(searched).toBe(0);
   });
 
+  it('starts no search when the lookup of the existing index item fails', async () => {
+    let searched = 0;
+    const c = {
+      searchCollection: async () => (searched++, listing),
+      findByField: async () => {
+        throw new Error('lookup failed');
+      },
+    };
+    await expect(
+      buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema }),
+    ).rejects.toThrow('lookup failed');
+    expect(searched).toBe(0);
+  });
+
   it('describes the build in plain lines', async () => {
     const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
     expect(previewLines(b)).toEqual([
@@ -191,7 +205,8 @@ describe('buildIndex', () => {
     });
     const c = { searchCollection: async () => [vol(38), vol(270)], findByField: async () => [] };
     const b = await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
-    expect(b.index.missing).toHaveLength(231);
+    expect(b.index.missing).toHaveLength(20);
+    expect(b.index.missingCount).toBe(231);
     const first20 = Array.from({ length: 20 }, (_, i) => 39 + i).join(', ');
     expect(previewLines(b)).toContain(`No volumes found for ${first20}. ...and 211 more.`);
   });

@@ -123,10 +123,11 @@ describe('index handlers', () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
     expect(await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' })).toMatchObject({
       missing: [10, 11],
+      missingCount: 2,
     });
   });
 
-  it('sends every missing number to the renderer, which caps what it names', async () => {
+  it('sends at most 20 missing numbers to the renderer, and the count of all of them', async () => {
     const vol = (n: number) => ({
       uuid: `v${n}`,
       version: 1,
@@ -137,7 +138,8 @@ describe('index handlers', () => {
     const c = connect({ searchCollection: async () => [vol(38), vol(270)] });
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
     const p = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
-    expect(p.missing).toEqual(Array.from({ length: 231 }, (_, i) => 39 + i));
+    expect(p.missing).toEqual(Array.from({ length: 20 }, (_, i) => 39 + i));
+    expect(p.missingCount).toBe(231);
   });
 
   it('a second upload updates the item the first one created', async () => {
@@ -449,7 +451,8 @@ describe('index handlers, from batch records', () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
     const preview = await h.preview({ instanceId: 'i', recordPaths: [await save(record())], templateId: 'with-index' });
     expect(preview.volumes).toEqual([{ heading: 'Fernbrook Vol 1', issues: ['Issue 1 (1971)'] }]);
-    expect(preview.notCreated).toEqual([{ row: 3, label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'server said no' }]);
+    // Only what is shown crosses IPC: no row number.
+    expect(preview.notCreated).toEqual([{ label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'server said no' }]);
     // The RECORD's collection drives the schema and, below, the upload.
     expect(collections).toEqual(['coll-rec']);
     await h.upload({ buildId: 'b1', draft: true });

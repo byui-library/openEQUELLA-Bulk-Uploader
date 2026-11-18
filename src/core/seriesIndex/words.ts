@@ -20,14 +20,19 @@ export const andMore = (total: number, shown = NOT_IN_SERIES_SHOWN): string =>
  * volume that nothing lists, in the template's own words; '' when there are
  * none. One wording: the CLI prints it, the desktop shows it.
  *
- * Names at most `NOT_IN_SERIES_SHOWN` and counts the rest: one misnamed file
- * (`Vol270` in a run of 38) makes hundreds "missing".
+ * Names at most `NOT_IN_SERIES_SHOWN` of `missing` and counts the rest of
+ * `total`: one misnamed file (`Vol270` in a run of 38) makes hundreds
+ * "missing", so only the first few are ever collected.
  */
-export const missingNote = (missing: readonly number[], labels: { group: string; groups: string }): string => {
-  if (missing.length === 0) return '';
-  const more = andMore(missing.length);
+export const missingNote = (
+  missing: readonly number[],
+  labels: { group: string; groups: string },
+  total: number,
+): string => {
+  if (total === 0) return '';
+  const more = andMore(total);
   return (
-    `No ${missing.length === 1 ? labels.group : labels.groups} found for ` +
+    `No ${total === 1 ? labels.group : labels.groups} found for ` +
     `${missing.slice(0, NOT_IN_SERIES_SHOWN).join(', ')}.${more ? ` ${more}` : ''}`
   );
 };

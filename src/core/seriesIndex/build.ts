@@ -36,10 +36,11 @@ export interface IndexBuild {
  */
 export type BuildSource = { kind: 'collection' } | { kind: 'record'; record: BatchRecord };
 
+/** What an index is built from: batch records, or a search of one collection. */
+export type IndexSourceChoice = { records: readonly string[] } | { collectionUuid: string };
+
 export interface SourceSite {
   baseUrl: string;
-  /** The collection searched when no record is given. */
-  collectionUuid: string;
   /** The collection the site's own schema was read from ('' when none), and that schema ('' when none). */
   configuredCollectionUuid: string;
   configuredSchemaUuid: string;
@@ -47,7 +48,7 @@ export interface SourceSite {
 
 /**
  * Where an index's items come from -- ONE rule for the CLI and the desktop.
- * Without records, a search of `site.collectionUuid`. With them, the records
+ * Without records, a search of the chosen collection. With them, the records
  * -- combined -- in THEIR collection, and only when they were made on this
  * site (`readBatchRecordsFor`): the index's links are built from this site's
  * address. Makes no request, so a record of another site is refused before
@@ -58,16 +59,16 @@ export interface SourceSite {
  * collection borrowing it would write fields its schema lacks.
  */
 export async function resolveIndexSource(
-  records: readonly string[] | null,
+  choice: IndexSourceChoice,
   site: SourceSite,
 ): Promise<{ collectionUuid: string; source: BuildSource; fallbackSchemaUuid: string }> {
   let collectionUuid: string;
   let source: BuildSource;
-  if (records === null) {
-    collectionUuid = site.collectionUuid;
+  if ('collectionUuid' in choice) {
+    collectionUuid = choice.collectionUuid;
     source = { kind: 'collection' };
   } else {
-    const record = await readBatchRecordsFor(records, site.baseUrl);
+    const record = await readBatchRecordsFor(choice.records, site.baseUrl);
     collectionUuid = record.collectionUuid;
     source = { kind: 'record', record };
   }
@@ -115,12 +116,13 @@ export async function buildIndex(args: BuildArgs): Promise<IndexBuild> {
   }
 
   const record = indexRecord(profile.index, args.schema);
-  const [existing, hits] = await Promise.all([
-    findExistingIndex(args.client, args.collectionUuid, record),
+  // Sequential, never side by side: a lookup that fails must not leave the
+  // paginated search below still paging in the background.
+  const existing = await findExistingIndex(args.client, args.collectionUuid, record);
+  const hits =
     source.kind === 'record'
       ? recordHits(source.record)
-      : args.client.searchCollection(args.collectionUuid, { where }).then((items) => items.map(toHit)),
-  ]);
+      : (await args.client.searchCollection(args.collectionUuid, { where })).map(toHit);
   // The index item -- or each of several -- is left out of the listing: it
   // lives in the collection it indexes, and is not "not in the series".
   const self = new Set(
@@ -160,7 +162,7 @@ export function previewLines(b: IndexBuild): string[] {
   const L = b.labels;
   const issues = b.index.volumes.reduce((n, v) => n + v.issues.length, 0);
   const lines = [`${plural(b.index.volumes.length, L.group, L.groups)}, ${plural(issues, L.part, L.parts)}.`];
-  const gaps = missingNote(b.index.missing, L);
+  const gaps = missingNote(b.index.missing, L, b.index.missingCount);
   if (gaps) lines.push(gaps);
   for (const h of b.index.heldBack) {
     lines.push(`Held back: ${h.reason} -- ${h.items.map((i) => i.name).join(', ')}`);
