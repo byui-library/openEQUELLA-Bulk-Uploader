@@ -888,6 +888,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         client: buildClient(cfg, buildAuth(cfg, tokens(), inst.id)),
         baseUrl: inst.baseUrl,
         fallbackSchemaUuid: inst.schemaUuid,
+        setupCollectionUuid: inst.collectionUuid,
       };
     },
   });

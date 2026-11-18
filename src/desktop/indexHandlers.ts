@@ -35,6 +35,12 @@ export type IndexConnection = {
   baseUrl: string;
   /** The schema Setup read for this site, for a collection that names none. */
   fallbackSchemaUuid: string;
+  /**
+   * The collection Setup read `fallbackSchemaUuid` FROM. The fallback is used
+   * for that collection only: a site's collections can use different schemas,
+   * and another collection borrowing it would write fields its schema lacks.
+   */
+  setupCollectionUuid: string;
 };
 
 export interface IndexHandlerDeps {
@@ -93,7 +99,11 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
       const { client } = connection;
       assertNotGuest(await client.currentUser(), 'Sign in to this site again, then build the index.');
       const profile = await loadTemplate(args.templateId, deps.templatesDir);
-      const schema = await resolveIndexSchema(client, args.collectionUuid, connection.fallbackSchemaUuid);
+      const fallback =
+        connection.setupCollectionUuid !== '' && args.collectionUuid === connection.setupCollectionUuid
+          ? connection.fallbackSchemaUuid
+          : '';
+      const schema = await resolveIndexSchema(client, args.collectionUuid, fallback);
       const build = await buildIndex({
         client,
         baseUrl: connection.baseUrl,

@@ -66,6 +66,7 @@ function connect(over: Record<string, unknown> = {}) {
       client: client as unknown as IndexConnection['client'],
       baseUrl: 'https://oeq.example.edu',
       fallbackSchemaUuid: '',
+      setupCollectionUuid: '',
     }),
   };
 }
@@ -318,6 +319,45 @@ describe('index handlers', () => {
     expect(second.buildId).not.toBe(older.buildId);
     await expect(h.upload({ buildId: older.buildId, draft: true })).rejects.toThrow(/Preview again/);
     expect((await h.upload({ buildId: second.buildId, draft: true })).kind).toBe('created');
+  });
+
+  describe("Setup's schema, for a collection that names none", () => {
+    const schemaless = async (collectionUuid: string) => {
+      const asked: string[] = [];
+      const c = connect({
+        getCollection: async (uuid: string) => ({ uuid, name: 'C' }),
+        getSchema: async (uuid: string) => {
+          asked.push(uuid);
+          return {
+            uuid,
+            namePath: '/DC/title',
+            titleHeader: 'DC/title',
+            descriptionPath: '/DC/description',
+            descriptionHeader: 'DC/description',
+            paths: new Set(['DC/title', 'DC/description', 'DC/identifier']),
+          };
+        },
+      });
+      const deps = async (): Promise<IndexConnection> => ({
+        ...(await c.deps()),
+        fallbackSchemaUuid: 'setup-schema',
+        setupCollectionUuid: 'setup-coll',
+      });
+      const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: deps, newId: () => 'b1' });
+      return { asked, run: () => h.preview({ instanceId: 'i', collectionUuid, templateId: 'with-index' }) };
+    };
+
+    it('is used for the collection Setup read it from', async () => {
+      const s = await schemaless('setup-coll');
+      await s.run();
+      expect(s.asked).toEqual(['setup-schema']);
+    });
+
+    it('is never borrowed by another collection', async () => {
+      const s = await schemaless('other-coll');
+      await expect(s.run()).rejects.toThrow(/did not say which schema/);
+      expect(s.asked).toEqual([]);
+    });
   });
 
   it('saves the build to a folder, reporting files already there', async () => {
