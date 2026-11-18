@@ -173,6 +173,32 @@ export interface SearchHit {
   attachmentNames: string[];
 }
 
+/** One item of a collection listing, as the series index reads it. */
+export interface CollectionItem {
+  uuid: string;
+  version: number;
+  status: string;
+  /** Null when the server sent none: production omits it, content-test sends it. */
+  name: string | null;
+  attachments: { type: string; filename: string; uuid: string }[];
+}
+
+function parseCollectionItem(r: Record<string, unknown>): CollectionItem {
+  const attachments = Array.isArray(r['attachments']) ? (r['attachments'] as Record<string, unknown>[]) : [];
+  const name = typeof r['name'] === 'string' && r['name'] !== '' ? r['name'] : null;
+  return {
+    uuid: String(r['uuid'] ?? ''),
+    version: typeof r['version'] === 'number' ? r['version'] : 1,
+    status: typeof r['status'] === 'string' ? r['status'] : '',
+    name,
+    attachments: attachments.map((a) => ({
+      type: String(a['type'] ?? ''),
+      filename: String(a['filename'] ?? a['description'] ?? ''),
+      uuid: String(a['uuid'] ?? ''),
+    })),
+  };
+}
+
 /**
  * Body types fetch() can safely re-send on a retry: their content is held in
  * memory (or is otherwise re-readable) rather than drained by the act of
@@ -568,6 +594,66 @@ export class OeqClient {
         .map((a) => a.filename ?? a.description ?? '')
         .filter((n) => n !== ''),
     }));
+  }
+
+  /**
+   * Every item in a collection, drafts included (`showall=true`), with its
+   * attachments -- read a page of 50 at a time until `available` is reached.
+   *
+   * `available > 0` with no rows on the FIRST page is openEQUELLA's answer to
+   * a guest (CLAUDE.md, "openEQUELLA answers an unauthenticated request with
+   * 200"), and is reported as that, never as an empty collection.
+   */
+  async searchCollection(collectionUuid: string, pageSize = 50): Promise<CollectionItem[]> {
+    const items: CollectionItem[] = [];
+    for (let start = 0; ; ) {
+      const url =
+        `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
+        `&info=${encodeURIComponent('basic,attachment')}&showall=true&length=${pageSize}&start=${start}`;
+      const body = (await (await this.request(url)).json()) as {
+        available?: number;
+        results?: Record<string, unknown>[];
+      };
+      const results = body.results ?? [];
+      const available = body.available ?? 0;
+      if (start === 0 && available > 0 && results.length === 0) {
+        throw new ValidationError(
+          `openEQUELLA reports ${available} items in this collection but returned none -- the session is ` +
+            'not signed in, or has expired. Sign in again and retry.',
+        );
+      }
+      items.push(...results.map(parseCollectionItem));
+      start += results.length;
+      if (results.length === 0 || start >= available) return items;
+    }
+  }
+
+  /** Items whose `path` is EXACTLY `value` -- the `where` mechanism of searchByTitle, for any path. */
+  async findByField(collectionUuid: string, path: string, value: string): Promise<CollectionItem[]> {
+    const clause = `/xml/${path} = '${escapeWhereValue(value)}'`;
+    const url =
+      `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
+      `&where=${encodeURIComponent(clause)}&info=basic&showall=true&length=50`;
+    const body = (await (await this.request(url)).json()) as { results?: Record<string, unknown>[] };
+    return (body.results ?? []).map(parseCollectionItem);
+  }
+
+  /** The item's full bean, as `editItem` sends it back. */
+  async getItemBean(uuid: string, version: number): Promise<Record<string, unknown>> {
+    const res = await this.request(`/api/item/${encodeURIComponent(uuid)}/${version}/`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  /**
+   * Replace an item's files and record IN PLACE: `PUT /api/item/{uuid}/{v}/
+   * ?file={staging}` with its bean. CONFIRMED on content-test 2026-11-17: same
+   * item, same version, same attachment uuids, files replaced, title changed.
+   */
+  async editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid: string): Promise<void> {
+    await this.request(
+      `/api/item/${encodeURIComponent(uuid)}/${version}/?file=${encodeURIComponent(stagingUuid)}`,
+      { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bean) },
+    );
   }
 
   /**

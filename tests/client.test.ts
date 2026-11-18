@@ -750,3 +750,61 @@ describe('OeqClient — a server failure names the status', () => {
     expect(err.retryable).toBe(true);
   });
 });
+
+describe('series index calls', () => {
+  const item = (uuid: string, status = 'live') => ({
+    uuid,
+    version: 1,
+    status,
+    name: `Fernbrook ${uuid}`,
+    attachments: [{ type: 'file', filename: `${uuid}.pdf`, uuid: `${uuid}-a` }],
+    fields: { 'DC/identifier': uuid },
+  });
+
+  it('pages through the whole collection, drafts included', async () => {
+    mock.state.collectionItems = Array.from({ length: 120 }, (_, i) => item(`u${i}`, i % 2 ? 'draft' : 'live'));
+    const items = await client.searchCollection('c1');
+    expect(items).toHaveLength(120);
+    expect(items[1]).toEqual({
+      uuid: 'u1',
+      version: 1,
+      status: 'draft',
+      name: 'Fernbrook u1',
+      attachments: [{ type: 'file', filename: 'u1.pdf', uuid: 'u1-a' }],
+    });
+    expect(mock.state.searchUrls.every((u) => u.includes('showall=true'))).toBe(true);
+    expect(mock.state.searchUrls).toHaveLength(3);
+  });
+
+  it('reports a guest session instead of an empty collection', async () => {
+    // available > 0 with no rows is how openEQUELLA answers a guest.
+    mock.state.collectionItems = [item('u1')];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/search')) {
+        return new Response(JSON.stringify({ available: 29, results: [] }), { status: 200 });
+      }
+      return original(input, init);
+    }) as typeof fetch;
+    try {
+      await expect(client.searchCollection('c1')).rejects.toThrow(/not signed in/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('finds items by an exact field value', async () => {
+    mock.state.collectionItems = [item('a'), item('b')];
+    const found = await client.findByField('c1', 'DC/identifier', 'b');
+    expect(found.map((f) => f.uuid)).toEqual(['b']);
+  });
+
+  it('reads an item and edits it with a staging area', async () => {
+    mock.state.collectionItems = [item('a')];
+    const bean = await client.getItemBean('a', 1);
+    expect(bean['uuid']).toBe('a');
+    const staging = await client.createStagingArea();
+    await client.editItem('a', 1, { ...bean, metadata: '<xml><x/></xml>' }, staging);
+    expect(mock.state.edits[0]).toMatchObject({ uuid: 'a', version: 1, staging, bean: { metadata: '<xml><x/></xml>' } });
+  });
+});

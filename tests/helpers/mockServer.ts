@@ -209,6 +209,21 @@ export interface MockState {
   /** Items that already exist, for the title/attachment duplicate check. */
   existingItems: { uuid: string; version: number; title: string; attachmentNames: string[] }[];
   /**
+   * The collection listing and field search the series index uses. Each item
+   * carries `fields` (header-form path -> value) so a `where` on a path other
+   * than the title path can match it.
+   */
+  collectionItems: {
+    uuid: string;
+    version: number;
+    status: string;
+    name?: string;
+    attachments: { type: string; filename: string; uuid: string }[];
+    fields: Record<string, string>;
+  }[];
+  /** Every `PUT /api/item/{uuid}/{version}` received: the body and its staging area. */
+  edits: { uuid: string; version: number; staging: string; bean: Record<string, unknown> }[];
+  /**
    * The xpath this mock instance's schema declares as the item name. A `where`
    * clause naming any other path matches nothing, which is what a real
    * instance does and is exactly the silent-blindness failure the title-path
@@ -287,6 +302,8 @@ export async function startMockServer(): Promise<MockServer> {
     items: [],
     existingIdentifiers: [],
     existingItems: [],
+    collectionItems: [],
+    edits: [],
     titlePath: 'MWDL/title',
     searchUrls: [],
     collectionUrls: [],
@@ -393,6 +410,27 @@ export async function startMockServer(): Promise<MockServer> {
         return send(res, 204, '');
       }
 
+      const itemAt = /^\/api\/item\/([^/]+)\/(\d+)\/?$/.exec(path);
+      if (itemAt && req.method === 'GET') {
+        const found = state.collectionItems.find((i) => i.uuid === itemAt[1] && i.version === Number(itemAt[2]));
+        if (!found) return send(res, 404, { error: 'not found' });
+        return send(res, 200, {
+          uuid: found.uuid,
+          version: found.version,
+          status: found.status,
+          collection: { uuid: 'c1' },
+          metadata: '<xml/>',
+          attachments: found.attachments.map((a) => ({ ...a, description: a.filename })),
+        });
+      }
+      if (itemAt && req.method === 'PUT') {
+        const staging = url.searchParams.get('file');
+        if (!staging || !state.stagingAreas.has(staging)) return send(res, 404, { error: 'no such staging area' });
+        const bean = JSON.parse((await readBody(req)).toString('utf8')) as Record<string, unknown>;
+        state.edits.push({ uuid: itemAt[1]!, version: Number(itemAt[2]), staging, bean });
+        return send(res, 200, '');
+      }
+
       if (path === '/api/item' && req.method === 'POST') {
         if (state.failItemNext > 0) {
           state.failItemNext--;
@@ -469,6 +507,16 @@ export async function startMockServer(): Promise<MockServer> {
           const askedPath = parsed[1]!;
           const wanted = parsed[2]!.replace(/''/g, "'");
 
+          if (askedPath !== state.titlePath) {
+            const found = state.collectionItems.filter((i) => showAll && i.fields[askedPath] === wanted);
+            return send(res, 200, {
+              start: 0,
+              length: found.length,
+              available: found.length,
+              results: found.map((i) => ({ uuid: i.uuid, version: i.version, status: i.status, name: i.name })),
+            });
+          }
+
           const hits =
             showAll && askedPath === state.titlePath
               ? state.existingItems.filter((i) => i.title === wanted)
@@ -490,6 +538,25 @@ export async function startMockServer(): Promise<MockServer> {
                     })),
                   }
                 : {}),
+            })),
+          });
+        }
+
+        if (!url.searchParams.has('q')) {
+          const visible = state.collectionItems.filter((i) => showAll || i.status === 'live');
+          const start = Number(url.searchParams.get('start') ?? '0');
+          const length = Number(url.searchParams.get('length') ?? '10');
+          const page = visible.slice(start, start + length);
+          return send(res, 200, {
+            start,
+            length: page.length,
+            available: visible.length,
+            results: page.map((i) => ({
+              uuid: i.uuid,
+              version: i.version,
+              status: i.status,
+              ...(i.name === undefined ? {} : { name: i.name }),
+              attachments: i.attachments,
             })),
           });
         }
