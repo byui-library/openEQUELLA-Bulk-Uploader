@@ -8,7 +8,8 @@ import { assertNotGuest } from '../core/identity.js';
 import { ValidationError } from '../core/errors.js';
 import { describeReason } from '../core/errorReason.js';
 import { listTemplates, loadTemplate, type TemplateSummary } from '../core/extract/templates.js';
-import { buildIndex, resolveIndexSchema, type IndexBuild } from '../core/seriesIndex/build.js';
+import { buildIndex, resolveIndexSchema, type BuildSource, type IndexBuild } from '../core/seriesIndex/build.js';
+import { readBatchRecordsFor } from '../core/seriesIndex/batchRecord.js';
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { findExistingIndex, publishIndex, type IndexClient } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
@@ -110,19 +111,34 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
     async preview(args: Parameters<OeqApi['indexPreview']>[0]): Promise<IndexPreview> {
       const ticket = ++previews;
       held = null;
-      const connection = await signedIn(args.instanceId, 'build the index');
+      const connection = await deps.connect(args.instanceId);
+      // A record of another site is refused before signing in: the index's
+      // links are built from THIS site's address, so they would point at the
+      // wrong server. The record's collection then drives everything below --
+      // the schema, the existing-item search and the upload.
+      let collectionUuid: string;
+      let source: BuildSource;
+      if ('recordPaths' in args) {
+        const record = await readBatchRecordsFor(args.recordPaths, connection.baseUrl);
+        collectionUuid = record.collectionUuid;
+        source = { kind: 'record', record };
+      } else {
+        collectionUuid = args.collectionUuid;
+        source = { kind: 'collection' };
+      }
       const { client } = connection;
+      assertNotGuest(await client.currentUser(), 'Sign in to this site again, then build the index.');
       const profile = await loadTemplate(args.templateId, deps.templatesDir);
       const fallback =
-        connection.setupCollectionUuid !== '' && args.collectionUuid === connection.setupCollectionUuid
+        connection.setupCollectionUuid !== '' && collectionUuid === connection.setupCollectionUuid
           ? connection.fallbackSchemaUuid
           : '';
-      const schema = await resolveIndexSchema(client, args.collectionUuid, fallback);
+      const schema = await resolveIndexSchema(client, collectionUuid, fallback);
       const build = await buildIndex({
         client,
         baseUrl: connection.baseUrl,
-        collectionUuid: args.collectionUuid,
-        source: { kind: 'collection' },
+        collectionUuid,
+        source,
         profile,
         schema,
       });
@@ -146,6 +162,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
             : e.kind === 'many'
               ? { kind: 'many', items: e.items.map(({ name }) => ({ name })) }
               : e,
+        notCreated: build.notCreated.map((n) => ({ ...n })),
       };
     },
 

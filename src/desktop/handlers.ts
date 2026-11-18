@@ -1,10 +1,11 @@
 import { app, dialog, safeStorage, type BrowserWindow, type IpcMain } from 'electron';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, readdir, copyFile } from 'node:fs/promises';
 import {
   CHANNELS,
   type ColumnReport,
+  type IndexRecordTarget,
   type OeqApi,
   type PlanReport,
   type RunReport,
@@ -42,6 +43,8 @@ import { signInInteractive } from './signin.js';
 import { rowLabel, type Sheet } from '../core/types.js';
 import { planFolders } from '../core/folderReport.js';
 import { OeqError } from '../core/errors.js';
+import { describeReason } from '../core/errorReason.js';
+import { keepBatchRecord } from '../core/seriesIndex/batchRecord.js';
 import { registerExtractHandlers } from './extractHandlers.js';
 import { registerIndexHandlers } from './indexHandlers.js';
 
@@ -354,6 +357,47 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
  * fake and exercise a handler without booting Electron -- see
  * tests/desktop/handlers.test.ts's `applyDuplicateChoices` suite.
  */
+/**
+ * Where a batch's record goes: beside its spreadsheet, the extension replaced
+ * by `.index.json` (spec section 7) -- so the record travels with the batch it
+ * describes, and `fernbrook.xlsx` is followed by `fernbrook.index.json`.
+ */
+export function indexRecordPathFor(sheetPath: string): string {
+  const ext = extname(sheetPath);
+  return join(dirname(sheetPath), `${basename(sheetPath, ext)}.index.json`);
+}
+
+/**
+ * A run, keeping the batch record when one was asked for (core's
+ * `keepBatchRecord`, shared with the CLI). `run` calls `afterRow` from its
+ * progress callback; the record is written once more at the end, and every
+ * write has settled before this returns or throws.
+ *
+ * A RECORD THAT CANNOT BE WRITTEN NEVER FAILS THE RUN: the items exist either
+ * way. It comes back as `indexRecordError`, for Results to warn about.
+ */
+export async function runKeepingRecord<S>(
+  manifestPath: string,
+  indexRecord: IndexRecordTarget | undefined,
+  run: (afterRow: () => void) => Promise<S>,
+): Promise<{ summary: S; indexRecordPath?: string; indexRecordError?: string }> {
+  const keeper = indexRecord ? keepBatchRecord(manifestPath, indexRecord.path, indexRecord.titlePath) : null;
+  let summary: S;
+  try {
+    summary = await run(() => keeper?.update());
+    // Once more at the end, so a batch with no rows to report still leaves a record.
+    keeper?.update();
+  } finally {
+    // Never rejects: a run that threw is not hidden by its record.
+    await keeper?.settled();
+  }
+  if (keeper === null || indexRecord === undefined) return { summary };
+  const kept = await keeper.settled();
+  return kept.written
+    ? { summary, indexRecordPath: indexRecord.path }
+    : { summary, indexRecordError: describeReason(kept.error) };
+}
+
 export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(CHANNELS.listInstances, async () => secrets().listInstances());
 
@@ -647,6 +691,16 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     return r.canceled ? null : (r.filePaths[0] ?? null);
   });
 
+  // Several allowed: a series uploaded in batches, or a retry run, builds one index.
+  ipcMain.handle(CHANNELS.chooseIndexRecords, async (): Promise<string[]> => {
+    const r = await dialog.showOpenDialog({
+      title: 'Choose batch records to build an index from',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Batch records', extensions: ['json'] }],
+    });
+    return r.canceled ? [] : r.filePaths;
+  });
+
   /**
    * Copies the starter-kit template CSV and its sample file into a folder
    * the operator picks, for the Choose screen's "Save a template and sample
@@ -745,6 +799,9 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
 
       const manifestPath = join(userData(), 'job.json');
       await saveManifest(manifestPath, manifest);
+      // The item name path the duplicate check above searched by titles the
+      // batch record too, so the record and the check cannot disagree.
+      const indexRecord = { path: indexRecordPathFor(args.sheetPath), titlePath: titleHeader };
 
       // Report columns against the OVERRIDDEN headers, so a column the user
       // remapped shows as valid. Do not hard-code `valid: true` -- if an
@@ -759,6 +816,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         warnings: manifest.warnings,
         duplicates,
         folders: planFolders(manifest.entries),
+        indexRecord,
       };
     },
   );
@@ -805,21 +863,25 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const auth = buildAuth(cfg, tokens(), inst.id);
       const client = buildClient(cfg, auth);
 
-      const summary = await runManifest(client, args.manifestPath, {
-        onProgress: (entry, done, total) => {
-          toRenderer(CHANNELS.progress, {
-            done,
-            total,
-            label: rowLabel(entry),
-            status: entry.status,
-            error: entry.error,
-          });
-        },
-      });
+      const { summary, ...kept } = await runKeepingRecord(args.manifestPath, args.indexRecord, (afterRow) =>
+        runManifest(client, args.manifestPath, {
+          onProgress: (entry, done, total) => {
+            toRenderer(CHANNELS.progress, {
+              done,
+              total,
+              label: rowLabel(entry),
+              status: entry.status,
+              error: entry.error,
+            });
+            afterRow();
+          },
+        }),
+      );
 
       const done = await loadManifest(args.manifestPath);
       return {
         ...summary,
+        ...kept,
         failures: done.entries
           .filter((e) => e.status === 'failed')
           .map((e) => ({ rowNumber: e.rowNumber, label: rowLabel(e), error: e.error ?? 'unknown' })),

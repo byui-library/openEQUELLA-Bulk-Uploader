@@ -5,8 +5,7 @@ import { assertNotGuest } from '../core/identity.js';
 import { ValidationError } from '../core/errors.js';
 import { loadProfile } from '../core/extract/profile.js';
 import { buildIndex, previewLines, resolveIndexSchema, type BuildSource } from '../core/seriesIndex/build.js';
-import { readBatchRecords } from '../core/seriesIndex/batchRecord.js';
-import { instanceEndpoint } from '../core/instanceUrl.js';
+import { readBatchRecordsFor } from '../core/seriesIndex/batchRecord.js';
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { publishIndex } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
@@ -55,39 +54,17 @@ export function checkIndexFlags(o: IndexCliOptions): {
 }
 
 /**
- * One spelling per site, for comparison only: `instanceEndpoint` lower-cases
- * the host and leaves exactly one trailing slash. Not `normaliseInstanceUrl`,
- * whose https rule is about sending a password and would answer a loopback
- * test site with a lecture instead of a comparison.
- */
-function siteKey(url: string): string | null {
-  try {
-    return instanceEndpoint(url, '').href;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Where the index's items come from. Without records, a search of the
  * configured collection. With them, the records -- combined -- in THEIR
- * collection, and only when they were made on the configured site: the
- * index's links are built from that site's address, so a record of another
- * would publish links to the wrong server.
+ * collection, and only when they were made on the configured site
+ * (`readBatchRecordsFor`, which the desktop shares).
  */
 export async function indexSource(
   records: readonly string[] | null,
   cfg: { baseUrl: string; collectionUuid: string },
 ): Promise<{ collectionUuid: string; source: BuildSource }> {
   if (records === null) return { collectionUuid: cfg.collectionUuid, source: { kind: 'collection' } };
-  const record = await readBatchRecords(records);
-  const recorded = siteKey(record.baseUrl);
-  if (recorded === null || recorded !== siteKey(cfg.baseUrl)) {
-    throw new ValidationError(
-      `The batch record was made on a different site (${record.baseUrl}) from the one configured here ` +
-        `(${cfg.baseUrl}). Refusing: the index's links would point at the wrong server.`,
-    );
-  }
+  const record = await readBatchRecordsFor(records, cfg.baseUrl);
   return { collectionUuid: record.collectionUuid, source: { kind: 'record', record } };
 }
 

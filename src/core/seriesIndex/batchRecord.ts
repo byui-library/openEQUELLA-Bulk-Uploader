@@ -1,8 +1,10 @@
 // src/core/seriesIndex/batchRecord.ts
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { ValidationError } from '../errors.js';
-import { writeJsonAtomic } from '../state.js';
+import { instanceEndpoint } from '../instanceUrl.js';
+import { parseManifest, writeJsonAtomic } from '../state.js';
 import { rowLabel, type ItemState, type Manifest, type RowStatus } from '../types.js';
 import type { IndexHit } from './types.js';
 
@@ -82,6 +84,100 @@ export function recordFromManifest(manifest: Manifest, titlePath: string | null,
 /** Written whole, through a temporary file, so a reader never sees half of one. */
 export async function writeBatchRecord(path: string, record: BatchRecord): Promise<void> {
   await writeJsonAtomic(path, record);
+}
+
+/** What a kept record came to: written (its last write landed), or the first thing that went wrong. */
+export interface KeptRecord {
+  written: boolean;
+  /** The first failure, if any write or read failed. Null when none did. */
+  error: unknown;
+}
+
+/**
+ * Keeps the batch record beside a run -- ONE implementation for the CLI and the
+ * desktop. Call `update()` from the runner's `onProgress` (runner.ts saves the
+ * manifest before it reports progress) and once at the end; the record is
+ * recomputed WHOLE each time, so an interrupted run leaves a record of exactly
+ * what it made.
+ *
+ * The manifest is read SYNCHRONOUSLY, inside the callback, so the read is over
+ * before the runner saves again: an async read could hold the file open across
+ * the runner's next rename, which Windows refuses -- failing the run. The
+ * writes are chained so two never overlap.
+ *
+ * A failure NEVER fails the run -- the items exist either way. `onFirstFailure`
+ * hears the first one; `settled()` never rejects.
+ */
+export function keepBatchRecord(
+  manifestPath: string,
+  file: string,
+  titlePath: string | null,
+  onFirstFailure: (err: unknown) => void = () => {},
+) {
+  let writes = Promise.resolve();
+  let firstError: unknown = null;
+  let lastOk = false;
+  const fail = (err: unknown): void => {
+    lastOk = false;
+    if (firstError !== null) return;
+    firstError = err ?? new Error('unknown failure');
+    onFirstFailure(err);
+  };
+  return {
+    update(): void {
+      let record: BatchRecord;
+      try {
+        record = recordFromManifest(parseManifest(readFileSync(manifestPath, 'utf8'), manifestPath), titlePath);
+      } catch (err) {
+        fail(err);
+        return;
+      }
+      writes = writes.then(() =>
+        writeBatchRecord(file, record).then(
+          () => {
+            lastOk = true;
+          },
+          fail,
+        ),
+      );
+    },
+    /** Every queued write, settled. Never rejects. */
+    async settled(): Promise<KeptRecord> {
+      await writes;
+      return { written: lastOk, error: firstError };
+    },
+  };
+}
+
+/**
+ * One spelling per site, for comparison only: `instanceEndpoint` lower-cases
+ * the host and leaves exactly one trailing slash. Not `normaliseInstanceUrl`,
+ * whose https rule is about sending a password and would answer a loopback
+ * test site with a lecture instead of a comparison.
+ */
+function siteKey(url: string): string | null {
+  try {
+    return instanceEndpoint(url, '').href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `readBatchRecords`, refusing records made on any site but `siteUrl`: the
+ * index's links are built from that site's address, so a record of another
+ * would publish links to the wrong server.
+ */
+export async function readBatchRecordsFor(paths: readonly string[], siteUrl: string): Promise<BatchRecord> {
+  const record = await readBatchRecords(paths);
+  const recorded = siteKey(record.baseUrl);
+  if (recorded === null || recorded !== siteKey(siteUrl)) {
+    throw new ValidationError(
+      `The batch record was made on a different site (${record.baseUrl}) from the one in use here ` +
+        `(${siteUrl}). Refusing: the index's links would point at the wrong server.`,
+    );
+  }
+  return record;
 }
 
 const siteOf = (url: string): string => url.replace(/\/+$/, '');

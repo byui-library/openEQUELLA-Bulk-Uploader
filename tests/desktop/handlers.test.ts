@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import {
   applyOverrides,
   fetchAndCacheSchema,
+  indexRecordPathFor,
+  runKeepingRecord,
   reportColumns,
   resolveSchemaPath,
   missingCredentialsMessage,
@@ -877,5 +879,95 @@ describe('applyFolderOrders', () => {
       ipc.call<number>('oeq:applyFolderOrders', { manifestPath, orders: { 2: ['b.pdf'] } }),
     ).rejects.toThrow(/does not match the folder/);
     expect((await loadManifest(manifestPath)).entries[0]!.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
+  });
+});
+
+describe('the batch record beside a desktop run', () => {
+  it('is the spreadsheet path with its extension replaced by .index.json', () => {
+    expect(indexRecordPathFor(join('C:', 'batches', 'fernbrook.xlsx'))).toBe(join('C:', 'batches', 'fernbrook.index.json'));
+    expect(indexRecordPathFor(join('C:', 'batches', 'fernbrook.v2.csv'))).toBe(join('C:', 'batches', 'fernbrook.v2.index.json'));
+    expect(indexRecordPathFor(join('C:', 'batches', 'noext'))).toBe(join('C:', 'batches', 'noext.index.json'));
+  });
+
+  function job(status: 'pending' | 'created'): Manifest {
+    return {
+      version: 2,
+      createdAt: '2026-11-18T00:00:00.000Z',
+      baseUrl: 'https://oeq.example.edu',
+      collectionUuid: 'c1',
+      schemaUuid: 's1',
+      itemState: 'draft',
+      attachmentColumn: 'attachment name',
+      warnings: [],
+      entries: [
+        {
+          rowNumber: 2,
+          source: 'FQ_1970_Vol1_No1.pdf',
+          files: [{ path: '/f/FQ_1970_Vol1_No1.pdf', name: 'FQ_1970_Vol1_No1.pdf' }],
+          metadata: { 'DC/title': ['Fernbrook Quarterly Vol 1'] },
+          status,
+          attempts: status === 'created' ? 1 : 0,
+          ...(status === 'created' ? { itemUuid: 'item-1', itemVersion: 1, attachmentUuids: ['att-1'] } : {}),
+        },
+      ],
+    };
+  }
+
+  it('writes the record while the run goes, and names it on the report', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-rec-'));
+    const manifestPath = join(dir, 'job.json');
+    await saveManifest(manifestPath, job('pending'));
+    const recordPath = join(dir, 'fernbrook.index.json');
+    const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: 'DC/title' }, async (afterRow) => {
+      await saveManifest(manifestPath, job('created'));
+      afterRow();
+      return { created: 1 };
+    });
+    expect(got).toEqual({ summary: { created: 1 }, indexRecordPath: recordPath });
+    const written = JSON.parse(await readFile(recordPath, 'utf8'));
+    expect(written.kind).toBe('oeq-batch-record');
+    expect(written.items).toEqual([
+      { row: 2, uuid: 'item-1', version: 1, title: 'Fernbrook Quarterly Vol 1', files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }] },
+    ]);
+  });
+
+  it('a record that cannot be written leaves the run successful, and says why', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-rec-'));
+    const manifestPath = join(dir, 'job.json');
+    await saveManifest(manifestPath, job('created'));
+    // A folder that does not exist: every write fails.
+    const recordPath = join(dir, 'missing-folder', 'fernbrook.index.json');
+    const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
+      afterRow();
+      return { created: 1 };
+    });
+    expect(got.summary).toEqual({ created: 1 });
+    expect(got.indexRecordPath).toBeUndefined();
+    expect(got.indexRecordError).toMatch(/fernbrook\.index\.json|ENOENT|no such file/i);
+  });
+
+  it('writes nothing when no record was asked for', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-rec-'));
+    const manifestPath = join(dir, 'job.json');
+    await saveManifest(manifestPath, job('created'));
+    const got = await runKeepingRecord(manifestPath, undefined, async (afterRow) => {
+      afterRow();
+      return { created: 1 };
+    });
+    expect(got).toEqual({ summary: { created: 1 } });
+  });
+
+  it('a run that throws still waits for its record, and throws', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-rec-'));
+    const manifestPath = join(dir, 'job.json');
+    await saveManifest(manifestPath, job('created'));
+    const recordPath = join(dir, 'fernbrook.index.json');
+    await expect(
+      runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
+        afterRow();
+        throw new Error('network gone');
+      }),
+    ).rejects.toThrow('network gone');
+    expect(JSON.parse(await readFile(recordPath, 'utf8')).items).toHaveLength(1);
   });
 });

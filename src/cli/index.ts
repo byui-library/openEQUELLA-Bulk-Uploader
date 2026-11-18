@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -13,8 +12,8 @@ import { extractDefinition, extractItemDescriptionPath, extractItemNamePath, par
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { folderLines } from '../core/folderReport.js';
-import { saveManifest, loadManifest, parseManifest } from '../core/state.js';
-import { recordFromManifest, writeBatchRecord, type BatchRecord } from '../core/seriesIndex/batchRecord.js';
+import { saveManifest, loadManifest } from '../core/state.js';
+import { keepBatchRecord } from '../core/seriesIndex/batchRecord.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import type { LogoutOutcome } from '../core/passwordAuth.js';
@@ -154,55 +153,17 @@ async function recordTitlePath(schemaFile: string): Promise<string | null> {
 }
 
 /**
- * Keeps the batch record beside a run: after every row, the record is
- * recomputed WHOLE from the manifest the runner has just saved (runner.ts
- * saves before it reports progress), so an interrupted run leaves a record of
- * exactly what it made.
- *
- * The manifest is read SYNCHRONOUSLY, inside the progress callback, so the
- * read is over before the runner saves again: an async read could hold the
- * file open across the runner's next rename, which Windows may refuse.
- *
- * A write that fails NEVER fails the run -- the items exist either way. It is
- * warned about once, naming the file, and the run carries on.
+ * The batch record beside a run (core's `keepBatchRecord`, which the desktop
+ * shares). A write that fails NEVER fails the run -- the items exist either
+ * way. It is warned about once, naming the file, and the run carries on.
  */
 function batchRecordKeeper(manifestPath: string, file: string, titlePath: string | null) {
-  let writes = Promise.resolve();
-  let warned = false;
-  let lastOk = false;
-  const fail = (err: unknown): void => {
-    lastOk = false;
-    if (warned) return;
-    warned = true;
+  return keepBatchRecord(manifestPath, file, titlePath, (err) =>
     console.error(
       `warning: could not write the batch record ${file} (${errorMessage(err)}). The run carries on; ` +
         `its items are created either way.`,
-    );
-  };
-  return {
-    update(): void {
-      let record: BatchRecord;
-      try {
-        record = recordFromManifest(parseManifest(readFileSync(manifestPath, 'utf8'), manifestPath), titlePath);
-      } catch (err) {
-        fail(err);
-        return;
-      }
-      writes = writes.then(() =>
-        writeBatchRecord(file, record).then(
-          () => {
-            lastOk = true;
-          },
-          fail,
-        ),
-      );
-    },
-    /** Every queued write, settled. Never rejects. */
-    async settled(): Promise<boolean> {
-      await writes;
-      return lastOk;
-    },
-  };
+    ),
+  );
 }
 
 /**
@@ -248,7 +209,7 @@ export async function runAction(o: RunCliOptions, env: Env = process.env): Promi
   );
   if (keeper && o.indexRecord) {
     console.log(
-      (await keeper.settled())
+      (await keeper.settled()).written
         ? `Batch record: ${o.indexRecord}`
         : `Batch record NOT written: ${o.indexRecord} (see the warning above).`,
     );

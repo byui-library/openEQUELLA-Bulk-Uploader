@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createIndexHandlers, type IndexConnection } from '../../src/desktop/indexHandlers.js';
+import { writeBatchRecord, type BatchRecord } from '../../src/core/seriesIndex/batchRecord.js';
 
 async function templatesDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'oeq-tpl-'));
@@ -385,5 +386,100 @@ describe('index handlers', () => {
       kind: 'exists',
       names: ['index.html', 'index.css', 'index.js'],
     });
+  });
+});
+
+describe('index handlers, from batch records', () => {
+  const record = (over: Partial<BatchRecord> = {}): BatchRecord => ({
+    kind: 'oeq-batch-record',
+    version: 1,
+    savedAt: '2026-11-18T19:00:00.000Z',
+    baseUrl: 'https://oeq.example.edu',
+    collectionUuid: 'coll-rec',
+    itemState: 'draft',
+    items: [
+      { row: 2, uuid: 'v1', version: 1, title: 'Fernbrook Vol 1', files: [{ name: 'FQ_1971_Vol1_No1.pdf', attachmentUuid: 'a' }] },
+    ],
+    leftOut: [{ row: 3, label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'server said no' }],
+    ...over,
+  });
+  const save = async (r: BatchRecord): Promise<string> => {
+    const path = join(await mkdtemp(join(tmpdir(), 'oeq-rec-')), 'fernbrook.index.json');
+    await writeBatchRecord(path, r);
+    return path;
+  };
+
+  it('builds from the record with no search of the collection, and names what the run did not create', async () => {
+    const collections: string[] = [];
+    const c = connect({
+      searchCollection: async () => {
+        throw new Error('the record route must not search the collection');
+      },
+      getCollection: async (uuid: string) => (collections.push(uuid), { uuid, name: 'C', schemaUuid: 's1' }),
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    const preview = await h.preview({ instanceId: 'i', recordPaths: [await save(record())], templateId: 'with-index' });
+    expect(preview.volumes).toEqual([{ heading: 'Fernbrook Vol 1', issues: ['Issue 1 (1971)'] }]);
+    expect(preview.notCreated).toEqual([{ label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'server said no' }]);
+    // The RECORD's collection drives the schema and, below, the upload.
+    expect(collections).toEqual(['coll-rec']);
+    await h.upload({ buildId: 'b1', draft: true });
+    expect(c.created[0]).toMatchObject({ collectionUuid: 'coll-rec' });
+  });
+
+  it("refuses another site's record before signing in", async () => {
+    let connected = 0;
+    const c = connect();
+    const deps = async (): Promise<IndexConnection> => (connected++, c.deps());
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: deps });
+    const path = await save(record({ baseUrl: 'https://oeq-test.example.edu' }));
+    await expect(h.preview({ instanceId: 'i', recordPaths: [path], templateId: 'with-index' })).rejects.toThrow(
+      /different site.*oeq-test\.example\.edu/,
+    );
+    // One connection, to learn the site's address; no sign-in check and no search.
+    expect(connected).toBe(1);
+    expect(c.calls.search).toBe(0);
+  });
+
+  it('matches the site however it is spelt', async () => {
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps });
+    const path = await save(record({ baseUrl: 'https://OEQ.example.edu/' }));
+    await expect(h.preview({ instanceId: 'i', recordPaths: [path], templateId: 'with-index' })).resolves.toBeDefined();
+  });
+
+  it('a collection preview names nothing as not created', async () => {
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps, newId: () => 'b1' });
+    const preview = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect(preview.notCreated).toEqual([]);
+  });
+
+  it("lends Setup's schema only when the record's collection is the one Setup read it from", async () => {
+    const asked: string[] = [];
+    const c = connect({
+      getCollection: async (uuid: string) => ({ uuid, name: 'C' }),
+      getSchema: async (uuid: string) => {
+        asked.push(uuid);
+        return {
+          uuid,
+          namePath: '/DC/title',
+          titleHeader: 'DC/title',
+          descriptionPath: '/DC/description',
+          descriptionHeader: 'DC/description',
+          paths: new Set(['DC/title', 'DC/description', 'DC/identifier']),
+        };
+      },
+    });
+    const deps = async (): Promise<IndexConnection> => ({
+      ...(await c.deps()),
+      fallbackSchemaUuid: 'setup-schema',
+      setupCollectionUuid: 'setup-coll',
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: deps });
+    await expect(
+      h.preview({ instanceId: 'i', recordPaths: [await save(record())], templateId: 'with-index' }),
+    ).rejects.toThrow(/did not say which schema/);
+    expect(asked).toEqual([]);
+    await h.preview({ instanceId: 'i', recordPaths: [await save(record({ collectionUuid: 'setup-coll' }))], templateId: 'with-index' });
+    expect(asked).toEqual(['setup-schema']);
   });
 });

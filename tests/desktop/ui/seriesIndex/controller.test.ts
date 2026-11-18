@@ -12,6 +12,7 @@ const preview = (over: Partial<IndexPreview> = {}): IndexPreview => ({
   notInSeries: [],
   existing: { kind: 'none' },
   labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
+  notCreated: [],
   ...over,
 });
 

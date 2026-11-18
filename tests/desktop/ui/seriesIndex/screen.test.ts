@@ -11,6 +11,7 @@ const preview = {
   notInSeries: [{ name: 'Fernbrook index', reason: 'none of its files fits' }],
   existing: { kind: 'one' as const, status: 'draft' },
   labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
+  notCreated: [] as { label: string; status: string; error?: string }[],
 };
 
 describe('index flow markup', () => {
