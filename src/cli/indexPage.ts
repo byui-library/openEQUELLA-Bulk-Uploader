@@ -49,7 +49,7 @@ export async function indexAction(o: IndexCliOptions, env: Env = process.env): P
 
   const profile = await loadProfile(o.template);
   const schema = await resolveIndexSchema(client, cfg.collectionUuid, cfg.schemaUuid);
-  const build = await buildIndex({ client, baseUrl: cfg.baseUrl, collectionUuid: cfg.collectionUuid, profile, schema });
+  const build = await buildIndex({ client, baseUrl: cfg.baseUrl, collectionUuid: cfg.collectionUuid, source: { kind: 'collection' }, profile, schema });
   for (const line of previewLines(build)) console.log(line);
 
   if (!flags.out && !flags.upload) {

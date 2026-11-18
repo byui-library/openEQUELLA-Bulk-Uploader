@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildIndex, previewLines, resolveIndexSchema } from '../../src/core/seriesIndex/build.js';
 import { parseProfile } from '../../src/core/extract/profile.js';
 import type { CollectionItem } from '../../src/core/client.js';
+import type { BatchRecord } from '../../src/core/seriesIndex/batchRecord.js';
 
 const profile = parseProfile({
   version: 1,
@@ -38,6 +39,7 @@ const client = {
   searchCollection: async () => listing,
   findByField: async () => [listing[1]!],
 };
+const collection = { kind: 'collection' } as const;
 
 describe('buildIndex', () => {
   it('collects, renders and finds the existing index item', async () => {
@@ -46,7 +48,7 @@ describe('buildIndex', () => {
       ...client,
       findByField: async (_c: string, path: string, value: string) => (asked.push([path, value]), [listing[1]!]),
     };
-    const b = await buildIndex({ client: recording, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
+    const b = await buildIndex({ client: recording, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
     expect(asked).toEqual([['DC/identifier', 'FQ_index']]);
     expect(b.index.volumes).toHaveLength(1);
     expect(b.index.volumes[0]!.issues).toHaveLength(1); // the URL attachment is ignored
@@ -55,7 +57,7 @@ describe('buildIndex', () => {
   });
 
   it('does not list the index item itself as not in the series', async () => {
-    const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
+    const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
     expect(b.index.notInSeries).toEqual([]);
     expect(previewLines(b).join('\n')).not.toContain('Fernbrook index');
   });
@@ -66,6 +68,7 @@ describe('buildIndex', () => {
       client: { searchCollection: async () => [...listing, twice], findByField: async () => [listing[1]!, twice] },
       baseUrl: 'https://oeq.example.edu',
       collectionUuid: 'c1',
+      source: collection,
       profile,
       schema,
     });
@@ -76,7 +79,7 @@ describe('buildIndex', () => {
   it('refuses a template with no index section', async () => {
     const { index: _drop, ...rest } = profile;
     await expect(
-      buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile: rest, schema }),
+      buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile: rest, schema }),
     ).rejects.toThrow(/no "index" section/);
   });
 
@@ -103,7 +106,7 @@ describe('buildIndex', () => {
       attachments: [{ type: 'file', filename: 'FQ_1991_Vol20.pdf', uuid: 'a20' }],
     };
     const c = { searchCollection: async () => [single], findByField: async () => [] };
-    const b = await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile: withGroup, schema });
+    const b = await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile: withGroup, schema });
     expect(b.index.volumes).toHaveLength(1);
     expect(b.index.volumes[0]!.group).toBe(20);
     expect(b.index.notInSeries).toHaveLength(0);
@@ -115,17 +118,96 @@ describe('buildIndex', () => {
     let searched = 0;
     const c = { ...client, searchCollection: async () => (searched++, listing) };
     await expect(
-      buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile: noSequence, schema }),
+      buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile: noSequence, schema }),
     ).rejects.toThrow(/no file-name patterns/);
     expect(searched).toBe(0);
   });
 
   it('describes the build in plain lines', async () => {
-    const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
+    const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
     expect(previewLines(b)).toEqual([
       '1 volume, 1 issue.',
       'Updates the existing index item, which stays live.',
     ]);
+  });
+
+  it("sends the template's search as q, and none when it has none", async () => {
+    const asked: Array<{ q?: string } | undefined> = [];
+    const c = { ...client, searchCollection: async (_c: string, opts?: { q?: string }) => (asked.push(opts), listing) };
+    const searching = { ...profile, index: { ...profile.index!, search: 'FQ_*' } };
+    await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile: searching, schema });
+    await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
+    expect(asked[0]?.q).toBe('FQ_*');
+    expect(asked[1]?.q).toBeUndefined();
+  });
+
+  it('names at most 20 items not in the series, and counts the rest', async () => {
+    const strays: CollectionItem[] = Array.from({ length: 23 }, (_, i) => ({
+      uuid: `s${i}`,
+      version: 1,
+      status: 'live',
+      name: `Stray ${i}`,
+      attachments: [{ type: 'file', filename: `stray${i}.pdf`, uuid: `sa${i}` }],
+    }));
+    const c = { searchCollection: async () => strays, findByField: async () => [] };
+    const b = await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
+    const line = previewLines(b).find((l) => l.startsWith('Not in the series'))!;
+    expect(line).toMatch(/^Not in the series \(23\): /);
+    expect(line).toContain('Stray 19 --');
+    expect(line).not.toContain('Stray 20 --');
+    expect(line).toMatch(/\.\.\.and 3 more\.$/);
+  });
+});
+
+describe('buildIndex from a batch record', () => {
+  const record: BatchRecord = {
+    kind: 'oeq-batch-record',
+    version: 1,
+    savedAt: '2026-11-18T19:00:00.000Z',
+    baseUrl: 'https://oeq.example.edu',
+    collectionUuid: 'c1',
+    itemState: 'draft',
+    items: [
+      { row: 2, uuid: 'v1', version: 1, title: 'Fernbrook Vol 1', files: [{ name: 'FQ_1971_Vol1_No1.pdf', attachmentUuid: 'a1' }] },
+      { row: 3, uuid: 'idx', version: 1, title: 'Fernbrook index', files: [{ name: 'index.html', attachmentUuid: 'h' }] },
+    ],
+    leftOut: [
+      { row: 4, label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'The server said no.' },
+      { row: 5, label: 'Vol3 (2 files)', status: 'pending' },
+    ],
+  };
+  const noSearch = {
+    searchCollection: async (): Promise<CollectionItem[]> => {
+      throw new Error('the record route must not search the collection');
+    },
+    findByField: async () => [listing[1]!],
+  };
+
+  it('builds from the record without searching, leaving out the index item and naming what was not created', async () => {
+    const b = await buildIndex({
+      client: noSearch,
+      baseUrl: 'https://oeq.example.edu',
+      collectionUuid: 'c1',
+      source: { kind: 'record', record },
+      profile,
+      schema,
+    });
+    expect(b.index.volumes).toHaveLength(1);
+    expect(b.index.volumes[0]!.issues[0]!.url).toBe('https://oeq.example.edu/items/v1/0/FQ_1971_Vol1_No1.pdf');
+    expect(b.index.notInSeries).toEqual([]);
+    expect(b.notCreated).toEqual([
+      { label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'The server said no.' },
+      { label: 'Vol3 (2 files)', status: 'pending' },
+    ]);
+    expect(previewLines(b)).toContain(
+      'Not created by the run (2): FQ_1972_Vol2_No1.pdf -- failed (The server said no.); Vol3 (2 files) -- pending',
+    );
+  });
+
+  it('a collection build has nothing not created', async () => {
+    const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
+    expect(b.notCreated).toEqual([]);
+    expect(previewLines(b).join('\n')).not.toContain('Not created');
   });
 });
 

@@ -819,6 +819,20 @@ describe('series index calls', () => {
     );
   });
 
+  it('narrows the listing with a free-text search when given one, and only then', async () => {
+    mock.state.collectionItems = [
+      { ...item('u1'), attachments: [{ type: 'file', filename: 'FQ_1970_Vol1_No1.pdf', uuid: 'a1' }] },
+      { ...item('u2'), attachments: [{ type: 'file', filename: 'Other_report.pdf', uuid: 'a2' }] },
+    ];
+    const narrowed = await client.searchCollection('c1', { q: 'FQ_*' });
+    expect(narrowed.map((i) => i.uuid)).toEqual(['u1']);
+    expect(new URL(mock.state.searchUrls[0]!, 'http://x').searchParams.get('q')).toBe('FQ_*');
+    mock.state.searchUrls = [];
+    expect(await client.searchCollection('c1', { q: '' })).toHaveLength(2);
+    expect(await client.searchCollection('c1')).toHaveLength(2);
+    expect(mock.state.searchUrls.some((u) => new URL(u, 'http://x').searchParams.has('q'))).toBe(false);
+  });
+
   it('asks for detail, because only detail brings each item its status', async () => {
     mock.state.collectionItems = [item('u1')];
     await client.searchCollection('c1');

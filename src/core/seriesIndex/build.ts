@@ -9,7 +9,8 @@ import { findExistingIndex, type ExistingIndex, type IndexClient } from './publi
 import { indexRecord, type IndexRecord, type IndexSchema } from './record.js';
 import { renderIndex } from './render.js';
 import type { IndexFiles, IndexHit, SeriesIndex } from './types.js';
-import { existingNote, plural } from './words.js';
+import { andMore, existingNote, NOT_IN_SERIES_SHOWN, plural } from './words.js';
+import { recordHits, type BatchRecord } from './batchRecord.js';
 
 /**
  * ONE build, used by the CLI and the desktop alike, so the preview, the files
@@ -24,12 +25,24 @@ export interface IndexBuild {
   existing: ExistingIndex;
   /** The template's own words: "issue"/"issues", "volume"/"volumes". */
   labels: SequenceLabels;
+  /** The batch record's rows the run did not create. Always empty for a collection build. */
+  notCreated: { label: string; status: string; error?: string }[];
 }
 
+/**
+ * Where the items come from: a search of the collection (narrowed by the
+ * template's `index.search`), or the batch records of the runs that made them
+ * -- which makes NO collection search at all (spec section 7).
+ */
+export type BuildSource = { kind: 'collection' } | { kind: 'record'; record: BatchRecord };
+
 export interface BuildArgs {
-  client: { searchCollection(collectionUuid: string): Promise<CollectionItem[]> } & Pick<IndexClient, 'findByField'>;
+  client: {
+    searchCollection(collectionUuid: string, opts?: { q?: string }): Promise<CollectionItem[]>;
+  } & Pick<IndexClient, 'findByField'>;
   baseUrl: string;
   collectionUuid: string;
+  source: BuildSource;
   profile: Profile;
   schema: IndexSchema;
 }
@@ -55,15 +68,24 @@ export async function buildIndex(args: BuildArgs): Promise<IndexBuild> {
   const self = new Set(
     existing.kind === 'one' ? [existing.uuid] : existing.kind === 'many' ? existing.items.map((i) => i.uuid) : [],
   );
-  const listing = (await args.client.searchCollection(args.collectionUuid)).filter((item) => !self.has(item.uuid));
+  const { source } = args;
+  const search = profile.index.search;
+  const hits =
+    source.kind === 'record'
+      ? recordHits(source.record)
+      : (await args.client.searchCollection(args.collectionUuid, search ? { q: search } : {})).map(toHit);
+  const notCreated =
+    source.kind === 'record'
+      ? source.record.leftOut.map((l) => ({ label: l.label, status: l.status, ...(l.error !== undefined ? { error: l.error } : {}) }))
+      : [];
   const index = collectIndex(
-    listing.map(toHit),
+    hits.filter((hit) => !self.has(hit.uuid)),
     { patterns: sequence.patterns, groupPatterns: profile.index.groupPatterns, labels: sequence.labels },
     args.baseUrl,
   );
   const labels = resolveLabels(sequence.labels);
   const files = renderIndex(index, { title: record.title, description: record.description, groups: labels.groups });
-  return { collectionUuid: args.collectionUuid, index, record, files, existing, labels };
+  return { collectionUuid: args.collectionUuid, index, record, files, existing, labels, notCreated };
 }
 
 /** The collection's schema, else the site's saved one, else a refusal naming both. */
@@ -92,10 +114,22 @@ export function previewLines(b: IndexBuild): string[] {
   for (const h of b.index.heldBack) {
     lines.push(`Held back: ${h.reason} -- ${h.items.map((i) => i.name).join(', ')}`);
   }
-  if (b.index.notInSeries.length > 0) {
+  const left = b.index.notInSeries;
+  if (left.length > 0) {
+    const more = andMore(left.length);
     lines.push(
-      `Not in the series (${b.index.notInSeries.length}): ` +
-        b.index.notInSeries.map((l) => `${l.name} -- ${l.reason}`).join('; '),
+      `Not in the series (${left.length}): ` +
+        left
+          .slice(0, NOT_IN_SERIES_SHOWN)
+          .map((l) => `${l.name} -- ${l.reason}`)
+          .join('; ') +
+        (more ? `; ${more}` : ''),
+    );
+  }
+  if (b.notCreated.length > 0) {
+    lines.push(
+      `Not created by the run (${b.notCreated.length}): ` +
+        b.notCreated.map((n) => `${n.label} -- ${n.status}${n.error ? ` (${n.error})` : ''}`).join('; '),
     );
   }
   lines.push(existingNote(b.existing).text);

@@ -588,6 +588,13 @@ describe('the index section', () => {
     ).toThrow(/has no \{group\}/);
   });
 
+  it('accepts a search that narrows the listing, and refuses a blank one', () => {
+    const cols = [{ path: 'DC/title', value: 'a' }];
+    expect(parseProfile({ ...base, index: { columns: cols, search: 'BOX_*' } }).index?.search).toBe('BOX_*');
+    expect(() => parseProfile({ ...base, index: { columns: cols, search: '' } })).toThrow(/not valid/);
+    expect(() => parseProfile({ ...base, index: { columns: cols, search: '   ' } })).toThrow(/"search"/);
+  });
+
   it('refuses a group pattern with a placeholder nothing understands', () => {
     expect(() =>
       parseProfile({

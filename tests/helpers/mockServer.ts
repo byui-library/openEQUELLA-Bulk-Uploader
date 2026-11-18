@@ -552,8 +552,18 @@ export async function startMockServer(): Promise<MockServer> {
           });
         }
 
-        if (!url.searchParams.has('q')) {
-          const visible = state.collectionItems.filter((i) => showAll || i.status === 'live');
+        // The collection listing: no `q`, or a `q` that narrows it (it always
+        // pages with `start`; the identifier check never does).
+        if (!url.searchParams.has('q') || url.searchParams.has('start')) {
+          // A MODEL of a free-text match, not openEQUELLA's matcher: a trailing
+          // `*` is a prefix of any attachment filename or the name, otherwise
+          // a substring of either.
+          const q = (url.searchParams.get('q') ?? '').toLowerCase();
+          const fits = (text: string | undefined) =>
+            text !== undefined && (q.endsWith('*') ? text.toLowerCase().startsWith(q.slice(0, -1)) : text.toLowerCase().includes(q));
+          const visible = state.collectionItems.filter(
+            (i) => (showAll || i.status === 'live') && (q === '' || fits(i.name) || i.attachments.some((a) => fits(a.filename))),
+          );
           const start = Number(url.searchParams.get('start') ?? '0');
           const length = Number(url.searchParams.get('length') ?? '10');
           const page = visible.slice(start, start + length);

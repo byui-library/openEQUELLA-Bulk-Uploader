@@ -31,7 +31,7 @@ export type IndexConnection = {
     currentUser(): Promise<CurrentUser>;
     getCollection(uuid: string): Promise<CollectionSummary>;
     getSchema(uuid: string): Promise<SchemaInfo>;
-    searchCollection(collectionUuid: string): Promise<CollectionItem[]>;
+    searchCollection(collectionUuid: string, opts?: { q?: string }): Promise<CollectionItem[]>;
   };
   baseUrl: string;
   /** The schema Setup read for this site, for a collection that names none. */
@@ -122,6 +122,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         client,
         baseUrl: connection.baseUrl,
         collectionUuid: args.collectionUuid,
+        source: { kind: 'collection' },
         profile,
         schema,
       });

@@ -633,12 +633,18 @@ export class OeqClient {
    * `available > 0` with no rows on the FIRST page is openEQUELLA's answer to
    * a guest (CLAUDE.md, "openEQUELLA answers an unauthenticated request with
    * 200"), and is reported as that, never as an empty collection.
+   *
+   * A non-empty `q` narrows the listing to openEQUELLA's free-text matches
+   * (a template's `index.search`, such as `SRE_*`: attachment file names are
+   * indexed). 50 is the most openEQUELLA returns a request -- more is a 500.
    */
-  async searchCollection(collectionUuid: string, pageSize = 50): Promise<CollectionItem[]> {
+  async searchCollection(collectionUuid: string, opts: { q?: string } = {}): Promise<CollectionItem[]> {
+    const pageSize = 50;
+    const q = opts.q ? `&q=${encodeURIComponent(opts.q)}` : '';
     const items: CollectionItem[] = [];
     for (let start = 0, pages = 0; ; pages++) {
       const url =
-        `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
+        `/api/search?collections=${encodeURIComponent(collectionUuid)}${q}` +
         `&info=${encodeURIComponent('basic,detail,attachment')}&showall=true&length=${pageSize}&start=${start}`;
       const body = (await (await this.request(url)).json()) as {
         available?: number;

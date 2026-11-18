@@ -5,6 +5,17 @@
 export const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 /**
+ * How many items "not in the series" are named; the rest are counted. A
+ * narrowed search may still bring back thousands, and a list that long
+ * hides the held-back volumes beside it.
+ */
+export const NOT_IN_SERIES_SHOWN = 20;
+
+/** "...and 3 more." when `total` passes the cap, else nothing. */
+export const andMore = (total: number, shown = NOT_IN_SERIES_SHOWN): string =>
+  total > shown ? `...and ${total - shown} more.` : '';
+
+/**
  * What is known of the index item already in openEQUELLA, as far as anything
  * needs to SAY it. `publish.ts#ExistingIndex` fits it; so does the desktop's
  * preview, which carries no uuids to the renderer.

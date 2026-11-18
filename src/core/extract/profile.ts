@@ -98,6 +98,7 @@ const profileSchema = z
       .object({
         columns: z.array(z.object({ path: z.string().min(1), value: z.string().min(1) }).strict()).min(1),
         groupPatterns: z.array(z.string().min(1)).optional(),
+        search: z.string().min(1).optional(),
       })
       .strict()
       .optional(),
@@ -197,6 +198,10 @@ export function parseProfile(input: unknown): Profile {
         throw new ValidationError(`The "index" section names '${column.path}' twice.`);
       }
       seen.add(column.path);
+    }
+    // A blank search would read the whole collection while looking narrowed.
+    if (profile.index.search !== undefined && profile.index.search.trim() === '') {
+      throw new ValidationError('The index "search" is blank. Remove it to read the whole collection.');
     }
     for (const pattern of profile.index.groupPatterns ?? []) {
       const names = placeholders(pattern);

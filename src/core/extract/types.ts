@@ -267,6 +267,12 @@ export interface Profile {
     columns: { path: string; value: string }[];
     /** Read only a {group} (and optionally {year}); tried after the sequence patterns. */
     groupPatterns?: string[];
+    /**
+     * A free-text search sent as `q` to narrow the collection listing (`SRE_*`:
+     * openEQUELLA indexes attachment file names). Absent, the whole collection
+     * is read. The file-name patterns still decide what is listed.
+     */
+    search?: string;
   };
 }
 

@@ -3,7 +3,7 @@ import { escapeHtml } from '../dom.js';
 import type { IndexPreview } from '../../ipc.js';
 import { canBuild, canLinkVolumes, type IndexFlowState } from './state.js';
 import type { IndexController } from './controller.js';
-import { existingNote, plural } from '../../../core/seriesIndex/words.js';
+import { andMore, existingNote, NOT_IN_SERIES_SHOWN, plural } from '../../../core/seriesIndex/words.js';
 
 const isBusy = (s: IndexFlowState) => s.working || s.loading;
 
@@ -33,10 +33,12 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
         .map((h) => `<li>${escapeHtml(`${h.reason}: ${h.items.join(', ')}`)}</li>`)
         .join('')}</ul><p class="hint">Remove the extra items in openEQUELLA, then preview again.</p>`
     : '';
+  const more = andMore(p.notInSeries.length);
   const left = p.notInSeries.length
     ? `<details><summary>Not in the series (${p.notInSeries.length})</summary><ul>${p.notInSeries
+        .slice(0, NOT_IN_SERIES_SHOWN)
         .map((l) => `<li>${escapeHtml(`${l.name} -- ${l.reason}`)}</li>`)
-        .join('')}</ul></details>`
+        .join('')}</ul>${more ? `<p class="hint">${more}</p>` : ''}</details>`
     : '';
   const volumes = `<details><summary>Show the ${plural(p.volumes.length, L.group, L.groups)}</summary><ul>${p.volumes
     .map((v) => `<li>${escapeHtml(v.heading)}<ul>${v.issues.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul></li>`)

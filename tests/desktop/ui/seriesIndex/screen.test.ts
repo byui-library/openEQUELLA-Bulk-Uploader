@@ -26,6 +26,15 @@ describe('index flow markup', () => {
     expect(html).not.toMatch(/\sstyle=/);
   });
 
+  it('names at most 20 items not in the series, and counts the rest', () => {
+    const notInSeries = Array.from({ length: 23 }, (_, i) => ({ name: `Stray ${i}`, reason: 'none of its files fits' }));
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, notInSeries } });
+    expect(html).toContain('Not in the series (23)');
+    expect(html).toContain('Stray 19 --');
+    expect(html).not.toContain('Stray 20 --');
+    expect(html).toContain('...and 3 more.');
+  });
+
   it('says an update keeps the item as it is instead of offering Draft/Publish', () => {
     const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview, upload: true });
     expect(html).toContain('Updates the existing index item, which stays draft');
