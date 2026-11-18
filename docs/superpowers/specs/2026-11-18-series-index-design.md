@@ -296,6 +296,84 @@ resources". The test item was purged.
 - The desktop button reads **"Build an index of this collection…"**, and
   every count and message uses the template's `labels`.
 
+### 7. A batch record: the index from the run itself (added 2026-11-18)
+
+**Why.** The first live preview on content-test found that the Snake River
+Echoes volumes share their collection with **116,086** other items.
+openEQUELLA returns at most 50 items a request (`length` over 50 is a 500,
+*"Length must be less than or equal to 50"*), so reading the collection is
+about 2,300 requests per preview. The operator's answer: the run that creates
+the volumes already knows each item's uuid and its attachments' uuids at the
+moment it creates them, so record that and build the index from it.
+
+**Decisions (operator, 2026-11-18):**
+
+- **The batch record is the main route; the collection search stays as the
+  second**, for series uploaded before this existed (the Snake River Echoes
+  volumes on content-test are such a series: no record of their run
+  survives). A template's `index.search` names a free-text search that
+  narrows what is read (`SRE_*`: openEQUELLA indexes attachment file names).
+  The file-name patterns still decide what is listed.
+- **Several records may build one index** (a series uploaded in batches, a
+  retry run). Their items are combined; a volume two items claim is held
+  back, exactly as before.
+- **The record is saved beside the spreadsheet**, automatically, as
+  `<spreadsheet name>.index.json`, and named on Results.
+
+**The record** — `src/core/seriesIndex/batchRecord.ts`:
+
+```json
+{
+  "kind": "oeq-batch-record",
+  "version": 1,
+  "savedAt": "2026-11-18T19:00:00.000Z",
+  "baseUrl": "https://oeq.example.edu",
+  "collectionUuid": "…",
+  "itemState": "draft",
+  "items": [
+    { "row": 2, "uuid": "…", "version": 1, "title": "Fernbrook Quarterly Vol 1",
+      "files": [ { "name": "FQ_1970_Vol1_No1.pdf", "attachmentUuid": "…" } ] }
+  ],
+  "leftOut": [ { "row": 3, "label": "Vol2 (4 files)", "status": "failed", "error": "…" } ]
+}
+```
+
+It is a **projection of the manifest**, recomputed whole after every row the
+run finishes — never appended to — so an interrupted run leaves a record of
+exactly what it made, and a retry run brings the same record up to date.
+Only `created` entries are items; every other entry is named in `leftOut`.
+The title is the entry's value at the schema's declared name path, else its
+row label.
+
+**Reading records** — combined in the order given. Refused, naming the file:
+not a batch record, an unknown version, records of different sites or
+different collections, or a site other than the one signed in to (the
+index's links would point at the wrong server). An item appearing in two
+records (the same uuid) is listed once.
+
+**Building from records** reuses `collectIndex`: each item becomes a hit
+whose status is the record's `itemState` (`draft` or `live`) and whose files
+are the recorded names. No collection search is made. The existing index
+item is still found by one `where` search, and upload and volume links work
+as before.
+
+**Surfaces.**
+
+- *Desktop, Review*: a box, "Keep a record of this batch for an index page",
+  naming the file it will write. Ticked, the run writes the record after each
+  row.
+- *Desktop, Results*: "Build an index page from this batch…" when a record
+  was written; it names the record's path.
+- *Desktop, Choose*: "Build an index from saved batch records…" — an open
+  dialog, several files allowed.
+- *CLI*: `oeq-upload run --index-record <file>`; `oeq-upload index
+  --from-record <file...>` in place of searching the collection.
+
+**The narrowed search** — a template's `index.search` (a string) is sent as
+`q` to the collection listing. Absent, the whole collection is read as
+before. The preview's "not in the series" list names at most 20 items and
+counts the rest.
+
 ## Errors and edge cases
 
 - Not signed in, or signed in as guest → stop before searching.
