@@ -138,7 +138,10 @@ function read(
   for (const { regex, names } of compiled) {
     const match = regex.exec(name);
     if (!match) continue;
-    const part = match[names.indexOf('part') + 1] ?? '';
+    // A pattern with no {part} (an index's group pattern) reads no parts:
+    // index -1 + 1 would otherwise be match[0], the whole match.
+    const partAt = names.indexOf('part');
+    const part = partAt === -1 ? '' : (match[partAt + 1] ?? '');
     const groupAt = names.indexOf('group');
     const yearAt = names.indexOf('year');
     return {
@@ -148,6 +151,20 @@ function read(
     };
   }
   return null;
+}
+
+/**
+ * What one file name says, by the first of `patterns` that matches it: its
+ * part numbers (none for a pattern without {part}), its group and its years.
+ * Null when no pattern matches. The series index reads published items'
+ * file names with this, so a name the extractor's checks accepted is a name
+ * the index reads the same way.
+ */
+export function readName(
+  patterns: readonly string[],
+  name: string,
+): { parts: number[]; group: number | null; years: YearSpan | null } | null {
+  return read(patterns.map(compile), name);
 }
 
 const listed = (numbers: number[]) => numbers.join(', ');
