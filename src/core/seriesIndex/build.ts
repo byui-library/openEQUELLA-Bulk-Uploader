@@ -75,8 +75,9 @@ export async function resolveIndexSchema(
   const uuid = fromCollection !== '' ? fromCollection : fallbackSchemaUuid;
   if (uuid === '') {
     throw new ValidationError(
-      "openEQUELLA did not say which schema this collection uses, and none is saved for this site, so the index's " +
-        'title and description fields cannot be found. Choose the collection on Setup, or set OEQ_SCHEMA_UUID.',
+      "openEQUELLA did not say which schema this collection uses, and none is known for it here, so the index's " +
+        'title and description fields cannot be found. In the desktop app, choose this collection on Setup; ' +
+        'on the command line, set OEQ_SCHEMA_UUID.',
     );
   }
   return client.getSchema(uuid);
