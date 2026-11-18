@@ -104,7 +104,8 @@ export async function publishIndex(client: IndexClient, args: PublishArgs): Prom
     await client.editItem(existing.uuid, existing.version, { ...bean, metadata, attachments }, staging);
     return { kind: 'updated', uuid: existing.uuid, version: existing.version };
   } catch (err) {
-    await client.deleteStagingArea(staging);
+    // Best-effort: a failed cleanup must never replace the real error.
+    await client.deleteStagingArea(staging).catch(() => {});
     throw err;
   }
 }

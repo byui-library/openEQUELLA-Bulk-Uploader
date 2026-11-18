@@ -12,7 +12,7 @@ const record: IndexRecord = {
 };
 const files = { 'index.html': '<h1>x</h1>', 'index.css': 'a{}', 'index.js': ';' };
 
-function fake(found: CollectionItem[] = [], failOn?: string) {
+function fake(found: CollectionItem[] = [], failOn?: string, attachments?: Record<string, unknown>[]) {
   const calls: string[] = [];
   const state = { created: null as unknown, edited: null as unknown, uploads: [] as string[] };
   const client: IndexClient = {
@@ -25,11 +25,12 @@ function fake(found: CollectionItem[] = [], failOn?: string) {
       return 'stg-1';
     },
     async uploadToStaging(_s, name) {
-      if (failOn === 'upload') throw new Error('network down');
+      if (failOn === 'upload' || failOn === 'cleanup') throw new Error('network down');
       state.uploads.push(name);
     },
     async deleteStagingArea(s) {
       calls.push(`delete ${s}`);
+      if (failOn === 'cleanup') throw new Error('cleanup failed');
     },
     async createItem(req) {
       state.created = req;
@@ -41,8 +42,9 @@ function fake(found: CollectionItem[] = [], failOn?: string) {
         version,
         status: 'live',
         metadata: '<xml/>',
-        attachments: [
+        attachments: attachments ?? [
           { type: 'file', filename: 'index.html', uuid: 'keep-html' },
+          { type: 'file', filename: 'index.css', uuid: 'keep-css' },
           { type: 'url', url: 'https://example.org', uuid: 'keep-url' },
         ],
       };
@@ -113,8 +115,10 @@ describe('publishIndex', () => {
     expect(edited.bean.status).toBe('live');
     expect(edited.bean.metadata).toContain('<identifier>FQ_index</identifier>');
     expect(edited.bean.attachments.find((a) => a.filename === 'index.html')!.uuid).toBe('keep-html');
+    expect(edited.bean.attachments.find((a) => a.filename === 'index.css')!.uuid).toBe('keep-css');
     expect(edited.bean.attachments.some((a) => a.uuid === 'keep-url')).toBe(true);
     expect(edited.bean.attachments).toHaveLength(4);
+    expect(edited.bean.attachments.find((a) => a.filename === 'index.js')!.uuid).toMatch(/.+/);
   });
 
   it('refuses several matches or no identifier, and stages nothing', async () => {
@@ -140,5 +144,35 @@ describe('publishIndex', () => {
       publishIndex(f.client, { collectionUuid: 'c1', record, files, existing: { kind: 'none' }, draft: true }),
     ).rejects.toThrow(/network down/);
     expect(f.calls).toContain('delete stg-1');
+  });
+
+  it('creates with draft false when asked to publish', async () => {
+    const f = fake();
+    await publishIndex(f.client, { collectionUuid: 'c1', record, files, existing: { kind: 'none' }, draft: false });
+    expect(f.state.created).toMatchObject({ draft: false });
+  });
+
+  it('gives new uuids to the index files when the item has none, keeping other attachments after them', async () => {
+    const f = fake([], undefined, [{ type: 'file', filename: 'report.pdf', uuid: 'keep-pdf' }]);
+    await publishIndex(f.client, {
+      collectionUuid: 'c1',
+      record,
+      files,
+      existing: { kind: 'one', uuid: 'a', version: 2, status: 'live' },
+      draft: true,
+    });
+    const atts = (f.state.edited as { bean: { attachments: { filename?: string; uuid: string }[] } }).bean.attachments;
+    expect(atts.map((a) => a.filename)).toEqual(['index.html', 'index.css', 'index.js', 'report.pdf']);
+    const fresh = atts.slice(0, 3).map((a) => a.uuid);
+    expect(fresh.every((u) => typeof u === 'string' && u.length > 0)).toBe(true);
+    expect(new Set(fresh).size).toBe(3);
+    expect(atts[3]!.uuid).toBe('keep-pdf');
+  });
+
+  it('reports the real failure even when cleanup also fails', async () => {
+    const f = fake([], 'cleanup');
+    await expect(
+      publishIndex(f.client, { collectionUuid: 'c1', record, files, existing: { kind: 'none' }, draft: true }),
+    ).rejects.toThrow(/network down/);
   });
 });
