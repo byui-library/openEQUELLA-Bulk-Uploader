@@ -1,5 +1,5 @@
 // src/desktop/ui/seriesIndex/controller.ts
-import type { OeqApi } from '../../ipc.js';
+import type { IndexPreview, OeqApi } from '../../ipc.js';
 import { errorMessage } from '../errors.js';
 import { linkLine } from '../../../core/seriesIndex/links.js';
 import { plural } from '../../../core/seriesIndex/words.js';
@@ -83,54 +83,60 @@ export function createIndexController(options: IndexControllerOptions) {
 
     async build(): Promise<void> {
       if (!canBuild(state) || state.preview === null) return;
-      const { buildId, existing } = state.preview;
-      const linking = state.linkVolumes && canLinkVolumes(state);
-      let linkError: string | null = null;
+      const { buildId } = state.preview;
       const done: string[] = [];
+
+      const saveFiles = async (folder: string): Promise<void> => {
+        let saved = await options.api.indexSaveFiles({ buildId, dir: folder, replace: false });
+        if (saved.kind === 'exists') {
+          const ok = confirm(`${saved.names.join(', ')} already exist in ${folder}. Replace them?`);
+          saved = ok ? await options.api.indexSaveFiles({ buildId, dir: folder, replace: true }) : saved;
+        }
+        done.push(saved.kind === 'saved' ? `Saved ${saved.paths.join(', ')}` : 'Files not saved: you kept the ones already there.');
+      };
+
+      /** The preview as it stands afterwards: the item exists, in the state the main side reports. */
+      const upload = async (preview: IndexPreview): Promise<IndexPreview> => {
+        const publishing = preview.existing.kind === 'none' && !state.draft;
+        if (publishing && !confirm('Publish the new index item? It will be live in the collection straight away.')) {
+          done.push('Not uploaded: you chose not to publish.');
+          return preview;
+        }
+        const up = await options.api.indexUpload({ buildId, draft: state.draft });
+        done.push(`${up.kind === 'created' ? 'Created' : 'Updated'} the index item: ${up.url}`);
+        // The screen must say the item exists, or a second click would offer Draft/Publish for it.
+        return { ...preview, existing: { kind: 'one', status: up.status } };
+      };
+
+      /**
+       * Asked here, naming how many items it edits, because it changes records
+       * other than the index. Returns the error to show, or null.
+       */
+      const link = async (preview: IndexPreview): Promise<string | null> => {
+        const L = preview.labels;
+        const Groups = L.groups.charAt(0).toUpperCase() + L.groups.slice(1);
+        if (preview.existing.kind !== 'one') {
+          done.push(`${Groups} not linked: the index item was not uploaded.`);
+          return null;
+        }
+        const question = `Add a link to the index as the first attachment of ${plural(preview.volumes.length, L.group, L.groups)}? This edits each of them in openEQUELLA.`;
+        if (!confirm(question)) {
+          done.push(`${Groups} not linked: you chose not to edit them.`);
+          return null;
+        }
+        const linked = await options.api.indexLinkVolumes({ buildId });
+        done.push(linkLine(linked, { ...L, heldBack: preview.heldBack.length }));
+        // As visible as the CLI's exit 1: a line in the list is easy to miss.
+        return linked.failed.length > 0 ? `Some ${L.groups} were not linked -- see below.` : null;
+      };
+
       set({ working: true, error: null, done });
       try {
-        if (state.saveFiles && state.folder !== null) {
-          let saved = await options.api.indexSaveFiles({ buildId, dir: state.folder, replace: false });
-          if (saved.kind === 'exists') {
-            const ok = confirm(`${saved.names.join(', ')} already exist in ${state.folder}. Replace them?`);
-            saved = ok ? await options.api.indexSaveFiles({ buildId, dir: state.folder, replace: true }) : saved;
-          }
-          done.push(saved.kind === 'saved' ? `Saved ${saved.paths.join(', ')}` : 'Files not saved: you kept the ones already there.');
-        }
+        if (state.saveFiles && state.folder !== null) await saveFiles(state.folder);
         let preview = state.preview;
-        if (state.upload) {
-          const publishing = existing.kind === 'none' && !state.draft;
-          if (publishing && !confirm('Publish the new index item? It will be live in the collection straight away.')) {
-            done.push('Not uploaded: you chose not to publish.');
-          } else {
-            const up = await options.api.indexUpload({ buildId, draft: state.draft });
-            done.push(`${up.kind === 'created' ? 'Created' : 'Updated'} the index item: ${up.url}`);
-            // The item now exists, in the state the main side reports; the screen
-            // must say so, or a second click would offer Draft/Publish for it.
-            preview = { ...preview, existing: { kind: 'one', status: up.status } };
-          }
-        }
-        // After the upload, so a new item exists to point at. Asked here, naming
-        // how many items it edits, because it changes records other than the index.
-        if (linking) {
-          const L = preview.labels;
-          const n = preview.volumes.length;
-          const Groups = L.groups.charAt(0).toUpperCase() + L.groups.slice(1);
-          if (preview.existing.kind !== 'one') {
-            done.push(`${Groups} not linked: the index item was not uploaded.`);
-          } else if (
-            !confirm(
-              `Add a link to the index as the first attachment of ${plural(n, L.group, L.groups)}? This edits each of them in openEQUELLA.`,
-            )
-          ) {
-            done.push(`${Groups} not linked: you chose not to edit them.`);
-          } else {
-            const linked = await options.api.indexLinkVolumes({ buildId });
-            done.push(linkLine(linked, { ...L, heldBack: preview.heldBack.length }));
-            // As visible as the CLI's exit 1: a line in the list is easy to miss.
-            if (linked.failed.length > 0) linkError = `Some ${L.groups} were not linked -- see below.`;
-          }
-        }
+        if (state.upload) preview = await upload(preview);
+        // After the upload, so a new item exists to point at.
+        const linkError = state.linkVolumes && canLinkVolumes(state) ? await link(preview) : null;
         set({ working: false, done: [...done], preview, error: linkError });
       } catch (err) {
         set({ working: false, done: [...done], error: errorMessage(err) });
