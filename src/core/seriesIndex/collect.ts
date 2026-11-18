@@ -75,7 +75,8 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
   const byGroup = new Map<number, { hit: IndexHit; reads: Read[] }[]>();
   /** Every group listed or held back -- what is NOT a gap. */
   const present = new Set<number>();
-  const nameOf = (hit: IndexHit) => hit.name?.trim() || hit.uuid;
+  // Listings only. A volume's heading never uses `label`: it falls back to "Volume N".
+  const nameOf = (hit: IndexHit) => hit.name?.trim() || hit.label?.trim() || hit.uuid;
 
   for (const hit of hits) {
     if (!isListed(hit.status)) {

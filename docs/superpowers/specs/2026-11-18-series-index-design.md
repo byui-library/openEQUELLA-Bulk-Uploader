@@ -263,7 +263,10 @@ reader who lands on one volume can reach the whole run.
   edited. CLI: `--link-volumes`, which requires `--upload`.
 - **Idempotent**: a volume whose first attachment is already this link is
   left alone; one that has it elsewhere has it moved to first, keeping its
-  uuid. Never a second copy.
+  uuid; one carrying the label but an older index's url is pointed at this
+  one; one with this url under another name is renamed. Never a second copy.
+  Each of those edits is counted as **updated**, never as "already had it",
+  and the desktop's confirm names all three (review, 2026-11-18).
 - Only listed volumes are linked; held-back volumes are not, until resolved.
 - One failed edit does not stop the rest; each failure is named.
 
@@ -324,7 +327,12 @@ moment it creates them, so record that and build the index from it.
   retry run). Their items are combined; a volume two items claim is held
   back, exactly as before.
 - **The record is saved beside the spreadsheet**, automatically, as
-  `<spreadsheet name>.index.json`, and named on Results.
+  `<spreadsheet name>.<site host>.index.json` (for example
+  `fernbrook.oeq.example.edu.index.json`), and named on Results. The host is
+  in the name (review, 2026-11-18) because a record of another site at the
+  path is never overwritten: one sheet run on a test site and then on
+  production would otherwise keep no production record. The CLI writes
+  exactly the `--index-record` path it is given.
 
 **The record** — `src/core/seriesIndex/batchRecord.ts`:
 
@@ -348,10 +356,17 @@ It is a **projection of the manifest**, recomputed whole after every row the
 run finishes — never appended to — so an interrupted run leaves a record of
 exactly what it made, and a retry run brings the same record up to date.
 Entries with an item -- `created`, and `incomplete` ones that have an item
-uuid -- are items; every other entry is named in `leftOut`. The title is the
-entry's value at the schema's declared name path, else `''`, so the index
-heads the volume as it heads any unnamed item ("Volume 27"); each item also
-carries its row `label`.
+uuid -- are items; every other entry is named in `leftOut`. **Except** an
+`incomplete` entry whose item kept FEWER attachments than files were sent
+(review, 2026-11-18): it lacks a file the record would list, so it is left
+out with the runner's error (or *"openEQUELLA kept fewer files than were
+sent"*). The title is the entry's value at the schema's declared name path,
+else `''`, so the index heads the volume as it heads any unnamed item
+("Volume 27"); each item also carries its row `label`, which names an
+untitled item in the preview's held-back and not-in-the-series listings, and
+its `state` -- the state it was created in -- so a later run's drafts do not
+make an earlier run's published items read as drafts. Records without
+`state` are read at the record's `itemState`.
 
 **A later run of the same spreadsheet adds to the record** (review,
 2026-11-18). A record already at the path, of the same site and collection,
@@ -369,7 +384,8 @@ to keep it.
 not a batch record, an unknown version, records of different sites or
 different collections, or a site other than the one signed in to (the
 index's links would point at the wrong server). An item appearing in two
-records (the same uuid) is listed once, and a row one record left out and
+records (the same uuid) is listed once -- the LATER record's, as the keeper
+resolves a rerun -- and a row one record left out and
 another created is not listed as left out. Every item and left-out entry is
 checked for shape; a damaged one refuses the file.
 
@@ -416,7 +432,14 @@ only as deleted items, so a correct index lacks them without saying so.
 between the lowest and highest volume listed or held back that is neither.
 The CLI preview and the desktop screen (a note under the counts) say
 *"No volumes found for 10, 11."* in the template's own words -- singular for
-one. The rendered page itself does not change.
+one. At most 20 numbers are named and the rest counted (*"...and 211
+more."*): one misnamed `Vol270` in a run of 38 makes 231 numbers "missing".
+The desktop's preview carries at most those 20 across IPC, with the total.
+The rendered page itself does not change.
+
+A `%` in `titleStartsWith` is refused when the template loads: it is a LIKE
+wildcard, and a leading one is the 500 above. `_`, the single-character
+wildcard, is allowed: it is common in titles and can only widen the read.
 
 The preview's "not in the series" list names at most 20 items and counts the
 rest.

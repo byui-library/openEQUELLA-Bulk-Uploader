@@ -13,7 +13,7 @@ import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { folderLines } from '../core/folderReport.js';
 import { saveManifest, loadManifest } from '../core/state.js';
-import { keepBatchRecord } from '../core/seriesIndex/batchRecord.js';
+import { BatchRecordRefused, keepBatchRecord } from '../core/seriesIndex/batchRecord.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import type { LogoutOutcome } from '../core/passwordAuth.js';
@@ -156,13 +156,17 @@ async function recordTitlePath(schemaFile: string): Promise<string | null> {
 /**
  * The batch record beside a run (core's `keepBatchRecord`, which the desktop
  * shares). A write that fails NEVER fails the run -- the items exist either
- * way. It is warned about once, naming the file, and the run carries on.
+ * way. It is warned about once, naming the file, and the run carries on. A
+ * file the keeper refused to overwrite is warned about in the refusal's own
+ * words, which already name the file and say it was left as it is.
  */
 function batchRecordKeeper(manifestPath: string, file: string, titlePath: string | null) {
   return keepBatchRecord(manifestPath, file, titlePath, (err) =>
     console.error(
-      `warning: could not write the batch record ${file} (${errorMessage(err)}). The run carries on; ` +
-        `its items are created either way.`,
+      err instanceof BatchRecordRefused
+        ? `warning: ${err.message}`
+        : `warning: could not write the batch record ${file} (${errorMessage(err)}). The run carries on; ` +
+            `its items are created either way.`,
     ),
   );
 }

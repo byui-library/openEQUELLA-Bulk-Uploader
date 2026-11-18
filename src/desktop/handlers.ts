@@ -359,12 +359,19 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
  */
 /**
  * Where a batch's record goes: beside its spreadsheet, the extension replaced
- * by `.index.json` (spec section 7) -- so the record travels with the batch it
- * describes, and `fernbrook.xlsx` is followed by `fernbrook.index.json`.
+ * by the site's host and `.index.json` (spec section 7) -- so the record
+ * travels with the batch it describes, and `fernbrook.xlsx` run against
+ * `https://oeq.example.edu` is followed by `fernbrook.oeq.example.edu.index.json`.
+ *
+ * The host is in the name because the keeper refuses to overwrite a record of
+ * another site: one sheet run on a test site and then on production would
+ * otherwise keep no record of the production run at all. Another COLLECTION
+ * of the same site at this path is still refused, as the keeper decides.
  */
-export function indexRecordPathFor(sheetPath: string): string {
+export function indexRecordPathFor(sheetPath: string, baseUrl: string): string {
   const ext = extname(sheetPath);
-  return join(dirname(sheetPath), `${basename(sheetPath, ext)}.index.json`);
+  const host = new URL(baseUrl).hostname.toLowerCase();
+  return join(dirname(sheetPath), `${basename(sheetPath, ext)}.${host}.index.json`);
 }
 
 /**
@@ -400,20 +407,24 @@ export async function runKeepingRecord<S>(
 }
 
 /**
- * Where each planned job's batch record goes, kept in the MAIN process: `plan`
- * remembers the location it computed, keyed by the manifest path it returned,
- * and `run` is told only whether to keep it. A path the renderer sent would be
- * a file the main process writes wherever it is told.
+ * Where the planned job's batch record goes, kept in the MAIN process: `plan`
+ * remembers the location it computed, with the manifest path it returned, and
+ * `run` is told only whether to keep it. A path the renderer sent would be a
+ * file the main process writes wherever it is told.
+ *
+ * ONE target: plan always writes the one `job.json`, so only the latest plan
+ * can be run. It is still checked against the manifest path, so a target is
+ * never used for a manifest it was not computed for.
  */
 export function indexRecordTargets() {
-  const byManifest = new Map<string, IndexRecordTarget>();
+  let latest: { manifestPath: string; target: IndexRecordTarget } | null = null;
   return {
     remember(manifestPath: string, target: IndexRecordTarget): void {
-      byManifest.set(manifestPath, target);
+      latest = { manifestPath, target };
     },
     forRun(manifestPath: string, keep: boolean): { target?: IndexRecordTarget; error?: string } {
       if (!keep) return {};
-      const target = byManifest.get(manifestPath);
+      const target = latest !== null && latest.manifestPath === manifestPath ? latest.target : undefined;
       return target === undefined
         ? { error: "this batch's record location is not known; plan it again" }
         : { target };
@@ -826,7 +837,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       await saveManifest(manifestPath, manifest);
       // The item name path the duplicate check above searched by titles the
       // batch record too, so the record and the check cannot disagree.
-      const indexRecord = { path: indexRecordPathFor(args.sheetPath), titlePath: titleHeader };
+      const indexRecord = { path: indexRecordPathFor(args.sheetPath, cfg.baseUrl), titlePath: titleHeader };
       recordTargets.remember(manifestPath, indexRecord);
 
       // Report columns against the OVERRIDDEN headers, so a column the user

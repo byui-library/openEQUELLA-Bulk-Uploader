@@ -180,4 +180,21 @@ describe('a blank name is no name', () => {
     expect(index.volumes[0]!.heading).toBe('Volume 1');
     expect(index.notInSeries[0]!.name).toBe('b');
   });
+
+  it("names an unnamed item in the listings by its label -- a record's row label -- but never heads a volume by it", () => {
+    const index = collectIndex(
+      [
+        hit('a', ['FQ_1971_Vol1_No1.pdf'], { name: null, label: 'FQ_1971_Vol1_No1.pdf' }),
+        hit('b', ['unrelated.pdf'], { name: null, label: 'unrelated.pdf' }),
+        hit('c', ['FQ_1972_Vol2_No1.pdf'], { name: null, label: 'Vol2a' }),
+        hit('d', ['FQ_1972_Vol2_No1.pdf'], { name: null, label: 'Vol2b' }),
+        hit('e', ['FQ_1973_Vol3_No1.pdf', 'FQ_1974_Vol4_No1.pdf'], { name: '  ', label: 'Vol3-4' }),
+      ],
+      RULE,
+      BASE,
+    );
+    expect(index.volumes[0]!.heading).toBe('Volume 1');
+    expect(index.notInSeries.map((l) => l.name)).toEqual(['unrelated.pdf']);
+    expect(index.heldBack.map((h) => h.items.map((i) => i.name))).toEqual([['Vol3-4'], ['Vol2a', 'Vol2b']]);
+  });
 });

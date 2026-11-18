@@ -431,6 +431,35 @@ describe('run --index-record', () => {
     expect(errors.some((e) => e.includes(record))).toBe(true);
     expect(logs).not.toContain(`Batch record: ${record}`);
   });
+
+  it('a failed write says it could not write the record, and that the run carries on', async () => {
+    const path = await job();
+    const record = join(dir, 'missing-folder', 'job.index.json');
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void errors.push(args.join(' ')));
+    await captureLogs(async () => {
+      await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: await schemaFile() }, env());
+    });
+    const warning = errors.find((e) => e.includes(record))!;
+    expect(warning).toMatch(/^warning: could not write the batch record .*The run carries on; its items are created either way\.$/s);
+  });
+
+  it('a record it refuses to overwrite is warned about in its own words, never as a failed write', async () => {
+    const path = await job();
+    const record = join(dir, 'job.index.json');
+    await writeFile(record, '{"some": "other file"}');
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void errors.push(args.join(' ')));
+    await captureLogs(async () => {
+      await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: await schemaFile() }, env());
+    });
+    const warning = errors.find((e) => e.includes(record))!;
+    expect(warning).toMatch(/^warning: .*job\.index\.json already exists and is not a batch record/);
+    expect(warning).toMatch(/It was left as it is, and no batch record was kept for this run\.$/);
+    expect(warning).not.toContain('could not write');
+    expect(warning).not.toContain('carries on');
+    expect(readFileSync(record, 'utf8')).toBe('{"some": "other file"}');
+  });
 });
 
 describe('planAction duplicate check', () => {

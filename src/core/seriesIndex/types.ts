@@ -13,6 +13,11 @@ export interface IndexHit {
   status: string;
   /** Null when the server sent none -- production's search omits it. */
   name: string | null;
+  /**
+   * What names the item in a listing when it has no name -- a batch record's
+   * row label. Never a volume's heading, which falls back to "Volume N".
+   */
+  label?: string;
   /** FILE attachments only, in the item's own order. */
   files: { filename: string; uuid: string }[];
 }

@@ -73,6 +73,7 @@ describe('recordFromManifest', () => {
           version: 1,
           title: 'Fernbrook Quarterly Vol 2',
           label: 'Vol2 (3 files)',
+          state: 'draft',
           files: [
             { name: 'FQ_1971_Vol2_No1.pdf', attachmentUuid: 'att-2a' },
             { name: 'FQ_1971_Vol2_No2.pdf', attachmentUuid: 'att-2b' },
@@ -107,6 +108,25 @@ describe('recordFromManifest', () => {
     );
     expect(r.items.map((i) => i.uuid)).toEqual(['item-2']);
     expect(r.leftOut).toEqual([{ row: 4, label: 'FQ_1972_Vol3_No1.pdf', status: 'incomplete', error: 'no item' }]);
+  });
+
+  it('leaves out an incomplete row whose item kept FEWER files than were sent: the index would link to nothing', () => {
+    const short = { ...folderRow, status: 'incomplete' as const, attachmentUuids: ['att-2a', 'att-2b'], error: 'kept 2 of 3' };
+    const r = recordFromManifest(manifest([short]), 'DC/title', now);
+    expect(r.items).toEqual([]);
+    expect(r.leftOut).toEqual([{ row: 3, label: 'Vol2 (3 files)', status: 'incomplete', error: 'kept 2 of 3' }]);
+
+    const { error: _e, ...silent } = short;
+    expect(recordFromManifest(manifest([silent]), 'DC/title', now).leftOut).toEqual([
+      { row: 3, label: 'Vol2 (3 files)', status: 'incomplete', error: 'openEQUELLA kept fewer files than were sent' },
+    ]);
+    // The same count, uuids differing: the item holds every file, so it is an item.
+    const differ = { ...folderRow, status: 'incomplete' as const, attachmentUuids: ['x', 'y', 'z'] };
+    expect(recordFromManifest(manifest([differ]), 'DC/title', now).items.map((i) => i.uuid)).toEqual(['item-2']);
+  });
+
+  it("records each new item's state, so a later run's drafts do not make earlier items read as drafts", () => {
+    expect(recordFromManifest(manifest([folderRow], { itemState: 'published' }), null, now).items[0]!.state).toBe('published');
   });
 
   it('names every entry the run did not create -- an interrupted run included', () => {
@@ -146,6 +166,7 @@ describe('recordHits', () => {
         version: 1,
         status: 'draft',
         name: 'Fernbrook Quarterly Vol 2',
+        label: 'Vol2 (3 files)',
         files: [
           { filename: 'FQ_1971_Vol2_No1.pdf', uuid: 'att-2a' },
           { filename: 'FQ_1971_Vol2_No2.pdf', uuid: 'att-2b' },
@@ -153,7 +174,22 @@ describe('recordHits', () => {
         ],
       },
     ]);
-    expect(recordHits({ ...r, itemState: 'published' })[0]!.status).toBe('live');
+    const { state: _s, ...stateless } = r.items[0]!;
+    expect(recordHits({ ...r, itemState: 'published', items: [stateless] })[0]!.status).toBe('live');
+  });
+
+  it("reads each item's own state before the record's", () => {
+    const r = recordFromManifest(manifest([folderRow]), 'DC/title', now);
+    const live = { ...r.items[0]!, uuid: 'item-1', state: 'published' as const };
+    expect(recordHits({ ...r, itemState: 'draft', items: [live, r.items[0]!] }).map((h) => h.status)).toEqual([
+      'live',
+      'draft',
+    ]);
+  });
+
+  it('gives an untitled item no name -- the heading falls back -- but its label, for listings', () => {
+    const r = recordFromManifest(manifest([{ ...folderRow, metadata: {} }]), 'DC/title', now);
+    expect(recordHits(r)[0]).toMatchObject({ name: null, label: 'Vol2 (3 files)' });
   });
 });
 
@@ -183,13 +219,33 @@ describe('writeBatchRecord / readBatchRecords', () => {
     await writeBatchRecord(a, record({ itemState: 'published', leftOut: [{ row: 7, label: 'x.pdf', status: 'failed', error: 'e' }] }));
     await writeBatchRecord(b, record({ baseUrl: 'https://oeq.example.edu/', items: [other, record().items[0]!] }));
     const both = await readBatchRecords([a, b]);
-    expect(both.items.map((i) => i.uuid)).toEqual(['item-2', 'item-9']);
+    expect(both.items.map((i) => i.uuid).sort()).toEqual(['item-2', 'item-9']);
     expect(both.leftOut).toEqual([{ row: 7, label: 'x.pdf', status: 'failed', error: 'e' }]);
     expect(both.itemState).toBe('draft');
     expect(both.baseUrl).toBe('https://oeq.example.edu');
 
     await writeBatchRecord(b, record({ itemState: 'published', items: [other] }));
     expect((await readBatchRecords([a, b])).itemState).toBe('published');
+  });
+
+  it('lets the LATER record win for a uuid two records carry, as a rerun keeping its record does', async () => {
+    const a = join(dir, 'a.json');
+    const b = join(dir, 'b.json');
+    const first = record().items[0]!;
+    const later = { ...first, version: 2, files: [{ name: 'FQ_1971_Vol2_All.pdf', attachmentUuid: 'att-new' }] };
+    await writeBatchRecord(a, record());
+    await writeBatchRecord(b, record({ items: [later] }));
+    expect((await readBatchRecords([a, b])).items).toEqual([later]);
+    expect((await readBatchRecords([b, a])).items).toEqual([first]);
+  });
+
+  it('reads a record written before items carried a state, and refuses a state it does not know', async () => {
+    const path = join(dir, 'old.json');
+    const { state: _s, ...stateless } = record().items[0]!;
+    await writeFile(path, JSON.stringify(record({ items: [stateless] })));
+    expect((await readBatchRecords([path])).items).toEqual([stateless]);
+    await writeFile(path, JSON.stringify(record({ items: [{ ...stateless, state: 'live' } as never] })));
+    await expect(readBatchRecords([path])).rejects.toThrow(/old\.json/);
   });
 
   it('refuses a file that is not a batch record, naming it', async () => {
@@ -328,6 +384,21 @@ describe('keepBatchRecord', () => {
     second.update();
     await second.settled();
     expect(read().itemState).toBe('draft');
+  });
+
+  it("keeps each item's own state, so a later run's drafts leave earlier published items published", async () => {
+    await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf')], { itemState: 'published' }));
+    const first = keepBatchRecord(manifestPath, file, null);
+    first.update();
+    await first.settled();
+    await saveManifest(manifestPath, manifest([created(3, 'item-3', 'three.pdf')], { itemState: 'draft' }));
+    const second = keepBatchRecord(manifestPath, file, null);
+    second.update();
+    await second.settled();
+    expect(recordHits(read()).map((h) => [h.uuid, h.status])).toEqual([
+      ['item-1', 'live'],
+      ['item-3', 'draft'],
+    ]);
   });
 
   it.each([

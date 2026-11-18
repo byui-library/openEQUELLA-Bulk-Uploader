@@ -884,10 +884,19 @@ describe('applyFolderOrders', () => {
 });
 
 describe('the batch record beside a desktop run', () => {
-  it('is the spreadsheet path with its extension replaced by .index.json', () => {
-    expect(indexRecordPathFor(join('C:', 'batches', 'fernbrook.xlsx'))).toBe(join('C:', 'batches', 'fernbrook.index.json'));
-    expect(indexRecordPathFor(join('C:', 'batches', 'fernbrook.v2.csv'))).toBe(join('C:', 'batches', 'fernbrook.v2.index.json'));
-    expect(indexRecordPathFor(join('C:', 'batches', 'noext'))).toBe(join('C:', 'batches', 'noext.index.json'));
+  const SITE = 'https://Fernbrook.OEQ.example.edu/repo/';
+  it('is the spreadsheet path with its extension replaced by the site host and .index.json', () => {
+    const at = (name: string) => indexRecordPathFor(join('C:', 'batches', name), SITE);
+    expect(at('fernbrook.xlsx')).toBe(join('C:', 'batches', 'fernbrook.fernbrook.oeq.example.edu.index.json'));
+    expect(at('fernbrook.v2.csv')).toBe(join('C:', 'batches', 'fernbrook.v2.fernbrook.oeq.example.edu.index.json'));
+    expect(at('noext')).toBe(join('C:', 'batches', 'noext.fernbrook.oeq.example.edu.index.json'));
+  });
+
+  it('differs by site, so one sheet run on a test site and then production keeps a record of each', () => {
+    const sheet = join('C:', 'batches', 'fernbrook.xlsx');
+    expect(indexRecordPathFor(sheet, 'https://oeq-test.example.edu')).not.toBe(
+      indexRecordPathFor(sheet, 'https://oeq.example.edu'),
+    );
   });
 
   function job(status: 'pending' | 'created'): Manifest {
@@ -928,7 +937,7 @@ describe('the batch record beside a desktop run', () => {
     const written = JSON.parse(await readFile(recordPath, 'utf8'));
     expect(written.kind).toBe('oeq-batch-record');
     expect(written.items).toEqual([
-      { row: 2, uuid: 'item-1', version: 1, title: 'Fernbrook Quarterly Vol 1', label: 'FQ_1970_Vol1_No1.pdf', files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }] },
+      { row: 2, uuid: 'item-1', version: 1, title: 'Fernbrook Quarterly Vol 1', label: 'FQ_1970_Vol1_No1.pdf', state: 'draft', files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }] },
     ]);
   });
 
@@ -1003,5 +1012,12 @@ describe("the batch record's location stays in the main process", () => {
     const later = { path: 'C:/batches/later.index.json', titlePath: null };
     targets.remember('C:/data/job.json', later);
     expect(targets.forRun('C:/data/job.json', true)).toEqual({ target: later });
+  });
+
+  it('is only the latest plan: a later plan of another manifest is never used for an earlier one', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    targets.remember('C:/data/other.json', { path: 'C:/batches/other.index.json', titlePath: null });
+    expect(targets.forRun('C:/data/job.json', true).error).toMatch(/plan it again/);
   });
 });

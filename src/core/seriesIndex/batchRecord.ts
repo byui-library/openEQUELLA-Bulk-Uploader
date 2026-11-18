@@ -29,6 +29,13 @@ export interface RecordItem {
    * it existed carry none.
    */
   label?: string;
+  /**
+   * The state the item was created in. A record accumulates runs, and one
+   * run's drafts must not make an earlier run's published items read as
+   * drafts. Optional: records written before it existed carry none, and are
+   * read at the record's `itemState`.
+   */
+  state?: ItemState;
   /** In the item's upload order. */
   files: { name: string; attachmentUuid: string }[];
 }
@@ -58,21 +65,37 @@ export interface BatchRecord {
  * title is '' -- never the row label, which would become the index's heading
  * (`1972_Vol27 (6 files)`) in place of the index's own (`Volume 27`).
  *
- * An entry with an item is an item, `incomplete` included: the runner marks a
- * row incomplete when the item exists but its attachment uuids differ, and the
- * index links by file name, not attachment uuid.
+ * An entry with an item is an item, `incomplete` included -- with one
+ * exception. The runner marks a row incomplete for two reasons (runner.ts):
+ * openEQUELLA assigned other attachment uuids than were sent, which does not
+ * matter here because the index links by file name; or it reported FEWER
+ * attachments than files were sent. That item lacks a file the record would
+ * list, and the index would link to nothing, so it is left out instead --
+ * with the runner's error, which says to check the item by hand.
  */
 export function recordFromManifest(manifest: Manifest, titlePath: string | null, now = new Date()): BatchRecord {
   const items: RecordItem[] = [];
   const leftOut: RecordLeftOut[] = [];
   for (const entry of manifest.entries) {
-    if ((entry.status === 'created' || entry.status === 'incomplete') && entry.itemUuid) {
+    const lostFiles =
+      entry.status === 'incomplete' &&
+      entry.attachmentUuids !== undefined &&
+      entry.attachmentUuids.length < entry.files.length;
+    if (lostFiles) {
+      leftOut.push({
+        row: entry.rowNumber,
+        label: rowLabel(entry),
+        status: entry.status,
+        error: entry.error ?? 'openEQUELLA kept fewer files than were sent',
+      });
+    } else if ((entry.status === 'created' || entry.status === 'incomplete') && entry.itemUuid) {
       items.push({
         row: entry.rowNumber,
         uuid: entry.itemUuid,
         version: entry.itemVersion ?? 1,
         title: titlePath === null ? '' : (entry.metadata[titlePath]?.[0] ?? '').trim(),
         label: rowLabel(entry),
+        state: manifest.itemState,
         files: entry.files.map((f, i) => ({ name: f.name, attachmentUuid: entry.attachmentUuids?.[i] ?? '' })),
       });
     } else {
@@ -110,17 +133,32 @@ function dropResolved(leftOut: readonly RecordLeftOut[], items: readonly RecordI
 /**
  * This run's record on top of an earlier one at the same path: the earlier
  * items, then this run's, one per uuid (this run's version wins). Left out is
- * this run's alone, minus rows either run created. Draft if either is.
+ * this run's alone, minus rows either run created. The record's own
+ * `itemState` is draft if either is; each item keeps the state it was made in
+ * (`RecordItem.state`), and that is what an index reads.
  */
 function accumulate(earlier: BatchRecord, current: BatchRecord): BatchRecord {
-  const now = new Set(current.items.map((i) => i.uuid));
-  const items = [...earlier.items.filter((i) => !now.has(i.uuid)), ...current.items];
+  const items = laterWins([...earlier.items, ...current.items]);
   return {
     ...current,
     itemState: earlier.itemState === 'draft' ? 'draft' : current.itemState,
     items,
     leftOut: dropResolved(current.leftOut, items),
   };
+}
+
+/**
+ * One item per uuid, the LATER one winning and taking the later place: the
+ * single rule for a uuid seen twice, whether a rerun's keeper or a reader
+ * combining several records meets it.
+ */
+function laterWins(items: readonly RecordItem[]): RecordItem[] {
+  const byUuid = new Map<string, RecordItem>();
+  for (const item of items) {
+    byUuid.delete(item.uuid);
+    byUuid.set(item.uuid, item);
+  }
+  return [...byUuid.values()];
 }
 
 /** Written whole, through a temporary file, so a reader never sees half of one. */
@@ -142,6 +180,13 @@ export interface RecordProgress {
 }
 
 /**
+ * The keeper declined to touch what is already at the path. Its message says
+ * so whole -- "It was left as it is, and no batch record was kept" -- and is
+ * shown as it is, never wrapped as a write that failed.
+ */
+export class BatchRecordRefused extends ValidationError {}
+
+/**
  * What is already at `file`, read once when a keeper starts: null when there
  * is nothing, the record when it is one of this site and collection, and a
  * refusal -- the file left as it is -- for anything else.
@@ -151,8 +196,11 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
   try {
     text = readFileSync(file, 'utf8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw new ValidationError(
+    // ENOTDIR: a folder on the way is a file, so nothing is at the path either;
+    // the write then fails, and says so.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw new BatchRecordRefused(
       `${file} already exists and could not be read (${(err as Error).message}). It was left as it is, ` +
         `and no batch record was kept for this run.`,
     );
@@ -161,20 +209,20 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
   try {
     earlier = parseBatchRecord(text, basename(file));
   } catch (err) {
-    throw new ValidationError(
+    throw new BatchRecordRefused(
       `${file} already exists and is not a batch record this tool can read (${(err as Error).message}). ` +
         `It was left as it is, and no batch record was kept for this run.`,
     );
   }
   const site = siteKey(earlier.baseUrl);
   if (site === null || site !== siteKey(manifest.baseUrl)) {
-    throw new ValidationError(
+    throw new BatchRecordRefused(
       `${file} is a batch record of another site (${earlier.baseUrl}). It was left as it is, and no ` +
         `batch record was kept for this run.`,
     );
   }
   if (earlier.collectionUuid !== manifest.collectionUuid) {
-    throw new ValidationError(
+    throw new BatchRecordRefused(
       `${file} is a batch record of another collection. It was left as it is, and no batch record ` +
         `was kept for this run.`,
     );
@@ -314,6 +362,7 @@ function isRecordItem(v: unknown): v is RecordItem {
     typeof v['version'] === 'number' &&
     typeof v['title'] === 'string' &&
     (v['label'] === undefined || typeof v['label'] === 'string') &&
+    (v['state'] === undefined || v['state'] === 'draft' || v['state'] === 'published') &&
     Array.isArray(v['files']) &&
     v['files'].every((f) => isObject(f) && typeof f['name'] === 'string' && typeof f['attachmentUuid'] === 'string')
   );
@@ -375,15 +424,14 @@ async function readOne(path: string): Promise<BatchRecord> {
  * Several records combined into one, in the order given: a series uploaded in
  * batches, or a retry run. Refused, naming the file: anything that is not a
  * version-1 record, and records of different sites or collections. An item
- * two records carry is listed once, and a row one record left out and
- * another created is not listed as left out; the result is draft if any
- * record is.
+ * two records carry is listed once -- the later record's, as `keepBatchRecord`
+ * resolves it -- and a row one record left out and another created is not
+ * listed as left out; the result is draft if any record is.
  */
 export async function readBatchRecords(paths: readonly string[]): Promise<BatchRecord> {
   if (paths.length === 0) throw new ValidationError('No batch record was given.');
   let combined: BatchRecord | null = null;
   let site: string | null = null;
-  const seen = new Set<string>();
   for (const path of paths) {
     const r = await readOne(path);
     if (combined === null) {
@@ -397,11 +445,7 @@ export async function readBatchRecords(paths: readonly string[]): Promise<BatchR
       throw new ValidationError(`${basename(path)} records a different collection from the first record.`);
     }
     if (r.itemState === 'draft') combined.itemState = 'draft';
-    for (const item of r.items) {
-      if (seen.has(item.uuid)) continue;
-      seen.add(item.uuid);
-      combined.items.push(item);
-    }
+    combined.items = laterWins([...combined.items, ...r.items]);
     combined.leftOut.push(...r.leftOut);
   }
   combined!.leftOut = dropResolved(combined!.leftOut, combined!.items);
@@ -411,15 +455,17 @@ export async function readBatchRecords(paths: readonly string[]): Promise<BatchR
 /**
  * The record's items as the hits `collectIndex` reads -- the same as a search
  * would give. An untitled item has no name, so the index heads it as it heads
- * any unnamed hit.
+ * any unnamed hit; its row label still names it in the preview's listings,
+ * which would otherwise show a bare uuid. Each item's status is its own state,
+ * else the record's.
  */
 export function recordHits(record: BatchRecord): IndexHit[] {
-  const status = record.itemState === 'published' ? 'live' : 'draft';
   return record.items.map((item) => ({
     uuid: item.uuid,
     version: item.version,
-    status,
+    status: (item.state ?? record.itemState) === 'published' ? 'live' : 'draft',
     name: item.title === '' ? null : item.title,
+    ...(item.label !== undefined ? { label: item.label } : {}),
     files: item.files.map((f) => ({ filename: f.name, uuid: f.attachmentUuid })),
   }));
 }
