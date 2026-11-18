@@ -30,8 +30,9 @@ async function templatesDir(): Promise<string> {
   return dir;
 }
 
-function connect() {
+function connect(over: Record<string, unknown> = {}) {
   const created: unknown[] = [];
+  const calls = { edit: 0, search: 0 };
   const client = {
     currentUser: async () => ({ id: 'u', username: 'u', firstName: '', lastName: '', guest: false }),
     getCollection: async () => ({ uuid: 'c1', name: 'C', schemaUuid: 's1' }),
@@ -43,7 +44,7 @@ function connect() {
       descriptionHeader: 'DC/description',
       paths: new Set(['DC/title', 'DC/description', 'DC/identifier']),
     }),
-    searchCollection: async () => [
+    searchCollection: async () => calls.search++ >= 0 && [
       { uuid: 'v1', version: 1, status: 'draft', name: 'Fernbrook Vol 1', attachments: [{ type: 'file', filename: 'FQ_1971_Vol1_No1.pdf', uuid: 'a' }] },
     ],
     findByField: async () => [],
@@ -52,11 +53,15 @@ function connect() {
     deleteStagingArea: async () => {},
     createItem: async (req: unknown) => (created.push(req), { uuid: 'new', version: 1, attachmentUuids: [] }),
     getItemBean: async () => ({}),
-    editItem: async () => {},
+    editItem: async () => {
+      calls.edit++;
+    },
+    ...over,
   };
   // The fake implements only what the flow calls; the cast says so once.
   return {
     created,
+    calls,
     deps: async (): Promise<IndexConnection> => ({
       client: client as unknown as IndexConnection['client'],
       baseUrl: 'https://oeq.example.edu',
@@ -85,6 +90,47 @@ describe('index handlers', () => {
     const up = await h.upload({ buildId: 'b1', draft: true });
     expect(up).toEqual({ kind: 'created', url: 'https://oeq.example.edu/items/new/0/index.html' });
     expect(c.created[0]).toMatchObject({ draft: true });
+  });
+
+  it('a second upload updates the item the first one created', async () => {
+    const c = connect();
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect((await h.upload({ buildId: 'b1', draft: true })).kind).toBe('created');
+    expect((await h.upload({ buildId: 'b1', draft: true })).kind).toBe('updated');
+    expect(c.created).toHaveLength(1);
+    expect(c.calls.edit).toBe(1);
+  });
+
+  it('a failed preview leaves no usable build', async () => {
+    let n = 0;
+    const c = connect();
+    const good = await c.deps();
+    const deps = async (): Promise<IndexConnection> => {
+      if (++n === 1) return good;
+      return {
+        ...good,
+        client: {
+          ...good.client,
+          getSchema: async () => {
+            throw new Error('boom');
+          },
+        } as IndexConnection['client'],
+      };
+    };
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    await expect(h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' })).rejects.toThrow();
+    await expect(h.upload({ buildId: 'b1', draft: true })).rejects.toThrow(/Preview again/);
+  });
+
+  it('a guest session rejects the preview before any search', async () => {
+    const c = connect({
+      currentUser: async () => ({ id: 'g', username: 'guest', firstName: '', lastName: '', guest: true }),
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps });
+    await expect(h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' })).rejects.toThrow();
+    expect(c.calls.search).toBe(0);
   });
 
   it('refuses an unknown or superseded build id', async () => {

@@ -104,6 +104,15 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         existing: build.existing,
         draft: args.draft,
       });
+      // The item now exists: a second upload from this same preview must update
+      // it, not create a duplicate. `held` stays, so later steps can use it.
+      build.existing = {
+        kind: 'one',
+        uuid: result.uuid,
+        version: result.version,
+        status:
+          build.existing.kind === 'one' ? build.existing.status : args.draft ? 'draft' : 'live',
+      };
       return { kind: result.kind, url: `${itemUrl(connection.baseUrl, result.uuid)}index.html` };
     },
   };
