@@ -41,7 +41,13 @@ const client = {
 
 describe('buildIndex', () => {
   it('collects, renders and finds the existing index item', async () => {
-    const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
+    const asked: Array<[string, string]> = [];
+    const recording = {
+      ...client,
+      findByField: async (_c: string, path: string, value: string) => (asked.push([path, value]), [listing[1]!]),
+    };
+    const b = await buildIndex({ client: recording, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
+    expect(asked).toEqual([['DC/identifier', 'FQ_index']]);
     expect(b.index.volumes).toHaveLength(1);
     expect(b.index.volumes[0]!.issues).toHaveLength(1); // the URL attachment is ignored
     expect(b.files['index.html']).toContain('<h1>Fernbrook index</h1>');
@@ -53,6 +59,46 @@ describe('buildIndex', () => {
     await expect(
       buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile: rest, schema }),
     ).rejects.toThrow(/no "index" section/);
+  });
+
+  it("passes the template's groupPatterns on, so a one-file volume is placed", async () => {
+    const withGroup = parseProfile({
+      version: 1,
+      pattern: 'FQ_Vol{group}',
+      columns: [{ path: 'attachment name', sources: [{ filename: true }] }],
+      checks: { sequence: { patterns: ['{year}_Vol{group}_No{part}'] } },
+      index: {
+        groupPatterns: ['{year}_Vol{group}'],
+        columns: [
+          { path: 'DC/title', value: 'Fernbrook index' },
+          { path: 'DC/description', value: 'Every volume.' },
+          { path: 'DC/identifier', value: 'FQ_index' },
+        ],
+      },
+    });
+    const single: CollectionItem = {
+      uuid: 'v20',
+      version: 1,
+      status: 'live',
+      name: 'Fernbrook Vol 20',
+      attachments: [{ type: 'file', filename: 'FQ_1991_Vol20.pdf', uuid: 'a20' }],
+    };
+    const c = { searchCollection: async () => [single], findByField: async () => [] };
+    const b = await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile: withGroup, schema });
+    expect(b.index.volumes).toHaveLength(1);
+    expect(b.index.volumes[0]!.group).toBe(20);
+    expect(b.index.notInSeries).toHaveLength(0);
+  });
+
+  it('refuses a template with no file-name patterns, before searching', async () => {
+    // parseProfile itself refuses an index section without checks.sequence, so build the shape by hand.
+    const noSequence = { ...profile, checks: undefined } as unknown as typeof profile;
+    let searched = 0;
+    const c = { ...client, searchCollection: async () => (searched++, listing) };
+    await expect(
+      buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile: noSequence, schema }),
+    ).rejects.toThrow(/no file-name patterns/);
+    expect(searched).toBe(0);
   });
 
   it('describes the build in plain lines', async () => {
