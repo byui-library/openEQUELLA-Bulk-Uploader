@@ -39,6 +39,15 @@ describe('linkVolumes', () => {
     expect(f.edits).toEqual([]);
   });
 
+  it('edits a first link whose description is stale, keeping its uuid', async () => {
+    const link = { type: 'url', url: URL_, description: 'Old words', uuid: 'l' };
+    const f = fake({ v1: { attachments: [link, file('a.pdf')] } });
+    const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(f.edits).toHaveLength(1);
+    expect(f.edits[0]!.attachments).toEqual([{ ...link, description: 'Index of all volumes' }, file('a.pdf')]);
+  });
+
   it('moves the link to first place, keeping its uuid, rather than adding a second', async () => {
     const link = { type: 'url', url: URL_, description: 'Old words', uuid: 'l' };
     const f = fake({ v1: { attachments: [file('a.pdf'), link] } });

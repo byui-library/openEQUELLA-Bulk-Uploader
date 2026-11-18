@@ -845,13 +845,13 @@ describe('series index calls', () => {
     expect(bean['uuid']).toBe('a');
     const staging = await client.createStagingArea();
     await client.editItem('a', 1, { ...bean, metadata: '<xml><x/></xml>' }, staging);
-    expect(mock.state.edits[0]).toMatchObject({ uuid: 'a', version: 1, staging, bean: { metadata: '<xml><x/></xml>' } });
+    expect(mock.state.edits[0]).toMatchObject({ uuid: 'a', version: 1, staging, filePresent: true, bean: { metadata: '<xml><x/></xml>' } });
   });
 
   it('edits an item with no new files: no file parameter is sent', async () => {
     mock.state.collectionItems = [item('a')];
     const bean = await client.getItemBean('a', 1);
     await client.editItem('a', 1, bean);
-    expect(mock.state.edits[0]).toMatchObject({ uuid: 'a', version: 1, staging: '' });
+    expect(mock.state.edits[0]).toMatchObject({ uuid: 'a', version: 1, staging: '', filePresent: false });
   });
 });

@@ -663,9 +663,12 @@ export class OeqClient {
    * Replace an item's files and record IN PLACE: `PUT /api/item/{uuid}/{v}/
    * ?file={staging}` with its bean. CONFIRMED on content-test 2026-11-17: same
    * item, same version, same attachment uuids, files replaced, title changed.
+   * With no staging area (undefined or empty) NO `file` parameter is sent: the
+   * record and attachments are edited and every file is kept (checked live
+   * 2026-11-18).
    */
   async editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid?: string): Promise<void> {
-    const query = stagingUuid === undefined ? '' : `?file=${encodeURIComponent(stagingUuid)}`;
+    const query = !stagingUuid ? '' : `?file=${encodeURIComponent(stagingUuid)}`;
     await this.request(
       `/api/item/${encodeURIComponent(uuid)}/${version}/${query}`,
       { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bean) },

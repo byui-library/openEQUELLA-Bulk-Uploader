@@ -222,7 +222,7 @@ export interface MockState {
     fields: Record<string, string>;
   }[];
   /** Every `PUT /api/item/{uuid}/{version}` received: the body and its staging area. */
-  edits: { uuid: string; version: number; staging: string; bean: Record<string, unknown> }[];
+  edits: { uuid: string; version: number; staging: string; filePresent: boolean; bean: Record<string, unknown> }[];
   /**
    * The xpath this mock instance's schema declares as the item name. A `where`
    * clause naming any other path matches nothing, which is what a real
@@ -427,7 +427,7 @@ export async function startMockServer(): Promise<MockServer> {
         const staging = url.searchParams.get('file') ?? '';
         if (staging !== '' && !state.stagingAreas.has(staging)) return send(res, 404, { error: 'no such staging area' });
         const bean = JSON.parse((await readBody(req)).toString('utf8')) as Record<string, unknown>;
-        state.edits.push({ uuid: itemAt[1]!, version: Number(itemAt[2]), staging, bean });
+        state.edits.push({ uuid: itemAt[1]!, version: Number(itemAt[2]), staging, filePresent: url.searchParams.has('file'), bean });
         return send(res, 200, '');
       }
 
