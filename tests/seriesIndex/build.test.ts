@@ -54,6 +54,25 @@ describe('buildIndex', () => {
     expect(b.existing).toEqual({ kind: 'one', uuid: 'idx', version: 1, status: 'live' });
   });
 
+  it('does not list the index item itself as not in the series', async () => {
+    const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
+    expect(b.index.notInSeries).toEqual([]);
+    expect(previewLines(b).join('\n')).not.toContain('Fernbrook index');
+  });
+
+  it('leaves out every index item when several carry the identifier', async () => {
+    const twice: CollectionItem = { ...listing[1]!, uuid: 'idx2' };
+    const b = await buildIndex({
+      client: { searchCollection: async () => [...listing, twice], findByField: async () => [listing[1]!, twice] },
+      baseUrl: 'https://oeq.example.edu',
+      collectionUuid: 'c1',
+      profile,
+      schema,
+    });
+    expect(b.index.notInSeries).toEqual([]);
+    expect(b.existing.kind).toBe('many');
+  });
+
   it('refuses a template with no index section', async () => {
     const { index: _drop, ...rest } = profile;
     await expect(
@@ -105,7 +124,6 @@ describe('buildIndex', () => {
     const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
     expect(previewLines(b)).toEqual([
       '1 volume, 1 issue.',
-      'Not in the series (1): Fernbrook index -- none of its files fits the template\'s file-name patterns',
       'openEQUELLA: updates the existing index item, which stays live.',
     ]);
   });

@@ -48,7 +48,13 @@ export async function buildIndex(args: BuildArgs): Promise<IndexBuild> {
   if (!sequence) throw new ValidationError('This template has no file-name patterns to read volumes and issues with.');
 
   const record = indexRecord(profile.index, args.schema);
-  const listing = await args.client.searchCollection(args.collectionUuid);
+  // Found FIRST, so the index item -- or each of several -- is left out of the
+  // listing: it lives in the collection it indexes, and is not "not in the series".
+  const existing = await findExistingIndex(args.client, args.collectionUuid, record);
+  const self = new Set(
+    existing.kind === 'one' ? [existing.uuid] : existing.kind === 'many' ? existing.items.map((i) => i.uuid) : [],
+  );
+  const listing = (await args.client.searchCollection(args.collectionUuid)).filter((item) => !self.has(item.uuid));
   const index = collectIndex(
     listing.map(toHit),
     { patterns: sequence.patterns, groupPatterns: profile.index.groupPatterns, labels: sequence.labels },
@@ -56,7 +62,6 @@ export async function buildIndex(args: BuildArgs): Promise<IndexBuild> {
   );
   const labels = resolveLabels(sequence.labels);
   const files = renderIndex(index, { title: record.title, description: record.description, groups: labels.groups });
-  const existing = await findExistingIndex(args.client, args.collectionUuid, record);
   return { collectionUuid: args.collectionUuid, index, record, files, existing, labels };
 }
 
