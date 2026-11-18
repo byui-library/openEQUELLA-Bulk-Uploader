@@ -29,19 +29,34 @@ function escapeXml(s: string): string {
     .replace(/'/g, '&apos;');
 }
 
+/**
+ * The elements a leaf's values become, one each, '' meaning a self-closing
+ * tag. Shared by buildMetadataXml and mergeMetadataXml so the two cannot
+ * disagree about blanks.
+ *
+ * A lone blank legitimately means "this optional field is empty" and must
+ * still render as a self-closing tag. A blank inside a multi-value list,
+ * though, is a spreadsheet-shape artifact (e.g. a ragged row), not a real
+ * repeated element, so it's dropped — unless every value is blank (or there
+ * are none), in which case there's nothing left to distinguish it from the
+ * lone-blank case, and it renders the same self-closing way.
+ */
+function elementValues(values: readonly string[]): string[] {
+  const kept = values.length > 1 ? values.filter((v) => v !== '') : [...values];
+  return kept.length === 0 ? [''] : kept;
+}
+
+/** One wording for a path that is given a value AND is a parent of another. */
+function conflictingPaths(withValue: string, child: string): ValidationError {
+  return new ValidationError(
+    `Conflicting metadata paths: '${withValue}' has a value but is also a parent of '${child}'`,
+  );
+}
+
 function render(name: string, node: Node): string {
   // A node carrying values is terminal; emit one element per value.
   if (node.values.length > 0) {
-    // A lone blank legitimately means "this optional field is empty" and
-    // must still render as a self-closing tag. A blank inside a multi-value
-    // list, though, is a spreadsheet-shape artifact (e.g. a ragged row), not
-    // a real repeated element, so it's dropped — unless every value is
-    // blank, in which case there's nothing left to distinguish it from the
-    // lone-blank case, and it renders the same self-closing way.
-    const rendered =
-      node.values.length > 1 ? node.values.filter((v) => v !== '') : node.values;
-    if (rendered.length === 0) return `<${name}/>`;
-    return rendered
+    return elementValues(node.values)
       .map((v) => (v === '' ? `<${name}/>` : `<${name}>${escapeXml(v)}</${name}>`))
       .join('');
   }
@@ -124,9 +139,7 @@ export function buildMetadataXml(fields: Record<string, string[]>): string {
         // The node we're about to descend into already has a value from an
         // earlier (shorter) xpath, e.g. 'MWDL/creators' was set before
         // 'MWDL/creators/creator' is now trying to add a child beneath it.
-        throw new ValidationError(
-          `Conflicting metadata paths: '${pathSoFar}' has a value but is also a parent of '${xpath}'`,
-        );
+        throw conflictingPaths(pathSoFar, xpath);
       }
       cursor = next;
     }
@@ -135,9 +148,7 @@ export function buildMetadataXml(fields: Record<string, string[]>): string {
       // The reverse order: this xpath's value arrives after a longer xpath
       // already populated children beneath it.
       const [firstChild] = cursor.children.keys();
-      throw new ValidationError(
-        `Conflicting metadata paths: '${xpath}' has a value but is also a parent of '${xpath}/${firstChild}'`,
-      );
+      throw conflictingPaths(xpath, `${xpath}/${firstChild}`);
     }
   }
   const inner = [...root.children].map(([k, child]) => render(k, child)).join('');
@@ -203,14 +214,11 @@ export function mergeMetadataXml(existingXml: string, fields: Record<string, str
         next = { [segment]: [] };
         parent.push(next);
       } else if (childrenOf(next, segment).some((c) => tagOf(c) === null && '#text' in c && String(c['#text']).trim() !== '')) {
-        throw new ValidationError(
-          `Conflicting metadata paths: '${pathSoFar}' has a value but is also a parent of '${xpath}'`,
-        );
+        throw conflictingPaths(pathSoFar, xpath);
       }
       parent = childrenOf(next, segment);
     }
-    const values = rawValues.length > 1 ? rawValues.filter((v) => v !== '') : rawValues;
-    const fresh: OrderedNode[] = (values.length === 0 ? [''] : values).map((v) => ({
+    const fresh: OrderedNode[] = elementValues(rawValues).map((v) => ({
       [leaf]: v === '' ? [] : [{ '#text': escapeXml(v) }],
     }));
     const first = parent.findIndex((n) => tagOf(n) === leaf);
