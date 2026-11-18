@@ -839,6 +839,21 @@ describe('series index calls', () => {
     expect(found.map((f) => f.uuid)).toEqual(['b']);
   });
 
+  it('a field search reports a guest answer, never "no such item"', async () => {
+    await withFakeSearch(
+      () => ({ available: 1, results: [] }),
+      async () => {
+        await expect(client.findByField('c1', 'DC/identifier', 'b')).rejects.toThrow(/not signed in/);
+      },
+    );
+    await withFakeSearch(
+      () => ({ available: 0, results: [] }),
+      async () => {
+        expect(await client.findByField('c1', 'DC/identifier', 'b')).toEqual([]);
+      },
+    );
+  });
+
   it('reads an item and edits it with a staging area', async () => {
     mock.state.collectionItems = [item('a')];
     const bean = await client.getItemBean('a', 1);

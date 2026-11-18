@@ -642,15 +642,27 @@ export class OeqClient {
    * Items whose `path` is EXACTLY `value` -- the `where` mechanism of
    * searchByTitle, for any path. `path` is interpolated unescaped because it
    * comes from the collection's own schema; `info=basic` means the results
-   * carry no attachments.
+   * carry no attachments. A guest answer throws, never reads as "none".
    */
   async findByField(collectionUuid: string, path: string, value: string): Promise<CollectionItem[]> {
     const clause = `/xml/${path} = '${escapeWhereValue(value)}'`;
     const url =
       `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
       `&where=${encodeURIComponent(clause)}&info=basic&showall=true&length=50`;
-    const body = (await (await this.request(url)).json()) as { results?: Record<string, unknown>[] };
-    return (body.results ?? []).map(parseCollectionItem);
+    const body = (await (await this.request(url)).json()) as {
+      available?: number;
+      results?: Record<string, unknown>[];
+    };
+    const results = body.results ?? [];
+    // `available > 0` with no rows is a guest answer, as in searchCollection.
+    // Read as "none", it would make the index publish a DUPLICATE item.
+    if (results.length === 0 && (body.available ?? 0) > 0) {
+      throw new ValidationError(
+        `openEQUELLA reports ${body.available} matching items but returned none -- the session is not signed ` +
+          'in, or has expired. Sign in again and retry.',
+      );
+    }
+    return results.map(parseCollectionItem);
   }
 
   /** The item's full bean, as `editItem` sends it back. */
