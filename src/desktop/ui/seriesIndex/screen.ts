@@ -27,6 +27,13 @@ function existingMarkup(s: IndexFlowState, e: IndexPreview['existing']): string 
 
 function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
   const dis = isBusy(s) ? ' disabled' : '';
+  // The template's words, escaped once: they come from an operator-edited file.
+  const L = {
+    part: escapeHtml(p.labels.part),
+    parts: escapeHtml(p.labels.parts),
+    group: escapeHtml(p.labels.group),
+    groups: escapeHtml(p.labels.groups),
+  };
   const held = p.heldBack.length
     ? `<h2>Held back (${p.heldBack.length})</h2><ul>${p.heldBack
         .map((h) => `<li>${escapeHtml(`${h.reason}: ${h.items.join(', ')}`)}</li>`)
@@ -37,12 +44,12 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
         .map((l) => `<li>${escapeHtml(`${l.name} -- ${l.reason}`)}</li>`)
         .join('')}</ul></details>`
     : '';
-  const volumes = `<details><summary>Show the ${plural(p.volumes.length, 'volume', 'volumes')}</summary><ul>${p.volumes
+  const volumes = `<details><summary>Show the ${plural(p.volumes.length, L.group, L.groups)}</summary><ul>${p.volumes
     .map((v) => `<li>${escapeHtml(v.heading)}<ul>${v.issues.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul></li>`)
     .join('')}</ul></details>`;
   return `
     <h2>${escapeHtml(p.title)}</h2>
-    <p>${plural(p.volumes.length, 'volume', 'volumes')}, ${plural(p.issueCount, 'issue', 'issues')}.</p>
+    <p>${plural(p.volumes.length, L.group, L.groups)}, ${plural(p.issueCount, L.part, L.parts)}.</p>
     ${held}${left}${volumes}
     <fieldset>
       <legend>Where should it go?</legend>
@@ -52,7 +59,7 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
       ${s.upload ? existingMarkup(s, p.existing) : ''}
       ${
         canLinkVolumes(s)
-          ? `<label><input type="checkbox" id="index-link-volumes"${dis} ${s.linkVolumes ? 'checked' : ''}> Add a link to the index on every volume (edits ${plural(p.volumes.length, 'item', 'items')})</label>`
+          ? `<label><input type="checkbox" id="index-link-volumes"${dis} ${s.linkVolumes ? 'checked' : ''}> Add a link to the index on every ${L.group} (edits ${plural(p.volumes.length, 'item', 'items')})</label>`
           : ''
       }
     </fieldset>

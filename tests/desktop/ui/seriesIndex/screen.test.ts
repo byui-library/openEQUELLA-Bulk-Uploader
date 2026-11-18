@@ -10,6 +10,7 @@ const preview = {
   heldBack: [{ reason: '2 items claim volume 3', items: ['A', 'B'] }],
   notInSeries: [{ name: 'Fernbrook index', reason: 'none of its files fits' }],
   existing: { kind: 'one' as const, status: 'draft' },
+  labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
 };
 
 describe('index flow markup', () => {
@@ -83,5 +84,24 @@ describe('index flow markup: volume links', () => {
     expect(indexFlowMarkup({ ...initialIndexState(), templates: [], preview })).toContain('id="index-link-volumes"');
     const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview, linkVolumes: true, working: true });
     expect(html).toMatch(/id="index-link-volumes"[^>]*disabled[^>]*checked/);
+  });
+});
+
+describe("index flow markup in the template's words", () => {
+  const boxes = {
+    ...preview,
+    volumes: [
+      { heading: 'Box 1', issues: ['Folder 1'] },
+      { heading: 'Box 2', issues: ['Folder 1', 'Folder 2'] },
+    ],
+    issueCount: 3,
+    labels: { part: 'folder', parts: 'folders', group: 'box', groups: 'boxes' },
+  };
+
+  it('counts and offers the link in boxes, not volumes', () => {
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: boxes });
+    expect(html).toContain('2 boxes, 3 folders.');
+    expect(html).toContain('Show the 2 boxes');
+    expect(html).toContain('Add a link to the index on every box (edits 2 items)');
   });
 });

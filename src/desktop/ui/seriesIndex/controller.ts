@@ -84,6 +84,7 @@ export function createIndexController(options: IndexControllerOptions) {
       if (!canBuild(state) || state.preview === null) return;
       const { buildId, existing } = state.preview;
       const linking = state.linkVolumes && canLinkVolumes(state);
+      let linkError: string | null = null;
       const done: string[] = [];
       set({ working: true, error: null, done });
       try {
@@ -113,19 +114,25 @@ export function createIndexController(options: IndexControllerOptions) {
         // After the upload, so a new item exists to point at. Asked here, naming
         // how many items it edits, because it changes records other than the index.
         if (linking) {
+          const L = preview.labels;
           const n = preview.volumes.length;
+          const Groups = L.groups.charAt(0).toUpperCase() + L.groups.slice(1);
           if (preview.existing.kind !== 'one') {
-            done.push('Volumes not linked: the index item was not uploaded.');
+            done.push(`${Groups} not linked: the index item was not uploaded.`);
           } else if (
-            !confirm(`Add a link to the index as the first attachment of ${n} volume items? This edits each of them in openEQUELLA.`)
+            !confirm(
+              `Add a link to the index as the first attachment of ${n} ${n === 1 ? L.group : L.groups}? This edits each of them in openEQUELLA.`,
+            )
           ) {
-            done.push('Volumes not linked: you chose not to edit them.');
+            done.push(`${Groups} not linked: you chose not to edit them.`);
           } else {
             const linked = await options.api.indexLinkVolumes({ buildId });
-            done.push(linkLine(linked, { group: 'volume', groups: 'volumes', heldBack: preview.heldBack.length }));
+            done.push(linkLine(linked, { ...L, heldBack: preview.heldBack.length }));
+            // As visible as the CLI's exit 1: a line in the list is easy to miss.
+            if (linked.failed.length > 0) linkError = `Some ${L.groups} were not linked -- see below.`;
           }
         }
-        set({ working: false, done: [...done], preview });
+        set({ working: false, done: [...done], preview, error: linkError });
       } catch (err) {
         set({ working: false, done: [...done], error: errorMessage(err) });
       }

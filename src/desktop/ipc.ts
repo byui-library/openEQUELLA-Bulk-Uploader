@@ -3,7 +3,7 @@ import type { ItemState, Manifest } from '../core/types.js';
 import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
-import type { ExtractedRow, ProblemsSummary } from '../core/extract/types.js';
+import type { ExtractedRow, ProblemsSummary, SequenceLabels } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
 import type { FolderSummary } from '../core/folderReport.js';
 import type { TemplateSummary } from '../core/extract/templates.js';
@@ -16,6 +16,8 @@ export interface IndexPreview {
   issueCount: number;
   heldBack: { reason: string; items: string[] }[];
   notInSeries: { name: string; reason: string }[];
+  /** The template's own words -- "issue"/"issues", "volume"/"volumes" -- so the screen never says "volume" for boxes. */
+  labels: SequenceLabels;
   existing:
     | { kind: 'none' }
     | { kind: 'one'; status: string }

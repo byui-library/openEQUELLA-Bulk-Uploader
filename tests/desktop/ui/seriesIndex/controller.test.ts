@@ -11,6 +11,7 @@ const preview = (over: Partial<IndexPreview> = {}): IndexPreview => ({
   heldBack: [],
   notInSeries: [],
   existing: { kind: 'none' },
+  labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
   ...over,
 });
 
@@ -152,7 +153,7 @@ describe('index flow controller races', () => {
 });
 
 describe('index flow controller: volume links', () => {
-  function linking(opts: { answers?: boolean[]; existing?: IndexPreview['existing']; heldBack?: IndexPreview['heldBack'] } = {}) {
+  function linking(opts: { answers?: boolean[]; existing?: IndexPreview['existing']; heldBack?: IndexPreview['heldBack']; labels?: IndexPreview['labels']; failed?: boolean } = {}) {
     const calls: string[] = [];
     const answers = [...(opts.answers ?? [])];
     const confirms: string[] = [];
@@ -166,11 +167,12 @@ describe('index flow controller: volume links', () => {
           ],
           existing: opts.existing ?? { kind: 'none' },
           heldBack: opts.heldBack ?? [],
+          ...(opts.labels ? { labels: opts.labels } : {}),
         }),
       indexUpload: async () => (calls.push('upload'), { kind: 'created' as const, url: 'https://x/items/n/0/index.html' }),
       indexLinkVolumes: async (a: { buildId: string }) => (
         calls.push(`link ${a.buildId}`),
-        { added: 1, alreadyThere: 0, failed: [{ heading: 'Vol 2', reason: 'server said no' }] }
+        { added: 1, alreadyThere: 0, failed: opts.failed === false ? [] : [{ heading: 'Vol 2', reason: 'server said no' }] }
       ),
     } as unknown as OeqApi;
     const c = createIndexController({
@@ -193,11 +195,42 @@ describe('index flow controller: volume links', () => {
     await c.build();
     expect(calls).toEqual(['upload', 'link b1']);
     expect(confirms).toEqual([
-      'Add a link to the index as the first attachment of 2 volume items? This edits each of them in openEQUELLA.',
+      'Add a link to the index as the first attachment of 2 volumes? This edits each of them in openEQUELLA.',
     ]);
     expect(c.state().done[1]).toBe(
       'Linked 1 volume to the index (0 already had it). Not linked: Vol 2 -- server said no.',
     );
+  });
+
+  it("speaks the template's words in the confirm and the result", async () => {
+    const { c, confirms } = linking({ labels: { part: 'folder', parts: 'folders', group: 'box', groups: 'boxes' }, failed: false });
+    await c.start();
+    await c.setTemplate('sre');
+    c.setUpload(true);
+    c.setLinkVolumes(true);
+    await c.build();
+    expect(confirms[0]).toBe('Add a link to the index as the first attachment of 2 boxes? This edits each of them in openEQUELLA.');
+    expect(c.state().done[1]).toBe('Linked 1 box to the index (0 already had it).');
+  });
+
+  it('a failed link is an error on screen, not only a line in the list', async () => {
+    const { c } = linking();
+    await c.start();
+    await c.setTemplate('sre');
+    c.setUpload(true);
+    c.setLinkVolumes(true);
+    await c.build();
+    expect(c.state().error).toBe('Some volumes were not linked -- see below.');
+  });
+
+  it('a clean link run sets no error', async () => {
+    const { c } = linking({ failed: false });
+    await c.start();
+    await c.setTemplate('sre');
+    c.setUpload(true);
+    c.setLinkVolumes(true);
+    await c.build();
+    expect(c.state().error).toBeNull();
   });
 
   it('a no skips the links and says so', async () => {

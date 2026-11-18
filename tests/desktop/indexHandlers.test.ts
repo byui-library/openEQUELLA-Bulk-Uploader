@@ -158,6 +158,41 @@ describe('index handlers', () => {
     });
   });
 
+  it("gives the renderer the template's own words", async () => {
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps, newId: () => 'b1' });
+    const preview = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect(preview.labels).toEqual({ part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' });
+  });
+
+  it('never links a held-back item, only the listed volumes', async () => {
+    const edited: string[] = [];
+    const c = connect({
+      searchCollection: async () => [
+        { uuid: 'v1', version: 1, status: 'live', name: 'Fernbrook Vol 1', attachments: [{ type: 'file', filename: 'FQ_1971_Vol1_No1.pdf', uuid: 'a' }] },
+        {
+          uuid: 'held',
+          version: 1,
+          status: 'live',
+          name: 'Fernbrook mixed',
+          attachments: [
+            { type: 'file', filename: 'FQ_1972_Vol2_No1.pdf', uuid: 'b' },
+            { type: 'file', filename: 'FQ_1973_Vol3_No1.pdf', uuid: 'c' },
+          ],
+        },
+      ],
+      getItemBean: async () => ({ attachments: [] }),
+      editItem: async (uuid: string) => {
+        edited.push(uuid);
+      },
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    const preview = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect(preview.heldBack).toHaveLength(1);
+    await h.upload({ buildId: 'b1', draft: true });
+    expect(await h.linkVolumes({ buildId: 'b1' })).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(edited).toEqual(['v1']);
+  });
+
   it('refuses to link volumes before the index item exists', async () => {
     const c = connect();
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });

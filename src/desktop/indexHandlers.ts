@@ -83,6 +83,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         issueCount: build.index.volumes.reduce((n, v) => n + v.issues.length, 0),
         heldBack: build.index.heldBack.map((h) => ({ reason: h.reason, items: h.items.map((i) => i.name) })),
         notInSeries: build.index.notInSeries.map((l) => ({ name: l.name, reason: l.reason })),
+        labels: { ...build.labels },
         existing:
           e.kind === 'one'
             ? { kind: 'one', status: e.status }
