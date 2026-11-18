@@ -20,7 +20,9 @@ From the interview of 2026-11-17:
 - It shows **each volume, then its issues** beneath.
 - The list comes **from openEQUELLA itself** (a search of the collection),
   not from a job file — so it reflects what is actually there, including
-  items uploaded by hand or in other batches.
+  items uploaded by hand or in other batches. *(Revised 2026-11-18 by the
+  operator: a batch record the run keeps is now the main route and the
+  search the second -- section 7.)*
 - The index item's **own record comes from the template**.
 - Rebuilding **updates the same item**; it never creates a second index.
 - The page is **plain and accessible**.
@@ -56,6 +58,14 @@ afterwards (`DELETE …?purge=true` → 204; a later GET → 404).
    `name` — `client.ts#searchByTitle` records that production did not, so
    `name` is used when present and never relied on. **Eight volumes exist
    twice** (15, 22, 25, 27, 31, 35, 36, 37), left by earlier test runs.
+
+   **Two of those observations were wrong, found 2026-11-18.** `status` comes
+   back ONLY when `info` includes `detail` -- the first live preview, asking
+   `basic,attachment`, listed 0 volumes -- so the listing now asks
+   `basic,detail,attachment` and refuses one whose items carry no status. And
+   the "duplicates" were **deleted** copies, which `showall=true` returns:
+   once status is read, nothing is held back. The series on content-test is
+   36 draft volumes and 77 deleted copies.
 2. **Addresses.** `/items/{uuid}/0/` redirects to the latest version's item
    page; `/items/{uuid}/0/{filename}` redirects to
    `/file/{uuid}/{version}/{filename}`, the file itself. `/file/{uuid}/0/…`
@@ -210,8 +220,9 @@ The staging area is deleted on every failure path, as `upload.ts` does.
 Client additions (`src/core/client.ts`):
 
 - `searchCollection(collectionUuid)` — pages through
-  `/api/search` (`length=50`, `start=`), `info=basic,attachment`,
-  `showall=true` (status is then filtered in `collect`), until `available`
+  `/api/search` (`length=50`, `start=`), `info=basic,detail,attachment`
+  (`detail` is what carries `status`), `showall=true` (status is then
+  filtered in `collect`; deleted items come back too), until `available`
   is reached. Applies the guest rule this codebase already learned:
   `available > 0` with no results is reported as "not signed in", never as
   an empty collection.
@@ -404,8 +415,18 @@ as before.
   was written; it names the record's path.
 - *Desktop, Choose*: "Build an index from saved batch records…" — an open
   dialog, several files allowed.
-- *CLI*: `oeq-upload run --index-record <file>`; `oeq-upload index
-  --from-record <file...>` in place of searching the collection.
+- *CLI*: `oeq-upload run --index-record <file>`, titling each item from the
+  declared name path of `run --schema-file` (default the bundled export, as
+  for `plan`); `oeq-upload index --from-record <file...>` in place of
+  searching the collection, in the record's collection.
+
+Both front ends keep the record through ONE lifecycle,
+`batchRecord.ts#runKeepingRecord`: the keeper is updated from the runner's
+progress callback with the manifest the runner hands it (saved before it is
+reported, so never re-read from disk), once more at the end -- a run that
+threw included -- and every write has settled before it returns. A record
+that cannot be written comes back as `indexRecordError`; the run's own
+result is untouched.
 
 **The narrowed search** — a template's `index.titleStartsWith` (a non-blank
 string) becomes `where=/xml/<name path> LIKE '<prefix>%'` on the collection
@@ -443,6 +464,30 @@ wildcard, is allowed: it is common in titles and can only widen the read.
 
 The preview's "not in the series" list names at most 20 items and counts the
 rest.
+
+**A volume held as one file** naming its volume and no issue is labelled
+*"Complete volume (1988)"* in the template's group word (operator,
+2026-11-18; Snake River Echoes 17-20). An unnumbered file beside numbered
+issues keeps its stem: it is a supplement, not the volume.
+
+**Status on a record build.** A record build lists each item in the state it
+was CREATED in; it does not ask openEQUELLA for the item's current status,
+so a volume deleted since the run is still listed. The volume-link step
+fetches each bean anyway and never edits one that is no longer listed
+(`deleted`, `archived`, …), naming it. Deferred, by review, 2026-11-18.
+
+**Also deferred:** the title path is re-derived at `run` time
+(`--schema-file`) rather than recorded in the manifest at `plan` time, where
+the schema was actually read.
+
+**Live run, content-test, 2026-11-18 (search route, `titleStartsWith`):**
+PASSED. Preview 36 volumes / 94 issues in seconds; files saved and opened in
+a browser, volume links, PDF links and the filter working; uploaded as a
+draft index item, rebuilt and updated in place (still one item); the index
+link added to all 36 volumes as first attachment exactly once, PDFs and
+versions unchanged, deleted copies untouched; a second link run added none.
+**The batch-record route has not been run live** -- the operator chose not to
+re-upload the series. It is the main open item.
 
 ## Errors and edge cases
 

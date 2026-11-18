@@ -3081,10 +3081,17 @@ Rules (both front ends):
 
 ### Task 16: Code review, /simplify, and the live run
 
-- [ ] **Step 1:** Run `/code-review` over `main...HEAD`, fix what is real, commit.
-- [ ] **Step 2:** Run `/simplify` over the same range, apply, commit, push.
-- [ ] **Step 3: Live run on content-test (operator present, agreed first).** Desktop app: sign in, choose the Snake River Echoes collection (`7b6aea89-...` on content-test), "Build an index of this collection…", choose Snake River Echoes. Expect: the eight duplicated volumes (15, 22, 25, 27, 31, 35, 36, 37) HELD BACK and named; volumes 16-20 listed through the group pattern. Save as files to a scratch folder and open `index.html` in a browser; upload as a Draft; open the item's `index.html`; follow one volume link and one issue link; type a year into the filter. Then build again and confirm "Updates the existing index item" and that the same item changed. Then tick "Add a link to the index on every volume", confirm, and check in openEQUELLA that a volume's first attachment is "Index of all volumes" and opens the index; build once more with it ticked and confirm the result says every volume already had it.
+- [x] **Step 1:** Run `/code-review` over `main...HEAD`, fix what is real, commit.
+- [x] **Step 2:** Run `/simplify` over the same range, apply, commit, push.
+- [x] **Step 3: Live run on content-test (operator present, agreed first).** Desktop app: sign in, choose the Snake River Echoes collection (`7b6aea89-...` on content-test), "Build an index of this collection…", choose Snake River Echoes. Expect: the eight duplicated volumes (15, 22, 25, 27, 31, 35, 36, 37) HELD BACK and named; volumes 16-20 listed through the group pattern. Save as files to a scratch folder and open `index.html` in a browser; upload as a Draft; open the item's `index.html`; follow one volume link and one issue link; type a year into the filter. Then build again and confirm "Updates the existing index item" and that the same item changed. Then tick "Add a link to the index on every volume", confirm, and check in openEQUELLA that a volume's first attachment is "Index of all volumes" and opens the index; build once more with it ticked and confirm the result says every volume already had it.
+  > **Done 2026-11-18, through the search route narrowed by `titleStartsWith`
+  > (Task 22).** The expectation about held-back volumes was wrong: the "eight
+  > duplicated volumes" were deleted copies, and once the search reads status
+  > (`info=detail`) nothing is held back. Result: 36 volumes, 94 issues; files,
+  > draft upload, rebuild in place and the volume links (all 36 once, then
+  > "36 already had it") all passed. Detail in `docs/SESSION-HANDOFF.md`.
 - [ ] **Step 4:** Record the results in `docs/SESSION-HANDOFF.md`, commit, push; open the PR (read the automated review comments before merging).
+  > Results recorded and pushed 2026-11-18; the PR is NOT yet opened.
 
 ---
 
@@ -3101,13 +3108,13 @@ typecheck`, renderer purity, no `style=`.
 
 **Files:** Create `src/core/seriesIndex/batchRecord.ts`, `tests/seriesIndex/batchRecord.test.ts`.
 
-- [ ] Types `BatchRecord`, `RecordItem { row, uuid, version, title, files: { name, attachmentUuid }[] }`, `RecordLeftOut { row, label, status, error? }`, exactly the JSON in spec section 7 (`kind: 'oeq-batch-record'`, `version: 1`).
-- [ ] `recordFromManifest(manifest, titlePath: string | null, now = new Date()): BatchRecord` -- PURE. `created` entries with an `itemUuid` become items: title = `entry.metadata[titlePath]?.[0]` trimmed, else `rowLabel(entry)`; files = `entry.files[i].name` paired with `entry.attachmentUuids?.[i] ?? ''`, in order. Every other entry (any other status, or created with no uuid) goes to `leftOut` with `rowLabel`, status and error.
-- [ ] `writeBatchRecord(path, record)` -- write to a temp file then rename (see how `saveManifest` in `src/core/state.ts` writes; reuse its helper if one exists).
-- [ ] `readBatchRecords(paths): Promise<BatchRecord>` -- parse each; refuse (ValidationError naming the file) anything not `kind: 'oeq-batch-record'` + `version: 1`, unreadable JSON, or records disagreeing on `baseUrl` (normalised: trailing slash removed) or `collectionUuid`. Combine: items in file order, a uuid already seen is skipped; `leftOut` concatenated; `itemState` 'draft' if any record says draft.
-- [ ] `recordHits(record): IndexHit[]` -- each item -> `{ uuid, version, status: itemState === 'published' ? 'live' : 'draft', name: title, files: files.map(f => ({ filename: f.name, uuid: f.attachmentUuid })) }`.
-- [ ] Tests for each, including: an interrupted manifest (some pending) -> pending entries in leftOut; a folder row with N files keeps order; refused mixes; a duplicate uuid listed once; write -> read round trip.
-- [ ] Commit `feat(index): the batch record -- what a run created, for an index`.
+- [x] Types `BatchRecord`, `RecordItem { row, uuid, version, title, files: { name, attachmentUuid }[] }`, `RecordLeftOut { row, label, status, error? }`, exactly the JSON in spec section 7 (`kind: 'oeq-batch-record'`, `version: 1`).
+- [x] `recordFromManifest(manifest, titlePath: string | null, now = new Date()): BatchRecord` -- PURE. `created` entries with an `itemUuid` become items: title = `entry.metadata[titlePath]?.[0]` trimmed, else `rowLabel(entry)`; files = `entry.files[i].name` paired with `entry.attachmentUuids?.[i] ?? ''`, in order. Every other entry (any other status, or created with no uuid) goes to `leftOut` with `rowLabel`, status and error.
+- [x] `writeBatchRecord(path, record)` -- write to a temp file then rename (see how `saveManifest` in `src/core/state.ts` writes; reuse its helper if one exists).
+- [x] `readBatchRecords(paths): Promise<BatchRecord>` -- parse each; refuse (ValidationError naming the file) anything not `kind: 'oeq-batch-record'` + `version: 1`, unreadable JSON, or records disagreeing on `baseUrl` (normalised: trailing slash removed) or `collectionUuid`. Combine: items in file order, a uuid already seen is skipped; `leftOut` concatenated; `itemState` 'draft' if any record says draft.
+- [x] `recordHits(record): IndexHit[]` -- each item -> `{ uuid, version, status: itemState === 'published' ? 'live' : 'draft', name: title, files: files.map(f => ({ filename: f.name, uuid: f.attachmentUuid })) }`.
+- [x] Tests for each, including: an interrupted manifest (some pending) -> pending entries in leftOut; a folder row with N files keeps order; refused mixes; a duplicate uuid listed once; write -> read round trip.
+- [x] Commit `feat(index): the batch record -- what a run created, for an index`.
 
 ### Task 18: Build from records; narrowed search
 
@@ -3118,47 +3125,63 @@ typecheck`, renderer purity, no `style=`.
 > name path, because `q`'s results were measured to depend on the session. See
 > spec section 7, "The narrowed search". The items below record what was built first.
 
-- [ ] `client.searchCollection(collectionUuid, opts?: { q?: string })` -- a non-empty `q` adds `&q=...`. Mock server: the no-where listing filters by `q` when given (a trailing `*` = prefix match on any attachment filename or the name; else substring), commented as a model, not openEQUELLA's matcher.
-- [ ] Profile `index.search?: string` (non-empty when present), validated beside `groupPatterns`.
-- [ ] `BuildArgs.source: { kind: 'collection' } | { kind: 'record'; record: BatchRecord }`. Collection: as now, passing `profile.index.search` as `q`. Record: NO `searchCollection` call; hits = `recordHits(record)`, still excluding the existing index item's uuid.
-- [ ] `IndexBuild.notCreated: { label, status, error? }[]` from the record's `leftOut` (empty for the collection route); `previewLines` adds `Not created by the run (N): label -- status; ...`.
-- [ ] "Not in the series" names at most 20 items and adds `...and N more.`, in `previewLines` and the desktop screen; the constant lives in `words.ts`.
-- [ ] Tests: the record route makes no search (fake client throws if called); `q` reaches the URL; the cap of 20 with the count.
-- [ ] Commit.
+- [x] `client.searchCollection(collectionUuid, opts?: { q?: string })` -- a non-empty `q` adds `&q=...`. Mock server: the no-where listing filters by `q` when given (a trailing `*` = prefix match on any attachment filename or the name; else substring), commented as a model, not openEQUELLA's matcher.
+- [x] Profile `index.search?: string` (non-empty when present), validated beside `groupPatterns`.
+- [x] `BuildArgs.source: { kind: 'collection' } | { kind: 'record'; record: BatchRecord }`. Collection: as now, passing `profile.index.search` as `q`. Record: NO `searchCollection` call; hits = `recordHits(record)`, still excluding the existing index item's uuid.
+- [x] `IndexBuild.notCreated: { label, status, error? }[]` from the record's `leftOut` (empty for the collection route); `previewLines` adds `Not created by the run (N): label -- status; ...`.
+- [x] "Not in the series" names at most 20 items and adds `...and N more.`, in `previewLines` and the desktop screen; the constant lives in `words.ts`.
+- [x] Tests: the record route makes no search (fake client throws if called); `q` reaches the URL; the cap of 20 with the count.
+- [x] Commit.
 
 ### Task 19: CLI
 
 **Files:** `src/cli/index.ts`, the module holding `runAction`, `src/cli/indexPage.ts`, tests.
 
-- [ ] `oeq-upload run --index-record <file>`: in `onProgress`, reload the manifest from its path (confirm in `runner.ts` that it is saved before progress is reported) and `writeBatchRecord(file, recordFromManifest(m, titlePath))`. `titlePath`: the schema's declared name path in header form, as `plan` resolves it; null when it cannot be resolved. Print `Batch record: <file>` at the end.
-- [ ] `oeq-upload index --from-record <file...>` (variadic): `readBatchRecords`; refuse when the record's `baseUrl` differs (normalised) from the configured site; use the record's `collectionUuid`; `source: { kind: 'record', record }`. Without it, as now, with the template's `search`.
-- [ ] Tests for both flags and the site-mismatch refusal.
-- [ ] Commit.
+- [x] `oeq-upload run --index-record <file>`: in `onProgress`, reload the manifest from its path (confirm in `runner.ts` that it is saved before progress is reported) and `writeBatchRecord(file, recordFromManifest(m, titlePath))`. `titlePath`: the schema's declared name path in header form, as `plan` resolves it; null when it cannot be resolved. Print `Batch record: <file>` at the end.
+- [x] `oeq-upload index --from-record <file...>` (variadic): `readBatchRecords`; refuse when the record's `baseUrl` differs (normalised) from the configured site; use the record's `collectionUuid`; `source: { kind: 'record', record }`. Without it, as now, with the template's `search`.
+- [x] Tests for both flags and the site-mismatch refusal.
+- [x] Commit.
 
 ### Task 20: Desktop main
 
 **Files:** `src/desktop/ipc.ts`, `src/desktop/preload.cts`, `src/desktop/handlers.ts`, `src/desktop/indexHandlers.ts`, tests.
 
-- [ ] `plan` returns `indexRecord: { path, titlePath }` -- path = the spreadsheet's path with its extension replaced by `.index.json`; titlePath = the `titleHeader` the plan handler already has.
-- [ ] `run` args gain `indexRecord?: { path, titlePath }`; when present, `onProgress` reloads the manifest and writes the record. `RunReport` gains `indexRecordPath?` when one was written and `indexRecordError?` when a write failed -- which never fails the run: the items exist either way.
-- [ ] `chooseIndexRecords(): Promise<string[]>` -- open dialog, `.json`, multiSelections.
-- [ ] `indexPreview` args: `{ instanceId, templateId } & ({ collectionUuid } | { recordPaths })`. Record route: `readBatchRecords`; refuse a record whose `baseUrl` is not this instance's (normalised); its `collectionUuid` drives schema resolution, the existing-item search and the upload.
-- [ ] Tests: the record written during a run, a failed record write leaving the run successful, a record preview making no collection search, another site's record refused.
-- [ ] Commit.
+- [x] `plan` returns `indexRecord: { path, titlePath }` -- path = the spreadsheet's path with its extension replaced by `.index.json`; titlePath = the `titleHeader` the plan handler already has.
+- [x] `run` args gain `indexRecord?: { path, titlePath }`; when present, `onProgress` reloads the manifest and writes the record. `RunReport` gains `indexRecordPath?` when one was written and `indexRecordError?` when a write failed -- which never fails the run: the items exist either way.
+- [x] `chooseIndexRecords(): Promise<string[]>` -- open dialog, `.json`, multiSelections.
+- [x] `indexPreview` args: `{ instanceId, templateId } & ({ collectionUuid } | { recordPaths })`. Record route: `readBatchRecords`; refuse a record whose `baseUrl` is not this instance's (normalised); its `collectionUuid` drives schema resolution, the existing-item search and the upload.
+- [x] Tests: the record written during a run, a failed record write leaving the run successful, a record preview making no collection search, another site's record refused.
+- [x] Commit.
 
 ### Task 21: Desktop renderer
 
 **Files:** `src/desktop/ui/screens/review.ts`, `results.ts`, `choose.ts`, `src/desktop/ui/app.ts`, `src/desktop/ui/seriesIndex/{state,controller,screen}.ts`, tests.
 
-- [ ] Review: checkbox `id="keep-index-record"`, "Keep a record of this batch for an index page", the path beneath in a `.path` span; default off; passed to `run`.
-- [ ] Results: with `indexRecordPath`, show it and "Build an index page from this batch..." opening the index flow with `recordPaths: [path]`; `indexRecordError` shown as a warning.
-- [ ] Choose: "Build an index from saved batch records..." -> `chooseIndexRecords()`; non-empty -> the index flow with those paths.
-- [ ] Index flow: `source: { collectionUuid } | { recordPaths }`; the hint says which ("From 2 batch records." / "From a search of this collection."); the preview lists "Not created by the run" when non-empty.
-- [ ] Tests for each control, and that the record route calls `indexPreview` with `recordPaths`.
-- [ ] Commit.
+- [x] Review: checkbox `id="keep-index-record"`, "Keep a record of this batch for an index page", the path beneath in a `.path` span; default off; passed to `run`.
+- [x] Results: with `indexRecordPath`, show it and "Build an index page from this batch..." opening the index flow with `recordPaths: [path]`; `indexRecordError` shown as a warning.
+- [x] Choose: "Build an index from saved batch records..." -> `chooseIndexRecords()`; non-empty -> the index flow with those paths.
+- [x] Index flow: `source: { collectionUuid } | { recordPaths }`; the hint says which ("From 2 batch records." / "From a search of this collection."); the preview lists "Not created by the run" when non-empty.
+- [x] Tests for each control, and that the record route calls `indexPreview` with `recordPaths`.
+- [x] Commit.
 
 ### Task 22: Template, docs, review, live
 
-- [ ] `templates/snake-river-echoes.profile.json`: `"search": "SRE_*"` in `index` -- only once checked against a full read of the content-test collection (spec section 7).
-- [ ] README, CLAUDE.md (status, layout, the `detail` and 50-per-page facts), handoff.
-- [ ] `/code-review` and `/simplify` over the Part 2 commits; then the live run: Task 16 Step 3 through the narrowed search, plus a small batch uploaded with the record kept, its index built from Results, and again later from Choose.
+- [x] `templates/snake-river-echoes.profile.json`: `"search": "SRE_*"` in `index` -- only once checked against a full read of the content-test collection (spec section 7). *Superseded: the check found `q` session-dependent; the template carries `"titleStartsWith": "Snake River"` instead.*
+- [x] README, CLAUDE.md (status, layout, the `detail` and 50-per-page facts), handoff.
+- [x] `/code-review` and `/simplify` over the Part 2 commits (two reviews and a /simplify; every finding fixed).
+- [x] The live run: Task 16 Step 3 through the narrowed search -- PASSED.
+- [ ] A small batch uploaded with the record kept, its index built from Results, and again later from Choose.
+
+**What remains (2026-11-18, end of day):**
+
+- The batch-record live test above -- built and unit-tested, not yet run
+  live, because the operator chose not to re-upload the series. Do it on the
+  next real upload.
+- Task 16 Step 4's PR: open it, read the automated review comments, merge;
+  then release.
+- Deferred from review: record the title path in the manifest at `plan`
+  time instead of `run --schema-file`; a record build does not ask
+  openEQUELLA for items' current status, so the page can list a volume
+  deleted since the run (the link step skips it).
+- Volume 27's unnumbered issue lists first because that is the item's
+  attachment order on content-test; check the item.

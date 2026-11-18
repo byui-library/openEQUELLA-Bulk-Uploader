@@ -2,7 +2,94 @@
 
 Read this first.
 
-## RESUME HERE — 2026-11-18: series index page BUILT
+## RESUME HERE — 2026-11-18 (end of day)
+
+**Where things stand.** The series index page is BUILT, REVIEWED and
+LIVE-TESTED on `feature/series-index` -- pushed, no PR open, not merged, not
+released. Plan Tasks 1-22 done (`docs/superpowers/plans/2026-11-18-series-index.md`),
+spec `docs/superpowers/specs/2026-11-18-series-index-design.md` (section 7 is
+the batch record). `main` does not have any of it.
+
+**Built today, beyond the morning's state below:**
+
+- **The batch record** (spec section 7, operator's design):
+  `src/core/seriesIndex/batchRecord.ts`. A run keeps
+  `<sheet stem>.<site host>.index.json` beside the spreadsheet, rebuilt whole
+  from the manifest after each row, carried forward across runs of the same
+  sheet; another site's or collection's file at the path is never
+  overwritten. An index builds from one or several records with **no
+  collection search**. Desktop: Review's "Keep a record of this batch for an
+  index page" box, Results' "Build an index page from this batch…", Choose's
+  "Build an index from saved batch records…". CLI: `run --index-record
+  <file>` (titled from `--schema-file`'s name path), `index --from-record
+  <file...>`.
+- **The search route, narrowed and made honest:** `info=basic,detail,attachment`
+  so items carry a status; deleted/withdrawn items filtered out;
+  `index.titleStartsWith` sent as a `where` prefix on the schema's name path
+  (`Snake River` in the Snake River Echoes template); gaps in the run named
+  in the preview (*"No volumes found for 10, 11."*, at most 20 named); one-file
+  volumes read *"Complete volume (1988)"* (operator's choice).
+- **The link confirm** now says what the build already did before asking,
+  and names every edit it makes (moved first, repointed, renamed); the result
+  counts updated links separately. The old "add a link?" straight after the
+  upload was read by the operator as "the links are there" -- the
+  understating-confirm rule in CLAUDE.md, again.
+- Two code reviews and a /simplify over the day's work; every finding fixed.
+
+**What was learned live on content-test (all now Key domain facts in
+CLAUDE.md):** search gives `status` only with `info=detail` (the first preview
+listed 0 volumes of 116,086 items, and the mock hid it from 2,759 tests);
+`showall=true` returns deleted items; a page is at most 50 (`length` > 50 is a
+500); free-text `q` is session-dependent (`SRE_*`: 115 items anonymous, 38 all
+deleted signed in) while a `where` title prefix is not (74 to both), and a
+leading wildcard is a 500. The series there is 36 draft volumes and 77 deleted
+copies; volumes 10 and 11 exist only as deleted items; the "eight duplicated
+volumes" expected were deleted copies, so nothing is held back. Two untitled
+drafts hold `SRE_Volume 1-25_Index.pdf` and are listed as not in the series.
+
+**The live run PASSED (search route), operator present:** preview 36
+volumes / 94 issues in seconds; files saved and opened in a browser -- volume
+links, PDF links and the filter all worked; uploaded as a draft index item
+(`b9125457-2021-4402-a52b-010be69d1b16` on content-test); rebuilt and updated
+in place, still one index item; the index link added to all 36 volumes as the
+first attachment exactly once, PDFs and versions unchanged, deleted copies
+untouched; a second link run: *"Linked 0 volumes to the index (36 already had
+it)"*.
+
+**Environment trap:** in the VS Code terminal `ELECTRON_RUN_AS_NODE=1` is set
+and `npm run desktop` fails with *"does not provide an export named
+'BrowserWindow'"*. `Remove-Item Env:ELECTRON_RUN_AS_NODE` first.
+
+**Next, in order:**
+
+1. **Open the PR** from `feature/series-index` to `main`. **Read the
+   automated review comments** (CLAUDE.md Process) and fix what is real;
+   treat each finding as a sample of a class. Merge. Then diff the branch
+   against `main` before deleting it -- a commit pushed after merge is
+   stranded.
+2. **Release**: bump `package.json`, tag `vX.Y.Z`, push the tag; the
+   workflow builds the installers. Tell staff the index page exists and that
+   Review's record box is off unless ticked.
+3. **Live-test the batch-record route on the next real upload** -- built and
+   unit-tested, never run live (the operator chose not to re-upload the
+   series). Tick Review's box; confirm Results names the record file and
+   that it sits beside the spreadsheet; "Build an index page from this
+   batch…" from Results; then later, from Choose, "Build an index from saved
+   batch records…" with the saved file. Check the preview makes no
+   collection search (it should take seconds whatever the collection size).
+4. **The deferred items** (from review, deliberately not done):
+   (a) record the title path in the manifest at `plan` time, instead of
+   `run --schema-file` re-deriving it; (b) a record build does not ask
+   openEQUELLA for items' current status, so the page can list a volume
+   deleted since the run (the link step does check, and skips it).
+5. **Volume 27's order:** its unnumbered commemorative issue lists FIRST on
+   the index because that is the item's attachment order on content-test;
+   CLAUDE.md says it was meant to be attached last. Check the item in
+   openEQUELLA -- not a page bug.
+
+## History: 2026-11-18 (morning) — series index page BUILT
+
+Superseded by the section above; kept as the record.
 
 **What was built**, on `feature/series-index` (not merged, not released;
 spec `docs/superpowers/specs/2026-11-18-series-index-design.md`, plan

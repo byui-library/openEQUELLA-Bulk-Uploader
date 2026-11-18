@@ -158,18 +158,29 @@ template's fixed sentence, never replacing it. Run live with the operator's
 model on 2026-11-17 ("worked very well"). Next: the series index page.
 Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
-**The series index page is BUILT, on `feature/series-index`** (2026-11-18),
-not yet merged or released. One page listing every volume of a serial, each
-linking to its item and each issue to its PDF, built from a SEARCH of the
-collection -- never a job file -- as `index.html`/`.css`/`.js`, saved to a
-folder for another web server and/or uploaded as one openEQUELLA item that a
-rebuild updates in place. `oeq-upload index` and "Build an index of this
-collection…" on Choose and Results. Draft and live volumes are listed alike;
-a volume two items claim is HELD BACK and named, never guessed; a partial
-listing builds nothing. Optionally a link to the index becomes every listed
-volume's first attachment, idempotently. Still to do: code review and
-/simplify of the branch, then the live run on content-test (plan Task 16),
-then PR, merge, release.
+**The series index page is BUILT, REVIEWED and LIVE-TESTED, on
+`feature/series-index`** (2026-11-18), not yet merged or released. One page
+listing every volume of a serial, each linking to its item and each issue to
+its PDF, as `index.html`/`.css`/`.js`, saved to a folder for another web
+server and/or uploaded as one openEQUELLA item that a rebuild updates in
+place. Built from one of two sources: **a batch record** the run keeps beside
+the spreadsheet (`<sheet stem>.<site host>.index.json`, the main route, by the
+operator's design), or **a search of the collection**, narrowed by the
+template's `index.titleStartsWith`, for series uploaded before records
+existed. `oeq-upload index [--from-record <file...>]`, `run --index-record`;
+on the desktop Review's "Keep a record of this batch…" box, Results' "Build an
+index page from this batch…", and Choose's "Build an index of this
+collection…" / "Build an index from saved batch records…". Draft and live
+volumes are listed alike; a volume two items claim is HELD BACK and named,
+never guessed; a partial listing builds nothing; gaps in the run are named.
+Optionally a link to the index becomes every listed volume's first
+attachment, idempotently. Two code reviews and a /simplify ran over it, all
+findings fixed. **The live run PASSED on content-test through the search
+route** (36 volumes, 94 issues; files, upload as draft, rebuild in place, links
+added to all 36 exactly once, a second link run adding none). **The
+batch-record route is unit-tested but NOT yet run live** -- the operator chose
+not to re-upload the series; do it on the next real upload. Still to do: PR,
+merge, release.
 Design: [docs/superpowers/specs/2026-11-18-series-index-design.md](docs/superpowers/specs/2026-11-18-series-index-design.md).
 
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
@@ -285,6 +296,10 @@ src/core/seriesIndex/  The series index page. collect (hits -> volumes; holds ba
                   guesses), render (three deterministic files), record (the item's record
                   from the template), publish (create, or update in place), links (the
                   index link on every volume), build (ONE build for CLI and desktop).
+  batchRecord.ts    What a run created, for an index: a projection of the manifest,
+                    rewritten whole after every row, carried forward across runs of
+                    one sheet. runKeepingRecord is the ONE lifecycle CLI and desktop
+                    share; a record that cannot be written never fails the run.
 src/cli/          plan | run | status | retry | login | logout | check | extract | index
   indexPage.ts      `oeq-upload index`. Flag rules checked before any I/O.
 src/mcp/          Nine MCP tools
@@ -576,6 +591,41 @@ shape, never as a value the code may assume.
   without touching the files, and openEQUELLA's item page lists attachments
   in the order sent (2026-11-18). Send no `file` at all then: what was
   checked is its absence, never an empty `?file=`.
+- **`/api/search` returns an item's `status` ONLY when `info` includes
+  `detail`.** `info=basic` gives uuid, version, name, description and links,
+  and nothing else (content-test, 2026-11-18). The index asked for
+  `basic,attachment`, so no item carried a status, and the first live preview
+  listed **0 volumes**, filing all 116,086 items in the collection as "not in
+  the series". 2,759 tests could not see it, because the mock sent `status`
+  whatever `info` asked for. The mock now models `info`, and a listing whose
+  items carry no status is refused rather than read as "nothing listed".
+- **`showall=true` returns DELETED items too.** It is mandatory (see the
+  duplicate-check bullet), so every reader of a search must filter by status
+  itself. The index lists only `live`, `draft`, `moderating` and `review`; a
+  deleted index item is never updated in place; and the volume-link step
+  never edits a deleted or archived volume. On content-test the Snake River
+  Echoes series is 36 draft volumes beside **77 deleted copies** -- the
+  "eight duplicated volumes" expected before the live run were deleted
+  copies, and nothing is held back once status is read. Volumes 10 and 11
+  exist only as deleted items, which is why the preview names gaps.
+- **A search page is at most 50 items.** `length` over 50 answers **500**,
+  *"Length must be less than or equal to 50"* (content-test, 2026-11-18). The
+  Snake River Echoes volumes share their collection with 116,086 other items,
+  so reading it whole is 2,322 requests, about 15-25 minutes. That is why the
+  batch record exists.
+- **Free-text `q` depends on WHO ASKS; a `where` prefix does not.**
+  `q=SRE_*` returned 115 items to an anonymous session and **38 to the
+  signed-in operator -- all deleted, every live volume missing**
+  (content-test, 2026-11-18). A full anonymous read of the collection matched
+  the anonymous `q` exactly, and that proved nothing about the signed-in
+  user: **a check run as one identity does not establish behaviour for
+  another.** `where=/xml/MWDL/title LIKE 'Snake River%'` returned the same 74
+  items to both, every volume among them. A LIKE that STARTS with a wildcard
+  is refused -- **500**, *"Like queries must not start with wildcard"* -- so
+  only a prefix can be expressed, and a `where` LIKE on
+  `/xml/item/attachments/attachment/file` matched nothing. Hence the
+  template's `index.titleStartsWith`, sent on the schema's declared name
+  path: a `%` in it is refused, a `_` allowed (it can only widen the read).
 - **A description is one or two paragraphs -- 1,000 characters -- and a
   section that never ends is not one.** The first live folder batch
   (2026-11-17) uploaded 4,000-character passages from the middle of a
@@ -908,3 +958,8 @@ shape, never as a value the code may assume.
   against the bundled export and reports columns as unvalidated — blocking the
   offline half of the tool on a network call nobody asked for would trade a
   real capability for a check.
+- **`npm run desktop` fails in the VS Code terminal** with *"does not provide
+  an export named 'BrowserWindow'"*, because that shell sets
+  `ELECTRON_RUN_AS_NODE=1`, which makes Electron run as plain Node. Clear it
+  first: `Remove-Item Env:ELECTRON_RUN_AS_NODE` (PowerShell) or
+  `unset ELECTRON_RUN_AS_NODE` (bash). Not a build fault (2026-11-18).
