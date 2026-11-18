@@ -72,31 +72,34 @@ export async function publishIndex(client: IndexClient, args: PublishArgs): Prom
   try {
     for (const name of INDEX_FILE_NAMES) await client.uploadToStaging(staging, name, args.files[name]);
 
-    if (existing.kind === 'none') {
+    const bean = existing.kind === 'one' ? await client.getItemBean(existing.uuid, existing.version) : null;
+    const current =
+      bean !== null && Array.isArray(bean['attachments']) ? (bean['attachments'] as Record<string, unknown>[]) : [];
+    const names = new Set<unknown>(INDEX_FILE_NAMES);
+    const isOurs = (a: Record<string, unknown>) => a['type'] === 'file' && names.has(a['filename']);
+    const kept = new Map<unknown, string>();
+    for (const a of current) {
+      if (isOurs(a) && typeof a['uuid'] === 'string' && !kept.has(a['filename'])) kept.set(a['filename'], a['uuid']);
+    }
+    const ours = INDEX_FILE_NAMES.map((name) => ({
+      type: 'file',
+      filename: name,
+      description: name,
+      uuid: kept.get(name) ?? randomUUID(),
+    }));
+
+    if (existing.kind === 'none' || bean === null) {
       const created = await client.createItem({
         collectionUuid: args.collectionUuid,
         metadata: buildMetadataXml(args.record.fields),
         stagingUuid: staging,
         draft: args.draft,
-        attachments: INDEX_FILE_NAMES.map((name) => ({ filename: name, description: name, uuid: randomUUID() })),
+        attachments: ours,
       });
       return { kind: 'created', uuid: created.uuid, version: created.version };
     }
 
-    const bean = await client.getItemBean(existing.uuid, existing.version);
-    const current = Array.isArray(bean['attachments']) ? (bean['attachments'] as Record<string, unknown>[]) : [];
-    const ours = new Set<string>(INDEX_FILE_NAMES);
-    const uuidOf = (name: string) =>
-      current.find((a) => a['type'] === 'file' && a['filename'] === name)?.['uuid'];
-    const attachments = [
-      ...INDEX_FILE_NAMES.map((name) => ({
-        type: 'file',
-        filename: name,
-        description: name,
-        uuid: typeof uuidOf(name) === 'string' ? (uuidOf(name) as string) : randomUUID(),
-      })),
-      ...current.filter((a) => !(a['type'] === 'file' && ours.has(String(a['filename'])))),
-    ];
+    const attachments = [...ours, ...current.filter((a) => !isOurs(a))];
     // MERGED, never rebuilt: the item's other fields are a cataloguer's, not ours.
     const existingXml = typeof bean['metadata'] === 'string' ? bean['metadata'] : '';
     const metadata = mergeMetadataXml(existingXml, args.record.fields);
