@@ -24,6 +24,7 @@ import { checkLock } from '../core/lock.js';
 import { OeqError, ValidationError } from '../core/errors.js';
 import { rowLabel, type ItemState } from '../core/types.js';
 import { runExtract, type ExtractCliOptions } from './extract.js';
+import { indexAction, type IndexCliOptions } from './indexPage.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -832,6 +833,21 @@ export function buildProgram(env: Env = process.env): Command {
       // influence, which is invisible until a test or an embedder passes an
       // environment and finds it silently ignored.
       await runExtract(o, (message) => console.log(message), env);
+    });
+
+  program
+    .command('index')
+    .description(
+      "Build a series' index page from what is in openEQUELLA. With no --out or --upload, previews only.",
+    )
+    .requiredOption('--template <path>', 'a template with sequence patterns and an "index" section')
+    .option('--out <dir>', 'save index.html, index.css and index.js to this folder')
+    .option('--force', 'replace those three files if the folder already has them')
+    .option('--upload', 'create the index item, or update the existing one in place')
+    .option('--draft', 'with --upload: a NEW index item is a draft')
+    .option('--publish', 'with --upload: a NEW index item is published')
+    .action(async (o: IndexCliOptions) => {
+      process.exitCode = await indexAction(o, env);
     });
 
   return program;
