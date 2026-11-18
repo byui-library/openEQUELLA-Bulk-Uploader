@@ -3,25 +3,20 @@ import { escapeHtml } from '../dom.js';
 import type { IndexPreview } from '../../ipc.js';
 import { canBuild, canLinkVolumes, type IndexFlowState } from './state.js';
 import type { IndexController } from './controller.js';
-import { plural } from '../../../core/seriesIndex/words.js';
+import { existingNote, plural } from '../../../core/seriesIndex/words.js';
 
 const isBusy = (s: IndexFlowState) => s.working || s.loading;
 
 function existingMarkup(s: IndexFlowState, e: IndexPreview['existing']): string {
   const dis = isBusy(s) ? ' disabled' : '';
-  switch (e.kind) {
-    case 'one':
-      return `<p class="note">Updates the existing index item, which stays ${escapeHtml(e.status)}.</p>`;
-    case 'many':
-      return `<p class="error">Cannot upload: ${e.names.length} items carry this index's identifier (${escapeHtml(e.names.join(', '))}). Remove the extra ones in openEQUELLA, then preview again.</p>`;
-    case 'unavailable':
-      return `<p class="error">Cannot upload: ${escapeHtml(e.reason)}</p>`;
-    case 'none':
-      return `
+  if (e.kind === 'none') {
+    return `
         <p>A new index item will be created as:</p>
         <label><input type="radio" name="index-state" id="index-draft"${dis} ${s.draft ? 'checked' : ''}> Draft</label>
         <label><input type="radio" name="index-state" id="index-publish"${dis} ${s.draft ? '' : 'checked'}> Published</label>`;
   }
+  const { tone, text } = existingNote(e);
+  return `<p class="${tone}">${escapeHtml(text)}</p>`;
 }
 
 function previewMarkup(s: IndexFlowState, p: IndexPreview): string {

@@ -124,7 +124,7 @@ describe('buildIndex', () => {
     const b = await buildIndex({ client, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', profile, schema });
     expect(previewLines(b)).toEqual([
       '1 volume, 1 issue.',
-      'openEQUELLA: updates the existing index item, which stays live.',
+      'Updates the existing index item, which stays live.',
     ]);
   });
 });

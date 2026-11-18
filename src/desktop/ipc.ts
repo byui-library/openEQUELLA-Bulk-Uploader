@@ -7,6 +7,7 @@ import type { ExtractedRow, ProblemsSummary, SequenceLabels } from '../core/extr
 import type { DuplicateFinding } from '../core/duplicates.js';
 import type { FolderSummary } from '../core/folderReport.js';
 import type { TemplateSummary } from '../core/extract/templates.js';
+import type { ExistingView } from '../core/seriesIndex/words.js';
 
 /** What the renderer is shown of one index build; the build itself stays in the main process. */
 export interface IndexPreview {
@@ -18,11 +19,8 @@ export interface IndexPreview {
   notInSeries: { name: string; reason: string }[];
   /** The template's own words -- "issue"/"issues", "volume"/"volumes" -- so the screen never says "volume" for boxes. */
   labels: SequenceLabels;
-  existing:
-    | { kind: 'none' }
-    | { kind: 'one'; status: string }
-    | { kind: 'many'; names: string[] }
-    | { kind: 'unavailable'; reason: string };
+  /** No uuids: they stay with the build in the main process. */
+  existing: ExistingView;
 }
 export type IndexSaveResult = { kind: 'saved'; paths: string[] } | { kind: 'exists'; names: string[] };
 export interface IndexUploadResult {

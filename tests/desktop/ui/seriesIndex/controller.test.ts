@@ -89,7 +89,7 @@ describe('index flow controller', () => {
   });
 
   it('cannot build an upload the server would refuse', () => {
-    const s = { ...initialIndexState(), preview: preview({ existing: { kind: 'many', names: ['A', 'B'] } }), upload: true };
+    const s = { ...initialIndexState(), preview: preview({ existing: { kind: 'many', items: [{ name: 'A' }, { name: 'B' }] } }), upload: true };
     expect(canBuild(s)).toBe(false);
   });
 });

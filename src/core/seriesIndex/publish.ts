@@ -5,6 +5,7 @@ import { ValidationError } from '../errors.js';
 import { buildMetadataXml, mergeMetadataXml } from '../metadata.js';
 import type { IndexRecord } from './record.js';
 import { INDEX_FILE_NAMES, type IndexFiles } from './types.js';
+import { existingNote } from './words.js';
 
 /**
  * The openEQUELLA destination. ONE index item per identifier: none -> create,
@@ -63,13 +64,8 @@ export type PublishResult = { kind: 'created' | 'updated'; uuid: string; version
 
 export async function publishIndex(client: IndexClient, args: PublishArgs): Promise<PublishResult> {
   const { existing } = args;
-  if (existing.kind === 'unavailable') throw new ValidationError(existing.reason);
-  if (existing.kind === 'many') {
-    throw new ValidationError(
-      `${existing.items.length} items already carry this index's identifier (${existing.items
-        .map((i) => i.name)
-        .join(', ')}). Remove the extra ones in openEQUELLA, then build again.`,
-    );
+  if (existing.kind === 'unavailable' || existing.kind === 'many') {
+    throw new ValidationError(existingNote(existing).text);
   }
 
   const staging = await client.createStagingArea();

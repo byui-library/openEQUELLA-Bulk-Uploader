@@ -9,7 +9,7 @@ import { findExistingIndex, type ExistingIndex, type IndexClient } from './publi
 import { indexRecord, type IndexRecord, type IndexSchema } from './record.js';
 import { renderIndex } from './render.js';
 import type { IndexFiles, IndexHit, SeriesIndex } from './types.js';
-import { plural } from './words.js';
+import { existingNote, plural } from './words.js';
 
 /**
  * ONE build, used by the CLI and the desktop alike, so the preview, the files
@@ -98,21 +98,6 @@ export function previewLines(b: IndexBuild): string[] {
         b.index.notInSeries.map((l) => `${l.name} -- ${l.reason}`).join('; '),
     );
   }
-  lines.push(existingLine(b.existing));
+  lines.push(existingNote(b.existing).text);
   return lines;
-}
-
-export function existingLine(existing: ExistingIndex): string {
-  switch (existing.kind) {
-    case 'none':
-      return 'openEQUELLA: creates a new index item.';
-    case 'one':
-      return `openEQUELLA: updates the existing index item, which stays ${existing.status}.`;
-    case 'many':
-      return `openEQUELLA: refused -- ${existing.items.length} items carry this identifier (${existing.items
-        .map((i) => i.name)
-        .join(', ')}).`;
-    case 'unavailable':
-      return `openEQUELLA: unavailable -- ${existing.reason}`;
-  }
 }

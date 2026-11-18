@@ -134,7 +134,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
           e.kind === 'one'
             ? { kind: 'one', status: e.status }
             : e.kind === 'many'
-              ? { kind: 'many', names: e.items.map((i) => i.name) }
+              ? { kind: 'many', items: e.items.map(({ name }) => ({ name })) }
               : e,
       };
     },
