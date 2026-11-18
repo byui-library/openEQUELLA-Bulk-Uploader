@@ -88,6 +88,30 @@ describe('linkVolumes', () => {
     expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [{ heading: 'Vol 1', reason: 'server said no' }] });
   });
 
+  it('never edits a volume that is deleted or otherwise withdrawn, and names it', async () => {
+    const f = fake({
+      v1: { status: 'deleted', attachments: [file('a.pdf')] },
+      v2: { status: 'archived', attachments: [file('b.pdf')] },
+      v3: { status: 'live', attachments: [file('c.pdf')] },
+      v4: { status: 'draft', attachments: [file('d.pdf')] },
+    });
+    const r = await linkVolumes(
+      f.client,
+      ['v1', 'v2', 'v3', 'v4'].map((uuid, i) => ({ uuid, version: 1, heading: `Vol ${i + 1}` })),
+      URL_,
+      'Index of all volumes',
+    );
+    expect(f.edits.map((e) => e.uuid)).toEqual(['v3', 'v4']);
+    expect(r).toEqual({
+      added: 2,
+      alreadyThere: 0,
+      failed: [
+        { heading: 'Vol 1', reason: 'it is deleted in openEQUELLA, so it was not edited' },
+        { heading: 'Vol 2', reason: 'it is archived in openEQUELLA, so it was not edited' },
+      ],
+    });
+  });
+
   it('builds the index page address from the index item', () => {
     expect(indexPageUrl('https://oeq.example.edu/repo', 'idx')).toBe('https://oeq.example.edu/repo/items/idx/0/index.html');
   });

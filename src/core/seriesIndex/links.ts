@@ -1,6 +1,6 @@
 // src/core/seriesIndex/links.ts
 import { describeReason } from '../errorReason.js';
-import { itemUrl } from './collect.js';
+import { isListed, itemUrl } from './collect.js';
 import { plural } from './words.js';
 
 /**
@@ -56,6 +56,13 @@ export async function linkVolumes(
   for (const v of volumes) {
     try {
       const bean = await client.getItemBean(v.uuid, v.version);
+      // A volume from a batch record may since have been deleted (or archived,
+      // ...): editing it would put a withdrawn item's record back in play.
+      const status = bean['status'];
+      if (typeof status === 'string' && !isListed(status)) {
+        result.failed.push({ heading: v.heading, reason: `it is ${status} in openEQUELLA, so it was not edited` });
+        continue;
+      }
       const current = Array.isArray(bean['attachments']) ? (bean['attachments'] as Record<string, unknown>[]) : [];
       const byUrl = current.findIndex((a) => a['type'] === 'url' && a['url'] === url);
       // A link carrying our label but another url is a REBUILT index's old
