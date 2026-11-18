@@ -100,7 +100,6 @@ export async function publishIndex(client: IndexClient, args: PublishArgs): Prom
     }
 
     const attachments = [...ours, ...current.filter((a) => !isOurs(a))];
-    // MERGED, never rebuilt: the item's other fields are a cataloguer's, not ours.
     const existingXml = typeof bean['metadata'] === 'string' ? bean['metadata'] : '';
     const metadata = mergeMetadataXml(existingXml, args.record.fields);
     await client.editItem(existing.uuid, existing.version, { ...bean, metadata, attachments }, staging);
