@@ -26,6 +26,9 @@ export interface IndexVolume {
   group: number;
   heading: string;
   itemUrl: string;
+  /** The volume's item, so the index link can be added to it. */
+  uuid: string;
+  version: number;
   issues: IndexIssue[];
 }
 

@@ -23,7 +23,7 @@ export interface IndexClient {
   deleteStagingArea(uuid: string): Promise<void>;
   createItem(req: CreateItemRequest): Promise<CreateItemResult>;
   getItemBean(uuid: string, version: number): Promise<Record<string, unknown>>;
-  editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid: string): Promise<void>;
+  editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid?: string): Promise<void>;
 }
 
 export type ExistingIndex =

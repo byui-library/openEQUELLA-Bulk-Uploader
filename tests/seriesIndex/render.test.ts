@@ -8,7 +8,7 @@ const index: SeriesIndex = {
     {
       group: 1,
       heading: 'Fernbrook <Quarterly> "One"',
-      itemUrl: 'https://oeq.example.edu/items/u1/0/',
+      itemUrl: 'https://oeq.example.edu/items/u1/0/', uuid: 'u1', version: 1,
       issues: [{ label: 'Issue 1 (1971)', url: 'https://oeq.example.edu/items/u1/0/FQ_No2%263.pdf' }],
     },
   ],

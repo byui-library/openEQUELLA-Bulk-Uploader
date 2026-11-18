@@ -424,8 +424,8 @@ export async function startMockServer(): Promise<MockServer> {
         });
       }
       if (itemAt && req.method === 'PUT') {
-        const staging = url.searchParams.get('file');
-        if (!staging || !state.stagingAreas.has(staging)) return send(res, 404, { error: 'no such staging area' });
+        const staging = url.searchParams.get('file') ?? '';
+        if (staging !== '' && !state.stagingAreas.has(staging)) return send(res, 404, { error: 'no such staging area' });
         const bean = JSON.parse((await readBody(req)).toString('utf8')) as Record<string, unknown>;
         state.edits.push({ uuid: itemAt[1]!, version: Number(itemAt[2]), staging, bean });
         return send(res, 200, '');

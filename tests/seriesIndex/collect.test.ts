@@ -31,6 +31,7 @@ describe('collectIndex', () => {
     expect(index.volumes.map((v) => v.group)).toEqual([2, 10]);
     expect(index.volumes[0]!.issues.map((i) => i.label)).toEqual(['Issue 1 (1972)', 'Issue 2 (1972–1973)']);
     expect(index.volumes[0]!.itemUrl).toBe(`${BASE}/items/v2/0/`);
+    expect(index.volumes[0]).toMatchObject({ uuid: 'v2', version: 1 });
     expect(index.volumes[0]!.issues[0]!.url).toBe(`${BASE}/items/v2/0/FQ_1972_Vol2_No1.pdf`);
   });
 

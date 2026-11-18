@@ -108,6 +108,8 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
       group,
       heading: hit.name?.trim() || `${capital(labels.group)} ${group}`,
       itemUrl: itemUrl(base, hit.uuid),
+      uuid: hit.uuid,
+      version: hit.version,
       issues: hit.files.map((f, i) => ({
         label: issueLabel(reads[i] ?? null, f.filename, labels),
         url: fileUrl(base, hit.uuid, f.filename),

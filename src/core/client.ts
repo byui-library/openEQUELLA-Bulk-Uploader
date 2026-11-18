@@ -664,9 +664,10 @@ export class OeqClient {
    * ?file={staging}` with its bean. CONFIRMED on content-test 2026-11-17: same
    * item, same version, same attachment uuids, files replaced, title changed.
    */
-  async editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid: string): Promise<void> {
+  async editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid?: string): Promise<void> {
+    const query = stagingUuid === undefined ? '' : `?file=${encodeURIComponent(stagingUuid)}`;
     await this.request(
-      `/api/item/${encodeURIComponent(uuid)}/${version}/?file=${encodeURIComponent(stagingUuid)}`,
+      `/api/item/${encodeURIComponent(uuid)}/${version}/${query}`,
       { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bean) },
     );
   }
