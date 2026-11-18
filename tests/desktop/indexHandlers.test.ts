@@ -216,6 +216,90 @@ describe('index handlers', () => {
     expect(edits).toEqual(['v1 "https://oeq.example.edu/items/old/0/index.html"']);
   });
 
+  it('every upload and link signs in afresh, never reusing the preview connection', async () => {
+    const c = connect({
+      getItemBean: async () => ({ attachments: [] }),
+    });
+    let n = 0;
+    const deps = async (id: string) => {
+      n++;
+      expect(id).toBe('i');
+      return c.deps();
+    };
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect(n).toBe(1);
+    await h.upload({ buildId: 'b1', draft: true });
+    expect(n).toBe(2);
+    await h.linkVolumes({ buildId: 'b1' });
+    expect(n).toBe(3);
+  });
+
+  it('a session that is guest by upload time refuses before any write', async () => {
+    const writes: string[] = [];
+    let guest = false;
+    const c = connect({
+      currentUser: async () => ({ id: 'u', username: guest ? 'guest' : 'u', firstName: '', lastName: '', guest }),
+      createStagingArea: async () => (writes.push('stage'), 'stg'),
+      editItem: async () => {
+        writes.push('edit');
+      },
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    guest = true;
+    await expect(h.upload({ buildId: 'b1', draft: true })).rejects.toThrow();
+    await expect(h.linkVolumes({ buildId: 'b1' })).rejects.toThrow();
+    expect(writes).toEqual([]);
+    expect(c.created).toEqual([]);
+  });
+
+  it('an index item created since the preview is UPDATED, not duplicated', async () => {
+    let appeared = false;
+    const c = connect({
+      findByField: async () =>
+        appeared ? [{ uuid: 'other', version: 3, status: 'live', name: 'Fernbrook index', attachments: [] }] : [],
+      getItemBean: async () => ({ metadata: '<xml/>', attachments: [] }),
+    });
+    const edited: string[] = [];
+    const client = (await c.deps()).client;
+    const deps = async (): Promise<IndexConnection> => ({
+      ...(await c.deps()),
+      client: {
+        ...client,
+        editItem: async (uuid: string) => {
+          edited.push(uuid);
+        },
+      } as IndexConnection['client'],
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: deps, newId: () => 'b1' });
+    const preview = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect(preview.existing).toEqual({ kind: 'none' });
+    appeared = true;
+    const up = await h.upload({ buildId: 'b1', draft: true });
+    expect(up).toEqual({ kind: 'updated', url: 'https://oeq.example.edu/items/other/0/index.html' });
+    expect(c.created).toEqual([]);
+    expect(edited).toEqual(['other']);
+  });
+
+  it('refuses an upload when several index items have appeared since the preview', async () => {
+    let appeared = false;
+    const c = connect({
+      findByField: async () =>
+        appeared
+          ? [
+              { uuid: 'x', version: 1, status: 'live', name: 'X', attachments: [] },
+              { uuid: 'y', version: 1, status: 'live', name: 'Y', attachments: [] },
+            ]
+          : [],
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    appeared = true;
+    await expect(h.upload({ buildId: 'b1', draft: true })).rejects.toThrow(/X, Y/);
+    expect(c.created).toEqual([]);
+  });
+
   it('saves the build to a folder, reporting files already there', async () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps, newId: () => 'b1' });
     await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });

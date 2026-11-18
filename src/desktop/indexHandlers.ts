@@ -9,7 +9,7 @@ import { ValidationError } from '../core/errors.js';
 import { listTemplates, loadTemplate, type TemplateSummary } from '../core/extract/templates.js';
 import { buildIndex, resolveIndexSchema, type IndexBuild } from '../core/seriesIndex/build.js';
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
-import { publishIndex, type IndexClient } from '../core/seriesIndex/publish.js';
+import { findExistingIndex, publishIndex, type IndexClient } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
 import { indexPageUrl, linkVolumes, type LinkResult } from '../core/seriesIndex/links.js';
 
@@ -17,6 +17,12 @@ import { indexPageUrl, linkVolumes, type LinkResult } from '../core/seriesIndex/
  * The series index's main-process side. The BUILD STAYS HERE, held by id, and
  * the renderer gets a summary: saving and uploading then use the exact bytes
  * the operator previewed, and a new preview supersedes the old id.
+ *
+ * WHAT IS HELD IS THE BUILD, NEVER THE SESSION. Every write -- upload, link --
+ * connects afresh and checks it is not a guest: a session openEQUELLA has
+ * since expired is answered as the guest with 200 and empty data, never a 401
+ * (CLAUDE.md). And the upload asks again which index item exists, because one
+ * may have been made since the preview -- by another operator, or by the CLI.
  */
 
 export type IndexConnection = {
@@ -39,7 +45,20 @@ export interface IndexHandlerDeps {
 
 export function createIndexHandlers(deps: IndexHandlerDeps) {
   const newId = deps.newId ?? randomUUID;
-  let held: { id: string; build: IndexBuild; connection: IndexConnection } | null = null;
+  let held: {
+    id: string;
+    build: IndexBuild;
+    instanceId: string;
+    /** The item THIS preview's upload created, while search may not list it yet. */
+    created: { uuid: string; version: number; status: string } | null;
+  } | null = null;
+
+  /** A fresh session for one write, refused if openEQUELLA answers it as the guest. */
+  const signedIn = async (instanceId: string, action: string): Promise<IndexConnection> => {
+    const connection = await deps.connect(instanceId);
+    assertNotGuest(await connection.client.currentUser(), `Sign in to this site again, then ${action}.`);
+    return connection;
+  };
 
   const take = (buildId: string) => {
     if (held === null || held.id !== buildId) {
@@ -74,7 +93,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         schema,
       });
       const id = newId();
-      held = { id, build, connection };
+      held = { id, build, instanceId: args.instanceId, created: null };
       const e = build.existing;
       return {
         buildId: id,
@@ -98,32 +117,38 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
     },
 
     async upload(args: Parameters<OeqApi['indexUpload']>[0]): Promise<IndexUploadResult> {
-      const { build, connection } = take(args.buildId);
+      const h = take(args.buildId);
+      const { build } = h;
+      const connection = await signedIn(h.instanceId, 'upload the index');
+      // Asked again, not trusted from the preview: an item made since then is
+      // updated, never duplicated; several now, or none findable, is refused by
+      // publishIndex. The one exception is the item THIS preview created --
+      // search may not list it yet, and "none" must not duplicate it.
+      let existing = await findExistingIndex(connection.client, build.collectionUuid, build.record);
+      if (existing.kind === 'none' && h.created !== null) existing = { kind: 'one', ...h.created };
       const result = await publishIndex(connection.client, {
         collectionUuid: build.collectionUuid,
         record: build.record,
         files: build.files,
-        existing: build.existing,
+        existing,
         draft: args.draft,
       });
       // The item now exists: a second upload from this same preview must update
       // it, not create a duplicate. `held` stays, so later steps can use it.
-      build.existing = {
-        kind: 'one',
-        uuid: result.uuid,
-        version: result.version,
-        status:
-          build.existing.kind === 'one' ? build.existing.status : args.draft ? 'draft' : 'live',
-      };
+      const status = existing.kind === 'one' ? existing.status : args.draft ? 'draft' : 'live';
+      if (result.kind === 'created') h.created = { uuid: result.uuid, version: result.version, status };
+      build.existing = { kind: 'one', uuid: result.uuid, version: result.version, status };
       return { kind: result.kind, url: `${itemUrl(connection.baseUrl, result.uuid)}index.html` };
     },
 
     async linkVolumes(args: Parameters<OeqApi['indexLinkVolumes']>[0]): Promise<LinkResult> {
-      const { build, connection } = take(args.buildId);
+      const h = take(args.buildId);
+      const { build } = h;
       // `existing` is 'one' when the item was found at preview time, or once
       // `upload` above has created it -- either way it names the item to link to.
       const e = build.existing;
       if (e.kind !== 'one') throw new ValidationError('Upload the index item first.');
+      const connection = await signedIn(h.instanceId, 'link the volumes');
       return linkVolumes(
         connection.client,
         build.index.volumes,
