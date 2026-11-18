@@ -31,6 +31,8 @@ export interface BatchState {
   duplicateChoices: Record<number, DuplicateChoice>;
   /** Row number -> a folder's file order chosen on Review. Absent means the planned order. */
   folderOrders: Record<number, string[]>;
+  /** Review's "Keep a record of this batch for an index page". Off unless ticked, every batch. */
+  keepIndexRecord: boolean;
 
   itemState: ItemState;
   typedCount: string;
@@ -74,6 +76,7 @@ export function clearedForNextBatch(): BatchState {
     duplicates: [],
     duplicateChoices: {},
     folderOrders: {},
+    keepIndexRecord: false,
 
     itemState: 'draft',
     typedCount: '',

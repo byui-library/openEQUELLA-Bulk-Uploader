@@ -26,6 +26,8 @@ export interface ResultsProps {
   /** Back to Choose for another spreadsheet, without restarting the app. */
   onAnotherBatch(): void;
   onBuildIndex(): void;
+  /** The index flow, from this batch's record (`report.indexRecordPath`). */
+  onBuildIndexFromRecord(path: string): void;
   /**
    * Setup for this site, clearing nothing -- app.ts's `handleSiteSettings`,
    * never the destructive "Clear all credentials…" route.
@@ -104,6 +106,26 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
       </fieldset>`
       : '';
 
+  // The batch record, when Review's box was ticked (spec section 7). A record
+  // that could not be written is a warning, never a failure: the items exist.
+  const recordSection = r.indexRecordPath
+    ? `
+      <fieldset>
+        <legend>Batch record</legend>
+        <p>A record of what this batch created was kept for an index page:</p>
+        <p class="path">${escapeHtml(r.indexRecordPath)}</p>
+        <div class="button-row">
+          <button id="results-build-index-record" type="button">Build an index page from this batch&hellip;</button>
+        </div>
+      </fieldset>`
+    : r.indexRecordError
+      ? `
+      <div class="warning-group" role="status">
+        <p>The batch record was not written: ${escapeHtml(r.indexRecordError)}.
+        The items were created either way; an index can still be built from a search of the collection.</p>
+      </div>`
+      : '';
+
   root.innerHTML = `
     <section class="screen">
       <h1>Done</h1>
@@ -118,6 +140,7 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
 
       ${interruptedSection}
       ${failuresSection}
+      ${recordSection}
 
       ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
 
@@ -166,6 +189,12 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
     .querySelector<HTMLButtonElement>('#results-another-btn')
     ?.addEventListener('click', () => props.onAnotherBatch());
   root.querySelector<HTMLButtonElement>('#results-build-index')?.addEventListener('click', () => props.onBuildIndex());
+  const recordPath = r.indexRecordPath;
+  if (recordPath) {
+    root
+      .querySelector<HTMLButtonElement>('#results-build-index-record')
+      ?.addEventListener('click', () => props.onBuildIndexFromRecord(recordPath));
+  }
   root
     .querySelector<HTMLButtonElement>('#results-site-settings')
     ?.addEventListener('click', () => props.onSiteSettings());

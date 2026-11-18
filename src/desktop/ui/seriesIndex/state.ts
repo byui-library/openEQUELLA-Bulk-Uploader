@@ -1,8 +1,10 @@
 // src/desktop/ui/seriesIndex/state.ts
-import type { IndexPreview } from '../../ipc.js';
+import type { IndexPreview, IndexSourceArgs } from '../../ipc.js';
 import type { TemplateSummary } from '../../../core/extract/templates.js';
 
 export interface IndexFlowState {
+  /** Where the index is built from: a search of a collection, or batch records. Fixed for the flow. */
+  source: IndexSourceArgs;
   templates: TemplateSummary[] | null;
   templateId: string | null;
   loading: boolean;
@@ -18,8 +20,9 @@ export interface IndexFlowState {
   error: string | null;
 }
 
-export function initialIndexState(): IndexFlowState {
+export function initialIndexState(source: IndexSourceArgs = { collectionUuid: '' }): IndexFlowState {
   return {
+    source,
     templates: null,
     templateId: null,
     loading: false,
@@ -42,6 +45,13 @@ export function initialIndexState(): IndexFlowState {
 export function canLinkVolumes(s: IndexFlowState): boolean {
   const e = s.preview?.existing;
   return e !== undefined && (e.kind === 'one' || (e.kind === 'none' && s.upload));
+}
+
+/** Which source the flow reads, in the operator's words. */
+export function sourceHint(source: IndexSourceArgs): string {
+  if (!('recordPaths' in source)) return 'From a search of this collection.';
+  const n = source.recordPaths.length;
+  return `From ${n === 1 ? 'a batch record' : `${n} batch records`}.`;
 }
 
 /** Build is offered only when every chosen destination can actually be used. */

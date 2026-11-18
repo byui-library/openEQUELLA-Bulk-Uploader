@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createIndexController } from '../../../../src/desktop/ui/seriesIndex/controller.js';
 import { canBuild, initialIndexState } from '../../../../src/desktop/ui/seriesIndex/state.js';
 import type { IndexPreview, OeqApi } from '../../../../src/desktop/ipc.js';
+import type { IndexSourceArgs } from '../../../../src/desktop/ipc.js';
 
 const preview = (over: Partial<IndexPreview> = {}): IndexPreview => ({
   buildId: 'b1',
@@ -34,7 +35,7 @@ function setup(opts: { confirm?: boolean; exists?: boolean; p?: IndexPreview } =
   const c = createIndexController({
     api,
     instanceId: 'i',
-    collectionUuid: 'c1',
+    source: { collectionUuid: 'c1' },
     confirm: (text: string) => (confirms.push(text), opts.confirm ?? true),
     onExit: () => calls.push('exit'),
     render: () => {},
@@ -107,7 +108,7 @@ describe('index flow controller races', () => {
     const c = createIndexController({
       api,
       instanceId: 'i',
-      collectionUuid: 'c1',
+      source: { collectionUuid: 'c1' },
       confirm: () => true,
       onExit: () => {},
       render: () => {
@@ -179,7 +180,7 @@ describe('index flow controller: volume links', () => {
     const c = createIndexController({
       api,
       instanceId: 'i',
-      collectionUuid: 'c1',
+      source: { collectionUuid: 'c1' },
       confirm: (text: string) => (confirms.push(text), answers.shift() ?? true),
       onExit: () => {},
       render: () => {},
@@ -272,5 +273,34 @@ describe('index flow controller: volume links', () => {
   it('links alone are not buildable while the index item does not exist', () => {
     const s = { ...initialIndexState(), preview: preview(), linkVolumes: true };
     expect(canBuild(s)).toBe(false);
+  });
+});
+
+describe('where the index flow reads from', () => {
+  const sourced = (source: IndexSourceArgs) => {
+    const asked: unknown[] = [];
+    const api = {
+      indexTemplates: async () => [{ id: 'sre', label: 'Snake River Echoes' }],
+      indexPreview: async (args: unknown) => (asked.push(args), preview()),
+    } as unknown as OeqApi;
+    const c = createIndexController({ api, instanceId: 'i', source, onExit: () => {}, render: () => {} });
+    return { c, asked };
+  };
+
+  it('previews from the batch records it was opened with, and from no collection', async () => {
+    const { c, asked } = sourced({ recordPaths: ['C:/b/fernbrook-1.index.json', 'C:/b/fernbrook-2.index.json'] });
+    await c.start();
+    await c.setTemplate('sre');
+    expect(asked).toEqual([
+      { instanceId: 'i', templateId: 'sre', recordPaths: ['C:/b/fernbrook-1.index.json', 'C:/b/fernbrook-2.index.json'] },
+    ]);
+    expect(c.state().source).toEqual({ recordPaths: ['C:/b/fernbrook-1.index.json', 'C:/b/fernbrook-2.index.json'] });
+  });
+
+  it('still previews a search of the collection it was opened with', async () => {
+    const { c, asked } = sourced({ collectionUuid: 'c1' });
+    await c.start();
+    await c.setTemplate('sre');
+    expect(asked).toEqual([{ instanceId: 'i', templateId: 'sre', collectionUuid: 'c1' }]);
   });
 });

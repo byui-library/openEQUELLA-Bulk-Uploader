@@ -1,6 +1,8 @@
 import type {
   OeqApi,
   ColumnReport,
+  IndexRecordTarget,
+  IndexSourceArgs,
   InstanceChoice,
   ModelChoice,
   PlanReport,
@@ -274,6 +276,7 @@ function initialState(): AppState {
     duplicates: [],
     duplicateChoices: {},
     folderOrders: {},
+    keepIndexRecord: false,
     itemState: 'draft',
     typedCount: '',
     uploading: false,
@@ -316,19 +319,38 @@ function currentInstance(): InstanceChoice | null {
 /**
  * The index flow, from Choose or Results. Like the extract flow, it owns its
  * own state and render loop and hands the root back on exit.
+ *
+ * Its source is a search of the chosen collection, or batch records -- which
+ * name their own collection, so that route needs none chosen here.
  */
-function openIndexFlow(): void {
-  if (!state.collectionUuid) return;
+function openIndexFlow(source: IndexSourceArgs): void {
   const root = requireEl('app');
   const controller = createIndexController({
     api: window.oeq,
     instanceId: state.instanceId,
-    collectionUuid: state.collectionUuid,
+    source,
     onExit: () => render(),
     render: (s) => renderIndexFlow(root, s, controller),
   });
   renderIndexFlow(root, controller.state(), controller);
   void controller.start();
+}
+
+function openCollectionIndexFlow(): void {
+  if (state.collectionUuid) openIndexFlow({ collectionUuid: state.collectionUuid });
+}
+
+/** Choose's "Build an index from saved batch records…": a dialog, then the flow. Cancel stays put. */
+async function handleIndexFromRecords(): Promise<void> {
+  let paths: string[];
+  try {
+    paths = await window.oeq.chooseIndexRecords();
+  } catch (err) {
+    state.chooseError = errorMessage(err);
+    render();
+    return;
+  }
+  if (paths.length > 0) openIndexFlow({ recordPaths: paths });
 }
 
 function render(): void {
@@ -429,7 +451,8 @@ function render(): void {
         // site would not confirm it. A second sign-out path written for this
         // screen is exactly how a live session gets left behind.
         onSignOut: handleSignOut,
-        onBuildIndex: openIndexFlow,
+        onBuildIndex: openCollectionIndexFlow,
+        onBuildIndexFromRecords: () => void handleIndexFromRecords(),
         onExtract: () => {
           // The extract flow owns its own state and render loop; app.ts hands
           // over the root element and gets it back on exit. Deliberately not
@@ -471,6 +494,11 @@ function render(): void {
           delete state.folderOrders[rowNumber];
           render();
         },
+        keepIndexRecord: state.keepIndexRecord,
+        onKeepIndexRecordChange: (keep) => {
+          // No re-render, as with duplicate choices: the box shows its own state.
+          state.keepIndexRecord = keep;
+        },
         onOverrideChange: handleReviewOverrideChange,
         onContinue: handleReviewContinue,
         onBack: handleReviewBack,
@@ -511,7 +539,8 @@ function render(): void {
           error: state.resultsError,
           onRetryFailed: handleRetryFailed,
           onAnotherBatch: handleAnotherBatch,
-          onBuildIndex: openIndexFlow,
+          onBuildIndex: openCollectionIndexFlow,
+          onBuildIndexFromRecord: (path) => openIndexFlow({ recordPaths: [path] }),
           // Both non-destructive, both the same handlers Choose uses. Done was
           // a dead end: another spreadsheet, a collection link, and nothing
           // else -- so changing a setting or moving to another site meant
@@ -1722,6 +1751,8 @@ async function loadReviewColumns(): Promise<void> {
   state.duplicates = [];
   state.duplicateChoices = {};
   state.folderOrders = {};
+  // A new spreadsheet has a different record path: the box starts unticked again.
+  state.keepIndexRecord = false;
   render();
   try {
     const columns = await window.oeq.validate({ instanceId: state.instanceId, sheetPath: state.sheetPath! });
@@ -1924,7 +1955,11 @@ async function handleUpload(): Promise<void> {
       await window.oeq.applyFolderOrders({ manifestPath: report.manifestPath, orders: state.folderOrders });
     }
 
-    const runReport = await window.oeq.run({ manifestPath: report.manifestPath, instanceId: state.instanceId });
+    const runReport = await window.oeq.run({
+      manifestPath: report.manifestPath,
+      instanceId: state.instanceId,
+      ...indexRecordForRun(report),
+    });
     await finishRun(report.manifestPath, runReport);
   } catch (err) {
     state.uploading = false;
@@ -1935,6 +1970,11 @@ async function handleUpload(): Promise<void> {
     state.screen = 'confirm';
     render();
   }
+}
+
+/** The batch record for `run`, only when Review's box was ticked. */
+function indexRecordForRun(plan: PlanReport): { indexRecord?: IndexRecordTarget } {
+  return state.keepIndexRecord && plan.indexRecord ? { indexRecord: plan.indexRecord } : {};
 }
 
 // --- Progress ------------------------------------------------------------
@@ -2009,7 +2049,12 @@ async function handleRetryFailed(): Promise<void> {
     state.retrying = false;
     state.screen = nextScreen('results', { type: 'retryStarted' });
     render();
-    const runReport = await window.oeq.run({ manifestPath, instanceId: state.instanceId });
+    // The same record as the first run, brought up to date with what the retry creates.
+    const runReport = await window.oeq.run({
+      manifestPath,
+      instanceId: state.instanceId,
+      ...indexRecordForRun(state.reviewPlan),
+    });
     await finishRun(manifestPath, runReport);
   } catch (err) {
     state.retrying = false;

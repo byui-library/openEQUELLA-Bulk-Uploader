@@ -115,3 +115,41 @@ describe("index flow markup in the template's words", () => {
     expect(html).toContain('Add a link to the index on every box (edits 2 items)');
   });
 });
+
+describe('index flow markup: where it reads from', () => {
+  it('says it searches the collection', () => {
+    const html = indexFlowMarkup({ ...initialIndexState({ collectionUuid: 'c1' }), templates: [] });
+    expect(html).toContain('From a search of this collection.');
+  });
+
+  it('says how many batch records it reads', () => {
+    expect(indexFlowMarkup({ ...initialIndexState({ recordPaths: ['a.json', 'b.json'] }), templates: [] })).toContain(
+      'From 2 batch records.',
+    );
+    expect(indexFlowMarkup({ ...initialIndexState({ recordPaths: ['a.json'] }), templates: [] })).toContain(
+      'From a batch record.',
+    );
+  });
+
+  it('says it is reading the records, not searching, while it previews', () => {
+    const html = indexFlowMarkup({ ...initialIndexState({ recordPaths: ['a.json'] }), templates: [], loading: true });
+    expect(html).toContain('Reading the batch records…');
+    expect(html).not.toContain('Searching the collection…');
+  });
+
+  it('lists what the run did not create, escaped', () => {
+    const notCreated = [
+      { label: 'FQ_1972_<Vol2>.pdf', status: 'failed', error: 'server said no' },
+      { label: 'FQ_1973_Vol3', status: 'pending' },
+    ];
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, notCreated } });
+    expect(html).toContain('Not created by the run (2)');
+    expect(html).toContain('FQ_1972_&lt;Vol2&gt;.pdf -- failed (server said no)');
+    expect(html).toContain('FQ_1973_Vol3 -- pending');
+    expect(html).not.toMatch(/\sstyle=/);
+  });
+
+  it('says nothing of it when every row was created', () => {
+    expect(indexFlowMarkup({ ...initialIndexState(), templates: [], preview })).not.toContain('Not created by the run');
+  });
+});

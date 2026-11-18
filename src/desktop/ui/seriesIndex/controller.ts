@@ -1,5 +1,5 @@
 // src/desktop/ui/seriesIndex/controller.ts
-import type { IndexPreview, OeqApi } from '../../ipc.js';
+import type { IndexPreview, IndexSourceArgs, OeqApi } from '../../ipc.js';
 import { errorMessage } from '../errors.js';
 import { linkLine } from '../../../core/seriesIndex/links.js';
 import { plural } from '../../../core/seriesIndex/words.js';
@@ -17,14 +17,15 @@ import { canBuild, canLinkVolumes, initialIndexState, type IndexFlowState } from
 export interface IndexControllerOptions {
   api: OeqApi;
   instanceId: string;
-  collectionUuid: string;
+  /** A search of one collection, or the batch records a run kept. Fixed for the flow. */
+  source: IndexSourceArgs;
   confirm?: (text: string) => boolean;
   onExit(): void;
   render(state: IndexFlowState): void;
 }
 
 export function createIndexController(options: IndexControllerOptions) {
-  let state = initialIndexState();
+  let state = initialIndexState(options.source);
   const confirm = options.confirm ?? ((text: string) => window.confirm(text));
   // Once the operator has left, nothing in flight may draw over what app.ts drew.
   let exited = false;
@@ -52,8 +53,8 @@ export function createIndexController(options: IndexControllerOptions) {
       try {
         const preview = await options.api.indexPreview({
           instanceId: options.instanceId,
-          collectionUuid: options.collectionUuid,
           templateId: id,
+          ...options.source,
         });
         if (mine !== previewRequest) return;
         set({ preview, loading: false });
