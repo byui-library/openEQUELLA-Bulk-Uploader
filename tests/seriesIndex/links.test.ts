@@ -55,6 +55,25 @@ describe('linkVolumes', () => {
     expect(f.edits[0]!.attachments).toEqual([{ ...link, description: 'Index of all volumes' }, file('a.pdf')]);
   });
 
+  it("replaces a rebuilt index's old link (same label, dead url) in place, rather than adding a second", async () => {
+    const old = { type: 'url', url: 'https://oeq.example.edu/items/deleted/0/index.html', description: 'Index of all volumes', uuid: 'l' };
+    const f = fake({ v1: { attachments: [file('a.pdf'), old] } });
+    const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(f.edits[0]!.attachments).toEqual([{ ...old, url: URL_ }, file('a.pdf')]);
+  });
+
+  it('never touches a link with a different description', async () => {
+    const other = { type: 'url', url: 'https://example.org/finding-aid', description: 'Finding aid', uuid: 'fa' };
+    const f = fake({ v1: { attachments: [other, file('a.pdf')] } });
+    await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    expect(f.edits[0]!.attachments).toEqual([
+      { type: 'url', url: URL_, description: 'Index of all volumes' },
+      other,
+      file('a.pdf'),
+    ]);
+  });
+
   it('carries on past a failure and names the volume', async () => {
     const f = fake({ v2: { attachments: [file('a.pdf')] } }, 'v1');
     const r = await linkVolumes(

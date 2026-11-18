@@ -10,7 +10,11 @@ import { itemUrl } from './collect.js';
  *
  * IDEMPOTENT: a volume that already has a link to THIS index page (matched by
  * url) is left alone when it is first, or moved to first keeping its uuid --
- * never given a second. Carries on past a failure and names it: one refused
+ * never given a second. Failing that, a url link whose description IS the
+ * label is this series' index link from an earlier, since-recreated index
+ * item: its url is replaced in place. Where both exist the url match wins
+ * and the other is left as it is -- removing an attachment is not this
+ * step's to do. Carries on past a failure and names it: one refused
  * volume must not leave the rest unlinked with nobody told.
  */
 
@@ -52,12 +56,16 @@ export async function linkVolumes(
     try {
       const bean = await client.getItemBean(v.uuid, v.version);
       const current = Array.isArray(bean['attachments']) ? (bean['attachments'] as Record<string, unknown>[]) : [];
-      const at = current.findIndex((a) => a['type'] === 'url' && a['url'] === url);
-      if (at === 0 && current[0]!['description'] === label) {
+      const byUrl = current.findIndex((a) => a['type'] === 'url' && a['url'] === url);
+      // A link carrying our label but another url is a REBUILT index's old
+      // link: replaced in place (url updated, uuid kept), never joined by a
+      // second. A url link with any other description is someone else's.
+      const at = byUrl !== -1 ? byUrl : current.findIndex((a) => a['type'] === 'url' && a['description'] === label);
+      if (at === 0 && current[0]!['url'] === url && current[0]!['description'] === label) {
         result.alreadyThere += 1;
         continue;
       }
-      const link = at === -1 ? { type: 'url', url, description: label } : { ...current[at]!, description: label };
+      const link = at === -1 ? { type: 'url', url, description: label } : { ...current[at]!, url, description: label };
       const rest = current.filter((_, i) => i !== at);
       await client.editItem(v.uuid, v.version, { ...bean, attachments: [link, ...rest] });
       result.added += 1;
