@@ -793,6 +793,46 @@ describe('series index calls', () => {
     }
   });
 
+  const rows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ uuid: `r${i}`, version: 1, status: 'live', name: `Fernbrook r${i}`, attachments: [] }));
+  const withFakeSearch = async (answer: (url: string) => unknown, run: () => Promise<void>) => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/search')) {
+        return new Response(JSON.stringify(answer(String(input))), { status: 200 });
+      }
+      return original(input, init);
+    }) as typeof fetch;
+    try {
+      await run();
+    } finally {
+      globalThis.fetch = original;
+    }
+  };
+
+  it('does not return a partial list when a later page comes back empty', async () => {
+    await withFakeSearch(
+      (url) => (url.includes('start=0') ? { available: 120, results: rows(50) } : { available: 120, results: [] }),
+      async () => {
+        await expect(client.searchCollection('c1')).rejects.toThrow(/not signed in/);
+      },
+    );
+  });
+
+  it('refuses a listing that ignores start rather than looping or over-reading', async () => {
+    let calls = 0;
+    await withFakeSearch(
+      () => {
+        calls++;
+        return { available: 120, results: rows(50) };
+      },
+      async () => {
+        await expect(client.searchCollection('c1')).rejects.toThrow(/did not page as expected/);
+      },
+    );
+    expect(calls).toBeLessThanOrEqual(4);
+  });
+
   it('finds items by an exact field value', async () => {
     mock.state.collectionItems = [item('a'), item('b')];
     const found = await client.findByField('c1', 'DC/identifier', 'b');

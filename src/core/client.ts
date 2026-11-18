@@ -606,7 +606,7 @@ export class OeqClient {
    */
   async searchCollection(collectionUuid: string, pageSize = 50): Promise<CollectionItem[]> {
     const items: CollectionItem[] = [];
-    for (let start = 0; ; ) {
+    for (let start = 0, pages = 0; ; pages++) {
       const url =
         `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
         `&info=${encodeURIComponent('basic,attachment')}&showall=true&length=${pageSize}&start=${start}`;
@@ -616,19 +616,30 @@ export class OeqClient {
       };
       const results = body.results ?? [];
       const available = body.available ?? 0;
-      if (start === 0 && available > 0 && results.length === 0) {
+      // An empty page while items remain is a guest answer: on the first page
+      // the session never signed in, on a later one it expired mid-listing.
+      // Either way a partial list must never be returned as the collection.
+      if (results.length === 0 && start < available) {
         throw new ValidationError(
-          `openEQUELLA reports ${available} items in this collection but returned none -- the session is ` +
-            'not signed in, or has expired. Sign in again and retry.',
+          `openEQUELLA reports ${available} items in this collection but returned only ${start} -- the ` +
+            'session is not signed in, or has expired. Sign in again and retry.',
         );
       }
       items.push(...results.map(parseCollectionItem));
       start += results.length;
+      // Termination must not depend on the server honouring `start`.
+      if (items.length > available || pages > Math.ceil(available / pageSize) + 1) {
+        throw new ValidationError(
+          "openEQUELLA's listing did not page as expected, so nothing is built from it. " +
+            `Reported ${available} items; read ${items.length} over ${pages + 1} pages.`,
+        );
+      }
       if (results.length === 0 || start >= available) return items;
     }
   }
 
   /** Items whose `path` is EXACTLY `value` -- the `where` mechanism of searchByTitle, for any path. */
+  // `path` is interpolated unescaped because it comes from the collection's own schema; `info=basic` means results carry no attachments.
   async findByField(collectionUuid: string, path: string, value: string): Promise<CollectionItem[]> {
     const clause = `/xml/${path} = '${escapeWhereValue(value)}'`;
     const url =
