@@ -40,6 +40,14 @@ describe('collectIndex', () => {
     expect(index.volumes).toHaveLength(1);
   });
 
+  it('lists an item awaiting moderation (moderating, review) like any other', () => {
+    for (const status of ['moderating', 'review']) {
+      const index = collectIndex([hit('a', ['FQ_1971_Vol1_No1.pdf'], { status })], RULE, BASE);
+      expect(index.volumes).toHaveLength(1);
+      expect(index.notInSeries).toEqual([]);
+    }
+  });
+
   it('leaves out a withdrawn item, saying why', () => {
     const index = collectIndex([hit('a', ['FQ_1971_Vol1_No1.pdf'], { status: 'archived' })], RULE, BASE);
     expect(index.volumes).toEqual([]);

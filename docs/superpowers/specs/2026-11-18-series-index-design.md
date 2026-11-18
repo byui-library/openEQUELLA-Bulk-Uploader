@@ -118,7 +118,8 @@ Rules:
   index) is labelled by its filename stem and keeps its attachment
   position, which is already last (`folderFiles.ts#orderFiles`).
 - Non-file attachments (URLs) are ignored.
-- **Status**: `draft` and `live` items are listed alike. An item someone
+- **Status**: `draft` and `live` items are listed alike, and so are items
+  awaiting moderation (`moderating`, `review`). An item someone
   has withdrawn (`deleted`, `archived`, `suspended`, `rejected`) is not
   listed, and the preview counts it under "not in the series" with its
   status, so it never silently vanishes.

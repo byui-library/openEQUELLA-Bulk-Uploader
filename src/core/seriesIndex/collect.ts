@@ -13,7 +13,10 @@ import type { HeldBack, IndexHit, IndexVolume, LeftOut, SeriesIndex } from './ty
  * person can see. An item no pattern fits is LISTED as not in the series.
  *
  * Draft and live are listed alike (operator, 2026-11-18): an item's links do
- * not change with its state. A withdrawn item is left out, saying so.
+ * not change with its state -- and so are items awaiting moderation
+ * (`moderating`, `review`), which are on their way to live, not withdrawn.
+ * Only a WITHDRAWN item (`deleted`, `archived`, `suspended`, `rejected`, or
+ * any status not listed here) is left out, saying so.
  */
 
 export interface IndexRule {
@@ -24,7 +27,7 @@ export interface IndexRule {
   labels?: Partial<SequenceLabels>;
 }
 
-const LISTED = new Set(['live', 'draft']);
+const LISTED = new Set(['live', 'draft', 'moderating', 'review']);
 
 /** The item, at whatever its latest version is (`/items/{uuid}/0/`, checked live 2026-11-17). */
 export function itemUrl(base: string, uuid: string): string {
