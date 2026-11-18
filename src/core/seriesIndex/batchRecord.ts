@@ -222,14 +222,17 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
 /**
  * Keeps the batch record beside a run -- ONE implementation for the CLI and the
  * desktop. Call `update(entry, manifest)` from the runner's `onProgress` and
- * `update()` once at the end; the record is recomputed WHOLE each time, so an
+ * `finish()` once at the end; the record is recomputed WHOLE each time, so an
  * interrupted run leaves a record of exactly what it made.
  *
- * The record is built from the manifest the runner HANDS to `onProgress`, never
- * read back from disk, and only from what it has reported: runner.ts saves the
- * manifest BEFORE it reports progress, so what a report carries is what is
- * saved. The manifest file is read once, here at the start -- for the statuses
- * already there, and for `update()` when nothing has been reported.
+ * During the run the record is built from the manifest the runner HANDS to
+ * `onProgress`: runner.ts saves the manifest BEFORE it reports progress, so
+ * what a report carries is what is saved. `finish()` instead reads the SAVED
+ * manifest, once: the reported object is the runner's live one, and a run that
+ * threw may have changed a row in it that its save never wrote -- an item the
+ * saved manifest does not know about. When that read fails, nothing new is
+ * written and the last record stands. The manifest file is otherwise read once,
+ * here at the start, for the statuses already there.
  *
  * A record already at `file` -- an earlier run of the same spreadsheet -- is
  * read once, here, and carried forward. Anything else there (not a record,
@@ -238,12 +241,12 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
  *
  * `update(entry, ...)` does nothing when that row's status is what it last saw
  * -- seeded from the manifest at the start -- so a retry's back-to-back reports
- * of already-finished rows cost nothing. `update()` always writes.
+ * of already-finished rows cost nothing. `finish()` always writes.
  *
- * Writes are chained so two never overlap, and coalesced: a queued write that
- * a later update has superseded is skipped, since only the latest record is
- * worth writing. Only the most recent update decides `written`: an earlier
- * write landing after a later failure does not.
+ * Writes are chained so two never overlap, and coalesced: the record is built
+ * inside the queued write, and only when that write is still the latest, so a
+ * report a later one superseded costs nothing. Only the most recent write
+ * decides `written`.
  *
  * A failure NEVER fails the run -- the items exist either way. `onFirstFailure`
  * hears the first one; `settled()` never rejects.
@@ -277,34 +280,40 @@ export function keepBatchRecord(
     fail(err);
   }
 
-  return {
-    update(progress?: RecordProgress, manifest?: Manifest): void {
-      if (refused) return;
-      if (manifest !== undefined) current = manifest;
-      if (progress !== undefined) {
-        if (seen.get(progress.rowNumber) === progress.status) return;
-        seen.set(progress.rowNumber, progress.status);
-      }
-      const seq = ++latest;
-      let record: BatchRecord;
+  /** Queue a write of the record built from `current` at the time it runs. */
+  const queue = (): void => {
+    const seq = ++latest;
+    writes = writes.then(async () => {
+      if (seq !== latest) return; // superseded: a later record is queued
       try {
         const now = recordFromManifest(current!, titlePath);
-        record = earlier === null ? now : accumulate(earlier, now);
+        await writeJsonAtomic(file, earlier === null ? now : accumulate(earlier, now));
+        if (seq === latest) written = true;
       } catch (err) {
-        written = false;
+        if (seq === latest) written = false;
+        fail(err);
+      }
+    });
+  };
+
+  return {
+    update(progress: RecordProgress, manifest?: Manifest): void {
+      if (refused) return;
+      if (manifest !== undefined) current = manifest;
+      if (seen.get(progress.rowNumber) === progress.status) return;
+      seen.set(progress.rowNumber, progress.status);
+      queue();
+    },
+    /** The final write, from the manifest as saved. Nothing new is written when it cannot be read. */
+    finish(): void {
+      if (refused) return;
+      try {
+        current = parseManifest(readFileSync(manifestPath, 'utf8'), manifestPath);
+      } catch (err) {
         fail(err);
         return;
       }
-      writes = writes.then(async () => {
-        if (seq !== latest) return; // superseded: a later record is queued
-        try {
-          await writeJsonAtomic(file, record);
-          if (seq === latest) written = true;
-        } catch (err) {
-          if (seq === latest) written = false;
-          fail(err);
-        }
-      });
+      queue();
     },
     /** Every queued write, settled. Never rejects. */
     async settled(): Promise<KeptRecord> {
@@ -324,8 +333,13 @@ export interface RecordTarget {
  * A run, keeping the batch record when one was asked for -- the ONE lifecycle
  * the CLI and the desktop share. `run` calls `afterRow` from the runner's
  * progress callback with the entry and the manifest it was handed; the record
- * is written once more at the end, and every write has settled before this
- * returns or throws.
+ * is written once more at the end, from the saved manifest, and every write
+ * has settled before this returns or throws.
+ *
+ * That final write happens only when the run returned, or reported at least
+ * one row. A run that threw before reporting anything never started -- most
+ * often another run holds the manifest's lock -- and writing then would put a
+ * start-time snapshot over the live run's record.
  *
  * A RECORD THAT CANNOT BE WRITTEN NEVER FAILS THE RUN: the items exist either
  * way. It comes back as `indexRecordError`; `onFirstFailure` hears it as it
@@ -337,19 +351,25 @@ export async function runKeepingRecord<S>(
   run: (afterRow: (entry: RecordProgress, manifest: Manifest) => void) => Promise<S>,
   onFirstFailure?: (err: unknown) => void,
 ): Promise<{ summary: S; indexRecordPath?: string; indexRecordError?: string }> {
-  const keeper = target ? keepBatchRecord(manifestPath, target.path, target.titlePath, onFirstFailure) : null;
+  if (target === undefined) return { summary: await run(() => {}) };
+  const keeper = keepBatchRecord(manifestPath, target.path, target.titlePath, onFirstFailure);
+  let reported = false;
+  let returned = false;
   let summary: S;
+  let kept: KeptRecord;
   try {
-    summary = await run((entry, manifest) => keeper?.update(entry, manifest));
+    summary = await run((entry, manifest) => {
+      reported = true;
+      keeper.update(entry, manifest);
+    });
+    returned = true;
   } finally {
     // Once more at the end -- a run that threw included -- so the record holds
-    // what was made, and a batch with no rows to report still leaves one.
-    keeper?.update();
+    // what was saved, and a batch with no rows to report still leaves one.
+    if (returned || reported) keeper.finish();
     // Never rejects: a run that threw is not made to wait on, or hidden by, its record.
-    await keeper?.settled();
+    kept = await keeper.settled();
   }
-  if (keeper === null || target === undefined) return { summary };
-  const kept = await keeper.settled();
   return kept.written
     ? { summary, indexRecordPath: target.path }
     : { summary, indexRecordError: describeReason(kept.error) };

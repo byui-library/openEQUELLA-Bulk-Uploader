@@ -9,6 +9,7 @@ import {
   readBatchRecords,
   recordFromManifest,
   recordHits,
+  runKeepingRecord,
   type BatchRecord,
 } from '../../src/core/seriesIndex/batchRecord.js';
 import type { Manifest, ManifestEntry } from '../../src/core/types.js';
@@ -335,7 +336,7 @@ describe('keepBatchRecord', () => {
       ]),
     );
     const first = keepBatchRecord(manifestPath, file, null);
-    first.update();
+    first.finish();
     expect((await first.settled()).written).toBe(true);
 
     // A later run of the same spreadsheet: a new job, in which row 4 was created.
@@ -348,7 +349,7 @@ describe('keepBatchRecord', () => {
       ]),
     );
     const second = keepBatchRecord(manifestPath, file, null);
-    second.update();
+    second.finish();
     expect((await second.settled()).written).toBe(true);
     const r = read();
     expect(r.items.map((i) => [i.uuid, i.version])).toEqual([
@@ -363,11 +364,11 @@ describe('keepBatchRecord', () => {
   it("keeps each item's own state, so a later run's drafts leave earlier published items published", async () => {
     await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf')], { itemState: 'published' }));
     const first = keepBatchRecord(manifestPath, file, null);
-    first.update();
+    first.finish();
     await first.settled();
     await saveManifest(manifestPath, manifest([created(3, 'item-3', 'three.pdf')], { itemState: 'draft' }));
     const second = keepBatchRecord(manifestPath, file, null);
-    second.update();
+    second.finish();
     await second.settled();
     expect(recordHits(read()).map((h) => [h.uuid, h.status])).toEqual([
       ['item-1', 'live'],
@@ -390,7 +391,7 @@ describe('keepBatchRecord', () => {
     await saveManifest(manifestPath, m);
     const failures: unknown[] = [];
     const keeper = keepBatchRecord(manifestPath, file, null, (err) => failures.push(err));
-    keeper.update();
+    keeper.finish();
     const kept = await keeper.settled();
     expect(kept.written).toBe(false);
     expect(String((kept.error as Error).message)).toMatch(reason);
@@ -416,10 +417,48 @@ describe('keepBatchRecord', () => {
     keeper.update({ rowNumber: 3, status: 'created' }, later);
     await keeper.settled();
     expect(existsSync(file)).toBe(false);
-    // The final update always writes, from the last manifest reported.
-    keeper.update();
+    // The final write always writes, from the manifest as SAVED.
+    await saveManifest(manifestPath, later);
+    keeper.finish();
     expect((await keeper.settled()).written).toBe(true);
     expect(read().items).toHaveLength(2);
+  });
+
+  it('finishes from the manifest as saved, not from a reported one changed since', async () => {
+    const saved = manifest([created(2, 'item-1', 'one.pdf'), entry({ rowNumber: 3, source: 'two.pdf' })]);
+    await saveManifest(manifestPath, saved);
+    const keeper = keepBatchRecord(manifestPath, file, null);
+    keeper.update({ rowNumber: 2, status: 'created' }, saved);
+    // The runner marks row 3 created in memory, and its save then fails.
+    saved.entries[1] = created(3, 'item-3', 'two.pdf');
+    keeper.finish();
+    expect((await keeper.settled()).written).toBe(true);
+    expect(read().items.map((i) => i.uuid)).toEqual(['item-1']);
+  });
+
+  it('writes nothing new when the saved manifest cannot be read at the finish', async () => {
+    await saveManifest(manifestPath, manifest([entry({ rowNumber: 2, source: 'one.pdf' })]));
+    const failures: unknown[] = [];
+    const keeper = keepBatchRecord(manifestPath, file, null, (err) => failures.push(err));
+    keeper.update({ rowNumber: 2, status: 'created' }, manifest([created(2, 'item-1', 'one.pdf')]));
+    await keeper.settled();
+    const before = readFileSync(file, 'utf8');
+    await writeFile(manifestPath, 'not a manifest');
+    keeper.finish();
+    const kept = await keeper.settled();
+    expect(kept.written).toBe(true);
+    expect(failures).toHaveLength(1);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+  });
+
+  it('never builds a record that a later report superseded', async () => {
+    await saveManifest(manifestPath, manifest([entry({ rowNumber: 2, source: 'one.pdf' })]));
+    const keeper = keepBatchRecord(manifestPath, file, null);
+    // Built eagerly, this one would fail; superseded before its write, it is never built.
+    keeper.update({ rowNumber: 2, status: 'uploading' }, { ...manifest([]), entries: null } as never);
+    keeper.update({ rowNumber: 2, status: 'created' }, manifest([created(2, 'item-1', 'one.pdf')]));
+    const kept = await keeper.settled();
+    expect(kept).toEqual({ written: true, error: null });
   });
 
   it('never reads the manifest back after it starts: the report carries it', async () => {
@@ -440,14 +479,123 @@ describe('keepBatchRecord', () => {
     expect(read().items.map((i) => i.uuid)).toEqual(['item-1', 'item-3']);
   });
 
-  it('reports written:false when the LAST update failed, though an earlier write landed after it', async () => {
+  it('reports written:false when the LAST update failed, though an earlier write landed', async () => {
     await saveManifest(manifestPath, manifest([entry({ rowNumber: 2, source: 'one.pdf' })]));
     const keeper = keepBatchRecord(manifestPath, file, null);
-    keeper.update(); // queues a write that lands later
-    // A manifest the record cannot be built from: the update fails, synchronously.
+    keeper.update({ rowNumber: 2, status: 'uploading' }, manifest([entry({ rowNumber: 2, source: 'one.pdf', status: 'uploading' })]));
+    expect((await keeper.settled()).written).toBe(true);
+    // A manifest the record cannot be built from: this write fails.
     keeper.update({ rowNumber: 2, status: 'created' }, { ...manifest([]), entries: null } as never);
     const kept = await keeper.settled();
     expect(kept.written).toBe(false);
     expect(kept.error).not.toBeNull();
+  });
+});
+
+describe('runKeepingRecord', () => {
+  function job(status: 'pending' | 'created'): Manifest {
+    return manifest([
+      entry({
+        metadata: { 'DC/title': ['Fernbrook Quarterly Vol 1'] },
+        status,
+        attempts: status === 'created' ? 1 : 0,
+        ...(status === 'created' ? { itemUuid: 'item-1', itemVersion: 1, attachmentUuids: ['att-1'] } : {}),
+      }),
+    ]);
+  }
+  let dir: string;
+  let manifestPath: string;
+  let recordPath: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'oeq-rec-'));
+    manifestPath = join(dir, 'job.json');
+    recordPath = join(dir, 'fernbrook.index.json');
+  });
+
+  it('writes the record while the run goes, and names it on the report', async () => {
+    await saveManifest(manifestPath, job('pending'));
+    const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: 'DC/title' }, async (afterRow) => {
+      await saveManifest(manifestPath, job('created'));
+      afterRow({ rowNumber: 2, status: 'created' }, job('created'));
+      return { created: 1 };
+    });
+    expect(got).toEqual({ summary: { created: 1 }, indexRecordPath: recordPath });
+    const written = JSON.parse(readFileSync(recordPath, 'utf8'));
+    expect(written.kind).toBe('oeq-batch-record');
+    expect(written.items).toEqual([
+      { row: 2, uuid: 'item-1', version: 1, title: 'Fernbrook Quarterly Vol 1', label: 'FQ_1970_Vol1_No1.pdf', state: 'draft', files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }] },
+    ]);
+  });
+
+  it('a record that cannot be written leaves the run successful, and says why', async () => {
+    await saveManifest(manifestPath, job('created'));
+    // A folder that does not exist: every write fails.
+    const unwritable = join(dir, 'missing-folder', 'fernbrook.index.json');
+    const got = await runKeepingRecord(manifestPath, { path: unwritable, titlePath: null }, async (afterRow) => {
+      afterRow({ rowNumber: 2, status: 'created' }, job('created'));
+      return { created: 1 };
+    });
+    expect(got.summary).toEqual({ created: 1 });
+    expect(got.indexRecordPath).toBeUndefined();
+    expect(got.indexRecordError).toMatch(/fernbrook\.index\.json|ENOENT|no such file/i);
+  });
+
+  it('writes nothing when no record was asked for', async () => {
+    await saveManifest(manifestPath, job('created'));
+    const got = await runKeepingRecord(manifestPath, undefined, async (afterRow) => {
+      afterRow({ rowNumber: 2, status: 'created' }, job('created'));
+      return { created: 1 };
+    });
+    expect(got).toEqual({ summary: { created: 1 } });
+    expect(existsSync(recordPath)).toBe(false);
+  });
+
+  it('a run that throws still waits for its record, and throws', async () => {
+    await saveManifest(manifestPath, job('created'));
+    await expect(
+      runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
+        afterRow({ rowNumber: 2, status: 'created' }, job('created'));
+        throw new Error('network gone');
+      }),
+    ).rejects.toThrow('network gone');
+    expect(JSON.parse(readFileSync(recordPath, 'utf8')).items).toHaveLength(1);
+  });
+
+  it('a run that throws after changing a row it never saved does not list that row', async () => {
+    const live = manifest([
+      entry({ rowNumber: 2, source: 'one.pdf' }),
+      entry({ rowNumber: 3, source: 'two.pdf' }),
+    ]);
+    await saveManifest(manifestPath, live);
+    await expect(
+      runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
+        live.entries[0] = { ...live.entries[0]!, status: 'created', itemUuid: 'item-1', itemVersion: 1, attachmentUuids: ['a'] };
+        await saveManifest(manifestPath, live);
+        afterRow({ rowNumber: 2, status: 'created' }, live);
+        // Row 3 is created in memory, and the save after it fails.
+        live.entries[1] = { ...live.entries[1]!, status: 'created', itemUuid: 'item-3', itemVersion: 1, attachmentUuids: ['b'] };
+        throw new Error('disk full');
+      }),
+    ).rejects.toThrow('disk full');
+    expect(JSON.parse(readFileSync(recordPath, 'utf8')).items.map((i: { uuid: string }) => i.uuid)).toEqual(['item-1']);
+  });
+
+  it('a run that never started writes nothing, leaving the live run\'s record as it is', async () => {
+    await saveManifest(manifestPath, job('created'));
+    const live = JSON.stringify(recordFromManifest(job('pending'), null));
+    await writeFile(recordPath, live);
+    await expect(
+      runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async () => {
+        throw new Error('another run holds the lock');
+      }),
+    ).rejects.toThrow('another run holds the lock');
+    expect(readFileSync(recordPath, 'utf8')).toBe(live);
+  });
+
+  it('a run that returns without reporting a row still leaves a record', async () => {
+    await saveManifest(manifestPath, job('created'));
+    const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async () => ({ created: 0 }));
+    expect(got).toEqual({ summary: { created: 0 }, indexRecordPath: recordPath });
+    expect(JSON.parse(readFileSync(recordPath, 'utf8')).items).toHaveLength(1);
   });
 });
