@@ -138,6 +138,49 @@ describe('index handlers', () => {
     await expect(h.upload({ buildId: 'nope', draft: true })).rejects.toThrow(/Preview again/);
   });
 
+  it('after an upload, links each LISTED volume to the new index item', async () => {
+    const edits: { uuid: string; bean: Record<string, unknown> }[] = [];
+    const c = connect({
+      getItemBean: async (uuid: string) => ({ uuid, attachments: [{ type: 'file', filename: 'FQ_1971_Vol1_No1.pdf', uuid: 'a' }] }),
+      editItem: async (uuid: string, _v: number, bean: Record<string, unknown>) => {
+        edits.push({ uuid, bean });
+      },
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    await h.upload({ buildId: 'b1', draft: true });
+    expect(await h.linkVolumes({ buildId: 'b1' })).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(edits.map((e) => e.uuid)).toEqual(['v1']);
+    expect((edits[0]!.bean['attachments'] as unknown[])[0]).toEqual({
+      type: 'url',
+      url: 'https://oeq.example.edu/items/new/0/index.html',
+      description: 'Index of all volumes',
+    });
+  });
+
+  it('refuses to link volumes before the index item exists', async () => {
+    const c = connect();
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    await expect(h.linkVolumes({ buildId: 'b1' })).rejects.toThrow(/Upload the index item first/);
+    expect(c.calls.edit).toBe(0);
+  });
+
+  it('links to an index item that already existed at preview time', async () => {
+    const edits: string[] = [];
+    const c = connect({
+      findByField: async () => [{ uuid: 'old', version: 2, status: 'live', name: 'Fernbrook index', attachments: [] }],
+      getItemBean: async () => ({ attachments: [] }),
+      editItem: async (uuid: string, _v: number, bean: Record<string, unknown>) => {
+        edits.push(`${uuid} ${JSON.stringify((bean['attachments'] as { url?: string }[])[0]?.url)}`);
+      },
+    });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    await h.linkVolumes({ buildId: 'b1' });
+    expect(edits).toEqual(['v1 "https://oeq.example.edu/items/old/0/index.html"']);
+  });
+
   it('saves the build to a folder, reporting files already there', async () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps, newId: () => 'b1' });
     await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });

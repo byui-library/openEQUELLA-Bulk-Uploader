@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { linkVolumes, indexPageUrl, type LinkClient } from '../../src/core/seriesIndex/links.js';
+import { linkVolumes, indexPageUrl, linkLine, type LinkClient } from '../../src/core/seriesIndex/links.js';
 
 const URL_ = 'https://oeq.example.edu/items/idx/0/index.html';
 
@@ -71,5 +71,32 @@ describe('linkVolumes', () => {
 
   it('builds the index page address from the index item', () => {
     expect(indexPageUrl('https://oeq.example.edu/repo', 'idx')).toBe('https://oeq.example.edu/repo/items/idx/0/index.html');
+  });
+});
+
+describe('linkLine', () => {
+  const words = { group: 'volume', groups: 'volumes' };
+
+  it('counts what was linked and what already had it', () => {
+    expect(linkLine({ added: 3, alreadyThere: 1, failed: [] }, { ...words, heldBack: 0 })).toBe(
+      'Linked 3 volumes to the index (1 already had it).',
+    );
+    expect(linkLine({ added: 1, alreadyThere: 0, failed: [] }, { ...words, heldBack: 0 })).toBe(
+      'Linked 1 volume to the index (0 already had it).',
+    );
+  });
+
+  it('names every volume that was not linked, and why', () => {
+    const line = linkLine(
+      { added: 1, alreadyThere: 0, failed: [{ heading: 'Vol 3', reason: 'server said no' }, { heading: 'Vol 4', reason: 'gone' }] },
+      { ...words, heldBack: 0 },
+    );
+    expect(line).toBe('Linked 1 volume to the index (0 already had it). Not linked: Vol 3 -- server said no; Vol 4 -- gone.');
+  });
+
+  it('says held-back volumes were not linked', () => {
+    expect(linkLine({ added: 2, alreadyThere: 0, failed: [] }, { ...words, heldBack: 1 })).toMatch(
+      /Held-back volumes were not linked\.$/,
+    );
   });
 });

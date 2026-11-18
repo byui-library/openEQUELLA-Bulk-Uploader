@@ -64,3 +64,24 @@ describe('index flow markup while busy or failed', () => {
     expect(html).not.toContain('No template can build an index');
   });
 });
+
+describe('index flow markup: volume links', () => {
+  const none = { ...preview, existing: { kind: 'none' as const } };
+
+  it('does not offer the link when there is no index item and no upload', () => {
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: none });
+    expect(html).not.toContain('id="index-link-volumes"');
+  });
+
+  it('offers it when the new item is being uploaded, naming how many items it edits', () => {
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: none, upload: true });
+    expect(html).toContain('id="index-link-volumes"');
+    expect(html).toContain('Add a link to the index on every volume (edits 1 item)');
+  });
+
+  it('offers it when the index item already exists, with or without upload', () => {
+    expect(indexFlowMarkup({ ...initialIndexState(), templates: [], preview })).toContain('id="index-link-volumes"');
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview, linkVolumes: true, working: true });
+    expect(html).toMatch(/id="index-link-volumes"[^>]*disabled[^>]*checked/);
+  });
+});

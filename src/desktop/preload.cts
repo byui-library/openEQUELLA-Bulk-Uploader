@@ -81,6 +81,7 @@ const CHANNELS = {
   indexPreview: 'oeq:indexPreview',
   indexSaveFiles: 'oeq:indexSaveFiles',
   indexUpload: 'oeq:indexUpload',
+  indexLinkVolumes: 'oeq:indexLinkVolumes',
 } as const;
 
 const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
@@ -133,6 +134,7 @@ const api: OeqApi = {
   indexPreview: (args) => invoke(CHANNELS.indexPreview, args),
   indexSaveFiles: (args) => invoke(CHANNELS.indexSaveFiles, args),
   indexUpload: (args) => invoke(CHANNELS.indexUpload, args),
+  indexLinkVolumes: (args) => invoke(CHANNELS.indexLinkVolumes, args),
   // Each returns the way to stop listening -- see OeqApi.onModelProgress.
   onProgress: (cb) => subscribe<RunProgress>(CHANNELS.progress, cb),
   onModelProgress: (cb) => subscribe<ModelProgress>(CHANNELS.modelProgress, cb),

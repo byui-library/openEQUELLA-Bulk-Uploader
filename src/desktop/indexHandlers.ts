@@ -11,6 +11,7 @@ import { buildIndex, resolveIndexSchema, type IndexBuild } from '../core/seriesI
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { publishIndex, type IndexClient } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
+import { indexPageUrl, linkVolumes, type LinkResult } from '../core/seriesIndex/links.js';
 
 /**
  * The series index's main-process side. The BUILD STAYS HERE, held by id, and
@@ -115,6 +116,20 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
       };
       return { kind: result.kind, url: `${itemUrl(connection.baseUrl, result.uuid)}index.html` };
     },
+
+    async linkVolumes(args: Parameters<OeqApi['indexLinkVolumes']>[0]): Promise<LinkResult> {
+      const { build, connection } = take(args.buildId);
+      // `existing` is 'one' when the item was found at preview time, or once
+      // `upload` above has created it -- either way it names the item to link to.
+      const e = build.existing;
+      if (e.kind !== 'one') throw new ValidationError('Upload the index item first.');
+      return linkVolumes(
+        connection.client,
+        build.index.volumes,
+        indexPageUrl(connection.baseUrl, e.uuid),
+        `Index of all ${build.labels.groups}`,
+      );
+    },
   };
 }
 
@@ -124,4 +139,7 @@ export function registerIndexHandlers(ipcMain: IpcMain, deps: IndexHandlerDeps):
   ipcMain.handle(CHANNELS.indexPreview, (_e, args: Parameters<OeqApi['indexPreview']>[0]) => h.preview(args));
   ipcMain.handle(CHANNELS.indexSaveFiles, (_e, args: Parameters<OeqApi['indexSaveFiles']>[0]) => h.saveFiles(args));
   ipcMain.handle(CHANNELS.indexUpload, (_e, args: Parameters<OeqApi['indexUpload']>[0]) => h.upload(args));
+  ipcMain.handle(CHANNELS.indexLinkVolumes, (_e, args: Parameters<OeqApi['indexLinkVolumes']>[0]) =>
+    h.linkVolumes(args),
+  );
 }

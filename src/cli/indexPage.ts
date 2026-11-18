@@ -8,6 +8,7 @@ import { buildIndex, previewLines, resolveIndexSchema } from '../core/seriesInde
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { publishIndex } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
+import { indexPageUrl, linkLine, linkVolumes } from '../core/seriesIndex/links.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -18,16 +19,26 @@ export interface IndexCliOptions {
   upload?: boolean;
   draft?: boolean;
   publish?: boolean;
+  linkVolumes?: boolean;
 }
 
 /** Flag rules, checked before any I/O. No destination is a preview -- the CLI's "preview first". */
-export function checkIndexFlags(o: IndexCliOptions): { out: string | null; upload: { draft: boolean } | null } {
+export function checkIndexFlags(o: IndexCliOptions): {
+  out: string | null;
+  upload: { draft: boolean } | null;
+  link: boolean;
+} {
   if (o.force && !o.out) throw new ValidationError('--force replaces files in the --out folder, so it needs --out.');
   if ((o.draft || o.publish) && !o.upload) throw new ValidationError('--draft and --publish only mean something with --upload.');
   if (o.upload && Boolean(o.draft) === Boolean(o.publish)) {
     throw new ValidationError('--upload needs exactly one of --draft or --publish. Refusing to guess.');
   }
-  return { out: o.out ?? null, upload: o.upload ? { draft: Boolean(o.draft) } : null };
+  // Strict: the upload is idempotent (an existing item is updated in place), so
+  // requiring it costs nothing and guarantees the index item the links point at.
+  if (o.linkVolumes && !o.upload) {
+    throw new ValidationError('--link-volumes needs --upload: the links point at the index item, so it is uploaded first.');
+  }
+  return { out: o.out ?? null, upload: o.upload ? { draft: Boolean(o.draft) } : null, link: Boolean(o.linkVolumes) };
 }
 
 export async function indexAction(o: IndexCliOptions, env: Env = process.env): Promise<number> {
@@ -69,6 +80,23 @@ export async function indexAction(o: IndexCliOptions, env: Env = process.env): P
       draft: flags.upload.draft,
     });
     console.log(`\n${result.kind === 'created' ? 'Created' : 'Updated'} the index item: ${itemUrl(cfg.baseUrl, result.uuid)}index.html`);
+    if (flags.link) {
+      // After the upload, so a newly created index item's uuid is known. Only
+      // the LISTED volumes: a held-back one is not in the index it would point at.
+      const linked = await linkVolumes(
+        client,
+        build.index.volumes,
+        indexPageUrl(cfg.baseUrl, result.uuid),
+        `Index of all ${build.labels.groups}`,
+      );
+      const line = linkLine(linked, { ...build.labels, heldBack: build.index.heldBack.length });
+      if (linked.failed.length > 0) {
+        console.error(line);
+        code = 1;
+      } else {
+        console.log(line);
+      }
+    }
   }
   return code;
 }

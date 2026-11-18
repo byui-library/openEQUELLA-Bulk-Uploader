@@ -150,3 +150,93 @@ describe('index flow controller races', () => {
     expect(c.state().error).toMatch(/boom/);
   });
 });
+
+describe('index flow controller: volume links', () => {
+  function linking(opts: { answers?: boolean[]; existing?: IndexPreview['existing']; heldBack?: IndexPreview['heldBack'] } = {}) {
+    const calls: string[] = [];
+    const answers = [...(opts.answers ?? [])];
+    const confirms: string[] = [];
+    const api = {
+      indexTemplates: async () => [{ id: 'sre', label: 'Snake River Echoes' }],
+      indexPreview: async () =>
+        preview({
+          volumes: [
+            { heading: 'Vol 1', issues: ['Issue 1'] },
+            { heading: 'Vol 2', issues: ['Issue 1'] },
+          ],
+          existing: opts.existing ?? { kind: 'none' },
+          heldBack: opts.heldBack ?? [],
+        }),
+      indexUpload: async () => (calls.push('upload'), { kind: 'created' as const, url: 'https://x/items/n/0/index.html' }),
+      indexLinkVolumes: async (a: { buildId: string }) => (
+        calls.push(`link ${a.buildId}`),
+        { added: 1, alreadyThere: 0, failed: [{ heading: 'Vol 2', reason: 'server said no' }] }
+      ),
+    } as unknown as OeqApi;
+    const c = createIndexController({
+      api,
+      instanceId: 'i',
+      collectionUuid: 'c1',
+      confirm: (text: string) => (confirms.push(text), answers.shift() ?? true),
+      onExit: () => {},
+      render: () => {},
+    });
+    return { c, calls, confirms };
+  }
+
+  it('asks, naming how many items it edits, then links AFTER the upload', async () => {
+    const { c, calls, confirms } = linking();
+    await c.start();
+    await c.setTemplate('sre');
+    c.setUpload(true);
+    c.setLinkVolumes(true);
+    await c.build();
+    expect(calls).toEqual(['upload', 'link b1']);
+    expect(confirms).toEqual([
+      'Add a link to the index as the first attachment of 2 volume items? This edits each of them in openEQUELLA.',
+    ]);
+    expect(c.state().done[1]).toBe(
+      'Linked 1 volume to the index (0 already had it). Not linked: Vol 2 -- server said no.',
+    );
+  });
+
+  it('a no skips the links and says so', async () => {
+    const { c, calls } = linking({ answers: [false] });
+    await c.start();
+    await c.setTemplate('sre');
+    c.setUpload(true);
+    c.setLinkVolumes(true);
+    await c.build();
+    expect(calls).toEqual(['upload']);
+    expect(c.state().done).toContain('Volumes not linked: you chose not to edit them.');
+  });
+
+  it('links alone, with no other destination, when the index item already exists', async () => {
+    const { c, calls } = linking({ existing: { kind: 'one', status: 'live' }, heldBack: [{ reason: 'two claim Vol 3', items: ['A', 'B'] }] });
+    await c.start();
+    await c.setTemplate('sre');
+    c.setLinkVolumes(true);
+    expect(canBuild(c.state())).toBe(true);
+    await c.build();
+    expect(calls).toEqual(['link b1']);
+    expect(c.state().done[0]).toMatch(/Held-back volumes were not linked\.$/);
+  });
+
+  it('does not link when the new item was not uploaded', async () => {
+    // Declining to publish a NEW item leaves nothing to link to.
+    const { c, calls } = linking({ answers: [false] });
+    await c.start();
+    await c.setTemplate('sre');
+    c.setUpload(true);
+    c.setDraft(false);
+    c.setLinkVolumes(true);
+    await c.build();
+    expect(calls).toEqual([]);
+    expect(c.state().done).toContain('Volumes not linked: the index item was not uploaded.');
+  });
+
+  it('links alone are not buildable while the index item does not exist', () => {
+    const s = { ...initialIndexState(), preview: preview(), linkVolumes: true };
+    expect(canBuild(s)).toBe(false);
+  });
+});

@@ -541,6 +541,10 @@ export interface OeqApi {
   indexPreview(args: { instanceId: string; collectionUuid: string; templateId: string }): Promise<IndexPreview>;
   indexSaveFiles(args: { buildId: string; dir: string; replace: boolean }): Promise<IndexSaveResult>;
   indexUpload(args: { buildId: string; draft: boolean }): Promise<IndexUploadResult>;
+  /** A link to the index item as every LISTED volume's first attachment. Refused until the index item exists. */
+  indexLinkVolumes(args: {
+    buildId: string;
+  }): Promise<{ added: number; alreadyThere: number; failed: { heading: string; reason: string }[] }>;
 }
 
 /** How far an extract run has got reading its batch. */
@@ -655,4 +659,5 @@ export const CHANNELS = {
   indexPreview: 'oeq:indexPreview',
   indexSaveFiles: 'oeq:indexSaveFiles',
   indexUpload: 'oeq:indexUpload',
+  indexLinkVolumes: 'oeq:indexLinkVolumes',
 } as const;

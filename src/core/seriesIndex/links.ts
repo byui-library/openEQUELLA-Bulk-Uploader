@@ -25,6 +25,18 @@ export interface LinkResult {
   failed: { heading: string; reason: string }[];
 }
 
+/**
+ * The one result line, printed by the CLI and shown by the desktop. Names every
+ * volume that was not linked, and says held-back volumes were never tried --
+ * otherwise "Linked 37 volumes" reads as "every volume".
+ */
+export function linkLine(r: LinkResult, o: { group: string; groups: string; heldBack: number }): string {
+  let line = `Linked ${r.added} ${r.added === 1 ? o.group : o.groups} to the index (${r.alreadyThere} already had it).`;
+  if (r.failed.length > 0) line += ` Not linked: ${r.failed.map((f) => `${f.heading} -- ${f.reason}`).join('; ')}.`;
+  if (o.heldBack > 0) line += ` Held-back ${o.groups} were not linked.`;
+  return line;
+}
+
 export function indexPageUrl(base: string, indexUuid: string): string {
   return `${itemUrl(base, indexUuid)}index.html`;
 }

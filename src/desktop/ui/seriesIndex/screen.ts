@@ -1,7 +1,7 @@
 // src/desktop/ui/seriesIndex/screen.ts
 import { escapeHtml } from '../dom.js';
 import type { IndexPreview } from '../../ipc.js';
-import { canBuild, type IndexFlowState } from './state.js';
+import { canBuild, canLinkVolumes, type IndexFlowState } from './state.js';
 import type { IndexController } from './controller.js';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -50,6 +50,11 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
       ${s.saveFiles ? `<button id="index-folder"${dis} type="button">Choose folder…</button> <span class="path">${s.folder ? escapeHtml(s.folder) : 'No folder chosen yet.'}</span>` : ''}
       <label><input type="checkbox" id="index-upload"${dis} ${s.upload ? 'checked' : ''}> Create or update the openEQUELLA item</label>
       ${s.upload ? existingMarkup(s, p.existing) : ''}
+      ${
+        canLinkVolumes(s)
+          ? `<label><input type="checkbox" id="index-link-volumes"${dis} ${s.linkVolumes ? 'checked' : ''}> Add a link to the index on every volume (edits ${plural(p.volumes.length, 'item', 'items')})</label>`
+          : ''
+      }
     </fieldset>
     <div class="button-row"><button id="index-build" type="button" ${canBuild(s) ? '' : 'disabled'}>${s.working ? 'Building…' : 'Build'}</button></div>`;
 }
@@ -90,6 +95,7 @@ export function renderIndexFlow(root: HTMLElement, s: IndexFlowState, c: IndexCo
   on('index-upload', 'change', (el) => c.setUpload(el.checked));
   on('index-draft', 'change', () => c.setDraft(true));
   on('index-publish', 'change', () => c.setDraft(false));
+  on('index-link-volumes', 'change', (el) => c.setLinkVolumes(el.checked));
   on('index-folder', 'click', () => void c.chooseFolder());
   on('index-build', 'click', () => void c.build());
   on('index-back', 'click', () => c.exit());

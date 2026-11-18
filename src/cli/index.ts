@@ -846,6 +846,7 @@ export function buildProgram(env: Env = process.env): Command {
     .option('--upload', 'create the index item, or update the existing one in place')
     .option('--draft', 'with --upload: a NEW index item is a draft')
     .option('--publish', 'with --upload: a NEW index item is published')
+    .option('--link-volumes', "with --upload: add a link to the index as every listed volume's first attachment")
     .action(async (o: IndexCliOptions) => {
       process.exitCode = await indexAction(o, env);
     });

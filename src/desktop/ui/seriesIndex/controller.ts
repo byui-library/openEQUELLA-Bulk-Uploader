@@ -1,15 +1,17 @@
 // src/desktop/ui/seriesIndex/controller.ts
 import type { OeqApi } from '../../ipc.js';
 import { errorMessage } from '../errors.js';
-import { canBuild, initialIndexState, type IndexFlowState } from './state.js';
+import { linkLine } from '../../../core/seriesIndex/links.js';
+import { canBuild, canLinkVolumes, initialIndexState, type IndexFlowState } from './state.js';
 
 /**
  * The "Build an index" flow. Owns its state and render loop, as the extract
  * flow does; app.ts hands over the root element and gets it back on exit.
  *
- * Two confirmations, both naming what will happen: replacing files that are
- * already in the folder, and PUBLISHING a new item (the collection may have no
- * moderation queue). An update keeps the item's state and asks nothing more.
+ * Three confirmations, each naming what will happen: replacing files that are
+ * already in the folder, PUBLISHING a new item (the collection may have no
+ * moderation queue), and editing every listed volume to add the index link.
+ * An update keeps the item's state and asks nothing more.
  */
 export interface IndexControllerOptions {
   api: OeqApi;
@@ -69,6 +71,9 @@ export function createIndexController(options: IndexControllerOptions) {
     setDraft(draft: boolean): void {
       set({ draft });
     },
+    setLinkVolumes(on: boolean): void {
+      set({ linkVolumes: on });
+    },
 
     async chooseFolder(): Promise<void> {
       const folder = await options.api.chooseFolder();
@@ -78,6 +83,7 @@ export function createIndexController(options: IndexControllerOptions) {
     async build(): Promise<void> {
       if (!canBuild(state) || state.preview === null) return;
       const { buildId, existing } = state.preview;
+      const linking = state.linkVolumes && canLinkVolumes(state);
       const done: string[] = [];
       set({ working: true, error: null, done });
       try {
@@ -102,6 +108,21 @@ export function createIndexController(options: IndexControllerOptions) {
             if (existing.kind === 'none') {
               preview = { ...preview, existing: { kind: 'one', status: state.draft ? 'draft' : 'live' } };
             }
+          }
+        }
+        // After the upload, so a new item exists to point at. Asked here, naming
+        // how many items it edits, because it changes records other than the index.
+        if (linking) {
+          const n = preview.volumes.length;
+          if (preview.existing.kind !== 'one') {
+            done.push('Volumes not linked: the index item was not uploaded.');
+          } else if (
+            !confirm(`Add a link to the index as the first attachment of ${n} volume items? This edits each of them in openEQUELLA.`)
+          ) {
+            done.push('Volumes not linked: you chose not to edit them.');
+          } else {
+            const linked = await options.api.indexLinkVolumes({ buildId });
+            done.push(linkLine(linked, { group: 'volume', groups: 'volumes', heldBack: preview.heldBack.length }));
           }
         }
         set({ working: false, done: [...done], preview });
