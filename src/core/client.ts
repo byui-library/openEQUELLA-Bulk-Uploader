@@ -200,6 +200,22 @@ function parseCollectionItem(r: Record<string, unknown>): CollectionItem {
 }
 
 /**
+ * A search page with no rows while `available` says more remain is a guest
+ * answer (CLAUDE.md, "openEQUELLA answers an unauthenticated request with
+ * 200"): on the first page the session never signed in, on a later one it
+ * expired mid-listing. Read as "none" or as a short list, it would make the
+ * index publish a duplicate item or list a partial collection.
+ */
+function assertNotGuestPage(rows: number, read: number, available: number): void {
+  if (rows === 0 && read < available) {
+    throw new ValidationError(
+      `openEQUELLA reports ${available} matching items but returned only ${read} -- the session is not ` +
+        'signed in, or has expired. Sign in again and retry.',
+    );
+  }
+}
+
+/**
  * Body types fetch() can safely re-send on a retry: their content is held in
  * memory (or is otherwise re-readable) rather than drained by the act of
  * sending the first request. Anything else (a web ReadableStream, a Node
@@ -616,15 +632,7 @@ export class OeqClient {
       };
       const results = body.results ?? [];
       const available = body.available ?? 0;
-      // An empty page while items remain is a guest answer: on the first page
-      // the session never signed in, on a later one it expired mid-listing.
-      // Either way a partial list must never be returned as the collection.
-      if (results.length === 0 && start < available) {
-        throw new ValidationError(
-          `openEQUELLA reports ${available} items in this collection but returned only ${start} -- the ` +
-            'session is not signed in, or has expired. Sign in again and retry.',
-        );
-      }
+      assertNotGuestPage(results.length, start, available);
       items.push(...results.map(parseCollectionItem));
       start += results.length;
       // Termination must not depend on the server honouring `start`.
@@ -654,14 +662,7 @@ export class OeqClient {
       results?: Record<string, unknown>[];
     };
     const results = body.results ?? [];
-    // `available > 0` with no rows is a guest answer, as in searchCollection.
-    // Read as "none", it would make the index publish a DUPLICATE item.
-    if (results.length === 0 && (body.available ?? 0) > 0) {
-      throw new ValidationError(
-        `openEQUELLA reports ${body.available} matching items but returned none -- the session is not signed ` +
-          'in, or has expired. Sign in again and retry.',
-      );
-    }
+    assertNotGuestPage(results.length, 0, body.available ?? 0);
     return results.map(parseCollectionItem);
   }
 
