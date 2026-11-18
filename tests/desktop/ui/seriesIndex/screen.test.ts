@@ -41,3 +41,26 @@ describe('index flow markup', () => {
     expect(html).toContain('id="index-publish"');
   });
 });
+
+describe('index flow markup while busy or failed', () => {
+  const tpl = [{ id: 'sre', label: 'SRE' }];
+  it('disables the controls while working', () => {
+    const html = indexFlowMarkup({
+      ...initialIndexState(),
+      templates: tpl,
+      preview: { ...preview, existing: { kind: 'none' } },
+      saveFiles: true,
+      upload: true,
+      working: true,
+    });
+    for (const id of ['index-template', 'index-save-files', 'index-upload', 'index-draft', 'index-publish', 'index-folder', 'index-back']) {
+      expect(html).toMatch(new RegExp(`id="${id}"[^>]*disabled`));
+    }
+  });
+
+  it('does not say no template exists beside a real error', () => {
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], error: 'network down' });
+    expect(html).toContain('network down');
+    expect(html).not.toContain('No template can build an index');
+  });
+});

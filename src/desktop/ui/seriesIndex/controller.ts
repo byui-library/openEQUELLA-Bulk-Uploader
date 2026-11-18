@@ -23,9 +23,13 @@ export interface IndexControllerOptions {
 export function createIndexController(options: IndexControllerOptions) {
   let state = initialIndexState();
   const confirm = options.confirm ?? ((text: string) => window.confirm(text));
+  // Once the operator has left, nothing in flight may draw over what app.ts drew.
+  let exited = false;
+  // Only the newest preview request may apply its result.
+  let previewRequest = 0;
   const set = (patch: Partial<IndexFlowState>) => {
     state = { ...state, ...patch };
-    options.render(state);
+    if (!exited) options.render(state);
   };
 
   return {
@@ -40,6 +44,7 @@ export function createIndexController(options: IndexControllerOptions) {
     },
 
     async setTemplate(id: string): Promise<void> {
+      const mine = ++previewRequest;
       set({ templateId: id, loading: true, preview: null, done: [], error: null });
       try {
         const preview = await options.api.indexPreview({
@@ -47,8 +52,10 @@ export function createIndexController(options: IndexControllerOptions) {
           collectionUuid: options.collectionUuid,
           templateId: id,
         });
+        if (mine !== previewRequest) return;
         set({ preview, loading: false });
       } catch (err) {
+        if (mine !== previewRequest) return;
         set({ loading: false, error: errorMessage(err) });
       }
     },
@@ -104,6 +111,7 @@ export function createIndexController(options: IndexControllerOptions) {
     },
 
     exit(): void {
+      exited = true;
       options.onExit();
     },
   };

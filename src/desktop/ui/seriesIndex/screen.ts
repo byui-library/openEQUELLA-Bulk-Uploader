@@ -6,7 +6,10 @@ import type { IndexController } from './controller.js';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+const isBusy = (s: IndexFlowState) => s.working || s.loading;
+
 function existingMarkup(s: IndexFlowState, e: IndexPreview['existing']): string {
+  const dis = isBusy(s) ? ' disabled' : '';
   switch (e.kind) {
     case 'one':
       return `<p class="note">Updates the existing index item, which stays ${escapeHtml(e.status)}.</p>`;
@@ -17,12 +20,13 @@ function existingMarkup(s: IndexFlowState, e: IndexPreview['existing']): string 
     case 'none':
       return `
         <p>A new index item will be created as:</p>
-        <label><input type="radio" name="index-state" id="index-draft" ${s.draft ? 'checked' : ''}> Draft</label>
-        <label><input type="radio" name="index-state" id="index-publish" ${s.draft ? '' : 'checked'}> Published</label>`;
+        <label><input type="radio" name="index-state" id="index-draft"${dis} ${s.draft ? 'checked' : ''}> Draft</label>
+        <label><input type="radio" name="index-state" id="index-publish"${dis} ${s.draft ? '' : 'checked'}> Published</label>`;
   }
 }
 
 function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
+  const dis = isBusy(s) ? ' disabled' : '';
   const held = p.heldBack.length
     ? `<h2>Held back (${p.heldBack.length})</h2><ul>${p.heldBack
         .map((h) => `<li>${escapeHtml(`${h.reason}: ${h.items.join(', ')}`)}</li>`)
@@ -42,9 +46,9 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
     ${held}${left}${volumes}
     <fieldset>
       <legend>Where should it go?</legend>
-      <label><input type="checkbox" id="index-save-files" ${s.saveFiles ? 'checked' : ''}> Save as files for a web server</label>
-      ${s.saveFiles ? `<button id="index-folder" type="button">Choose folder…</button> <span class="path">${s.folder ? escapeHtml(s.folder) : 'No folder chosen yet.'}</span>` : ''}
-      <label><input type="checkbox" id="index-upload" ${s.upload ? 'checked' : ''}> Create or update the openEQUELLA item</label>
+      <label><input type="checkbox" id="index-save-files"${dis} ${s.saveFiles ? 'checked' : ''}> Save as files for a web server</label>
+      ${s.saveFiles ? `<button id="index-folder"${dis} type="button">Choose folder…</button> <span class="path">${s.folder ? escapeHtml(s.folder) : 'No folder chosen yet.'}</span>` : ''}
+      <label><input type="checkbox" id="index-upload"${dis} ${s.upload ? 'checked' : ''}> Create or update the openEQUELLA item</label>
       ${s.upload ? existingMarkup(s, p.existing) : ''}
     </fieldset>
     <div class="button-row"><button id="index-build" type="button" ${canBuild(s) ? '' : 'disabled'}>${s.working ? 'Building…' : 'Build'}</button></div>`;
@@ -55,9 +59,11 @@ export function indexFlowMarkup(s: IndexFlowState): string {
     s.templates === null
       ? '<p class="note">Loading templates…</p>'
       : s.templates.length === 0
-        ? '<p class="note">No template can build an index: it needs file-name patterns and an "index" section.</p>'
+        ? s.error
+          ? ''
+          : '<p class="note">No template can build an index: it needs file-name patterns and an "index" section.</p>'
         : `<label for="index-template">Template</label>
-           <select id="index-template"><option value="">Choose…</option>${s.templates
+           <select id="index-template"${isBusy(s) ? ' disabled' : ''}><option value="">Choose…</option>${s.templates
              .map((t) => `<option value="${escapeHtml(t.id)}" ${t.id === s.templateId ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)
              .join('')}</select>`;
   return `
@@ -69,7 +75,7 @@ export function indexFlowMarkup(s: IndexFlowState): string {
       ${s.preview ? previewMarkup(s, s.preview) : ''}
       ${s.done.map((d) => `<p class="note">${escapeHtml(d)}</p>`).join('')}
       ${s.error ? `<p class="error" role="alert">${escapeHtml(s.error)}</p>` : ''}
-      <p class="reset-row"><button id="index-back" type="button" class="link-button">Back</button></p>
+      <p class="reset-row"><button id="index-back"${isBusy(s) ? ' disabled' : ''} type="button" class="link-button">Back</button></p>
     </section>`;
 }
 

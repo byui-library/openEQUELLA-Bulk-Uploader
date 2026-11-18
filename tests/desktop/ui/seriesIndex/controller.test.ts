@@ -92,3 +92,61 @@ describe('index flow controller', () => {
     expect(canBuild(s)).toBe(false);
   });
 });
+
+describe('index flow controller races', () => {
+  const deferred = <T,>() => {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  const make = (indexPreview: () => Promise<IndexPreview>, indexTemplates?: () => Promise<unknown>) => {
+    let renders = 0;
+    const api = { indexTemplates: indexTemplates ?? (async () => []), indexPreview } as unknown as OeqApi;
+    const c = createIndexController({
+      api,
+      instanceId: 'i',
+      collectionUuid: 'c1',
+      confirm: () => true,
+      onExit: () => {},
+      render: () => {
+        renders += 1;
+      },
+    });
+    return { c, renders: () => renders };
+  };
+
+  it('does not render after exit', async () => {
+    const d = deferred<IndexPreview>();
+    const { c, renders } = make(() => d.promise);
+    const p = c.setTemplate('sre');
+    c.exit();
+    const before = renders();
+    d.resolve(preview());
+    await p;
+    expect(renders()).toBe(before);
+  });
+
+  it('lets only the latest setTemplate apply its preview', async () => {
+    const first = deferred<IndexPreview>();
+    const second = deferred<IndexPreview>();
+    const queue = [first, second];
+    const { c } = make(() => queue.shift()!.promise);
+    const p1 = c.setTemplate('a');
+    const p2 = c.setTemplate('b');
+    second.resolve(preview({ buildId: 'second' }));
+    await p2;
+    first.resolve(preview({ buildId: 'first' }));
+    await p1;
+    expect(c.state().preview?.buildId).toBe('second');
+    expect(c.state().loading).toBe(false);
+  });
+
+  it('keeps templates empty and records the error when start fails', async () => {
+    const { c } = make(async () => preview(), async () => {
+      throw new Error('boom');
+    });
+    await c.start();
+    expect(c.state().templates).toEqual([]);
+    expect(c.state().error).toMatch(/boom/);
+  });
+});
