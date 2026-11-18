@@ -383,4 +383,16 @@ describe('the Snake River Echoes template -- issue checks', () => {
     const p = await loadTemplate('snake-river-echoes');
     expect(p.checks?.sequence?.patterns).toEqual(['{year}_Vol{group}_No{part}', '{year}_Vol{group}_Num{part}']);
   });
+
+  it('Snake River Echoes carries an index section that reads every kind of volume', async () => {
+    const p = await loadTemplate('snake-river-echoes');
+    expect(p.index?.columns.map((c) => c.path)).toEqual([
+      'MWDL/title',
+      'MWDL/description',
+      'MWDL/identifier',
+      'MWDL/genres/genre',
+      'BYUI_extended/byui_rights/restrict_to_byui',
+    ]);
+    expect(p.index?.groupPatterns).toEqual(['{year}_Vol{group}']);
+  });
 });
