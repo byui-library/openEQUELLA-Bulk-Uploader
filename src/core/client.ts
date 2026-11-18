@@ -638,8 +638,12 @@ export class OeqClient {
     }
   }
 
-  /** Items whose `path` is EXACTLY `value` -- the `where` mechanism of searchByTitle, for any path. */
-  // `path` is interpolated unescaped because it comes from the collection's own schema; `info=basic` means results carry no attachments.
+  /**
+   * Items whose `path` is EXACTLY `value` -- the `where` mechanism of
+   * searchByTitle, for any path. `path` is interpolated unescaped because it
+   * comes from the collection's own schema; `info=basic` means the results
+   * carry no attachments.
+   */
   async findByField(collectionUuid: string, path: string, value: string): Promise<CollectionItem[]> {
     const clause = `/xml/${path} = '${escapeWhereValue(value)}'`;
     const url =
