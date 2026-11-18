@@ -131,7 +131,17 @@ export async function loadManifest(path: string): Promise<Manifest> {
         : `Could not read manifest at ${path}: ${(err as Error).message}`;
     throw new OeqError(message, { cause: err });
   }
+  return parseManifest(raw, path);
+}
 
+/**
+ * The manifest in `raw`, read from `path`: validated, and a v1 manifest read
+ * as v2. Separate from the file read so a caller that must read without
+ * yielding -- `run --index-record`, inside the runner's progress callback,
+ * where an async read would overlap the runner's next save -- validates
+ * exactly as `loadManifest` does.
+ */
+export function parseManifest(raw: string, path: string): Manifest {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

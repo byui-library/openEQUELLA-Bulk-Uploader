@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -12,7 +13,8 @@ import { extractDefinition, extractItemDescriptionPath, extractItemNamePath, par
 import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js';
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { folderLines } from '../core/folderReport.js';
-import { saveManifest, loadManifest } from '../core/state.js';
+import { saveManifest, loadManifest, parseManifest } from '../core/state.js';
+import { recordFromManifest, writeBatchRecord, type BatchRecord } from '../core/seriesIndex/batchRecord.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import type { LogoutOutcome } from '../core/passwordAuth.js';
@@ -117,6 +119,90 @@ export interface RunCliOptions {
   manifest: string;
   forceInterrupted?: boolean;
   maxAttempts?: number;
+  /** Keep a batch record here for an index page (spec section 7). */
+  indexRecord?: string;
+  /** Read only with `indexRecord`: its declared name path titles each recorded item. */
+  schemaFile?: string;
+}
+
+const DEFAULT_SCHEMA_FILE = 'schema/_entity.xml';
+
+/**
+ * The schema's declared item name path, in header form, read from the same
+ * export `plan` reads it from -- or null, said out loud, when it cannot be.
+ * Null is not a failure: the record then titles each item by its row label.
+ */
+async function recordTitlePath(schemaFile: string): Promise<string | null> {
+  let xml: string;
+  try {
+    xml = await readFile(schemaFile, 'utf8');
+  } catch (err) {
+    console.error(
+      `warning: could not read the schema export ${schemaFile} (${errorMessage(err)}), so the batch ` +
+        `record titles each item by its row label.`,
+    );
+    return null;
+  }
+  const path = extractItemNamePath(xml);
+  if (path === null) {
+    console.error(
+      `warning: the schema export ${schemaFile} declares no item name path, so the batch record ` +
+        `titles each item by its row label.`,
+    );
+  }
+  return path;
+}
+
+/**
+ * Keeps the batch record beside a run: after every row, the record is
+ * recomputed WHOLE from the manifest the runner has just saved (runner.ts
+ * saves before it reports progress), so an interrupted run leaves a record of
+ * exactly what it made.
+ *
+ * The manifest is read SYNCHRONOUSLY, inside the progress callback, so the
+ * read is over before the runner saves again: an async read could hold the
+ * file open across the runner's next rename, which Windows may refuse.
+ *
+ * A write that fails NEVER fails the run -- the items exist either way. It is
+ * warned about once, naming the file, and the run carries on.
+ */
+function batchRecordKeeper(manifestPath: string, file: string, titlePath: string | null) {
+  let writes = Promise.resolve();
+  let warned = false;
+  let lastOk = false;
+  const fail = (err: unknown): void => {
+    lastOk = false;
+    if (warned) return;
+    warned = true;
+    console.error(
+      `warning: could not write the batch record ${file} (${errorMessage(err)}). The run carries on; ` +
+        `its items are created either way.`,
+    );
+  };
+  return {
+    update(): void {
+      let record: BatchRecord;
+      try {
+        record = recordFromManifest(parseManifest(readFileSync(manifestPath, 'utf8'), manifestPath), titlePath);
+      } catch (err) {
+        fail(err);
+        return;
+      }
+      writes = writes.then(() =>
+        writeBatchRecord(file, record).then(
+          () => {
+            lastOk = true;
+          },
+          fail,
+        ),
+      );
+    },
+    /** Every queued write, settled. Never rejects. */
+    async settled(): Promise<boolean> {
+      await writes;
+      return lastOk;
+    },
+  };
 }
 
 /**
@@ -136,17 +222,37 @@ export interface RunCliOptions {
 export async function runAction(o: RunCliOptions, env: Env = process.env): Promise<number> {
   const cfg = loadConfig(env);
   const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
-  const summary = await runManifest(client, o.manifest, {
-    forceInterrupted: o.forceInterrupted,
-    maxAttempts: o.maxAttempts,
-    onProgress: (e, done, total) =>
-      console.log(`[${done}/${total}] ${rowLabel(e)} -> ${e.status}${e.error ? `: ${e.error}` : ''}`),
-  });
+  const keeper = o.indexRecord
+    ? batchRecordKeeper(o.manifest, o.indexRecord, await recordTitlePath(o.schemaFile ?? DEFAULT_SCHEMA_FILE))
+    : null;
+  let summary: Awaited<ReturnType<typeof runManifest>>;
+  try {
+    summary = await runManifest(client, o.manifest, {
+      forceInterrupted: o.forceInterrupted,
+      maxAttempts: o.maxAttempts,
+      onProgress: (e, done, total) => {
+        console.log(`[${done}/${total}] ${rowLabel(e)} -> ${e.status}${e.error ? `: ${e.error}` : ''}`);
+        keeper?.update();
+      },
+    });
+    // Once more at the end, so a batch with no rows to report still leaves a record.
+    keeper?.update();
+  } finally {
+    // Never rejects: a run that threw is not made to wait on, or hidden by, its record.
+    await keeper?.settled();
+  }
 
   console.log(
     `created=${summary.created} failed=${summary.failed} skipped=${summary.skipped} ` +
       `incomplete=${summary.incomplete} interrupted=${summary.interrupted}`,
   );
+  if (keeper && o.indexRecord) {
+    console.log(
+      (await keeper.settled())
+        ? `Batch record: ${o.indexRecord}`
+        : `Batch record NOT written: ${o.indexRecord} (see the warning above).`,
+    );
+  }
 
   if (summary.interrupted > 0) {
     console.log(
@@ -744,6 +850,15 @@ export function buildProgram(env: Env = process.env): Command {
     .requiredOption('--manifest <path>', 'job manifest from `plan`')
     .option('--force-interrupted', 'process rows left mid-upload by an interrupted prior run')
     .option('--max-attempts <n>', 'max attempts per row', (v) => parseInt(v, 10))
+    .option(
+      '--index-record <file>',
+      'keep a record of what this run creates, for `oeq-upload index --from-record`; rewritten after every row',
+    )
+    .option(
+      '--schema-file <path>',
+      "with --index-record: the schema export whose declared name path titles each recorded item",
+      DEFAULT_SCHEMA_FILE,
+    )
     .action(async (o: RunCliOptions) => {
       process.exitCode = await runAction(o, env);
     });
@@ -847,6 +962,10 @@ export function buildProgram(env: Env = process.env): Command {
     .option('--draft', 'with --upload: a NEW index item is a draft')
     .option('--publish', 'with --upload: a NEW index item is published')
     .option('--link-volumes', "with --upload: add a link to the index as every listed volume's first attachment")
+    .option(
+      '--from-record <file...>',
+      'build from batch records written by `run --index-record`, in their collection, instead of searching it',
+    )
     .action(async (o: IndexCliOptions) => {
       process.exitCode = await indexAction(o, env);
     });
