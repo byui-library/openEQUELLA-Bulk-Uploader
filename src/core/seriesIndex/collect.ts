@@ -1,5 +1,5 @@
 // src/core/seriesIndex/collect.ts
-import { readName, resolveLabels } from '../extract/sequenceChecks.js';
+import { nameReader, resolveLabels, type NameRead } from '../extract/sequenceChecks.js';
 import type { SequenceLabels } from '../extract/types.js';
 import { instanceEndpoint } from '../instanceUrl.js';
 import type { HeldBack, IndexHit, IndexVolume, LeftOut, SeriesIndex } from './types.js';
@@ -43,7 +43,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const stem = (filename: string) => filename.replace(/\.[^.]+$/, '');
 const isRun = (parts: number[]) => parts.every((p, i) => i === 0 || p === parts[i - 1]! + 1);
 
-type Read = ReturnType<typeof readName>;
+type Read = NameRead | null;
 
 /** "Issue 2 (1972)", "Issues 2–3", or the file's stem when it states no part. */
 export function issueLabel(read: Read, filename: string, labels: SequenceLabels): string {
@@ -60,7 +60,7 @@ export function issueLabel(read: Read, filename: string, labels: SequenceLabels)
 
 export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: string): SeriesIndex {
   const labels = resolveLabels(rule.labels);
-  const patterns = [...rule.patterns, ...(rule.groupPatterns ?? [])];
+  const readName = nameReader([...rule.patterns, ...(rule.groupPatterns ?? [])]);
   const notInSeries: LeftOut[] = [];
   const heldBack: HeldBack[] = [];
   const byGroup = new Map<number, { hit: IndexHit; reads: Read[] }[]>();
@@ -71,7 +71,7 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
       notInSeries.push({ uuid: hit.uuid, name: nameOf(hit), reason: `its status is ${hit.status}` });
       continue;
     }
-    const reads = hit.files.map((f) => readName(patterns, f.filename));
+    const reads = hit.files.map((f) => readName(f.filename));
     const groups = [...new Set(reads.flatMap((r) => (r && r.group !== null ? [r.group] : [])))].sort(
       (a, b) => a - b,
     );
@@ -92,7 +92,9 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
       continue;
     }
     const group = groups[0]!;
-    byGroup.set(group, [...(byGroup.get(group) ?? []), { hit, reads }]);
+    const claims = byGroup.get(group);
+    if (claims) claims.push({ hit, reads });
+    else byGroup.set(group, [{ hit, reads }]);
   }
 
   const volumes: IndexVolume[] = [];
