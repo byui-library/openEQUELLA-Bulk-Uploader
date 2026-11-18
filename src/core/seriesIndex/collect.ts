@@ -61,7 +61,7 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
   const notInSeries: LeftOut[] = [];
   const heldBack: HeldBack[] = [];
   const byGroup = new Map<number, { hit: IndexHit; reads: Read[] }[]>();
-  const nameOf = (hit: IndexHit) => hit.name ?? hit.uuid;
+  const nameOf = (hit: IndexHit) => hit.name?.trim() || hit.uuid;
 
   for (const hit of hits) {
     if (!LISTED.has(hit.status)) {
@@ -106,7 +106,7 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
     const { hit, reads } = claims[0]!;
     volumes.push({
       group,
-      heading: hit.name ?? `${capital(labels.group)} ${group}`,
+      heading: hit.name?.trim() || `${capital(labels.group)} ${group}`,
       itemUrl: itemUrl(base, hit.uuid),
       issues: hit.files.map((f, i) => ({
         label: issueLabel(reads[i] ?? null, f.filename, labels),

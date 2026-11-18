@@ -121,3 +121,15 @@ describe('issueLabel', () => {
     expect(issueLabel({ parts: [1, 3], group: 4, years: null }, 'x.pdf', labels)).toBe('Issues 1, 3');
   });
 });
+
+describe('a blank name is no name', () => {
+  it('headings fall back, and the not-in-series list falls back to the uuid', () => {
+    const index = collectIndex(
+      [hit('a', ['FQ_1971_Vol1_No1.pdf'], { name: '  ' }), hit('b', ['unrelated.pdf'], { name: '' })],
+      RULE,
+      BASE,
+    );
+    expect(index.volumes[0]!.heading).toBe('Volume 1');
+    expect(index.notInSeries[0]!.name).toBe('b');
+  });
+});
