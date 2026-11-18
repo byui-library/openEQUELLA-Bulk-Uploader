@@ -21,6 +21,7 @@ function existingMarkup(s: IndexFlowState, e: IndexPreview['existing']): string 
 
 function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
   const dis = isBusy(s) ? ' disabled' : '';
+  // The words come from a template file an operator can edit, so they are markup-unsafe.
   const L = {
     part: escapeHtml(p.labels.part),
     parts: escapeHtml(p.labels.parts),
