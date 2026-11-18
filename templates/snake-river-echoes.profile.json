@@ -20,7 +20,8 @@
       { "path": "MWDL/genres/genre", "value": "Periodical" },
       { "path": "BYUI_extended/byui_rights/restrict_to_byui", "value": "Public" }
     ],
-    "groupPatterns": ["{year}_Vol{group}"]
+    "groupPatterns": ["{year}_Vol{group}"],
+    "search": "SRE_*"
   },
   "columns": [
     { "path": "attachment name", "sources": [{ "filename": true }], "locked": true },
