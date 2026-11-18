@@ -52,6 +52,8 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
     /** The item THIS preview's upload created, while search may not list it yet. */
     created: { uuid: string; version: number; status: string } | null;
   } | null = null;
+  /** How many previews have STARTED; see preview. */
+  let previews = 0;
 
   /** A fresh session for one write, refused if openEQUELLA answers it as the guest. */
   const signedIn = async (instanceId: string, action: string): Promise<IndexConnection> => {
@@ -78,7 +80,14 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
       return usable;
     },
 
+    /**
+     * Only the LATEST-STARTED preview may be held. One started earlier that
+     * finishes later still returns its summary, but under an id that is not
+     * held -- so saving or uploading it says "Preview again" rather than
+     * writing a build the operator has already moved past.
+     */
     async preview(args: Parameters<OeqApi['indexPreview']>[0]): Promise<IndexPreview> {
+      const ticket = ++previews;
       held = null;
       const connection = await deps.connect(args.instanceId);
       const { client } = connection;
@@ -93,7 +102,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         schema,
       });
       const id = newId();
-      held = { id, build, instanceId: args.instanceId, created: null };
+      if (ticket === previews) held = { id, build, instanceId: args.instanceId, created: null };
       const e = build.existing;
       return {
         buildId: id,

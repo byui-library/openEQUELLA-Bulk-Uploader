@@ -300,6 +300,26 @@ describe('index handlers', () => {
     expect(c.created).toEqual([]);
   });
 
+  it('only the latest-started preview is held, even when an older one finishes last', async () => {
+    const c = connect();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let n = 0;
+    const deps = async (): Promise<IndexConnection> => {
+      if (++n === 1) await gate; // the first preview stalls until the second is done
+      return c.deps();
+    };
+    const ids = ['b1', 'b2'];
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: deps, newId: () => ids.shift()! });
+    const first = h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    const second = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    release();
+    const older = await first;
+    expect(second.buildId).not.toBe(older.buildId);
+    await expect(h.upload({ buildId: older.buildId, draft: true })).rejects.toThrow(/Preview again/);
+    expect((await h.upload({ buildId: second.buildId, draft: true })).kind).toBe('created');
+  });
+
   it('saves the build to a folder, reporting files already there', async () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps, newId: () => 'b1' });
     await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
