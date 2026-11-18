@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import type { CollectionItem, CreateItemRequest, CreateItemResult } from '../client.js';
 import { ValidationError } from '../errors.js';
-import { buildMetadataXml } from '../metadata.js';
+import { buildMetadataXml, mergeMetadataXml } from '../metadata.js';
 import type { IndexRecord } from './record.js';
 import { INDEX_FILE_NAMES, type IndexFiles } from './types.js';
 
@@ -13,7 +13,8 @@ import { INDEX_FILE_NAMES, type IndexFiles } from './types.js';
  *
  * An update KEEPS THE ITEM'S STATE: it never publishes a draft or unpublishes
  * a live item. An edit copies the bean whole and changes what it names
- * (CLAUDE.md) -- so attachments other than the three index files stay.
+ * (CLAUDE.md) -- so attachments other than the three index files stay, and
+ * the record is MERGED: only the template's paths change.
  */
 
 export interface IndexClient {
@@ -71,7 +72,6 @@ export async function publishIndex(client: IndexClient, args: PublishArgs): Prom
     );
   }
 
-  const metadata = buildMetadataXml(args.record.fields);
   const staging = await client.createStagingArea();
   try {
     for (const name of INDEX_FILE_NAMES) await client.uploadToStaging(staging, name, args.files[name]);
@@ -79,7 +79,7 @@ export async function publishIndex(client: IndexClient, args: PublishArgs): Prom
     if (existing.kind === 'none') {
       const created = await client.createItem({
         collectionUuid: args.collectionUuid,
-        metadata,
+        metadata: buildMetadataXml(args.record.fields),
         stagingUuid: staging,
         draft: args.draft,
         attachments: INDEX_FILE_NAMES.map((name) => ({ filename: name, description: name, uuid: randomUUID() })),
@@ -101,6 +101,9 @@ export async function publishIndex(client: IndexClient, args: PublishArgs): Prom
       })),
       ...current.filter((a) => !(a['type'] === 'file' && ours.has(String(a['filename'])))),
     ];
+    // MERGED, never rebuilt: the item's other fields are a cataloguer's, not ours.
+    const existingXml = typeof bean['metadata'] === 'string' ? bean['metadata'] : '';
+    const metadata = mergeMetadataXml(existingXml, args.record.fields);
     await client.editItem(existing.uuid, existing.version, { ...bean, metadata, attachments }, staging);
     return { kind: 'updated', uuid: existing.uuid, version: existing.version };
   } catch (err) {

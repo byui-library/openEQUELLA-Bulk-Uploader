@@ -12,7 +12,12 @@ const record: IndexRecord = {
 };
 const files = { 'index.html': '<h1>x</h1>', 'index.css': 'a{}', 'index.js': ';' };
 
-function fake(found: CollectionItem[] = [], failOn?: string, attachments?: Record<string, unknown>[]) {
+function fake(
+  found: CollectionItem[] = [],
+  failOn?: string,
+  attachments?: Record<string, unknown>[],
+  metadata = '<xml/>',
+) {
   const calls: string[] = [];
   const state = { created: null as unknown, edited: null as unknown, uploads: [] as string[] };
   const client: IndexClient = {
@@ -41,7 +46,7 @@ function fake(found: CollectionItem[] = [], failOn?: string, attachments?: Recor
         uuid,
         version,
         status: 'live',
-        metadata: '<xml/>',
+        metadata,
         attachments: attachments ?? [
           { type: 'file', filename: 'index.html', uuid: 'keep-html' },
           { type: 'file', filename: 'index.css', uuid: 'keep-css' },
@@ -119,6 +124,21 @@ describe('publishIndex', () => {
     expect(edited.bean.attachments.some((a) => a.uuid === 'keep-url')).toBe(true);
     expect(edited.bean.attachments).toHaveLength(4);
     expect(edited.bean.attachments.find((a) => a.filename === 'index.js')!.uuid).toMatch(/.+/);
+  });
+
+  it('an update changes only the fields the template names, keeping the rest of the record', async () => {
+    const f = fake([], undefined, undefined, '<xml><DC><title>Old</title><rights>Kept rights</rights></DC></xml>');
+    await publishIndex(f.client, {
+      collectionUuid: 'c1',
+      record,
+      files,
+      existing: { kind: 'one', uuid: 'a', version: 2, status: 'live' },
+      draft: true,
+    });
+    const metadata = (f.state.edited as { bean: { metadata: string } }).bean.metadata;
+    expect(metadata).toBe(
+      '<xml><DC><title>Fernbrook index</title><rights>Kept rights</rights><identifier>FQ_index</identifier></DC></xml>',
+    );
   });
 
   it('refuses several matches or no identifier, and stages nothing', async () => {

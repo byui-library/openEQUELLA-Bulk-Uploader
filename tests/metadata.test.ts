@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { XMLParser } from 'fast-xml-parser';
-import { buildMetadataXml } from '../src/core/metadata.js';
+import { buildMetadataXml, mergeMetadataXml } from '../src/core/metadata.js';
 import { ValidationError } from '../src/core/errors.js';
 
 describe('buildMetadataXml', () => {
@@ -143,5 +143,43 @@ describe('buildMetadataXml', () => {
 
   it('still emits a self-closing tag for a lone blank value (single-value case unchanged)', () => {
     expect(buildMetadataXml({ 'MWDL/abstract': [''] })).toBe('<xml><MWDL><abstract/></MWDL></xml>');
+  });
+});
+
+describe('mergeMetadataXml', () => {
+  it('keeps every field the template does not name, attributes and comments included', () => {
+    const existing =
+      '<xml><DC><title>Old title</title><subject lang="en">Rivers &amp; lakes</subject><!-- kept --></DC>' +
+      '<item><history>edited</history></item></xml>';
+    const out = mergeMetadataXml(existing, { 'DC/title': ['Fernbrook index'] });
+    expect(out).toBe(
+      '<xml><DC><title>Fernbrook index</title><subject lang="en">Rivers &amp; lakes</subject><!-- kept --></DC>' +
+        '<item><history>edited</history></item></xml>',
+    );
+  });
+
+  it("replaces every value of a repeated field with the template's, in place", () => {
+    const existing =
+      '<xml><DC><creators><creator>Aster</creator><creator>Birch</creator></creators><title>T</title></DC></xml>';
+    expect(mergeMetadataXml(existing, { 'DC/creators/creator': ['Cedar'] })).toBe(
+      '<xml><DC><creators><creator>Cedar</creator></creators><title>T</title></DC></xml>',
+    );
+  });
+
+  it('creates the containers a missing path needs, on an empty record', () => {
+    expect(mergeMetadataXml('<xml/>', { 'DC/title': ['A & B'], 'DC/identifier': ['FQ_index'] })).toBe(
+      '<xml><DC><title>A &amp; B</title><identifier>FQ_index</identifier></DC></xml>',
+    );
+    expect(mergeMetadataXml('', { 'DC/title': ['A'] })).toBe('<xml><DC><title>A</title></DC></xml>');
+  });
+
+  it('writes a blank value as an empty element, as buildMetadataXml does', () => {
+    expect(mergeMetadataXml('<xml><DC><note>x</note></DC></xml>', { 'DC/note': [''] })).toBe(
+      '<xml><DC><note/></DC></xml>',
+    );
+  });
+
+  it('refuses a path that runs through a field holding a value', () => {
+    expect(() => mergeMetadataXml('<xml><DC>text</DC></xml>', { 'DC/title': ['A'] })).toThrow(ValidationError);
   });
 });
