@@ -43,6 +43,7 @@ import { rowLabel, type Sheet } from '../core/types.js';
 import { planFolders } from '../core/folderReport.js';
 import { OeqError } from '../core/errors.js';
 import { registerExtractHandlers } from './extractHandlers.js';
+import { registerIndexHandlers } from './indexHandlers.js';
 
 const userData = () => app.getPath('userData');
 
@@ -874,5 +875,20 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     // IPC boundary. Same instance id both times, so the endpoint the operator
     // confirmed against is the endpoint their documents go to.
     modelFor: (instanceId: string) => secrets().getModel(instanceId),
+  });
+
+  // Series index. Its own module, like extract; the client is built per call
+  // exactly as listCollections builds one.
+  registerIndexHandlers(ipcMain, {
+    templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
+    connect: async (instanceId: string) => {
+      const { inst, settings } = await requireSettings(instanceId);
+      const cfg = buildConfig(inst, settings, 'unused');
+      return {
+        client: buildClient(cfg, buildAuth(cfg, tokens(), inst.id)),
+        baseUrl: inst.baseUrl,
+        fallbackSchemaUuid: inst.schemaUuid,
+      };
+    },
   });
 }

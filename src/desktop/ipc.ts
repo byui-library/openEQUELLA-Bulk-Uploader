@@ -6,6 +6,27 @@ import type { Profile } from '../core/extract/types.js';
 import type { ExtractedRow, ProblemsSummary } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
 import type { FolderSummary } from '../core/folderReport.js';
+import type { TemplateSummary } from '../core/extract/templates.js';
+
+/** What the renderer is shown of one index build; the build itself stays in the main process. */
+export interface IndexPreview {
+  buildId: string;
+  title: string;
+  volumes: { heading: string; issues: string[] }[];
+  issueCount: number;
+  heldBack: { reason: string; items: string[] }[];
+  notInSeries: { name: string; reason: string }[];
+  existing:
+    | { kind: 'none' }
+    | { kind: 'one'; status: string }
+    | { kind: 'many'; names: string[] }
+    | { kind: 'unavailable'; reason: string };
+}
+export type IndexSaveResult = { kind: 'saved'; paths: string[] } | { kind: 'exists'; names: string[] };
+export interface IndexUploadResult {
+  kind: 'created' | 'updated';
+  url: string;
+}
 // `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
 // this module is reachable from the sandboxed renderer. A type-only import is
 // erased at compile time and never becomes a runtime require (see
@@ -514,6 +535,12 @@ export interface OeqApi {
    * batch of scanned PDFs is minutes of reading before any model is asked.
    */
   onExtractProgress(cb: (p: ExtractProgress) => void): () => void;
+
+  /** Templates that can build an index: sequence patterns AND an `index` section. */
+  indexTemplates(): Promise<TemplateSummary[]>;
+  indexPreview(args: { instanceId: string; collectionUuid: string; templateId: string }): Promise<IndexPreview>;
+  indexSaveFiles(args: { buildId: string; dir: string; replace: boolean }): Promise<IndexSaveResult>;
+  indexUpload(args: { buildId: string; draft: boolean }): Promise<IndexUploadResult>;
 }
 
 /** How far an extract run has got reading its batch. */
@@ -624,4 +651,8 @@ export const CHANNELS = {
   saveProfileAs: 'oeq:saveProfileAs',
   chooseCsvPath: 'oeq:chooseCsvPath',
   openPath: 'oeq:openPath',
+  indexTemplates: 'oeq:indexTemplates',
+  indexPreview: 'oeq:indexPreview',
+  indexSaveFiles: 'oeq:indexSaveFiles',
+  indexUpload: 'oeq:indexUpload',
 } as const;

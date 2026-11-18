@@ -1,0 +1,105 @@
+import { describe, it, expect } from 'vitest';
+import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createIndexHandlers, type IndexConnection } from '../../src/desktop/indexHandlers.js';
+
+async function templatesDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'oeq-tpl-'));
+  await mkdir(dir, { recursive: true });
+  const base = {
+    version: 1,
+    pattern: 'FQ_Vol{group}',
+    columns: [{ path: 'attachment name', sources: [{ filename: true }] }],
+    checks: { sequence: { patterns: ['{year}_Vol{group}_No{part}'], labels: { part: 'issue', group: 'volume' } } },
+  };
+  await writeFile(
+    join(dir, 'with-index.profile.json'),
+    JSON.stringify({
+      ...base,
+      index: {
+        columns: [
+          { path: 'DC/title', value: 'Fernbrook index' },
+          { path: 'DC/description', value: 'Every volume.' },
+          { path: 'DC/identifier', value: 'FQ_index' },
+        ],
+      },
+    }),
+  );
+  await writeFile(join(dir, 'without-index.profile.json'), JSON.stringify(base));
+  return dir;
+}
+
+function connect() {
+  const created: unknown[] = [];
+  const client = {
+    currentUser: async () => ({ id: 'u', username: 'u', firstName: '', lastName: '', guest: false }),
+    getCollection: async () => ({ uuid: 'c1', name: 'C', schemaUuid: 's1' }),
+    getSchema: async () => ({
+      uuid: 's1',
+      namePath: '/DC/title',
+      titleHeader: 'DC/title',
+      descriptionPath: '/DC/description',
+      descriptionHeader: 'DC/description',
+      paths: new Set(['DC/title', 'DC/description', 'DC/identifier']),
+    }),
+    searchCollection: async () => [
+      { uuid: 'v1', version: 1, status: 'draft', name: 'Fernbrook Vol 1', attachments: [{ type: 'file', filename: 'FQ_1971_Vol1_No1.pdf', uuid: 'a' }] },
+    ],
+    findByField: async () => [],
+    createStagingArea: async () => 'stg',
+    uploadToStaging: async () => {},
+    deleteStagingArea: async () => {},
+    createItem: async (req: unknown) => (created.push(req), { uuid: 'new', version: 1, attachmentUuids: [] }),
+    getItemBean: async () => ({}),
+    editItem: async () => {},
+  };
+  // The fake implements only what the flow calls; the cast says so once.
+  return {
+    created,
+    deps: async (): Promise<IndexConnection> => ({
+      client: client as unknown as IndexConnection['client'],
+      baseUrl: 'https://oeq.example.edu',
+      fallbackSchemaUuid: '',
+    }),
+  };
+}
+
+describe('index handlers', () => {
+  it('offers only templates that can build an index', async () => {
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps });
+    expect((await h.templates()).map((t) => t.id)).toEqual(['with-index']);
+  });
+
+  it('previews, then uploads THE SAME build by id', async () => {
+    const c = connect();
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    const preview = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect(preview).toMatchObject({
+      buildId: 'b1',
+      title: 'Fernbrook index',
+      volumes: [{ heading: 'Fernbrook Vol 1', issues: ['Issue 1 (1971)'] }],
+      issueCount: 1,
+      existing: { kind: 'none' },
+    });
+    const up = await h.upload({ buildId: 'b1', draft: true });
+    expect(up).toEqual({ kind: 'created', url: 'https://oeq.example.edu/items/new/0/index.html' });
+    expect(c.created[0]).toMatchObject({ draft: true });
+  });
+
+  it('refuses an unknown or superseded build id', async () => {
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps });
+    await expect(h.upload({ buildId: 'nope', draft: true })).rejects.toThrow(/Preview again/);
+  });
+
+  it('saves the build to a folder, reporting files already there', async () => {
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: connect().deps, newId: () => 'b1' });
+    await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    const dir = await mkdtemp(join(tmpdir(), 'oeq-out-'));
+    expect((await h.saveFiles({ buildId: 'b1', dir, replace: false })).kind).toBe('saved');
+    expect(await h.saveFiles({ buildId: 'b1', dir, replace: false })).toEqual({
+      kind: 'exists',
+      names: ['index.html', 'index.css', 'index.js'],
+    });
+  });
+});

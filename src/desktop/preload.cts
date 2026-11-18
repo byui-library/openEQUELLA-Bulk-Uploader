@@ -77,6 +77,10 @@ const CHANNELS = {
   saveProfileAs: 'oeq:saveProfileAs',
   chooseCsvPath: 'oeq:chooseCsvPath',
   openPath: 'oeq:openPath',
+  indexTemplates: 'oeq:indexTemplates',
+  indexPreview: 'oeq:indexPreview',
+  indexSaveFiles: 'oeq:indexSaveFiles',
+  indexUpload: 'oeq:indexUpload',
 } as const;
 
 const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
@@ -125,6 +129,10 @@ const api: OeqApi = {
   saveProfileAs: (profile) => invoke(CHANNELS.saveProfileAs, profile),
   chooseCsvPath: () => invoke(CHANNELS.chooseCsvPath),
   openPath: (path) => invoke(CHANNELS.openPath, path),
+  indexTemplates: () => invoke(CHANNELS.indexTemplates),
+  indexPreview: (args) => invoke(CHANNELS.indexPreview, args),
+  indexSaveFiles: (args) => invoke(CHANNELS.indexSaveFiles, args),
+  indexUpload: (args) => invoke(CHANNELS.indexUpload, args),
   // Each returns the way to stop listening -- see OeqApi.onModelProgress.
   onProgress: (cb) => subscribe<RunProgress>(CHANNELS.progress, cb),
   onModelProgress: (cb) => subscribe<ModelProgress>(CHANNELS.modelProgress, cb),
