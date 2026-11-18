@@ -25,6 +25,7 @@ export interface ResultsProps {
   onRetryFailed(): void;
   /** Back to Choose for another spreadsheet, without restarting the app. */
   onAnotherBatch(): void;
+  onBuildIndex(): void;
   /**
    * Setup for this site, clearing nothing -- app.ts's `handleSiteSettings`,
    * never the destructive "Clear all credentials…" route.
@@ -130,6 +131,9 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
         <button id="results-another-btn" type="button">
           Upload another spreadsheet
         </button>
+        <button id="results-build-index" type="button">
+          Build an index of this collection&hellip;
+        </button>
       </div>
       <p class="hint">
         Keeps you signed in and keeps ${escapeHtml(props.collectionName || 'the same collection')}
@@ -161,6 +165,7 @@ export function renderResults(root: HTMLElement, props: ResultsProps): void {
   root
     .querySelector<HTMLButtonElement>('#results-another-btn')
     ?.addEventListener('click', () => props.onAnotherBatch());
+  root.querySelector<HTMLButtonElement>('#results-build-index')?.addEventListener('click', () => props.onBuildIndex());
   root
     .querySelector<HTMLButtonElement>('#results-site-settings')
     ?.addEventListener('click', () => props.onSiteSettings());

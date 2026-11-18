@@ -34,6 +34,7 @@ const props = (over: Partial<ResultsProps> = {}): ResultsProps => ({
   onAnotherBatch: () => {},
   onSiteSettings: () => {},
   onSignOut: () => {},
+  onBuildIndex: () => {},
   ...over,
 });
 

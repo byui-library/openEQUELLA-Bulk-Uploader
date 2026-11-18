@@ -34,6 +34,7 @@ const props = (over: Partial<ChooseProps> = {}): ChooseProps => ({
   onExtract: () => {},
   onSiteSettings: () => {},
   onSignOut: () => {},
+  onBuildIndex: () => {},
   ...over,
 });
 

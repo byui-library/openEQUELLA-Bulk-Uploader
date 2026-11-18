@@ -30,6 +30,8 @@ import { timeoutSecondsProblem } from '../../core/ai/provider.js';
 import { signOutNotice } from './signout.js';
 import { renderSignin } from './screens/signin.js';
 import { renderChoose } from './screens/choose.js';
+import { createIndexController } from './seriesIndex/controller.js';
+import { renderIndexFlow } from './seriesIndex/screen.js';
 import { moveFile, ordersStillValid, renderReview } from './screens/review.js';
 import { renderConfirm } from './screens/confirm.js';
 import { renderProgress, type ProgressLogEntry } from './screens/progress.js';
@@ -311,6 +313,24 @@ function currentInstance(): InstanceChoice | null {
   return instanceById(state.instanceId);
 }
 
+/**
+ * The index flow, from Choose or Results. Like the extract flow, it owns its
+ * own state and render loop and hands the root back on exit.
+ */
+function openIndexFlow(): void {
+  if (!state.collectionUuid) return;
+  const root = requireEl('app');
+  const controller = createIndexController({
+    api: window.oeq,
+    instanceId: state.instanceId,
+    collectionUuid: state.collectionUuid,
+    onExit: () => render(),
+    render: (s) => renderIndexFlow(root, s, controller),
+  });
+  renderIndexFlow(root, controller.state(), controller);
+  void controller.start();
+}
+
 function render(): void {
   // On Setup, the banner must reflect the instance being CONFIGURED
   // (setupInstanceId), not the app's separate action-flow instance -- a
@@ -409,6 +429,7 @@ function render(): void {
         // site would not confirm it. A second sign-out path written for this
         // screen is exactly how a live session gets left behind.
         onSignOut: handleSignOut,
+        onBuildIndex: openIndexFlow,
         onExtract: () => {
           // The extract flow owns its own state and render loop; app.ts hands
           // over the root element and gets it back on exit. Deliberately not
@@ -490,6 +511,7 @@ function render(): void {
           error: state.resultsError,
           onRetryFailed: handleRetryFailed,
           onAnotherBatch: handleAnotherBatch,
+          onBuildIndex: openIndexFlow,
           // Both non-destructive, both the same handlers Choose uses. Done was
           // a dead end: another spreadsheet, a collection link, and nothing
           // else -- so changing a setting or moving to another site meant

@@ -37,6 +37,8 @@ export interface ChooseProps {
   onSaveStarterKit(): void;
   onContinue(): void;
   onExtract(): void;
+  /** "Build an index…" -- needs a chosen collection; see ui/seriesIndex. */
+  onBuildIndex(): void;
   /**
    * Back to Setup for this site, clearing nothing.
    *
@@ -149,6 +151,9 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
       <fieldset>
         <legend>1. Collection</legend>
         ${collectionSection}
+        <button id="choose-build-index" type="button" ${props.collectionUuid ? '' : 'disabled'}>
+          Build an index of this collection&hellip;
+        </button>
       </fieldset>
 
       <fieldset>
@@ -223,6 +228,7 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
     .querySelector<HTMLButtonElement>('#choose-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
   root.querySelector<HTMLButtonElement>('#choose-extract')?.addEventListener('click', props.onExtract);
+  root.querySelector<HTMLButtonElement>('#choose-build-index')?.addEventListener('click', () => props.onBuildIndex());
   root
     .querySelector<HTMLButtonElement>('#choose-site-settings')
     ?.addEventListener('click', () => props.onSiteSettings());
