@@ -7,7 +7,6 @@ import {
   fetchAndCacheSchema,
   indexRecordPathFor,
   indexRecordTargets,
-  runKeepingRecord,
   reportColumns,
   resolveSchemaPath,
   missingCredentialsMessage,
@@ -17,6 +16,7 @@ import {
 import { forgetLiveSessions, rememberSession } from '../../src/desktop/session.js';
 import { SecretStore, EncryptedTokenStore, type Cipher } from '../../src/desktop/secrets.js';
 import { saveManifest, loadManifest } from '../../src/core/state.js';
+import { runKeepingRecord } from '../../src/core/seriesIndex/batchRecord.js';
 import { SchemaCache } from '../../src/core/schemaCache.js';
 import type { SchemaInfo } from '../../src/core/discovery.js';
 import type { Sheet, Manifest } from '../../src/core/types.js';
@@ -930,7 +930,7 @@ describe('the batch record beside a desktop run', () => {
     const recordPath = join(dir, 'fernbrook.index.json');
     const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: 'DC/title' }, async (afterRow) => {
       await saveManifest(manifestPath, job('created'));
-      afterRow({ rowNumber: 2, status: 'created' });
+      afterRow({ rowNumber: 2, status: 'created' }, job('created'));
       return { created: 1 };
     });
     expect(got).toEqual({ summary: { created: 1 }, indexRecordPath: recordPath });
@@ -948,7 +948,7 @@ describe('the batch record beside a desktop run', () => {
     // A folder that does not exist: every write fails.
     const recordPath = join(dir, 'missing-folder', 'fernbrook.index.json');
     const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
-      afterRow({ rowNumber: 2, status: 'created' });
+      afterRow({ rowNumber: 2, status: 'created' }, job('created'));
       return { created: 1 };
     });
     expect(got.summary).toEqual({ created: 1 });
@@ -961,7 +961,7 @@ describe('the batch record beside a desktop run', () => {
     const manifestPath = join(dir, 'job.json');
     await saveManifest(manifestPath, job('created'));
     const got = await runKeepingRecord(manifestPath, undefined, async (afterRow) => {
-      afterRow({ rowNumber: 2, status: 'created' });
+      afterRow({ rowNumber: 2, status: 'created' }, job('created'));
       return { created: 1 };
     });
     expect(got).toEqual({ summary: { created: 1 } });
@@ -974,7 +974,7 @@ describe('the batch record beside a desktop run', () => {
     const recordPath = join(dir, 'fernbrook.index.json');
     await expect(
       runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
-        afterRow({ rowNumber: 2, status: 'created' });
+        afterRow({ rowNumber: 2, status: 'created' }, job('created'));
         throw new Error('network gone');
       }),
     ).rejects.toThrow('network gone');

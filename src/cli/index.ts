@@ -13,7 +13,7 @@ import { buildManifest, preflightDuplicates, markSkipped } from '../core/plan.js
 import { findDuplicates, defaultChoice } from '../core/duplicates.js';
 import { folderLines } from '../core/folderReport.js';
 import { saveManifest, loadManifest } from '../core/state.js';
-import { BatchRecordRefused, keepBatchRecord } from '../core/seriesIndex/batchRecord.js';
+import { BatchRecordRefused, runKeepingRecord } from '../core/seriesIndex/batchRecord.js';
 import { AuthorizationCodeAuth } from '../core/authCode.js';
 import { FileTokenStore, type TokenStore } from '../core/tokenStore.js';
 import type { LogoutOutcome } from '../core/passwordAuth.js';
@@ -154,21 +154,21 @@ async function recordTitlePath(schemaFile: string): Promise<string | null> {
 }
 
 /**
- * The batch record beside a run (core's `keepBatchRecord`, which the desktop
- * shares). A write that fails NEVER fails the run -- the items exist either
- * way. It is warned about once, naming the file, and the run carries on. A
- * file the keeper refused to overwrite is warned about in the refusal's own
- * words, which already name the file and say it was left as it is.
+ * The warning for the batch record's first failure (core's `runKeepingRecord`,
+ * which the desktop shares). A write that fails NEVER fails the run -- the
+ * items exist either way. It is warned about once, naming the file, and the
+ * run carries on. A file the keeper refused to overwrite is warned about in
+ * the refusal's own words, which already name the file and say it was left as
+ * it is.
  */
-function batchRecordKeeper(manifestPath: string, file: string, titlePath: string | null) {
-  return keepBatchRecord(manifestPath, file, titlePath, (err) =>
+function warnBatchRecord(file: string) {
+  return (err: unknown): void =>
     console.error(
       err instanceof BatchRecordRefused
         ? `warning: ${err.message}`
         : `warning: could not write the batch record ${file} (${errorMessage(err)}). The run carries on; ` +
             `its items are created either way.`,
-    ),
-  );
+    );
 }
 
 /**
@@ -188,34 +188,31 @@ function batchRecordKeeper(manifestPath: string, file: string, titlePath: string
 export async function runAction(o: RunCliOptions, env: Env = process.env): Promise<number> {
   const cfg = loadConfig(env);
   const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
-  const keeper = o.indexRecord
-    ? batchRecordKeeper(o.manifest, o.indexRecord, await recordTitlePath(o.schemaFile ?? DEFAULT_SCHEMA_FILE))
-    : null;
-  let summary: Awaited<ReturnType<typeof runManifest>>;
-  try {
-    summary = await runManifest(client, o.manifest, {
-      forceInterrupted: o.forceInterrupted,
-      maxAttempts: o.maxAttempts,
-      onProgress: (e, done, total) => {
-        console.log(`[${done}/${total}] ${rowLabel(e)} -> ${e.status}${e.error ? `: ${e.error}` : ''}`);
-        keeper?.update(e);
-      },
-    });
-  } finally {
-    // Once more at the end -- a run that threw included -- so the record holds
-    // what was made, and a batch with no rows to report still leaves one.
-    keeper?.update();
-    // Never rejects: a run that threw is not made to wait on, or hidden by, its record.
-    await keeper?.settled();
-  }
+  const target = o.indexRecord
+    ? { path: o.indexRecord, titlePath: await recordTitlePath(o.schemaFile ?? DEFAULT_SCHEMA_FILE) }
+    : undefined;
+  const { summary, indexRecordPath } = await runKeepingRecord(
+    o.manifest,
+    target,
+    (afterRow) =>
+      runManifest(client, o.manifest, {
+        forceInterrupted: o.forceInterrupted,
+        maxAttempts: o.maxAttempts,
+        onProgress: (e, done, total, manifest) => {
+          console.log(`[${done}/${total}] ${rowLabel(e)} -> ${e.status}${e.error ? `: ${e.error}` : ''}`);
+          afterRow(e, manifest);
+        },
+      }),
+    target ? warnBatchRecord(target.path) : undefined,
+  );
 
   console.log(
     `created=${summary.created} failed=${summary.failed} skipped=${summary.skipped} ` +
       `incomplete=${summary.incomplete} interrupted=${summary.interrupted}`,
   );
-  if (keeper && o.indexRecord) {
+  if (o.indexRecord) {
     console.log(
-      (await keeper.settled()).written
+      indexRecordPath !== undefined
         ? `Batch record: ${o.indexRecord}`
         : `Batch record NOT written: ${o.indexRecord} (see the warning above).`,
     );

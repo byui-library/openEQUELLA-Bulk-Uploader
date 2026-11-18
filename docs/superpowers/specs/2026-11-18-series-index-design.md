@@ -343,9 +343,9 @@ moment it creates them, so record that and build the index from it.
   "savedAt": "2026-11-18T19:00:00.000Z",
   "baseUrl": "https://oeq.example.edu",
   "collectionUuid": "…",
-  "itemState": "draft",
   "items": [
     { "row": 2, "uuid": "…", "version": 1, "title": "Fernbrook Quarterly Vol 1",
+      "label": "FQ_1970_Vol1_No1.pdf", "state": "draft",
       "files": [ { "name": "FQ_1970_Vol1_No1.pdf", "attachmentUuid": "…" } ] }
   ],
   "leftOut": [ { "row": 3, "label": "Vol2 (4 files)", "status": "failed", "error": "…" } ]
@@ -365,8 +365,8 @@ else `''`, so the index heads the volume as it heads any unnamed item
 ("Volume 27"); each item also carries its row `label`, which names an
 untitled item in the preview's held-back and not-in-the-series listings, and
 its `state` -- the state it was created in -- so a later run's drafts do not
-make an earlier run's published items read as drafts. Records without
-`state` are read at the record's `itemState`.
+make an earlier run's published items read as drafts. Both are required: no
+release has written a record without them.
 
 **A later run of the same spreadsheet adds to the record** (review,
 2026-11-18). A record already at the path, of the same site and collection,
@@ -390,7 +390,7 @@ another created is not listed as left out. Every item and left-out entry is
 checked for shape; a damaged one refuses the file.
 
 **Building from records** reuses `collectIndex`: each item becomes a hit
-whose status is the record's `itemState` (`draft` or `live`) and whose files
+whose status is the item's own `state` (`draft` or `live`) and whose files
 are the recorded names. No collection search is made. The existing index
 item is still found by one `where` search, and upload and volume links work
 as before.

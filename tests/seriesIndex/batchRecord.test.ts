@@ -3,13 +3,12 @@ import { mkdtemp, writeFile, readdir, rm } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { saveManifest } from '../../src/core/state.js';
+import { saveManifest, writeJsonAtomic } from '../../src/core/state.js';
 import {
   keepBatchRecord,
   readBatchRecords,
   recordFromManifest,
   recordHits,
-  writeBatchRecord,
   type BatchRecord,
 } from '../../src/core/seriesIndex/batchRecord.js';
 import type { Manifest, ManifestEntry } from '../../src/core/types.js';
@@ -65,7 +64,6 @@ describe('recordFromManifest', () => {
       savedAt: '2026-11-18T19:00:00.000Z',
       baseUrl: 'https://oeq.example.edu',
       collectionUuid: 'c1',
-      itemState: 'draft',
       items: [
         {
           row: 3,
@@ -158,7 +156,7 @@ describe('recordFromManifest', () => {
 });
 
 describe('recordHits', () => {
-  it('turns each item into a search hit, with the record state as its status', () => {
+  it("turns each item into a search hit, with the item's state as its status", () => {
     const r = recordFromManifest(manifest([folderRow]), 'DC/title', now);
     expect(recordHits(r)).toEqual([
       {
@@ -174,14 +172,12 @@ describe('recordHits', () => {
         ],
       },
     ]);
-    const { state: _s, ...stateless } = r.items[0]!;
-    expect(recordHits({ ...r, itemState: 'published', items: [stateless] })[0]!.status).toBe('live');
   });
 
-  it("reads each item's own state before the record's", () => {
+  it("reads each item's own state", () => {
     const r = recordFromManifest(manifest([folderRow]), 'DC/title', now);
     const live = { ...r.items[0]!, uuid: 'item-1', state: 'published' as const };
-    expect(recordHits({ ...r, itemState: 'draft', items: [live, r.items[0]!] }).map((h) => h.status)).toEqual([
+    expect(recordHits({ ...r, items: [live, r.items[0]!] }).map((h) => h.status)).toEqual([
       'live',
       'draft',
     ]);
@@ -193,7 +189,7 @@ describe('recordHits', () => {
   });
 });
 
-describe('writeBatchRecord / readBatchRecords', () => {
+describe('readBatchRecords', () => {
   let dir: string;
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'oeq-batch-record-'));
@@ -206,26 +202,22 @@ describe('writeBatchRecord / readBatchRecords', () => {
 
   it('round-trips, leaving no temporary file behind', async () => {
     const path = join(dir, 'batch.index.json');
-    await writeBatchRecord(path, record());
-    await writeBatchRecord(path, record()); // replaces, as a run does after every row
+    await writeJsonAtomic(path, record());
+    await writeJsonAtomic(path, record()); // replaces, as a run does after every row
     expect(await readdir(dir)).toEqual(['batch.index.json']);
     expect(await readBatchRecords([path])).toEqual(record());
   });
 
-  it('combines several records in order, listing a uuid once and keeping draft if any is draft', async () => {
+  it('combines several records in order, listing a uuid once', async () => {
     const a = join(dir, 'a.json');
     const b = join(dir, 'b.json');
     const other = { ...record().items[0]!, row: 2, uuid: 'item-9', title: 'Fernbrook Quarterly Vol 9' };
-    await writeBatchRecord(a, record({ itemState: 'published', leftOut: [{ row: 7, label: 'x.pdf', status: 'failed', error: 'e' }] }));
-    await writeBatchRecord(b, record({ baseUrl: 'https://oeq.example.edu/', items: [other, record().items[0]!] }));
+    await writeJsonAtomic(a, record({ leftOut: [{ row: 7, label: 'x.pdf', status: 'failed', error: 'e' }] }));
+    await writeJsonAtomic(b, record({ baseUrl: 'https://oeq.example.edu/', items: [other, record().items[0]!] }));
     const both = await readBatchRecords([a, b]);
     expect(both.items.map((i) => i.uuid).sort()).toEqual(['item-2', 'item-9']);
     expect(both.leftOut).toEqual([{ row: 7, label: 'x.pdf', status: 'failed', error: 'e' }]);
-    expect(both.itemState).toBe('draft');
     expect(both.baseUrl).toBe('https://oeq.example.edu');
-
-    await writeBatchRecord(b, record({ itemState: 'published', items: [other] }));
-    expect((await readBatchRecords([a, b])).itemState).toBe('published');
   });
 
   it('lets the LATER record win for a uuid two records carry, as a rerun keeping its record does', async () => {
@@ -233,19 +225,20 @@ describe('writeBatchRecord / readBatchRecords', () => {
     const b = join(dir, 'b.json');
     const first = record().items[0]!;
     const later = { ...first, version: 2, files: [{ name: 'FQ_1971_Vol2_All.pdf', attachmentUuid: 'att-new' }] };
-    await writeBatchRecord(a, record());
-    await writeBatchRecord(b, record({ items: [later] }));
+    await writeJsonAtomic(a, record());
+    await writeJsonAtomic(b, record({ items: [later] }));
     expect((await readBatchRecords([a, b])).items).toEqual([later]);
     expect((await readBatchRecords([b, a])).items).toEqual([first]);
   });
 
-  it('reads a record written before items carried a state, and refuses a state it does not know', async () => {
+  it('refuses an item without a state or a label, or with a state it does not know', async () => {
     const path = join(dir, 'old.json');
     const { state: _s, ...stateless } = record().items[0]!;
-    await writeFile(path, JSON.stringify(record({ items: [stateless] })));
-    expect((await readBatchRecords([path])).items).toEqual([stateless]);
-    await writeFile(path, JSON.stringify(record({ items: [{ ...stateless, state: 'live' } as never] })));
-    await expect(readBatchRecords([path])).rejects.toThrow(/old\.json/);
+    const { label: _l, ...unlabelled } = record().items[0]!;
+    for (const item of [stateless, unlabelled, { ...stateless, state: 'live' }]) {
+      await writeFile(path, JSON.stringify(record({ items: [item as never] })));
+      await expect(readBatchRecords([path])).rejects.toThrow(/old\.json/);
+    }
   });
 
   it('refuses a file that is not a batch record, naming it', async () => {
@@ -270,10 +263,10 @@ describe('writeBatchRecord / readBatchRecords', () => {
   it('refuses records of different sites or collections', async () => {
     const a = join(dir, 'a.json');
     const b = join(dir, 'b.json');
-    await writeBatchRecord(a, record());
-    await writeBatchRecord(b, record({ baseUrl: 'https://other.example.edu' }));
+    await writeJsonAtomic(a, record());
+    await writeJsonAtomic(b, record({ baseUrl: 'https://other.example.edu' }));
     await expect(readBatchRecords([a, b])).rejects.toThrow(/b\.json.*site/);
-    await writeBatchRecord(b, record({ collectionUuid: 'c2' }));
+    await writeJsonAtomic(b, record({ collectionUuid: 'c2' }));
     await expect(readBatchRecords([a, b])).rejects.toThrow(/b\.json.*collection/);
   });
 
@@ -284,8 +277,8 @@ describe('writeBatchRecord / readBatchRecords', () => {
   it('compares sites as one spelling: host case and a trailing slash do not differ', async () => {
     const a = join(dir, 'a.json');
     const b = join(dir, 'b.json');
-    await writeBatchRecord(a, record());
-    await writeBatchRecord(b, record({ baseUrl: 'https://OEQ.Example.edu/' }));
+    await writeJsonAtomic(a, record());
+    await writeJsonAtomic(b, record({ baseUrl: 'https://OEQ.Example.edu/' }));
     await expect(readBatchRecords([a, b])).resolves.toBeDefined();
   });
 
@@ -294,18 +287,11 @@ describe('writeBatchRecord / readBatchRecords', () => {
     const b = join(dir, 'b.json');
     const failed = { row: 3, label: 'Vol2 (3 files)', status: 'failed' as const, error: 'The server said no.' };
     const other = { row: 9, label: 'Vol9', status: 'failed' as const };
-    await writeBatchRecord(a, record({ items: [], leftOut: [failed, other] }));
-    await writeBatchRecord(b, record()); // the retry created row 3
+    await writeJsonAtomic(a, record({ items: [], leftOut: [failed, other] }));
+    await writeJsonAtomic(b, record()); // the retry created row 3
     const both = await readBatchRecords([a, b]);
     expect(both.items.map((i) => i.uuid)).toEqual(['item-2']);
     expect(both.leftOut).toEqual([other]);
-  });
-
-  it('still reads a record written before items carried a label', async () => {
-    const path = join(dir, 'old.json');
-    const { label: _label, ...unlabelled } = record().items[0]!;
-    await writeFile(path, JSON.stringify(record({ items: [unlabelled] })));
-    expect((await readBatchRecords([path])).items).toEqual([unlabelled]);
   });
 
   it.each([
@@ -374,18 +360,6 @@ describe('keepBatchRecord', () => {
     expect(r.leftOut).toEqual([]);
   });
 
-  it('keeps an earlier record draft if it was draft', async () => {
-    await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf')]));
-    const first = keepBatchRecord(manifestPath, file, null);
-    first.update();
-    await first.settled();
-    await saveManifest(manifestPath, manifest([created(3, 'item-3', 'three.pdf')], { itemState: 'published' }));
-    const second = keepBatchRecord(manifestPath, file, null);
-    second.update();
-    await second.settled();
-    expect(read().itemState).toBe('draft');
-  });
-
   it("keeps each item's own state, so a later run's drafts leave earlier published items published", async () => {
     await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf')], { itemState: 'published' }));
     const first = keepBatchRecord(manifestPath, file, null);
@@ -432,28 +406,46 @@ describe('keepBatchRecord', () => {
     keeper.update({ rowNumber: 2, status: 'created' });
     await keeper.settled();
     expect(existsSync(file)).toBe(false);
-    // Row 3 changed: written.
-    await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf'), created(3, 'item-3', 'two.pdf')]));
-    keeper.update({ rowNumber: 3, status: 'created' });
+    // Row 3 changed: written, from the manifest the report carries.
+    const later = manifest([created(2, 'item-1', 'one.pdf'), created(3, 'item-3', 'two.pdf')]);
+    keeper.update({ rowNumber: 3, status: 'created' }, later);
     await keeper.settled();
     expect(read().items).toHaveLength(2);
     // The same report again: nothing written.
     await rm(file);
-    keeper.update({ rowNumber: 3, status: 'created' });
+    keeper.update({ rowNumber: 3, status: 'created' }, later);
     await keeper.settled();
     expect(existsSync(file)).toBe(false);
-    // The final update always writes.
+    // The final update always writes, from the last manifest reported.
     keeper.update();
     expect((await keeper.settled()).written).toBe(true);
-    expect(existsSync(file)).toBe(true);
+    expect(read().items).toHaveLength(2);
+  });
+
+  it('never reads the manifest back after it starts: the report carries it', async () => {
+    await saveManifest(manifestPath, manifest([entry({ rowNumber: 2, source: 'one.pdf' })]));
+    const keeper = keepBatchRecord(manifestPath, file, null);
+    await rm(manifestPath);
+    keeper.update({ rowNumber: 2, status: 'created' }, manifest([created(2, 'item-1', 'one.pdf')]));
+    expect((await keeper.settled()).written).toBe(true);
+    expect(read().items.map((i) => i.uuid)).toEqual(['item-1']);
+  });
+
+  it('writes only the latest record when several are queued', async () => {
+    await saveManifest(manifestPath, manifest([entry({ rowNumber: 2, source: 'one.pdf' }), entry({ rowNumber: 3, source: 'two.pdf' })]));
+    const keeper = keepBatchRecord(manifestPath, file, null);
+    keeper.update({ rowNumber: 2, status: 'created' }, manifest([created(2, 'item-1', 'one.pdf'), entry({ rowNumber: 3, source: 'two.pdf' })]));
+    keeper.update({ rowNumber: 3, status: 'created' }, manifest([created(2, 'item-1', 'one.pdf'), created(3, 'item-3', 'two.pdf')]));
+    expect((await keeper.settled()).written).toBe(true);
+    expect(read().items.map((i) => i.uuid)).toEqual(['item-1', 'item-3']);
   });
 
   it('reports written:false when the LAST update failed, though an earlier write landed after it', async () => {
     await saveManifest(manifestPath, manifest([entry({ rowNumber: 2, source: 'one.pdf' })]));
     const keeper = keepBatchRecord(manifestPath, file, null);
     keeper.update(); // queues a write that lands later
-    await rm(manifestPath); // so the next read fails, synchronously
-    keeper.update({ rowNumber: 2, status: 'created' });
+    // A manifest the record cannot be built from: the update fails, synchronously.
+    keeper.update({ rowNumber: 2, status: 'created' }, { ...manifest([]), entries: null } as never);
     const kept = await keeper.settled();
     expect(kept.written).toBe(false);
     expect(kept.error).not.toBeNull();

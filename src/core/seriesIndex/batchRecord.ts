@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { ValidationError } from '../errors.js';
-import { instanceEndpoint } from '../instanceUrl.js';
+import { describeReason } from '../errorReason.js';
+import { sameSite } from '../instanceUrl.js';
 import { parseManifest, writeJsonAtomic } from '../state.js';
 import { rowLabel, type ItemState, type Manifest, type RowStatus } from '../types.js';
 import type { IndexHit } from './types.js';
@@ -25,17 +26,15 @@ export interface RecordItem {
   title: string;
   /**
    * The entry's row label, so a combined record can tell that a row another
-   * record left out was created after all. Optional: records written before
-   * it existed carry none.
+   * record left out was created after all.
    */
-  label?: string;
+  label: string;
   /**
    * The state the item was created in. A record accumulates runs, and one
    * run's drafts must not make an earlier run's published items read as
-   * drafts. Optional: records written before it existed carry none, and are
-   * read at the record's `itemState`.
+   * drafts.
    */
-  state?: ItemState;
+  state: ItemState;
   /** In the item's upload order. */
   files: { name: string; attachmentUuid: string }[];
 }
@@ -54,7 +53,6 @@ export interface BatchRecord {
   savedAt: string;
   baseUrl: string;
   collectionUuid: string;
-  itemState: ItemState;
   items: RecordItem[];
   leftOut: RecordLeftOut[];
 }
@@ -113,7 +111,6 @@ export function recordFromManifest(manifest: Manifest, titlePath: string | null,
     savedAt: now.toISOString(),
     baseUrl: manifest.baseUrl,
     collectionUuid: manifest.collectionUuid,
-    itemState: manifest.itemState,
     items,
     leftOut,
   };
@@ -126,22 +123,20 @@ export function recordFromManifest(manifest: Manifest, titlePath: string | null,
  */
 function dropResolved(leftOut: readonly RecordLeftOut[], items: readonly RecordItem[]): RecordLeftOut[] {
   const key = (row: number, label: string): string => `${row}\u0000${label}`;
-  const made = new Set(items.flatMap((i) => (i.label === undefined ? [] : [key(i.row, i.label)])));
+  const made = new Set(items.map((i) => key(i.row, i.label)));
   return leftOut.filter((l) => !made.has(key(l.row, l.label)));
 }
 
 /**
  * This run's record on top of an earlier one at the same path: the earlier
  * items, then this run's, one per uuid (this run's version wins). Left out is
- * this run's alone, minus rows either run created. The record's own
- * `itemState` is draft if either is; each item keeps the state it was made in
- * (`RecordItem.state`), and that is what an index reads.
+ * this run's alone, minus rows either run created. Each item keeps the state
+ * it was made in (`RecordItem.state`), and that is what an index reads.
  */
 function accumulate(earlier: BatchRecord, current: BatchRecord): BatchRecord {
   const items = laterWins([...earlier.items, ...current.items]);
   return {
     ...current,
-    itemState: earlier.itemState === 'draft' ? 'draft' : current.itemState,
     items,
     leftOut: dropResolved(current.leftOut, items),
   };
@@ -159,11 +154,6 @@ function laterWins(items: readonly RecordItem[]): RecordItem[] {
     byUuid.set(item.uuid, item);
   }
   return [...byUuid.values()];
-}
-
-/** Written whole, through a temporary file, so a reader never sees half of one. */
-export async function writeBatchRecord(path: string, record: BatchRecord): Promise<void> {
-  await writeJsonAtomic(path, record);
 }
 
 /** What a kept record came to: written (its last write landed), or the first thing that went wrong. */
@@ -201,7 +191,7 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return null;
     throw new BatchRecordRefused(
-      `${file} already exists and could not be read (${(err as Error).message}). It was left as it is, ` +
+      `${file} already exists and could not be read (${describeReason(err)}). It was left as it is, ` +
         `and no batch record was kept for this run.`,
     );
   }
@@ -210,12 +200,11 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
     earlier = parseBatchRecord(text, basename(file));
   } catch (err) {
     throw new BatchRecordRefused(
-      `${file} already exists and is not a batch record this tool can read (${(err as Error).message}). ` +
+      `${file} already exists and is not a batch record this tool can read (${describeReason(err)}). ` +
         `It was left as it is, and no batch record was kept for this run.`,
     );
   }
-  const site = siteKey(earlier.baseUrl);
-  if (site === null || site !== siteKey(manifest.baseUrl)) {
+  if (!sameSite(earlier.baseUrl, manifest.baseUrl)) {
     throw new BatchRecordRefused(
       `${file} is a batch record of another site (${earlier.baseUrl}). It was left as it is, and no ` +
         `batch record was kept for this run.`,
@@ -232,25 +221,29 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
 
 /**
  * Keeps the batch record beside a run -- ONE implementation for the CLI and the
- * desktop. Call `update(entry)` from the runner's `onProgress` (runner.ts saves
- * the manifest before it reports progress) and `update()` once at the end; the
- * record is recomputed WHOLE each time, so an interrupted run leaves a record
- * of exactly what it made.
+ * desktop. Call `update(entry, manifest)` from the runner's `onProgress` and
+ * `update()` once at the end; the record is recomputed WHOLE each time, so an
+ * interrupted run leaves a record of exactly what it made.
+ *
+ * The record is built from the manifest the runner HANDS to `onProgress`, never
+ * read back from disk, and only from what it has reported: runner.ts saves the
+ * manifest BEFORE it reports progress, so what a report carries is what is
+ * saved. The manifest file is read once, here at the start -- for the statuses
+ * already there, and for `update()` when nothing has been reported.
  *
  * A record already at `file` -- an earlier run of the same spreadsheet -- is
  * read once, here, and carried forward. Anything else there (not a record,
  * another site's, another collection's) is never overwritten: that is this
  * keeper's failure, and nothing is written.
  *
- * `update(entry)` does nothing when that row's status is what it last saw --
- * seeded from the manifest at the start -- so a retry's back-to-back reports
+ * `update(entry, ...)` does nothing when that row's status is what it last saw
+ * -- seeded from the manifest at the start -- so a retry's back-to-back reports
  * of already-finished rows cost nothing. `update()` always writes.
  *
- * The manifest is read SYNCHRONOUSLY, inside the callback, so the read is over
- * before the runner saves again: an async read could hold the file open across
- * the runner's next rename, which Windows refuses -- failing the run. The
- * writes are chained so two never overlap. Only the most recent update decides
- * `written`: an earlier write landing after a later failure does not.
+ * Writes are chained so two never overlap, and coalesced: a queued write that
+ * a later update has superseded is skipped, since only the latest record is
+ * worth writing. Only the most recent update decides `written`: an earlier
+ * write landing after a later failure does not.
  *
  * A failure NEVER fails the run -- the items exist either way. `onFirstFailure`
  * hears the first one; `settled()` never rejects.
@@ -270,23 +263,24 @@ export function keepBatchRecord(
     firstError = err ?? new Error('unknown failure');
     onFirstFailure(err);
   };
-  const readManifest = (): Manifest => parseManifest(readFileSync(manifestPath, 'utf8'), manifestPath);
 
   const seen = new Map<number, RowStatus>();
   let earlier: BatchRecord | null = null;
+  let current: Manifest | null = null;
   let refused = false;
   try {
-    const start = readManifest();
-    for (const e of start.entries) seen.set(e.rowNumber, e.status);
-    earlier = earlierRecord(file, start);
+    current = parseManifest(readFileSync(manifestPath, 'utf8'), manifestPath);
+    for (const e of current.entries) seen.set(e.rowNumber, e.status);
+    earlier = earlierRecord(file, current);
   } catch (err) {
     refused = true;
     fail(err);
   }
 
   return {
-    update(progress?: RecordProgress): void {
+    update(progress?: RecordProgress, manifest?: Manifest): void {
       if (refused) return;
+      if (manifest !== undefined) current = manifest;
       if (progress !== undefined) {
         if (seen.get(progress.rowNumber) === progress.status) return;
         seen.set(progress.rowNumber, progress.status);
@@ -294,24 +288,23 @@ export function keepBatchRecord(
       const seq = ++latest;
       let record: BatchRecord;
       try {
-        const current = recordFromManifest(readManifest(), titlePath);
-        record = earlier === null ? current : accumulate(earlier, current);
+        const now = recordFromManifest(current!, titlePath);
+        record = earlier === null ? now : accumulate(earlier, now);
       } catch (err) {
         written = false;
         fail(err);
         return;
       }
-      writes = writes.then(() =>
-        writeBatchRecord(file, record).then(
-          () => {
-            if (seq === latest) written = true;
-          },
-          (err: unknown) => {
-            if (seq === latest) written = false;
-            fail(err);
-          },
-        ),
-      );
+      writes = writes.then(async () => {
+        if (seq !== latest) return; // superseded: a later record is queued
+        try {
+          await writeJsonAtomic(file, record);
+          if (seq === latest) written = true;
+        } catch (err) {
+          if (seq === latest) written = false;
+          fail(err);
+        }
+      });
     },
     /** Every queued write, settled. Never rejects. */
     async settled(): Promise<KeptRecord> {
@@ -321,18 +314,45 @@ export function keepBatchRecord(
   };
 }
 
+/** Where a run keeps its record, and the schema's name path in header form that titles each item. */
+export interface RecordTarget {
+  path: string;
+  titlePath: string | null;
+}
+
 /**
- * One spelling per site, for comparison only: `instanceEndpoint` lower-cases
- * the host and leaves exactly one trailing slash. Not `normaliseInstanceUrl`,
- * whose https rule is about sending a password and would answer a loopback
- * test site with a lecture instead of a comparison.
+ * A run, keeping the batch record when one was asked for -- the ONE lifecycle
+ * the CLI and the desktop share. `run` calls `afterRow` from the runner's
+ * progress callback with the entry and the manifest it was handed; the record
+ * is written once more at the end, and every write has settled before this
+ * returns or throws.
+ *
+ * A RECORD THAT CANNOT BE WRITTEN NEVER FAILS THE RUN: the items exist either
+ * way. It comes back as `indexRecordError`; `onFirstFailure` hears it as it
+ * happens.
  */
-function siteKey(url: string): string | null {
+export async function runKeepingRecord<S>(
+  manifestPath: string,
+  target: RecordTarget | undefined,
+  run: (afterRow: (entry: RecordProgress, manifest: Manifest) => void) => Promise<S>,
+  onFirstFailure?: (err: unknown) => void,
+): Promise<{ summary: S; indexRecordPath?: string; indexRecordError?: string }> {
+  const keeper = target ? keepBatchRecord(manifestPath, target.path, target.titlePath, onFirstFailure) : null;
+  let summary: S;
   try {
-    return instanceEndpoint(url, '').href;
-  } catch {
-    return null;
+    summary = await run((entry, manifest) => keeper?.update(entry, manifest));
+  } finally {
+    // Once more at the end -- a run that threw included -- so the record holds
+    // what was made, and a batch with no rows to report still leaves one.
+    keeper?.update();
+    // Never rejects: a run that threw is not made to wait on, or hidden by, its record.
+    await keeper?.settled();
   }
+  if (keeper === null || target === undefined) return { summary };
+  const kept = await keeper.settled();
+  return kept.written
+    ? { summary, indexRecordPath: target.path }
+    : { summary, indexRecordError: describeReason(kept.error) };
 }
 
 /**
@@ -342,8 +362,7 @@ function siteKey(url: string): string | null {
  */
 export async function readBatchRecordsFor(paths: readonly string[], siteUrl: string): Promise<BatchRecord> {
   const record = await readBatchRecords(paths);
-  const recorded = siteKey(record.baseUrl);
-  if (recorded === null || recorded !== siteKey(siteUrl)) {
+  if (!sameSite(record.baseUrl, siteUrl)) {
     throw new ValidationError(
       `The batch record was made on a different site (${record.baseUrl}) from the one in use here ` +
         `(${siteUrl}). Refusing: the index's links would point at the wrong server.`,
@@ -361,8 +380,8 @@ function isRecordItem(v: unknown): v is RecordItem {
     typeof v['uuid'] === 'string' &&
     typeof v['version'] === 'number' &&
     typeof v['title'] === 'string' &&
-    (v['label'] === undefined || typeof v['label'] === 'string') &&
-    (v['state'] === undefined || v['state'] === 'draft' || v['state'] === 'published') &&
+    typeof v['label'] === 'string' &&
+    (v['state'] === 'draft' || v['state'] === 'published') &&
     Array.isArray(v['files']) &&
     v['files'].every((f) => isObject(f) && typeof f['name'] === 'string' && typeof f['attachmentUuid'] === 'string')
   );
@@ -398,7 +417,6 @@ function parseBatchRecord(text: string, name: string): BatchRecord {
   if (
     typeof r.baseUrl !== 'string' ||
     typeof r.collectionUuid !== 'string' ||
-    (r.itemState !== 'draft' && r.itemState !== 'published') ||
     !Array.isArray(r.items) ||
     !Array.isArray(r.leftOut) ||
     !r.items.every(isRecordItem) ||
@@ -415,7 +433,7 @@ async function readOne(path: string): Promise<BatchRecord> {
   try {
     text = await readFile(path, 'utf8');
   } catch (err) {
-    throw new ValidationError(`Could not read the batch record ${name}: ${(err as Error).message}`);
+    throw new ValidationError(`Could not read the batch record ${name}: ${describeReason(err)}`);
   }
   return parseBatchRecord(text, name);
 }
@@ -426,25 +444,23 @@ async function readOne(path: string): Promise<BatchRecord> {
  * version-1 record, and records of different sites or collections. An item
  * two records carry is listed once -- the later record's, as `keepBatchRecord`
  * resolves it -- and a row one record left out and another created is not
- * listed as left out; the result is draft if any record is.
+ * listed as left out.
  */
 export async function readBatchRecords(paths: readonly string[]): Promise<BatchRecord> {
   if (paths.length === 0) throw new ValidationError('No batch record was given.');
   let combined: BatchRecord | null = null;
-  let site: string | null = null;
   for (const path of paths) {
     const r = await readOne(path);
     if (combined === null) {
+      // The trailing slash comes off for display only; sites are compared by `sameSite`.
       combined = { ...r, baseUrl: r.baseUrl.replace(/\/+$/, ''), items: [], leftOut: [] };
-      site = siteKey(r.baseUrl);
-    } else if (site === null || siteKey(r.baseUrl) !== site) {
+    } else if (!sameSite(r.baseUrl, combined.baseUrl)) {
       throw new ValidationError(
         `${basename(path)} records a different site (${r.baseUrl}) from the first record (${combined.baseUrl}).`,
       );
     } else if (r.collectionUuid !== combined.collectionUuid) {
       throw new ValidationError(`${basename(path)} records a different collection from the first record.`);
     }
-    if (r.itemState === 'draft') combined.itemState = 'draft';
     combined.items = laterWins([...combined.items, ...r.items]);
     combined.leftOut.push(...r.leftOut);
   }
@@ -456,16 +472,15 @@ export async function readBatchRecords(paths: readonly string[]): Promise<BatchR
  * The record's items as the hits `collectIndex` reads -- the same as a search
  * would give. An untitled item has no name, so the index heads it as it heads
  * any unnamed hit; its row label still names it in the preview's listings,
- * which would otherwise show a bare uuid. Each item's status is its own state,
- * else the record's.
+ * which would otherwise show a bare uuid. Each item's status is its own state.
  */
 export function recordHits(record: BatchRecord): IndexHit[] {
   return record.items.map((item) => ({
     uuid: item.uuid,
     version: item.version,
-    status: (item.state ?? record.itemState) === 'published' ? 'live' : 'draft',
+    status: item.state === 'published' ? 'live' : 'draft',
     name: item.title === '' ? null : item.title,
-    ...(item.label !== undefined ? { label: item.label } : {}),
+    label: item.label,
     files: item.files.map((f) => ({ filename: f.name, uuid: f.attachmentUuid })),
   }));
 }

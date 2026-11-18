@@ -43,8 +43,7 @@ import { signInInteractive } from './signin.js';
 import { rowLabel, type Sheet } from '../core/types.js';
 import { planFolders } from '../core/folderReport.js';
 import { OeqError } from '../core/errors.js';
-import { describeReason } from '../core/errorReason.js';
-import { keepBatchRecord, type RecordProgress } from '../core/seriesIndex/batchRecord.js';
+import { runKeepingRecord } from '../core/seriesIndex/batchRecord.js';
 import { registerExtractHandlers } from './extractHandlers.js';
 import { registerIndexHandlers } from './indexHandlers.js';
 
@@ -372,38 +371,6 @@ export function indexRecordPathFor(sheetPath: string, baseUrl: string): string {
   const ext = extname(sheetPath);
   const host = new URL(baseUrl).hostname.toLowerCase();
   return join(dirname(sheetPath), `${basename(sheetPath, ext)}.${host}.index.json`);
-}
-
-/**
- * A run, keeping the batch record when one was asked for (core's
- * `keepBatchRecord`, shared with the CLI). `run` calls `afterRow` from its
- * progress callback; the record is written once more at the end, and every
- * write has settled before this returns or throws.
- *
- * A RECORD THAT CANNOT BE WRITTEN NEVER FAILS THE RUN: the items exist either
- * way. It comes back as `indexRecordError`, for Results to warn about.
- */
-export async function runKeepingRecord<S>(
-  manifestPath: string,
-  indexRecord: IndexRecordTarget | undefined,
-  run: (afterRow: (entry: RecordProgress) => void) => Promise<S>,
-): Promise<{ summary: S; indexRecordPath?: string; indexRecordError?: string }> {
-  const keeper = indexRecord ? keepBatchRecord(manifestPath, indexRecord.path, indexRecord.titlePath) : null;
-  let summary: S;
-  try {
-    summary = await run((entry) => keeper?.update(entry));
-  } finally {
-    // Once more at the end -- a run that threw included -- so the record holds
-    // what was made, and a batch with no rows to report still leaves one.
-    keeper?.update();
-    // Never rejects: a run that threw is not hidden by its record.
-    await keeper?.settled();
-  }
-  if (keeper === null || indexRecord === undefined) return { summary };
-  const kept = await keeper.settled();
-  return kept.written
-    ? { summary, indexRecordPath: indexRecord.path }
-    : { summary, indexRecordError: describeReason(kept.error) };
 }
 
 /**
@@ -903,7 +870,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const record = recordTargets.forRun(args.manifestPath, args.keepIndexRecord === true);
       const { summary, ...kept } = await runKeepingRecord(args.manifestPath, record.target, (afterRow) =>
         runManifest(client, args.manifestPath, {
-          onProgress: (entry, done, total) => {
+          onProgress: (entry, done, total, manifest) => {
             toRenderer(CHANNELS.progress, {
               done,
               total,
@@ -911,7 +878,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
               status: entry.status,
               error: entry.error,
             });
-            afterRow(entry);
+            afterRow(entry, manifest);
           },
         }),
       );
