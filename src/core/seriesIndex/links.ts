@@ -25,7 +25,11 @@ export interface LinkClient {
 }
 
 export interface LinkResult {
+  /** Volumes given a new link. */
   added: number;
+  /** Volumes whose existing link was edited: moved first, pointed at this index, or renamed. */
+  updated: number;
+  /** Volumes whose link was already first, to this index, under this label: not edited. */
   alreadyThere: number;
   failed: { heading: string; reason: string }[];
 }
@@ -33,10 +37,13 @@ export interface LinkResult {
 /**
  * The one result line, printed by the CLI and shown by the desktop. Names every
  * volume that was not linked, and says held-back volumes were never tried --
- * otherwise "Linked 37 volumes" reads as "every volume".
+ * otherwise "Linked 37 volumes" reads as "every volume". A volume whose link
+ * was edited is counted as updated, never as "already had it": it was edited.
  */
 export function linkLine(r: LinkResult, o: { group: string; groups: string; heldBack: number }): string {
-  let line = `Linked ${plural(r.added, o.group, o.groups)} to the index (${r.alreadyThere} already had it).`;
+  const updated =
+    r.updated > 0 ? `${r.updated} updated: their link moved first, pointed at this index or renamed; ` : '';
+  let line = `Linked ${plural(r.added, o.group, o.groups)} to the index (${updated}${r.alreadyThere} already had it).`;
   if (r.failed.length > 0) line += ` Not linked: ${r.failed.map((f) => `${f.heading} -- ${f.reason}`).join('; ')}.`;
   if (o.heldBack > 0) line += ` Held-back ${o.groups} were not linked.`;
   return line;
@@ -52,7 +59,7 @@ export async function linkVolumes(
   url: string,
   label: string,
 ): Promise<LinkResult> {
-  const result: LinkResult = { added: 0, alreadyThere: 0, failed: [] };
+  const result: LinkResult = { added: 0, updated: 0, alreadyThere: 0, failed: [] };
   for (const v of volumes) {
     try {
       const bean = await client.getItemBean(v.uuid, v.version);
@@ -76,7 +83,8 @@ export async function linkVolumes(
       const link = at === -1 ? { type: 'url', url, description: label } : { ...current[at]!, url, description: label };
       const rest = current.filter((_, i) => i !== at);
       await client.editItem(v.uuid, v.version, { ...bean, attachments: [link, ...rest] });
-      result.added += 1;
+      if (at === -1) result.added += 1;
+      else result.updated += 1;
     } catch (err) {
       result.failed.push({ heading: v.heading, reason: describeReason(err) });
     }

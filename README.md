@@ -670,7 +670,11 @@ optionally patterns for volumes whose files carry no issue number:
   starts with a wildcard. It is a match on the record, not openEQUELLA's
   free-text search, whose results were measured to differ depending on who
   is signed in. Against a schema that declares no name path the build
-  refuses rather than reading everything.
+  refuses rather than reading everything. A `%` in it is refused, because
+  openEQUELLA reads it as "any characters". A `_` is allowed although
+  openEQUELLA reads it as "any one character": it is common in titles, and
+  it can only widen what is read -- the file-name patterns still decide what
+  is listed.
 
 `templates/snake-river-echoes.profile.json` carries one.
 
@@ -722,8 +726,11 @@ upload.
 - It **edits the volume items in place**: their files, attachment ids and
   version are untouched; only the link is added before them.
 - It is **idempotent**. A volume whose first attachment is already the link is
-  left alone; one that has it elsewhere has it moved to first. Never a second
-  copy. The result says how many were added and how many already had it.
+  left alone; one that has it elsewhere has it moved to first; one whose link
+  points at an earlier, since-recreated index item is pointed at this one; and
+  one whose link to this index carries another name is renamed. Never a second
+  copy. The result says how many were added, how many were updated (moved,
+  pointed here or renamed) and how many already had it.
 - Held-back volumes are not linked until they are resolved, and the result
   says so. One failed edit does not stop the rest; every failure is named.
 

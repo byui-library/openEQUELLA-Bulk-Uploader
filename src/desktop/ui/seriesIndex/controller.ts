@@ -2,7 +2,7 @@
 import type { IndexPreview, IndexSourceArgs, OeqApi } from '../../ipc.js';
 import { errorMessage } from '../errors.js';
 import { linkLine } from '../../../core/seriesIndex/links.js';
-import { plural } from '../../../core/seriesIndex/words.js';
+import { indexLinkLabel, plural } from '../../../core/seriesIndex/words.js';
 import { canBuild, canLinkVolumes, initialIndexState, type IndexFlowState } from './state.js';
 
 /**
@@ -96,17 +96,20 @@ export function createIndexController(options: IndexControllerOptions) {
         done.push(saved.kind === 'saved' ? `Saved ${saved.paths.join(', ')}` : 'Files not saved: you kept the ones already there.');
       };
 
-      /** The preview as it stands afterwards: the item exists, in the state the main side reports. */
-      const upload = async (preview: IndexPreview): Promise<IndexPreview> => {
+      let preview: IndexPreview = state.preview;
+
+      /** Whether it uploaded. If it did, `preview` now says the item exists, in the state the main side reports. */
+      const upload = async (): Promise<boolean> => {
         const publishing = preview.existing.kind === 'none' && !state.draft;
         if (publishing && !confirm('Publish the new index item? It will be live in the collection straight away.')) {
           done.push('Not uploaded: you chose not to publish.');
-          return preview;
+          return false;
         }
         const up = await options.api.indexUpload({ buildId, draft: state.draft });
         done.push(`${up.kind === 'created' ? 'Created' : 'Updated'} the index item: ${up.url}`);
         // The screen must say the item exists, or a second click would offer Draft/Publish for it.
-        return { ...preview, existing: { kind: 'one', status: up.status } };
+        preview = { ...preview, existing: { kind: 'one', status: up.status } };
+        return true;
       };
 
       /**
@@ -116,18 +119,23 @@ export function createIndexController(options: IndexControllerOptions) {
        * a report that the links were there (live run, 2026-11-18). Returns the
        * error to show, or null.
        */
-      const link = async (preview: IndexPreview, uploadedNow: boolean): Promise<string | null> => {
+      const link = async (uploadedNow: boolean): Promise<string | null> => {
         const L = preview.labels;
         const Groups = L.groups.charAt(0).toUpperCase() + L.groups.slice(1);
         if (preview.existing.kind !== 'one') {
           done.push(`${Groups} not linked: the index item was not uploaded.`);
           return null;
         }
+        // Every edit linkVolumes can make is named: a confirm that understates
+        // what it confirms collects consent for something other than what happens.
+        const label = indexLinkLabel(L);
         const question =
           (uploadedNow ? 'The index item is uploaded. Now add' : 'Add') +
           ` a link to it on ${plural(preview.volumes.length, L.group, L.groups)} in openEQUELLA? ` +
-          `Each ${L.group} gets one link, "Index of all ${L.groups}", listed above its files. ` +
-          `Nothing else on them changes, and a ${L.group} that already has the link is left as it is.`;
+          `Each ${L.group} gets one link, "${label}", listed first, above its files. ` +
+          `Nothing else on them changes. A ${L.group} that already has the link is not given a second: ` +
+          `its link is moved first if it is not, pointed at this index if it points elsewhere, ` +
+          `and renamed "${label}" if it is named otherwise.`;
         if (!confirm(question)) {
           done.push(`${Groups} not linked: you chose not to edit them.`);
           return null;
@@ -141,12 +149,9 @@ export function createIndexController(options: IndexControllerOptions) {
       set({ working: true, error: null, done });
       try {
         if (state.saveFiles && state.folder !== null) await saveFiles(state.folder);
-        let preview = state.preview;
-        const before = preview;
-        if (state.upload) preview = await upload(preview);
+        const uploaded = state.upload ? await upload() : false;
         // After the upload, so a new item exists to point at.
-        const linkError =
-          state.linkVolumes && canLinkVolumes(state) ? await link(preview, preview !== before) : null;
+        const linkError = state.linkVolumes && canLinkVolumes(state) ? await link(uploaded) : null;
         set({ working: false, done: [...done], preview, error: linkError });
       } catch (err) {
         set({ working: false, done: [...done], error: errorMessage(err) });

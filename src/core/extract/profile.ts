@@ -203,6 +203,17 @@ export function parseProfile(input: unknown): Profile {
     if (profile.index.titleStartsWith !== undefined && profile.index.titleStartsWith.trim() === '') {
       throw new ValidationError('The index "titleStartsWith" is blank. Remove it to read the whole collection.');
     }
+    // It is sent inside a LIKE clause, where % matches any run of characters:
+    // the read would no longer be a prefix, and a leading % is a server 500
+    // ("Like queries must not start with wildcard"). `_` -- openEQUELLA's
+    // single-character wildcard -- is allowed: it is common in titles, it only
+    // WIDENS what is read, and the file-name patterns still decide what is listed.
+    if (profile.index.titleStartsWith?.includes('%')) {
+      throw new ValidationError(
+        `The index "titleStartsWith" contains %, which openEQUELLA reads as a wildcard, not a character. ` +
+          `Shorten it to the part before the %.`,
+      );
+    }
     for (const pattern of profile.index.groupPatterns ?? []) {
       const names = placeholders(pattern);
       if (!names.includes('group')) {

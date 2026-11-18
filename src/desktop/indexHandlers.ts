@@ -14,6 +14,7 @@ import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { findExistingIndex, publishIndex, type IndexClient } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
 import { indexPageUrl, linkVolumes, type LinkResult } from '../core/seriesIndex/links.js';
+import { indexLinkLabel, NOT_IN_SERIES_SHOWN } from '../core/seriesIndex/words.js';
 
 /**
  * The series index's main-process side. The BUILD STAYS HERE, held by id, and
@@ -155,7 +156,8 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         issueCount: build.index.volumes.reduce((n, v) => n + v.issues.length, 0),
         heldBack: build.index.heldBack.map((h) => ({ reason: h.reason, items: h.items.map((i) => i.name) })),
         notInSeries: build.index.notInSeries.map((l) => ({ name: l.name, reason: l.reason })),
-        missing: [...build.index.missing],
+        missing: build.index.missing.slice(0, NOT_IN_SERIES_SHOWN),
+        missingCount: build.index.missing.length,
         labels: { ...build.labels },
         existing:
           e.kind === 'one'
@@ -205,7 +207,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         connection.client,
         build.index.volumes,
         indexPageUrl(connection.baseUrl, item.uuid),
-        `Index of all ${build.labels.groups}`,
+        indexLinkLabel(build.labels),
       );
     },
   };

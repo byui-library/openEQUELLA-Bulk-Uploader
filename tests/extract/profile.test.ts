@@ -593,6 +593,14 @@ describe('the index section', () => {
     expect(parseProfile({ ...base, index: { columns: cols, titleStartsWith: 'Box' } }).index?.titleStartsWith).toBe('Box');
     expect(() => parseProfile({ ...base, index: { columns: cols, titleStartsWith: '' } })).toThrow(/not valid/);
     expect(() => parseProfile({ ...base, index: { columns: cols, titleStartsWith: '   ' } })).toThrow(/"titleStartsWith"/);
+    // % is openEQUELLA's LIKE wildcard: it would widen the read, and a leading one is a server 500.
+    for (const prefix of ['%Echoes', 'Snake%River', '100%']) {
+      expect(() => parseProfile({ ...base, index: { columns: cols, titleStartsWith: prefix } })).toThrow(
+        /"titleStartsWith".*%/,
+      );
+    }
+    // _ is a single-character wildcard too, but common in titles and only widens what is read.
+    expect(parseProfile({ ...base, index: { columns: cols, titleStartsWith: 'SRE_' } }).index?.titleStartsWith).toBe('SRE_');
   });
 
   it('no longer accepts the free-text "search" it replaced', () => {

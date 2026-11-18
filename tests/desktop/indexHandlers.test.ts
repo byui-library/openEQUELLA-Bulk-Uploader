@@ -120,7 +120,25 @@ describe('index handlers', () => {
     });
     const c = connect({ searchCollection: async () => [vol(9), vol(12)] });
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
-    expect((await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' })).missing).toEqual([10, 11]);
+    expect(await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' })).toMatchObject({
+      missing: [10, 11],
+      missingCount: 2,
+    });
+  });
+
+  it('sends at most 20 missing numbers to the renderer, with how many there are', async () => {
+    const vol = (n: number) => ({
+      uuid: `v${n}`,
+      version: 1,
+      status: 'live',
+      name: `Fernbrook Vol ${n}`,
+      attachments: [{ type: 'file', filename: `FQ_1971_Vol${n}_No1.pdf`, uuid: `a${n}` }],
+    });
+    const c = connect({ searchCollection: async () => [vol(38), vol(270)] });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    const p = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
+    expect(p.missing).toEqual(Array.from({ length: 20 }, (_, i) => 39 + i));
+    expect(p.missingCount).toBe(231);
   });
 
   it('a second upload updates the item the first one created', async () => {
@@ -180,7 +198,7 @@ describe('index handlers', () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
     await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
     await h.upload({ buildId: 'b1', draft: true });
-    expect(await h.linkVolumes({ buildId: 'b1' })).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(await h.linkVolumes({ buildId: 'b1' })).toEqual({ added: 1, updated: 0, alreadyThere: 0, failed: [] });
     expect(edits.map((e) => e.uuid)).toEqual(['v1']);
     expect((edits[0]!.bean['attachments'] as unknown[])[0]).toEqual({
       type: 'url',
@@ -220,7 +238,7 @@ describe('index handlers', () => {
     const preview = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
     expect(preview.heldBack).toHaveLength(1);
     await h.upload({ buildId: 'b1', draft: true });
-    expect(await h.linkVolumes({ buildId: 'b1' })).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(await h.linkVolumes({ buildId: 'b1' })).toEqual({ added: 1, updated: 0, alreadyThere: 0, failed: [] });
     expect(edited).toEqual(['v1']);
   });
 

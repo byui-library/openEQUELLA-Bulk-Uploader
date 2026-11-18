@@ -12,6 +12,7 @@ const preview = (over: Partial<IndexPreview> = {}): IndexPreview => ({
   heldBack: [],
   notInSeries: [],
   missing: [],
+  missingCount: 0,
   existing: { kind: 'none' },
   labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
   notCreated: [],
@@ -175,7 +176,7 @@ describe('index flow controller: volume links', () => {
       indexUpload: async () => (calls.push('upload'), { kind: 'created' as const, url: 'https://x/items/n/0/index.html', status: 'draft' }),
       indexLinkVolumes: async (a: { buildId: string }) => (
         calls.push(`link ${a.buildId}`),
-        { added: 1, alreadyThere: 0, failed: opts.failed === false ? [] : [{ heading: 'Vol 2', reason: 'server said no' }] }
+        { added: 1, updated: 0, alreadyThere: 0, failed: opts.failed === false ? [] : [{ heading: 'Vol 2', reason: 'server said no' }] }
       ),
     } as unknown as OeqApi;
     const c = createIndexController({
@@ -199,8 +200,10 @@ describe('index flow controller: volume links', () => {
     expect(calls).toEqual(['upload', 'link b1']);
     expect(confirms).toEqual([
       'The index item is uploaded. Now add a link to it on 2 volumes in openEQUELLA? ' +
-        'Each volume gets one link, "Index of all volumes", listed above its files. ' +
-        'Nothing else on them changes, and a volume that already has the link is left as it is.',
+        'Each volume gets one link, "Index of all volumes", listed first, above its files. ' +
+        'Nothing else on them changes. A volume that already has the link is not given a second: ' +
+        'its link is moved first if it is not, pointed at this index if it points elsewhere, ' +
+        'and renamed "Index of all volumes" if it is named otherwise.',
     ]);
     expect(c.state().done[1]).toBe(
       'Linked 1 volume to the index (0 already had it). Not linked: Vol 2 -- server said no.',
@@ -216,8 +219,10 @@ describe('index flow controller: volume links', () => {
     await c.build();
     expect(confirms[0]).toBe(
       'The index item is uploaded. Now add a link to it on 2 boxes in openEQUELLA? ' +
-        'Each box gets one link, "Index of all boxes", listed above its files. ' +
-        'Nothing else on them changes, and a box that already has the link is left as it is.',
+        'Each box gets one link, "Index of all boxes", listed first, above its files. ' +
+        'Nothing else on them changes. A box that already has the link is not given a second: ' +
+        'its link is moved first if it is not, pointed at this index if it points elsewhere, ' +
+        'and renamed "Index of all boxes" if it is named otherwise.',
     );
     expect(c.state().done[1]).toBe('Linked 1 box to the index (0 already had it).');
   });

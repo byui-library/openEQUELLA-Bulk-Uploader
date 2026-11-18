@@ -10,6 +10,7 @@ import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { publishIndex } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
 import { indexPageUrl, linkLine, linkVolumes } from '../core/seriesIndex/links.js';
+import { indexLinkLabel } from '../core/seriesIndex/words.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -117,7 +118,7 @@ export async function indexAction(o: IndexCliOptions, env: Env = process.env): P
         client,
         build.index.volumes,
         indexPageUrl(cfg.baseUrl, result.uuid),
-        `Index of all ${build.labels.groups}`,
+        indexLinkLabel(build.labels),
       );
       const line = linkLine(linked, { ...build.labels, heldBack: build.index.heldBack.length });
       if (linked.failed.length > 0) {

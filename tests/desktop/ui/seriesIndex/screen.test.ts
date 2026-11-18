@@ -10,6 +10,7 @@ const preview = {
   heldBack: [{ reason: '2 items claim volume 3', items: ['A', 'B'] }],
   notInSeries: [{ name: 'Fernbrook index', reason: 'none of its files fits' }],
   missing: [] as number[],
+  missingCount: 0,
   existing: { kind: 'one' as const, status: 'draft' },
   labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
   notCreated: [] as { label: string; status: string; error?: string }[],
@@ -30,12 +31,22 @@ describe('index flow markup', () => {
 
   it('names the volumes nothing lists, under the counts, in the template words, escaped', () => {
     const labels = { part: 'issue', parts: 'issues', group: 'box', groups: 'b<o>xes' };
-    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, labels, missing: [10, 11] } });
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, labels, missing: [10, 11], missingCount: 2 } });
     expect(html).toContain('<p class="note">No b&lt;o&gt;xes found for 10, 11.</p>');
     expect(html.indexOf('No b&lt;o&gt;xes found')).toBeGreaterThan(html.indexOf('1 box, 2 issues'));
-    const one = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, missing: [10] } });
+    const one = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, missing: [10], missingCount: 1 } });
     expect(one).toContain('<p class="note">No volume found for 10.</p>');
     expect(indexFlowMarkup({ ...initialIndexState(), templates: [], preview })).not.toContain('found for');
+  });
+
+  it('names the missing numbers it was sent, and counts the rest', () => {
+    const missing = Array.from({ length: 20 }, (_, i) => 39 + i);
+    const html = indexFlowMarkup({
+      ...initialIndexState(),
+      templates: [],
+      preview: { ...preview, missing, missingCount: 231 },
+    });
+    expect(html).toContain(`<p class="note">No volumes found for ${missing.join(', ')}. ...and 211 more.</p>`);
   });
 
   it('names at most 20 items not in the series, and counts the rest', () => {

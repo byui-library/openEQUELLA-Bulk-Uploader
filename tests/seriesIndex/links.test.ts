@@ -23,7 +23,7 @@ describe('linkVolumes', () => {
   it('puts the link first and keeps every other attachment', async () => {
     const f = fake({ v1: { uuid: 'v1', version: 1, attachments: [file('a.pdf'), file('b.pdf')] } });
     const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
-    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(r).toEqual({ added: 1, updated: 0, alreadyThere: 0, failed: [] });
     expect(f.edits[0]!.attachments).toEqual([
       { type: 'url', url: URL_, description: 'Index of all volumes' },
       file('a.pdf'),
@@ -35,7 +35,7 @@ describe('linkVolumes', () => {
     const link = { type: 'url', url: URL_, description: 'Index of all volumes', uuid: 'l' };
     const f = fake({ v1: { attachments: [link, file('a.pdf')] } });
     const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
-    expect(r).toEqual({ added: 0, alreadyThere: 1, failed: [] });
+    expect(r).toEqual({ added: 0, updated: 0, alreadyThere: 1, failed: [] });
     expect(f.edits).toEqual([]);
   });
 
@@ -43,7 +43,7 @@ describe('linkVolumes', () => {
     const link = { type: 'url', url: URL_, description: 'Old words', uuid: 'l' };
     const f = fake({ v1: { attachments: [link, file('a.pdf')] } });
     const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
-    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(r).toEqual({ added: 0, updated: 1, alreadyThere: 0, failed: [] });
     expect(f.edits).toHaveLength(1);
     expect(f.edits[0]!.attachments).toEqual([{ ...link, description: 'Index of all volumes' }, file('a.pdf')]);
   });
@@ -51,7 +51,8 @@ describe('linkVolumes', () => {
   it('moves the link to first place, keeping its uuid, rather than adding a second', async () => {
     const link = { type: 'url', url: URL_, description: 'Old words', uuid: 'l' };
     const f = fake({ v1: { attachments: [file('a.pdf'), link] } });
-    await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    expect(r).toEqual({ added: 0, updated: 1, alreadyThere: 0, failed: [] });
     expect(f.edits[0]!.attachments).toEqual([{ ...link, description: 'Index of all volumes' }, file('a.pdf')]);
   });
 
@@ -59,7 +60,7 @@ describe('linkVolumes', () => {
     const old = { type: 'url', url: 'https://oeq.example.edu/items/deleted/0/index.html', description: 'Index of all volumes', uuid: 'l' };
     const f = fake({ v1: { attachments: [file('a.pdf'), old] } });
     const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
-    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(r).toEqual({ added: 0, updated: 1, alreadyThere: 0, failed: [] });
     expect(f.edits[0]!.attachments).toEqual([{ ...old, url: URL_ }, file('a.pdf')]);
   });
 
@@ -85,7 +86,7 @@ describe('linkVolumes', () => {
       URL_,
       'Index of all volumes',
     );
-    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [{ heading: 'Vol 1', reason: 'server said no' }] });
+    expect(r).toEqual({ added: 1, updated: 0, alreadyThere: 0, failed: [{ heading: 'Vol 1', reason: 'server said no' }] });
   });
 
   it('never edits a volume that is deleted or otherwise withdrawn, and names it', async () => {
@@ -104,6 +105,7 @@ describe('linkVolumes', () => {
     expect(f.edits.map((e) => e.uuid)).toEqual(['v3', 'v4']);
     expect(r).toEqual({
       added: 2,
+      updated: 0,
       alreadyThere: 0,
       failed: [
         { heading: 'Vol 1', reason: 'it is deleted in openEQUELLA, so it was not edited' },
@@ -121,24 +123,30 @@ describe('linkLine', () => {
   const words = { group: 'volume', groups: 'volumes' };
 
   it('counts what was linked and what already had it', () => {
-    expect(linkLine({ added: 3, alreadyThere: 1, failed: [] }, { ...words, heldBack: 0 })).toBe(
+    expect(linkLine({ added: 3, updated: 0, alreadyThere: 1, failed: [] }, { ...words, heldBack: 0 })).toBe(
       'Linked 3 volumes to the index (1 already had it).',
     );
-    expect(linkLine({ added: 1, alreadyThere: 0, failed: [] }, { ...words, heldBack: 0 })).toBe(
+    expect(linkLine({ added: 1, updated: 0, alreadyThere: 0, failed: [] }, { ...words, heldBack: 0 })).toBe(
       'Linked 1 volume to the index (0 already had it).',
+    );
+  });
+
+  it('counts a link it moved, repointed or renamed as updated -- never as "already had it"', () => {
+    expect(linkLine({ added: 3, updated: 2, alreadyThere: 1, failed: [] }, { ...words, heldBack: 0 })).toBe(
+      'Linked 3 volumes to the index (2 updated: their link moved first, pointed at this index or renamed; 1 already had it).',
     );
   });
 
   it('names every volume that was not linked, and why', () => {
     const line = linkLine(
-      { added: 1, alreadyThere: 0, failed: [{ heading: 'Vol 3', reason: 'server said no' }, { heading: 'Vol 4', reason: 'gone' }] },
+      { added: 1, updated: 0, alreadyThere: 0, failed: [{ heading: 'Vol 3', reason: 'server said no' }, { heading: 'Vol 4', reason: 'gone' }] },
       { ...words, heldBack: 0 },
     );
     expect(line).toBe('Linked 1 volume to the index (0 already had it). Not linked: Vol 3 -- server said no; Vol 4 -- gone.');
   });
 
   it('says held-back volumes were not linked', () => {
-    expect(linkLine({ added: 2, alreadyThere: 0, failed: [] }, { ...words, heldBack: 1 })).toMatch(
+    expect(linkLine({ added: 2, updated: 0, alreadyThere: 0, failed: [] }, { ...words, heldBack: 1 })).toMatch(
       /Held-back volumes were not linked\.$/,
     );
   });

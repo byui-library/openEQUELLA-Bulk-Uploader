@@ -181,6 +181,21 @@ describe('buildIndex', () => {
     expect(previewLines(one)).toContain('No volume found for 10.');
   });
 
+  it('names at most 20 missing numbers, and counts the rest -- one misnamed file can open a long gap', async () => {
+    const vol = (n: number): CollectionItem => ({
+      uuid: `v${n}`,
+      version: 1,
+      status: 'live',
+      name: `Fernbrook Vol ${n}`,
+      attachments: [{ type: 'file', filename: `FQ_1971_Vol${n}_No1.pdf`, uuid: `a${n}` }],
+    });
+    const c = { searchCollection: async () => [vol(38), vol(270)], findByField: async () => [] };
+    const b = await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
+    expect(b.index.missing).toHaveLength(231);
+    const first20 = Array.from({ length: 20 }, (_, i) => 39 + i).join(', ');
+    expect(previewLines(b)).toContain(`No volumes found for ${first20}. ...and 211 more.`);
+  });
+
   it('names at most 20 items not in the series, and counts the rest', async () => {
     const strays: CollectionItem[] = Array.from({ length: 23 }, (_, i) => ({
       uuid: `s${i}`,

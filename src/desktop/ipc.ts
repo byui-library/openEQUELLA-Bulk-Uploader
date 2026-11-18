@@ -17,8 +17,13 @@ export interface IndexPreview {
   issueCount: number;
   heldBack: { reason: string; items: string[] }[];
   notInSeries: { name: string; reason: string }[];
-  /** Numbers between the first and last volume that nothing lists or holds back. */
+  /**
+   * Numbers between the first and last volume that nothing lists or holds
+   * back -- at most `NOT_IN_SERIES_SHOWN` of them, since one misnamed file can
+   * make hundreds. `missingCount` is how many there are.
+   */
   missing: number[];
+  missingCount: number;
   /** The template's own words -- "issue"/"issues", "volume"/"volumes" -- so the screen never says "volume" for boxes. */
   labels: SequenceLabels;
   /** No uuids: they stay with the build in the main process. */
@@ -589,7 +594,7 @@ export interface OeqApi {
   /** A link to the index item as every LISTED volume's first attachment. Refused until the index item exists. */
   indexLinkVolumes(args: {
     buildId: string;
-  }): Promise<{ added: number; alreadyThere: number; failed: { heading: string; reason: string }[] }>;
+  }): Promise<{ added: number; updated: number; alreadyThere: number; failed: { heading: string; reason: string }[] }>;
 }
 
 /** How far an extract run has got reading its batch. */

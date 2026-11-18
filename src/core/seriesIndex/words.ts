@@ -19,11 +19,27 @@ export const andMore = (total: number, shown = NOT_IN_SERIES_SHOWN): string =>
  * "No volumes found for 10, 11." -- the numbers between the first and last
  * volume that nothing lists, in the template's own words; '' when there are
  * none. One wording: the CLI prints it, the desktop shows it.
+ *
+ * Names at most `NOT_IN_SERIES_SHOWN` and counts the rest: one misnamed file
+ * (`Vol270` in a run of 38) makes hundreds "missing". `total` is how many
+ * there are when `missing` has already been cut to that many -- as the
+ * desktop's preview is, before it crosses to the renderer.
  */
-export const missingNote = (missing: readonly number[], labels: { group: string; groups: string }): string =>
-  missing.length === 0
-    ? ''
-    : `No ${missing.length === 1 ? labels.group : labels.groups} found for ${missing.join(', ')}.`;
+export const missingNote = (
+  missing: readonly number[],
+  labels: { group: string; groups: string },
+  total = missing.length,
+): string => {
+  if (total === 0) return '';
+  const more = andMore(total);
+  return (
+    `No ${total === 1 ? labels.group : labels.groups} found for ` +
+    `${missing.slice(0, NOT_IN_SERIES_SHOWN).join(', ')}.${more ? ` ${more}` : ''}`
+  );
+};
+
+/** The volume link's description: "Index of all volumes", in the template's own word. */
+export const indexLinkLabel = (labels: { groups: string }): string => `Index of all ${labels.groups}`;
 
 /**
  * What is known of the index item already in openEQUELLA, as far as anything
