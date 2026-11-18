@@ -395,7 +395,7 @@ describe('run --index-record', () => {
     expect(logs).toContain(`Batch record: ${record}`);
   });
 
-  it('titles items by row label when the schema export cannot be read', async () => {
+  it('records no titles when the schema export cannot be read', async () => {
     const path = await job();
     const record = join(dir, 'job.index.json');
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -403,7 +403,7 @@ describe('run --index-record', () => {
       await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: join(dir, 'missing.xml') }, env());
     });
     const written = JSON.parse(readFileSync(record, 'utf8'));
-    expect(written.items[0].title).toBe('FQ_1970_Vol1_No1.pdf');
+    expect(written.items[0].title).toBe('');
   });
 
   it('writes no record without the flag', async () => {

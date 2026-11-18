@@ -341,15 +341,31 @@ moment it creates them, so record that and build the index from it.
 It is a **projection of the manifest**, recomputed whole after every row the
 run finishes — never appended to — so an interrupted run leaves a record of
 exactly what it made, and a retry run brings the same record up to date.
-Only `created` entries are items; every other entry is named in `leftOut`.
-The title is the entry's value at the schema's declared name path, else its
-row label.
+Entries with an item -- `created`, and `incomplete` ones that have an item
+uuid -- are items; every other entry is named in `leftOut`. The title is the
+entry's value at the schema's declared name path, else `''`, so the index
+heads the volume as it heads any unnamed item ("Volume 27"); each item also
+carries its row `label`.
+
+**A later run of the same spreadsheet adds to the record** (review,
+2026-11-18). A record already at the path, of the same site and collection,
+is read when the run starts: its items are carried forward, this run's
+version of an item winning, and `leftOut` is this run's alone, minus any row
+an item already accounts for (same row, same label). A file at the path that
+is not a batch record, or is another site's or collection's, is never
+overwritten: the record is reported as not written, naming the file and why,
+and the run carries on. The keeper writes only when a row's status changes,
+and once at the end. On the desktop the record's location stays in the main
+process: `plan` remembers it by manifest path and `run` is told only whether
+to keep it.
 
 **Reading records** — combined in the order given. Refused, naming the file:
 not a batch record, an unknown version, records of different sites or
 different collections, or a site other than the one signed in to (the
 index's links would point at the wrong server). An item appearing in two
-records (the same uuid) is listed once.
+records (the same uuid) is listed once, and a row one record left out and
+another created is not listed as left out. Every item and left-out entry is
+checked for shape; a damaged one refuses the file.
 
 **Building from records** reuses `collectIndex`: each item becomes a hit
 whose status is the record's `itemState` (`draft` or `live`) and whose files

@@ -6,6 +6,7 @@ import {
   applyOverrides,
   fetchAndCacheSchema,
   indexRecordPathFor,
+  indexRecordTargets,
   runKeepingRecord,
   reportColumns,
   resolveSchemaPath,
@@ -920,14 +921,14 @@ describe('the batch record beside a desktop run', () => {
     const recordPath = join(dir, 'fernbrook.index.json');
     const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: 'DC/title' }, async (afterRow) => {
       await saveManifest(manifestPath, job('created'));
-      afterRow();
+      afterRow({ rowNumber: 2, status: 'created' });
       return { created: 1 };
     });
     expect(got).toEqual({ summary: { created: 1 }, indexRecordPath: recordPath });
     const written = JSON.parse(await readFile(recordPath, 'utf8'));
     expect(written.kind).toBe('oeq-batch-record');
     expect(written.items).toEqual([
-      { row: 2, uuid: 'item-1', version: 1, title: 'Fernbrook Quarterly Vol 1', files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }] },
+      { row: 2, uuid: 'item-1', version: 1, title: 'Fernbrook Quarterly Vol 1', label: 'FQ_1970_Vol1_No1.pdf', files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }] },
     ]);
   });
 
@@ -938,7 +939,7 @@ describe('the batch record beside a desktop run', () => {
     // A folder that does not exist: every write fails.
     const recordPath = join(dir, 'missing-folder', 'fernbrook.index.json');
     const got = await runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
-      afterRow();
+      afterRow({ rowNumber: 2, status: 'created' });
       return { created: 1 };
     });
     expect(got.summary).toEqual({ created: 1 });
@@ -951,7 +952,7 @@ describe('the batch record beside a desktop run', () => {
     const manifestPath = join(dir, 'job.json');
     await saveManifest(manifestPath, job('created'));
     const got = await runKeepingRecord(manifestPath, undefined, async (afterRow) => {
-      afterRow();
+      afterRow({ rowNumber: 2, status: 'created' });
       return { created: 1 };
     });
     expect(got).toEqual({ summary: { created: 1 } });
@@ -964,10 +965,43 @@ describe('the batch record beside a desktop run', () => {
     const recordPath = join(dir, 'fernbrook.index.json');
     await expect(
       runKeepingRecord(manifestPath, { path: recordPath, titlePath: null }, async (afterRow) => {
-        afterRow();
+        afterRow({ rowNumber: 2, status: 'created' });
         throw new Error('network gone');
       }),
     ).rejects.toThrow('network gone');
     expect(JSON.parse(await readFile(recordPath, 'utf8')).items).toHaveLength(1);
+  });
+});
+
+describe("the batch record's location stays in the main process", () => {
+  const target = { path: 'C:/batches/fernbrook.index.json', titlePath: 'DC/title' };
+
+  it('is the location plan computed for that job, looked up by its manifest path', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    expect(targets.forRun('C:/data/job.json', true)).toEqual({ target });
+  });
+
+  it('is nothing at all when no record was asked for', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    expect(targets.forRun('C:/data/job.json', false)).toEqual({});
+    expect(targets.forRun('C:/data/other.json', false)).toEqual({});
+  });
+
+  it('is refused, saying why, for a job plan never located', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    const got = targets.forRun('C:/data/other.json', true);
+    expect(got.target).toBeUndefined();
+    expect(got.error).toMatch(/record location is not known; plan it again/);
+  });
+
+  it('is the latest plan of a job', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    const later = { path: 'C:/batches/later.index.json', titlePath: null };
+    targets.remember('C:/data/job.json', later);
+    expect(targets.forRun('C:/data/job.json', true)).toEqual({ target: later });
   });
 });

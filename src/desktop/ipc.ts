@@ -31,7 +31,7 @@ export type IndexSourceArgs = { collectionUuid: string } | { recordPaths: string
 /**
  * The batch record a run may keep (spec section 7): where, and the schema's
  * declared name path in header form that titles each item -- null when none
- * is declared, and the row label stands in.
+ * is declared, and the record carries no titles.
  */
 export interface IndexRecordTarget {
   path: string;
@@ -178,8 +178,9 @@ export interface PlanReport {
   folders: PlanFolder[];
   /**
    * Where this batch's record WOULD go -- beside the spreadsheet, as
-   * `<name>.index.json` -- and what titles its items. Nothing is written
-   * unless Review's box is ticked and this is passed to `run`.
+   * `<name>.index.json` -- and what titles its items. For Review to SHOW:
+   * the main process remembers it by `manifestPath`, and `run` is told only
+   * `keepIndexRecord`. Nothing is written unless Review's box is ticked.
    */
   indexRecord: IndexRecordTarget;
 }
@@ -449,8 +450,12 @@ export interface OeqApi {
    */
   applyFolderOrders(args: { manifestPath: string; orders: Record<number, string[]> }): Promise<number>;
 
-  /** With `indexRecord`, the batch record is rewritten after every row (see `PlanReport.indexRecord`). */
-  run(args: { manifestPath: string; instanceId: string; indexRecord?: IndexRecordTarget }): Promise<RunReport>;
+  /**
+   * With `keepIndexRecord`, the batch record is rewritten after every row, at
+   * the location `plan` computed for this manifest (`PlanReport.indexRecord`),
+   * which the main process looked up itself -- never one the renderer sends.
+   */
+  run(args: { manifestPath: string; instanceId: string; keepIndexRecord?: boolean }): Promise<RunReport>;
   retryFailed(manifestPath: string): Promise<void>;
   loadManifest(manifestPath: string): Promise<Manifest>;
 

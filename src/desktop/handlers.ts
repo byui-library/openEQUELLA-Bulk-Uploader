@@ -44,7 +44,7 @@ import { rowLabel, type Sheet } from '../core/types.js';
 import { planFolders } from '../core/folderReport.js';
 import { OeqError } from '../core/errors.js';
 import { describeReason } from '../core/errorReason.js';
-import { keepBatchRecord } from '../core/seriesIndex/batchRecord.js';
+import { keepBatchRecord, type RecordProgress } from '../core/seriesIndex/batchRecord.js';
 import { registerExtractHandlers } from './extractHandlers.js';
 import { registerIndexHandlers } from './indexHandlers.js';
 
@@ -379,15 +379,16 @@ export function indexRecordPathFor(sheetPath: string): string {
 export async function runKeepingRecord<S>(
   manifestPath: string,
   indexRecord: IndexRecordTarget | undefined,
-  run: (afterRow: () => void) => Promise<S>,
+  run: (afterRow: (entry: RecordProgress) => void) => Promise<S>,
 ): Promise<{ summary: S; indexRecordPath?: string; indexRecordError?: string }> {
   const keeper = indexRecord ? keepBatchRecord(manifestPath, indexRecord.path, indexRecord.titlePath) : null;
   let summary: S;
   try {
-    summary = await run(() => keeper?.update());
-    // Once more at the end, so a batch with no rows to report still leaves a record.
-    keeper?.update();
+    summary = await run((entry) => keeper?.update(entry));
   } finally {
+    // Once more at the end -- a run that threw included -- so the record holds
+    // what was made, and a batch with no rows to report still leaves one.
+    keeper?.update();
     // Never rejects: a run that threw is not hidden by its record.
     await keeper?.settled();
   }
@@ -398,7 +399,31 @@ export async function runKeepingRecord<S>(
     : { summary, indexRecordError: describeReason(kept.error) };
 }
 
+/**
+ * Where each planned job's batch record goes, kept in the MAIN process: `plan`
+ * remembers the location it computed, keyed by the manifest path it returned,
+ * and `run` is told only whether to keep it. A path the renderer sent would be
+ * a file the main process writes wherever it is told.
+ */
+export function indexRecordTargets() {
+  const byManifest = new Map<string, IndexRecordTarget>();
+  return {
+    remember(manifestPath: string, target: IndexRecordTarget): void {
+      byManifest.set(manifestPath, target);
+    },
+    forRun(manifestPath: string, keep: boolean): { target?: IndexRecordTarget; error?: string } {
+      if (!keep) return {};
+      const target = byManifest.get(manifestPath);
+      return target === undefined
+        ? { error: "this batch's record location is not known; plan it again" }
+        : { target };
+    },
+  };
+}
+
 export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindow | null): void {
+  const recordTargets = indexRecordTargets();
+
   ipcMain.handle(CHANNELS.listInstances, async () => secrets().listInstances());
 
   ipcMain.handle(CHANNELS.credentialsDropped, async () => secrets().credentialsDropped());
@@ -802,6 +827,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       // The item name path the duplicate check above searched by titles the
       // batch record too, so the record and the check cannot disagree.
       const indexRecord = { path: indexRecordPathFor(args.sheetPath), titlePath: titleHeader };
+      recordTargets.remember(manifestPath, indexRecord);
 
       // Report columns against the OVERRIDDEN headers, so a column the user
       // remapped shows as valid. Do not hard-code `valid: true` -- if an
@@ -863,7 +889,8 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const auth = buildAuth(cfg, tokens(), inst.id);
       const client = buildClient(cfg, auth);
 
-      const { summary, ...kept } = await runKeepingRecord(args.manifestPath, args.indexRecord, (afterRow) =>
+      const record = recordTargets.forRun(args.manifestPath, args.keepIndexRecord === true);
+      const { summary, ...kept } = await runKeepingRecord(args.manifestPath, record.target, (afterRow) =>
         runManifest(client, args.manifestPath, {
           onProgress: (entry, done, total) => {
             toRenderer(CHANNELS.progress, {
@@ -873,7 +900,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
               status: entry.status,
               error: entry.error,
             });
-            afterRow();
+            afterRow(entry);
           },
         }),
       );
@@ -882,6 +909,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       return {
         ...summary,
         ...kept,
+        ...(record.error !== undefined ? { indexRecordError: record.error } : {}),
         failures: done.entries
           .filter((e) => e.status === 'failed')
           .map((e) => ({ rowNumber: e.rowNumber, label: rowLabel(e), error: e.error ?? 'unknown' })),

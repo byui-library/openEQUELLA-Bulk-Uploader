@@ -129,7 +129,8 @@ const DEFAULT_SCHEMA_FILE = 'schema/_entity.xml';
 /**
  * The schema's declared item name path, in header form, read from the same
  * export `plan` reads it from -- or null, said out loud, when it cannot be.
- * Null is not a failure: the record then titles each item by its row label.
+ * Null is not a failure: the record then carries no titles, and the index heads
+ * each volume by its number.
  */
 async function recordTitlePath(schemaFile: string): Promise<string | null> {
   let xml: string;
@@ -138,7 +139,7 @@ async function recordTitlePath(schemaFile: string): Promise<string | null> {
   } catch (err) {
     console.error(
       `warning: could not read the schema export ${schemaFile} (${errorMessage(err)}), so the batch ` +
-        `record titles each item by its row label.`,
+        `record carries no titles; an index built from it heads each volume by its number.`,
     );
     return null;
   }
@@ -146,7 +147,7 @@ async function recordTitlePath(schemaFile: string): Promise<string | null> {
   if (path === null) {
     console.error(
       `warning: the schema export ${schemaFile} declares no item name path, so the batch record ` +
-        `titles each item by its row label.`,
+        `carries no titles; an index built from it heads each volume by its number.`,
     );
   }
   return path;
@@ -193,12 +194,13 @@ export async function runAction(o: RunCliOptions, env: Env = process.env): Promi
       maxAttempts: o.maxAttempts,
       onProgress: (e, done, total) => {
         console.log(`[${done}/${total}] ${rowLabel(e)} -> ${e.status}${e.error ? `: ${e.error}` : ''}`);
-        keeper?.update();
+        keeper?.update(e);
       },
     });
-    // Once more at the end, so a batch with no rows to report still leaves a record.
-    keeper?.update();
   } finally {
+    // Once more at the end -- a run that threw included -- so the record holds
+    // what was made, and a batch with no rows to report still leaves one.
+    keeper?.update();
     // Never rejects: a run that threw is not made to wait on, or hidden by, its record.
     await keeper?.settled();
   }

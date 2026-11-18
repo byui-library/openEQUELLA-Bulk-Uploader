@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readdir, rm } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { saveManifest } from '../../src/core/state.js';
 import {
+  keepBatchRecord,
   readBatchRecords,
   recordFromManifest,
   recordHits,
@@ -69,6 +72,7 @@ describe('recordFromManifest', () => {
           uuid: 'item-2',
           version: 1,
           title: 'Fernbrook Quarterly Vol 2',
+          label: 'Vol2 (3 files)',
           files: [
             { name: 'FQ_1971_Vol2_No1.pdf', attachmentUuid: 'att-2a' },
             { name: 'FQ_1971_Vol2_No2.pdf', attachmentUuid: 'att-2b' },
@@ -80,11 +84,29 @@ describe('recordFromManifest', () => {
     });
   });
 
-  it('falls back to the row label when there is no title path or no title', () => {
+  it('records no title when none is stated, so the index falls back to its own heading', () => {
     const noTitle = { ...folderRow, metadata: { 'DC/title': ['   '] } };
-    expect(recordFromManifest(manifest([folderRow]), null, now).items[0]!.title).toBe('Vol2 (3 files)');
-    expect(recordFromManifest(manifest([noTitle]), 'DC/title', now).items[0]!.title).toBe('Vol2 (3 files)');
-    expect(recordFromManifest(manifest([folderRow]), 'DC/other', now).items[0]!.title).toBe('Vol2 (3 files)');
+    expect(recordFromManifest(manifest([folderRow]), null, now).items[0]!.title).toBe('');
+    expect(recordFromManifest(manifest([noTitle]), 'DC/title', now).items[0]!.title).toBe('');
+    expect(recordFromManifest(manifest([folderRow]), 'DC/other', now).items[0]!.title).toBe('');
+    expect(recordHits(recordFromManifest(manifest([folderRow]), null, now))[0]!.name).toBeNull();
+  });
+
+  it('records each item with its row label', () => {
+    expect(recordFromManifest(manifest([folderRow]), 'DC/title', now).items[0]!.label).toBe('Vol2 (3 files)');
+  });
+
+  it('records an incomplete row that has an item as an item: it exists in openEQUELLA', () => {
+    const r = recordFromManifest(
+      manifest([
+        { ...folderRow, status: 'incomplete', error: 'uuids differ' },
+        entry({ rowNumber: 4, source: 'FQ_1972_Vol3_No1.pdf', status: 'incomplete', error: 'no item' }),
+      ]),
+      'DC/title',
+      now,
+    );
+    expect(r.items.map((i) => i.uuid)).toEqual(['item-2']);
+    expect(r.leftOut).toEqual([{ row: 4, label: 'FQ_1972_Vol3_No1.pdf', status: 'incomplete', error: 'no item' }]);
   });
 
   it('names every entry the run did not create -- an interrupted run included', () => {
@@ -100,7 +122,7 @@ describe('recordFromManifest', () => {
       now,
     );
     expect(r.items.map((i) => i.uuid)).toEqual(['item-1', 'item-2']);
-    expect(r.items[0]!.title).toBe('FQ_1970_Vol1_No1.pdf');
+    expect(r.items[0]!.title).toBe('');
     expect(r.leftOut).toEqual([
       { row: 4, label: 'FQ_1972_Vol3_No1.pdf', status: 'failed', error: 'The server said no.' },
       { row: 5, label: 'FQ_1972_Vol3_No2.pdf', status: 'pending' },
@@ -201,5 +223,168 @@ describe('writeBatchRecord / readBatchRecords', () => {
 
   it('refuses an empty list of records', async () => {
     await expect(readBatchRecords([])).rejects.toThrow(/no batch record/i);
+  });
+
+  it('compares sites as one spelling: host case and a trailing slash do not differ', async () => {
+    const a = join(dir, 'a.json');
+    const b = join(dir, 'b.json');
+    await writeBatchRecord(a, record());
+    await writeBatchRecord(b, record({ baseUrl: 'https://OEQ.Example.edu/' }));
+    await expect(readBatchRecords([a, b])).resolves.toBeDefined();
+  });
+
+  it('drops a left-out row that another record created, so the two do not contradict', async () => {
+    const a = join(dir, 'a.json');
+    const b = join(dir, 'b.json');
+    const failed = { row: 3, label: 'Vol2 (3 files)', status: 'failed' as const, error: 'The server said no.' };
+    const other = { row: 9, label: 'Vol9', status: 'failed' as const };
+    await writeBatchRecord(a, record({ items: [], leftOut: [failed, other] }));
+    await writeBatchRecord(b, record()); // the retry created row 3
+    const both = await readBatchRecords([a, b]);
+    expect(both.items.map((i) => i.uuid)).toEqual(['item-2']);
+    expect(both.leftOut).toEqual([other]);
+  });
+
+  it('still reads a record written before items carried a label', async () => {
+    const path = join(dir, 'old.json');
+    const { label: _label, ...unlabelled } = record().items[0]!;
+    await writeFile(path, JSON.stringify(record({ items: [unlabelled] })));
+    expect((await readBatchRecords([path])).items).toEqual([unlabelled]);
+  });
+
+  it.each([
+    ['an item without a uuid', { items: [{ row: 3, version: 1, title: '', files: [] }] }],
+    ['an item whose version is text', { items: [{ row: 3, uuid: 'u', version: '1', title: '', files: [] }] }],
+    ['an item whose files are not a list', { items: [{ row: 3, uuid: 'u', version: 1, title: '', files: 'a.pdf' }] }],
+    ['a file without a name', { items: [{ row: 3, uuid: 'u', version: 1, title: '', files: [{ attachmentUuid: 'a' }] }] }],
+    ['a label that is not text', { items: [{ row: 3, uuid: 'u', version: 1, title: '', label: 3, files: [] }] }],
+    ['an item that is not an object', { items: [null] }],
+    ['a left-out row whose row is text', { leftOut: [{ row: '3', label: 'x', status: 'failed' }] }],
+    ['a left-out row without a status', { leftOut: [{ row: 3, label: 'x' }] }],
+    ['a left-out error that is not text', { leftOut: [{ row: 3, label: 'x', status: 'failed', error: 4 }] }],
+  ])('refuses %s, naming the file', async (_what, over) => {
+    const path = join(dir, 'damaged.json');
+    await writeFile(path, JSON.stringify({ ...record(), ...over }));
+    await expect(readBatchRecords([path])).rejects.toThrow(/damaged\.json/);
+  });
+});
+
+describe('keepBatchRecord', () => {
+  let dir: string;
+  let manifestPath: string;
+  let file: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'oeq-keeper-'));
+    manifestPath = join(dir, 'job.json');
+    file = join(dir, 'batch.index.json');
+  });
+  const read = (): BatchRecord => JSON.parse(readFileSync(file, 'utf8')) as BatchRecord;
+  const created = (rowNumber: number, uuid: string, source: string): ManifestEntry =>
+    entry({ rowNumber, source, status: 'created', itemUuid: uuid, itemVersion: 1, attachmentUuids: [`${uuid}-a`] });
+
+  it("carries an earlier run's items forward, this run's version winning, rather than replacing them", async () => {
+    // The first run of this spreadsheet created rows 2 and 3; row 4 failed.
+    await saveManifest(
+      manifestPath,
+      manifest([
+        created(2, 'item-1', 'one.pdf'),
+        created(3, 'item-3', 'three.pdf'),
+        entry({ rowNumber: 4, source: 'four.pdf', status: 'failed', error: 'no' }),
+      ]),
+    );
+    const first = keepBatchRecord(manifestPath, file, null);
+    first.update();
+    expect((await first.settled()).written).toBe(true);
+
+    // A later run of the same spreadsheet: a new job, in which row 4 was created.
+    await saveManifest(
+      manifestPath,
+      manifest([
+        entry({ rowNumber: 2, source: 'one.pdf', status: 'skipped' }),
+        { ...created(3, 'item-3', 'three.pdf'), itemVersion: 2 },
+        created(4, 'item-4', 'four.pdf'),
+      ]),
+    );
+    const second = keepBatchRecord(manifestPath, file, null);
+    second.update();
+    expect((await second.settled()).written).toBe(true);
+    const r = read();
+    expect(r.items.map((i) => [i.uuid, i.version])).toEqual([
+      ['item-1', 1],
+      ['item-3', 2],
+      ['item-4', 1],
+    ]);
+    // Row 2 is listed as created by the earlier run, so it is not also "left out".
+    expect(r.leftOut).toEqual([]);
+  });
+
+  it('keeps an earlier record draft if it was draft', async () => {
+    await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf')]));
+    const first = keepBatchRecord(manifestPath, file, null);
+    first.update();
+    await first.settled();
+    await saveManifest(manifestPath, manifest([created(3, 'item-3', 'three.pdf')], { itemState: 'published' }));
+    const second = keepBatchRecord(manifestPath, file, null);
+    second.update();
+    await second.settled();
+    expect(read().itemState).toBe('draft');
+  });
+
+  it.each([
+    ['is not a batch record', '{"some": "other file"}', /not a batch record/],
+    ['is not JSON at all', 'notes the operator kept', /not a batch record/],
+    ['records another site', null, /another site/],
+    ['records another collection', 'collection', /another collection/],
+  ])('leaves a file that %s alone, and says so', async (_what, content, reason) => {
+    const m = manifest([created(2, 'item-1', 'one.pdf')]);
+    let text: string;
+    if (content === null) text = JSON.stringify(recordFromManifest({ ...m, baseUrl: 'https://other.example.edu' }, null));
+    else if (content === 'collection') text = JSON.stringify(recordFromManifest({ ...m, collectionUuid: 'c9' }, null));
+    else text = content;
+    await writeFile(file, text);
+    await saveManifest(manifestPath, m);
+    const failures: unknown[] = [];
+    const keeper = keepBatchRecord(manifestPath, file, null, (err) => failures.push(err));
+    keeper.update();
+    const kept = await keeper.settled();
+    expect(kept.written).toBe(false);
+    expect(String((kept.error as Error).message)).toMatch(reason);
+    expect(String((kept.error as Error).message)).toContain('batch.index.json');
+    expect(failures).toHaveLength(1);
+    expect(readFileSync(file, 'utf8')).toBe(text);
+  });
+
+  it('writes nothing for a progress report whose row status has not changed', async () => {
+    await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf'), entry({ rowNumber: 3, source: 'two.pdf' })]));
+    const keeper = keepBatchRecord(manifestPath, file, null);
+    // A retry reports already-created rows back to back: nothing to write.
+    keeper.update({ rowNumber: 2, status: 'created' });
+    await keeper.settled();
+    expect(existsSync(file)).toBe(false);
+    // Row 3 changed: written.
+    await saveManifest(manifestPath, manifest([created(2, 'item-1', 'one.pdf'), created(3, 'item-3', 'two.pdf')]));
+    keeper.update({ rowNumber: 3, status: 'created' });
+    await keeper.settled();
+    expect(read().items).toHaveLength(2);
+    // The same report again: nothing written.
+    await rm(file);
+    keeper.update({ rowNumber: 3, status: 'created' });
+    await keeper.settled();
+    expect(existsSync(file)).toBe(false);
+    // The final update always writes.
+    keeper.update();
+    expect((await keeper.settled()).written).toBe(true);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it('reports written:false when the LAST update failed, though an earlier write landed after it', async () => {
+    await saveManifest(manifestPath, manifest([entry({ rowNumber: 2, source: 'one.pdf' })]));
+    const keeper = keepBatchRecord(manifestPath, file, null);
+    keeper.update(); // queues a write that lands later
+    await rm(manifestPath); // so the next read fails, synchronously
+    keeper.update({ rowNumber: 2, status: 'created' });
+    const kept = await keeper.settled();
+    expect(kept.written).toBe(false);
+    expect(kept.error).not.toBeNull();
   });
 });

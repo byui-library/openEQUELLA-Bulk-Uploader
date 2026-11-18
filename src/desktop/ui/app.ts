@@ -1,7 +1,6 @@
 import type {
   OeqApi,
   ColumnReport,
-  IndexRecordTarget,
   IndexSourceArgs,
   InstanceChoice,
   ModelChoice,
@@ -1972,9 +1971,12 @@ async function handleUpload(): Promise<void> {
   }
 }
 
-/** The batch record for `run`, only when Review's box was ticked. */
-function indexRecordForRun(plan: PlanReport): { indexRecord?: IndexRecordTarget } {
-  return state.keepIndexRecord && plan.indexRecord ? { indexRecord: plan.indexRecord } : {};
+/**
+ * Whether `run` keeps the batch record: only when Review's box was ticked. The
+ * location is the main process's own, remembered from the plan.
+ */
+function indexRecordForRun(plan: PlanReport): { keepIndexRecord?: boolean } {
+  return state.keepIndexRecord && plan.indexRecord ? { keepIndexRecord: true } : {};
 }
 
 // --- Progress ------------------------------------------------------------

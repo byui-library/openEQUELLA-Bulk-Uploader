@@ -2453,6 +2453,7 @@ describe('the batch record, through the app', () => {
     harness.app.fire('#confirm-upload-btn');
     await flush();
     expect(harness.calls.runs).toHaveLength(1);
+    expect(harness.calls.runs[0]!['keepIndexRecord']).toBeUndefined();
     expect(harness.calls.runs[0]!['indexRecord']).toBeUndefined();
   });
 
@@ -2464,7 +2465,9 @@ describe('the batch record, through the app', () => {
     await flush();
     harness.app.fire('#confirm-upload-btn');
     await flush();
-    expect(harness.calls.runs[0]!['indexRecord']).toEqual(RECORD);
+    expect(harness.calls.runs[0]!['keepIndexRecord']).toBe(true);
+    // The location is the main process's own: the renderer never sends a path.
+    expect(harness.calls.runs[0]!['indexRecord']).toBeUndefined();
   });
 
   it('opens the index flow on the record from Done', async () => {
