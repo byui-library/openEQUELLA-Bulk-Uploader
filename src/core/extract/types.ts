@@ -256,6 +256,18 @@ export interface Profile {
      */
     sequence?: { patterns: string[]; labels?: Partial<SequenceLabels> };
   };
+  /**
+   * The series index's own record, and how to read a volume from a file the
+   * sequence patterns cannot (a volume issued as one file with no issue
+   * number). Optional: a template without it is never offered for an index.
+   * See core/seriesIndex/ and docs/superpowers/specs/2026-11-18-series-index-design.md.
+   */
+  index?: {
+    /** One literal value per schema path, written as the index item's metadata. */
+    columns: { path: string; value: string }[];
+    /** Read only a {group} (and optionally {year}); tried after the sequence patterns. */
+    groupPatterns?: string[];
+  };
 }
 
 /**

@@ -539,3 +539,61 @@ describe('parseProfile -- a model writing after the other sources', () => {
     expect(() => parseProfile(withSources([{ opening: true, after: true }]))).toThrow();
   });
 });
+
+describe('the index section', () => {
+  const base = {
+    version: 1,
+    pattern: 'BOX_{group}',
+    columns: [{ path: 'attachment name', sources: [{ filename: true }] }],
+    checks: { sequence: { patterns: ['Box{group}_F{part}'] } },
+  };
+
+  it('accepts columns and group patterns', () => {
+    const p = parseProfile({
+      ...base,
+      index: {
+        columns: [{ path: 'DC/title', value: 'Box index' }],
+        groupPatterns: ['Box{group}'],
+      },
+    });
+    expect(p.index?.columns[0]).toEqual({ path: 'DC/title', value: 'Box index' });
+    expect(p.index?.groupPatterns).toEqual(['Box{group}']);
+  });
+
+  it('refuses an unknown key', () => {
+    expect(() => parseProfile({ ...base, index: { columns: [{ path: 'DC/title', value: 'x' }], extra: 1 } })).toThrow(
+      /not valid/,
+    );
+  });
+
+  it('refuses an index section without sequence patterns to read volumes with', () => {
+    const { checks: _drop, ...noChecks } = base;
+    expect(() => parseProfile({ ...noChecks, index: { columns: [{ path: 'DC/title', value: 'x' }] } })).toThrow(
+      /checks\.sequence/,
+    );
+  });
+
+  it('refuses a path named twice', () => {
+    expect(() =>
+      parseProfile({
+        ...base,
+        index: { columns: [{ path: 'DC/title', value: 'a' }, { path: 'DC/title', value: 'b' }] },
+      }),
+    ).toThrow(/names 'DC\/title' twice/);
+  });
+
+  it('refuses a group pattern with no {group}', () => {
+    expect(() =>
+      parseProfile({ ...base, index: { columns: [{ path: 'DC/title', value: 'a' }], groupPatterns: ['Box{part}'] } }),
+    ).toThrow(/has no \{group\}/);
+  });
+
+  it('refuses a group pattern with a placeholder nothing understands', () => {
+    expect(() =>
+      parseProfile({
+        ...base,
+        index: { columns: [{ path: 'DC/title', value: 'a' }], groupPatterns: ['Box{group}_{shelf}'] },
+      }),
+    ).toThrow(/\{shelf\}/);
+  });
+});
