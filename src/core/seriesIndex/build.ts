@@ -9,6 +9,7 @@ import { findExistingIndex, type ExistingIndex, type IndexClient } from './publi
 import { indexRecord, type IndexRecord, type IndexSchema } from './record.js';
 import { renderIndex } from './render.js';
 import type { IndexFiles, IndexHit, SeriesIndex } from './types.js';
+import { plural } from './words.js';
 
 /**
  * ONE build, used by the CLI and the desktop alike, so the preview, the files
@@ -82,8 +83,6 @@ export async function resolveIndexSchema(
   }
   return client.getSchema(uuid);
 }
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** What the preview says, as plain lines -- the CLI prints them; the desktop shows the same facts. */
 export function previewLines(b: IndexBuild): string[] {

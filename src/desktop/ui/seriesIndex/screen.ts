@@ -3,8 +3,7 @@ import { escapeHtml } from '../dom.js';
 import type { IndexPreview } from '../../ipc.js';
 import { canBuild, canLinkVolumes, type IndexFlowState } from './state.js';
 import type { IndexController } from './controller.js';
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+import { plural } from '../../../core/seriesIndex/words.js';
 
 const isBusy = (s: IndexFlowState) => s.working || s.loading;
 

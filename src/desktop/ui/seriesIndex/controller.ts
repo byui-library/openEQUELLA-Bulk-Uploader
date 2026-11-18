@@ -2,6 +2,7 @@
 import type { OeqApi } from '../../ipc.js';
 import { errorMessage } from '../errors.js';
 import { linkLine } from '../../../core/seriesIndex/links.js';
+import { plural } from '../../../core/seriesIndex/words.js';
 import { canBuild, canLinkVolumes, initialIndexState, type IndexFlowState } from './state.js';
 
 /**
@@ -121,7 +122,7 @@ export function createIndexController(options: IndexControllerOptions) {
             done.push(`${Groups} not linked: the index item was not uploaded.`);
           } else if (
             !confirm(
-              `Add a link to the index as the first attachment of ${n} ${n === 1 ? L.group : L.groups}? This edits each of them in openEQUELLA.`,
+              `Add a link to the index as the first attachment of ${plural(n, L.group, L.groups)}? This edits each of them in openEQUELLA.`,
             )
           ) {
             done.push(`${Groups} not linked: you chose not to edit them.`);

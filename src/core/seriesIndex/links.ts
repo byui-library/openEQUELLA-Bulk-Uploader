@@ -1,6 +1,7 @@
 // src/core/seriesIndex/links.ts
 import { describeReason } from '../errorReason.js';
 import { itemUrl } from './collect.js';
+import { plural } from './words.js';
 
 /**
  * A link to the index on every volume, as its FIRST attachment (operator,
@@ -35,7 +36,7 @@ export interface LinkResult {
  * otherwise "Linked 37 volumes" reads as "every volume".
  */
 export function linkLine(r: LinkResult, o: { group: string; groups: string; heldBack: number }): string {
-  let line = `Linked ${r.added} ${r.added === 1 ? o.group : o.groups} to the index (${r.alreadyThere} already had it).`;
+  let line = `Linked ${plural(r.added, o.group, o.groups)} to the index (${r.alreadyThere} already had it).`;
   if (r.failed.length > 0) line += ` Not linked: ${r.failed.map((f) => `${f.heading} -- ${f.reason}`).join('; ')}.`;
   if (o.heldBack > 0) line += ` Held-back ${o.groups} were not linked.`;
   return line;
