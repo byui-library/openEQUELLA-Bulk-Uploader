@@ -105,11 +105,9 @@ export function createIndexController(options: IndexControllerOptions) {
           } else {
             const up = await options.api.indexUpload({ buildId, draft: state.draft });
             done.push(`${up.kind === 'created' ? 'Created' : 'Updated'} the index item: ${up.url}`);
-            // The main side now treats the item as existing; so must the screen,
-            // or a second click would offer Draft/Publish for an item that is there.
-            if (existing.kind === 'none') {
-              preview = { ...preview, existing: { kind: 'one', status: state.draft ? 'draft' : 'live' } };
-            }
+            // The item now exists, in the state the main side reports; the screen
+            // must say so, or a second click would offer Draft/Publish for it.
+            preview = { ...preview, existing: { kind: 'one', status: up.status } };
           }
         }
         // After the upload, so a new item exists to point at. Asked here, naming

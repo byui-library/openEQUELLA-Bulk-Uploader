@@ -49,14 +49,20 @@ export interface IndexHandlerDeps {
   newId?: () => string;
 }
 
+type IndexItem = { uuid: string; version: number; status: string };
+
 export function createIndexHandlers(deps: IndexHandlerDeps) {
   const newId = deps.newId ?? randomUUID;
   let held: {
     id: string;
     build: IndexBuild;
     instanceId: string;
-    /** The item THIS preview's upload created, while search may not list it yet. */
-    created: { uuid: string; version: number; status: string } | null;
+    /**
+     * The index item, as last known: the one the preview found, or the one an
+     * upload from this preview created or updated. Kept because search may not
+     * list a just-created item yet; `build.existing` stays what the preview saw.
+     */
+    item: IndexItem | null;
   } | null = null;
   /** How many previews have STARTED; see preview. */
   let previews = 0;
@@ -120,8 +126,11 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         schema,
       });
       const id = newId();
-      if (ticket === previews) held = { id, build, instanceId: args.instanceId, created: null };
       const e = build.existing;
+      if (ticket === previews) {
+        const item = e.kind === 'one' ? { uuid: e.uuid, version: e.version, status: e.status } : null;
+        held = { id, build, instanceId: args.instanceId, item };
+      }
       return {
         buildId: id,
         title: build.record.title,
@@ -149,10 +158,11 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
       const connection = await signedIn(h.instanceId, 'upload the index');
       // Asked again, not trusted from the preview: an item made since then is
       // updated, never duplicated; several now, or none findable, is refused by
-      // publishIndex. The one exception is the item THIS preview created --
-      // search may not list it yet, and "none" must not duplicate it.
+      // publishIndex. The one exception is the item already known here --
+      // search may not list a just-created one yet, and "none" must not
+      // duplicate it.
       let existing = await findExistingIndex(connection.client, build.collectionUuid, build.record);
-      if (existing.kind === 'none' && h.created !== null) existing = { kind: 'one', ...h.created };
+      if (existing.kind === 'none' && h.item !== null) existing = { kind: 'one', ...h.item };
       const result = await publishIndex(connection.client, {
         collectionUuid: build.collectionUuid,
         record: build.record,
@@ -163,23 +173,19 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
       // The item now exists: a second upload from this same preview must update
       // it, not create a duplicate. `held` stays, so later steps can use it.
       const status = existing.kind === 'one' ? existing.status : args.draft ? 'draft' : 'live';
-      if (result.kind === 'created') h.created = { uuid: result.uuid, version: result.version, status };
-      build.existing = { kind: 'one', uuid: result.uuid, version: result.version, status };
-      return { kind: result.kind, url: `${itemUrl(connection.baseUrl, result.uuid)}index.html` };
+      h.item = { uuid: result.uuid, version: result.version, status };
+      return { kind: result.kind, url: `${itemUrl(connection.baseUrl, result.uuid)}index.html`, status };
     },
 
     async linkVolumes(args: Parameters<OeqApi['indexLinkVolumes']>[0]): Promise<LinkResult> {
       const h = take(args.buildId);
-      const { build } = h;
-      // `existing` is 'one' when the item was found at preview time, or once
-      // `upload` above has created it -- either way it names the item to link to.
-      const e = build.existing;
-      if (e.kind !== 'one') throw new ValidationError('Upload the index item first.');
+      const { build, item } = h;
+      if (item === null) throw new ValidationError('Upload the index item first.');
       const connection = await signedIn(h.instanceId, 'link the volumes');
       return linkVolumes(
         connection.client,
         build.index.volumes,
-        indexPageUrl(connection.baseUrl, e.uuid),
+        indexPageUrl(connection.baseUrl, item.uuid),
         `Index of all ${build.labels.groups}`,
       );
     },

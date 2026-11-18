@@ -26,6 +26,8 @@ export type IndexSaveResult = { kind: 'saved'; paths: string[] } | { kind: 'exis
 export interface IndexUploadResult {
   kind: 'created' | 'updated';
   url: string;
+  /** The item's state after the upload: an update keeps it, a create is what was chosen. */
+  status: string;
 }
 // `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
 // this module is reachable from the sandboxed renderer. A type-only import is

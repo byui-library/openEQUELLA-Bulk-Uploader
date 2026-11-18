@@ -105,7 +105,7 @@ describe('index handlers', () => {
       existing: { kind: 'none' },
     });
     const up = await h.upload({ buildId: 'b1', draft: true });
-    expect(up).toEqual({ kind: 'created', url: 'https://oeq.example.edu/items/new/0/index.html' });
+    expect(up).toEqual({ kind: 'created', url: 'https://oeq.example.edu/items/new/0/index.html', status: 'draft' });
     expect(c.created[0]).toMatchObject({ draft: true });
   });
 
@@ -294,7 +294,7 @@ describe('index handlers', () => {
     expect(preview.existing).toEqual({ kind: 'none' });
     appeared = true;
     const up = await h.upload({ buildId: 'b1', draft: true });
-    expect(up).toEqual({ kind: 'updated', url: 'https://oeq.example.edu/items/other/0/index.html' });
+    expect(up).toEqual({ kind: 'updated', url: 'https://oeq.example.edu/items/other/0/index.html', status: 'live' });
     expect(c.created).toEqual([]);
     expect(edited).toEqual(['other']);
   });

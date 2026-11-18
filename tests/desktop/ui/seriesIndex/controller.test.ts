@@ -27,7 +27,7 @@ function setup(opts: { confirm?: boolean; exists?: boolean; p?: IndexPreview } =
       saveAttempts += 1;
       return opts.exists && saveAttempts === 1 ? { kind: 'exists' as const, names: ['index.html'] } : { kind: 'saved' as const, paths: ['C:/out/index.html'] };
     },
-    indexUpload: async (a: { draft: boolean }) => (calls.push(`upload draft=${a.draft}`), { kind: 'created' as const, url: 'https://x/items/n/0/index.html' }),
+    indexUpload: async (a: { draft: boolean }) => (calls.push(`upload draft=${a.draft}`), { kind: 'created' as const, url: 'https://x/items/n/0/index.html', status: a.draft ? 'draft' : 'live' }),
   } as unknown as OeqApi;
   const confirms: string[] = [];
   const c = createIndexController({
@@ -169,7 +169,7 @@ describe('index flow controller: volume links', () => {
           heldBack: opts.heldBack ?? [],
           ...(opts.labels ? { labels: opts.labels } : {}),
         }),
-      indexUpload: async () => (calls.push('upload'), { kind: 'created' as const, url: 'https://x/items/n/0/index.html' }),
+      indexUpload: async () => (calls.push('upload'), { kind: 'created' as const, url: 'https://x/items/n/0/index.html', status: 'draft' }),
       indexLinkVolumes: async (a: { buildId: string }) => (
         calls.push(`link ${a.buildId}`),
         { added: 1, alreadyThere: 0, failed: opts.failed === false ? [] : [{ heading: 'Vol 2', reason: 'server said no' }] }
