@@ -21,7 +21,7 @@
       { "path": "BYUI_extended/byui_rights/restrict_to_byui", "value": "Public" }
     ],
     "groupPatterns": ["{year}_Vol{group}"],
-    "search": "SRE_*"
+    "titleStartsWith": "Snake River"
   },
   "columns": [
     { "path": "attachment name", "sources": [{ "filename": true }], "locked": true },

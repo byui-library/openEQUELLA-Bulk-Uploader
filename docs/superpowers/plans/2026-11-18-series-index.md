@@ -3113,6 +3113,11 @@ typecheck`, renderer purity, no `style=`.
 
 **Files:** `src/core/seriesIndex/build.ts`, `src/core/client.ts`, `src/core/extract/types.ts` + `profile.ts`, `src/core/seriesIndex/words.ts`, `src/desktop/ui/seriesIndex/screen.ts`, tests.
 
+> **Superseded (2026-11-18), before release:** free-text `q` / `index.search` was
+> replaced by `index.titleStartsWith`, sent as a `where` prefix on the schema's
+> name path, because `q`'s results were measured to depend on the session. See
+> spec section 7, "The narrowed search". The items below record what was built first.
+
 - [ ] `client.searchCollection(collectionUuid, opts?: { q?: string })` -- a non-empty `q` adds `&q=...`. Mock server: the no-where listing filters by `q` when given (a trailing `*` = prefix match on any attachment filename or the name; else substring), commented as a model, not openEQUELLA's matcher.
 - [ ] Profile `index.search?: string` (non-empty when present), validated beside `groupPatterns`.
 - [ ] `BuildArgs.source: { kind: 'collection' } | { kind: 'record'; record: BatchRecord }`. Collection: as now, passing `profile.index.search` as `q`. Record: NO `searchCollection` call; hits = `recordHits(record)`, still excluding the existing index item's uuid.

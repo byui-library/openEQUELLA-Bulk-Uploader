@@ -498,6 +498,46 @@ export async function startMockServer(): Promise<MockServer> {
         const withAtt = info.includes('attachment') || info.includes('all');
         state.searchUrls.push(req.url ?? '');
 
+        // The collection listing: it always pages with `start`; the identifier,
+        // title and field searches never do. It may be narrowed by a `where`.
+        if (url.searchParams.has('start')) {
+          // A MODEL of the behaviour measured on content-test (2026-11-18), not
+          // openEQUELLA's matcher: `/xml/<path> LIKE '<prefix>%'` keeps the
+          // items whose value at <path> starts with <prefix>, case-sensitively.
+          // The name stands in for the value at the title path. A LIKE that
+          // starts with a wildcard is refused, as the real server refuses it.
+          let fits: (i: MockState['collectionItems'][number]) => boolean = () => true;
+          if (where) {
+            const like = /^\/xml\/(.+?)\s+LIKE\s+'(.*)%'$/s.exec(where);
+            if (!like) return send(res, 400, { error: `unparseable where clause: ${where}` });
+            const askedPath = like[1]!;
+            const prefix = like[2]!.replace(/''/g, "'");
+            if (prefix.startsWith('%') || prefix.startsWith('*')) {
+              return send(res, 500, { error: 'Like queries must not start with wildcard' });
+            }
+            fits = (i) => {
+              const value = i.fields[askedPath] ?? (askedPath === state.titlePath ? i.name : undefined);
+              return value !== undefined && value.startsWith(prefix);
+            };
+          }
+          const visible = state.collectionItems.filter((i) => (showAll || i.status === 'live') && fits(i));
+          const start = Number(url.searchParams.get('start') ?? '0');
+          const length = Number(url.searchParams.get('length') ?? '10');
+          const page = visible.slice(start, start + length);
+          return send(res, 200, {
+            start,
+            length: page.length,
+            available: visible.length,
+            results: page.map((i) => ({
+              uuid: i.uuid,
+              version: i.version,
+              ...(withDetail ? { status: i.status } : {}),
+              ...(i.name === undefined ? {} : { name: i.name }),
+              ...(withAtt ? { attachments: i.attachments } : {}),
+            })),
+          });
+        }
+
         if (where) {
           // Models the shape CONFIRMED against production on 2026-08-07:
           // an exact match on the node, and results that carry `attachments`
@@ -548,35 +588,6 @@ export async function startMockServer(): Promise<MockServer> {
                     })),
                   }
                 : {}),
-            })),
-          });
-        }
-
-        // The collection listing: no `q`, or a `q` that narrows it (it always
-        // pages with `start`; the identifier check never does).
-        if (!url.searchParams.has('q') || url.searchParams.has('start')) {
-          // A MODEL of a free-text match, not openEQUELLA's matcher: a trailing
-          // `*` is a prefix of any attachment filename or the name, otherwise
-          // a substring of either.
-          const q = (url.searchParams.get('q') ?? '').toLowerCase();
-          const fits = (text: string | undefined) =>
-            text !== undefined && (q.endsWith('*') ? text.toLowerCase().startsWith(q.slice(0, -1)) : text.toLowerCase().includes(q));
-          const visible = state.collectionItems.filter(
-            (i) => (showAll || i.status === 'live') && (q === '' || fits(i.name) || i.attachments.some((a) => fits(a.filename))),
-          );
-          const start = Number(url.searchParams.get('start') ?? '0');
-          const length = Number(url.searchParams.get('length') ?? '10');
-          const page = visible.slice(start, start + length);
-          return send(res, 200, {
-            start,
-            length: page.length,
-            available: visible.length,
-            results: page.map((i) => ({
-              uuid: i.uuid,
-              version: i.version,
-              ...(withDetail ? { status: i.status } : {}),
-              ...(i.name === undefined ? {} : { name: i.name }),
-              ...(withAtt ? { attachments: i.attachments } : {}),
             })),
           });
         }

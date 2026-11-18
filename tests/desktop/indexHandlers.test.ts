@@ -110,6 +110,19 @@ describe('index handlers', () => {
     expect(c.created[0]).toMatchObject({ draft: true });
   });
 
+  it('carries the volume numbers nothing lists to the preview', async () => {
+    const vol = (n: number) => ({
+      uuid: `v${n}`,
+      version: 1,
+      status: 'live',
+      name: `Fernbrook Vol ${n}`,
+      attachments: [{ type: 'file', filename: `FQ_1971_Vol${n}_No1.pdf`, uuid: `a${n}` }],
+    });
+    const c = connect({ searchCollection: async () => [vol(9), vol(12)] });
+    const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
+    expect((await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' })).missing).toEqual([10, 11]);
+  });
+
   it('a second upload updates the item the first one created', async () => {
     const c = connect();
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });

@@ -634,13 +634,16 @@ export class OeqClient {
    * a guest (CLAUDE.md, "openEQUELLA answers an unauthenticated request with
    * 200"), and is reported as that, never as an empty collection.
    *
-   * A non-empty `q` narrows the listing to openEQUELLA's free-text matches
-   * (a template's `index.search`, such as `SRE_*`: attachment file names are
-   * indexed). 50 is the most openEQUELLA returns a request -- more is a 500.
+   * A non-empty `where` narrows the listing by a clause on the record, such as
+   * `/xml/MWDL/title LIKE 'Snake River%'` (a template's `index.titleStartsWith`).
+   * Never free-text `q`: measured on content-test (2026-11-18), `q=SRE_*` gave
+   * an anonymous session 115 items and the signed-in operator 38 -- all
+   * deleted, every live volume missing. A `where` clause gave both the same 74.
+   * 50 is the most openEQUELLA returns a request -- more is a 500.
    */
-  async searchCollection(collectionUuid: string, opts: { q?: string } = {}): Promise<CollectionItem[]> {
+  async searchCollection(collectionUuid: string, opts: { where?: string } = {}): Promise<CollectionItem[]> {
     const pageSize = 50;
-    const q = opts.q ? `&q=${encodeURIComponent(opts.q)}` : '';
+    const q = opts.where ? `&where=${encodeURIComponent(opts.where)}` : '';
     const items: CollectionItem[] = [];
     for (let start = 0, pages = 0; ; pages++) {
       const url =

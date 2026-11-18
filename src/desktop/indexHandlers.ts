@@ -32,7 +32,7 @@ export type IndexConnection = {
     currentUser(): Promise<CurrentUser>;
     getCollection(uuid: string): Promise<CollectionSummary>;
     getSchema(uuid: string): Promise<SchemaInfo>;
-    searchCollection(collectionUuid: string, opts?: { q?: string }): Promise<CollectionItem[]>;
+    searchCollection(collectionUuid: string, opts?: { where?: string }): Promise<CollectionItem[]>;
   };
   baseUrl: string;
   /** The schema Setup read for this site, for a collection that names none. */
@@ -155,6 +155,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         issueCount: build.index.volumes.reduce((n, v) => n + v.issues.length, 0),
         heldBack: build.index.heldBack.map((h) => ({ reason: h.reason, items: h.items.map((i) => i.name) })),
         notInSeries: build.index.notInSeries.map((l) => ({ name: l.name, reason: l.reason })),
+        missing: [...build.index.missing],
         labels: { ...build.labels },
         existing:
           e.kind === 'one'

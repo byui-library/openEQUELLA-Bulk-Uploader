@@ -67,6 +67,8 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
   const notInSeries: LeftOut[] = [];
   const heldBack: HeldBack[] = [];
   const byGroup = new Map<number, { hit: IndexHit; reads: Read[] }[]>();
+  /** Every group listed or held back -- what is NOT a gap. */
+  const present = new Set<number>();
   const nameOf = (hit: IndexHit) => hit.name?.trim() || hit.uuid;
 
   for (const hit of hits) {
@@ -87,6 +89,7 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
       continue;
     }
     if (groups.length > 1) {
+      for (const g of groups) present.add(g);
       heldBack.push({
         group: null,
         reason: `its files name more than one ${labels.group}: ${groups.join(', ')}`,
@@ -124,5 +127,21 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
       })),
     });
   }
-  return { volumes, heldBack, notInSeries };
+  for (const group of byGroup.keys()) present.add(group);
+  return { volumes, heldBack, notInSeries, missing: gaps(present) };
+}
+
+/**
+ * Every whole number strictly between the lowest and highest present group
+ * that is not present. A volume that exists only as a withdrawn item is a
+ * gap like any other: the page silently lacks it, so the operator is told.
+ */
+function gaps(present: ReadonlySet<number>): number[] {
+  if (present.size === 0) return [];
+  const sorted = [...present].sort((a, b) => a - b);
+  const missing: number[] = [];
+  for (let n = sorted[0]! + 1; n < sorted[sorted.length - 1]!; n++) {
+    if (!present.has(n)) missing.push(n);
+  }
+  return missing;
 }

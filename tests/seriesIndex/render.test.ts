@@ -14,6 +14,7 @@ const index: SeriesIndex = {
   ],
   heldBack: [],
   notInSeries: [],
+  missing: [],
 };
 const page = { title: 'Fernbrook & Co. index', description: 'Every volume <b>so far</b>.', groups: 'volumes' };
 

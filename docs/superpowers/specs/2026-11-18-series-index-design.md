@@ -311,9 +311,15 @@ moment it creates them, so record that and build the index from it.
 - **The batch record is the main route; the collection search stays as the
   second**, for series uploaded before this existed (the Snake River Echoes
   volumes on content-test are such a series: no record of their run
-  survives). A template's `index.search` names a free-text search that
-  narrows what is read (`SRE_*`: openEQUELLA indexes attachment file names).
-  The file-name patterns still decide what is listed.
+  survives). A template's `index.titleStartsWith` narrows what is read to
+  items whose title starts with it, by a `where` clause on the schema's
+  declared name path (`Snake River`). The file-name patterns still decide
+  what is listed. (This was first a free-text `index.search`, `SRE_*`, sent
+  as `q`; it was replaced before release -- see "The narrowed search" below.)
+- **A gap in the run of volumes is named** (2026-11-18): every number between
+  the lowest and highest volume listed or held back that is neither. A
+  volume that exists only as a deleted item is such a gap, and the page
+  would otherwise silently lack it.
 - **Several records may build one index** (a series uploaded in batches, a
   retry run). Their items are combined; a volume two items claim is held
   back, exactly as before.
@@ -385,10 +391,35 @@ as before.
 - *CLI*: `oeq-upload run --index-record <file>`; `oeq-upload index
   --from-record <file...>` in place of searching the collection.
 
-**The narrowed search** — a template's `index.search` (a string) is sent as
-`q` to the collection listing. Absent, the whole collection is read as
-before. The preview's "not in the series" list names at most 20 items and
-counts the rest.
+**The narrowed search** — a template's `index.titleStartsWith` (a non-blank
+string) becomes `where=/xml/<name path> LIKE '<prefix>%'` on the collection
+listing, the name path being the one the collection's schema declares
+(`MWDL/title` at BYU-Idaho). Absent, the whole collection is read as before.
+A template that sets it against a schema declaring no name path is
+**refused**, never quietly widened to a read of everything.
+
+Why not free text, measured on content-test, 2026-11-18:
+
+- **Free-text `q` depends on who asks.** `q=SRE_*` returned 115 items to an
+  anonymous session and 38 to the signed-in operator -- all 38 deleted, and
+  every live volume missing. A search that narrows differently per session
+  cannot be trusted to narrow at all.
+- **A `where` clause does not.** `where=/xml/MWDL/title LIKE 'Snake River%'`
+  returned the same 74 items to both sessions, every volume among them.
+- **Only a prefix is possible.** openEQUELLA refuses a LIKE that starts with
+  a wildcard -- a 500, *"Like queries must not start with wildcard"* -- so
+  "title contains" cannot be expressed this way.
+
+**Gaps.** The same measurement found volumes 10 and 11 of the series exist
+only as deleted items, so a correct index lacks them without saying so.
+`collectIndex` therefore returns `missing`: every whole number strictly
+between the lowest and highest volume listed or held back that is neither.
+The CLI preview and the desktop screen (a note under the counts) say
+*"No volumes found for 10, 11."* in the template's own words -- singular for
+one. The rendered page itself does not change.
+
+The preview's "not in the series" list names at most 20 items and counts the
+rest.
 
 ## Errors and edge cases
 

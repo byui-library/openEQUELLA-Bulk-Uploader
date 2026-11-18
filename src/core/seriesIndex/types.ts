@@ -51,6 +51,12 @@ export interface SeriesIndex {
   volumes: IndexVolume[];
   heldBack: HeldBack[];
   notInSeries: LeftOut[];
+  /**
+   * Every whole number strictly between the lowest and highest group listed
+   * or held back that is neither: a volume the page silently lacks. Told to
+   * the operator; the page itself does not mention it.
+   */
+  missing: number[];
 }
 
 /** The three files, by the names they are saved and attached under. */

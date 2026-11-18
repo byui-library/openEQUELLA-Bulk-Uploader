@@ -17,6 +17,8 @@ export interface IndexPreview {
   issueCount: number;
   heldBack: { reason: string; items: string[] }[];
   notInSeries: { name: string; reason: string }[];
+  /** Numbers between the first and last volume that nothing lists or holds back. */
+  missing: number[];
   /** The template's own words -- "issue"/"issues", "volume"/"volumes" -- so the screen never says "volume" for boxes. */
   labels: SequenceLabels;
   /** No uuids: they stay with the build in the main process. */

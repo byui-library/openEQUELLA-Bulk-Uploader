@@ -3,7 +3,7 @@ import { escapeHtml } from '../dom.js';
 import type { IndexPreview } from '../../ipc.js';
 import { canBuild, canLinkVolumes, sourceHint, type IndexFlowState } from './state.js';
 import type { IndexController } from './controller.js';
-import { andMore, existingNote, NOT_IN_SERIES_SHOWN, plural } from '../../../core/seriesIndex/words.js';
+import { andMore, existingNote, missingNote, NOT_IN_SERIES_SHOWN, plural } from '../../../core/seriesIndex/words.js';
 
 const isBusy = (s: IndexFlowState) => s.working || s.loading;
 
@@ -41,6 +41,8 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
         .map((n) => `<li>${escapeHtml(`${n.label} -- ${n.status}${n.error ? ` (${n.error})` : ''}`)}</li>`)
         .join('')}</ul>`
     : '';
+  // Escaped once, as a whole: the words come from the template (raw labels here).
+  const gaps = missingNote(p.missing, p.labels);
   const more = andMore(p.notInSeries.length);
   const left = p.notInSeries.length
     ? `<details><summary>Not in the series (${p.notInSeries.length})</summary><ul>${p.notInSeries
@@ -54,6 +56,7 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
   return `
     <h2>${escapeHtml(p.title)}</h2>
     <p>${plural(p.volumes.length, L.group, L.groups)}, ${plural(p.issueCount, L.part, L.parts)}.</p>
+    ${gaps ? `<p class="note">${escapeHtml(gaps)}</p>` : ''}
     ${held}${notCreated}${left}${volumes}
     <fieldset>
       <legend>Where should it go?</legend>

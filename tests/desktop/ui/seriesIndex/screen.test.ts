@@ -9,6 +9,7 @@ const preview = {
   issueCount: 2,
   heldBack: [{ reason: '2 items claim volume 3', items: ['A', 'B'] }],
   notInSeries: [{ name: 'Fernbrook index', reason: 'none of its files fits' }],
+  missing: [] as number[],
   existing: { kind: 'one' as const, status: 'draft' },
   labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
   notCreated: [] as { label: string; status: string; error?: string }[],
@@ -25,6 +26,16 @@ describe('index flow markup', () => {
     expect(html).toContain('2 items claim volume 3: A, B');
     expect(html).toContain('Fernbrook &lt;index&gt;');
     expect(html).not.toMatch(/\sstyle=/);
+  });
+
+  it('names the volumes nothing lists, under the counts, in the template words, escaped', () => {
+    const labels = { part: 'issue', parts: 'issues', group: 'box', groups: 'b<o>xes' };
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, labels, missing: [10, 11] } });
+    expect(html).toContain('<p class="note">No b&lt;o&gt;xes found for 10, 11.</p>');
+    expect(html.indexOf('No b&lt;o&gt;xes found')).toBeGreaterThan(html.indexOf('1 box, 2 issues'));
+    const one = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, missing: [10] } });
+    expect(one).toContain('<p class="note">No volume found for 10.</p>');
+    expect(indexFlowMarkup({ ...initialIndexState(), templates: [], preview })).not.toContain('found for');
   });
 
   it('names at most 20 items not in the series, and counts the rest', () => {

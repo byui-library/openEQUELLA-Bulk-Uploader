@@ -131,14 +131,54 @@ describe('buildIndex', () => {
     ]);
   });
 
-  it("sends the template's search as q, and none when it has none", async () => {
-    const asked: Array<{ q?: string } | undefined> = [];
-    const c = { ...client, searchCollection: async (_c: string, opts?: { q?: string }) => (asked.push(opts), listing) };
-    const searching = { ...profile, index: { ...profile.index!, search: 'FQ_*' } };
-    await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile: searching, schema });
+  it("narrows by a where clause on the schema's name path, and reads everything without a prefix", async () => {
+    const asked: Array<{ where?: string } | undefined> = [];
+    const c = { ...client, searchCollection: async (_c: string, opts?: { where?: string }) => (asked.push(opts), listing) };
+    const narrowing = { ...profile, index: { ...profile.index!, titleStartsWith: "Fernbrook's" } };
+    await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile: narrowing, schema });
     await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
-    expect(asked[0]?.q).toBe('FQ_*');
-    expect(asked[1]?.q).toBeUndefined();
+    expect(asked[0]?.where).toBe("/xml/DC/title LIKE 'Fernbrook''s%'");
+    expect(asked[1]?.where).toBeUndefined();
+  });
+
+  it('refuses a title prefix when the schema declares no name path, rather than reading everything', async () => {
+    let searched = 0;
+    const c = { ...client, searchCollection: async () => (searched++, listing) };
+    const narrowing = { ...profile, index: { ...profile.index!, titleStartsWith: 'Fernbrook' } };
+    await expect(
+      buildIndex({
+        client: c,
+        baseUrl: 'https://oeq.example.edu',
+        collectionUuid: 'c1',
+        source: collection,
+        profile: narrowing,
+        schema: { ...schema, titleHeader: null },
+      }),
+    ).rejects.toThrow(/titleStartsWith.*no .*name path|name path.*titleStartsWith/s);
+    expect(searched).toBe(0);
+  });
+
+  it('names the volumes the listing skips', async () => {
+    const vol = (n: number): CollectionItem => ({
+      uuid: `v${n}`,
+      version: 1,
+      status: 'live',
+      name: `Fernbrook Vol ${n}`,
+      attachments: [{ type: 'file', filename: `FQ_1971_Vol${n}_No1.pdf`, uuid: `a${n}` }],
+    });
+    const c = { searchCollection: async () => [vol(9), vol(12)], findByField: async () => [] };
+    const b = await buildIndex({ client: c, baseUrl: 'https://oeq.example.edu', collectionUuid: 'c1', source: collection, profile, schema });
+    expect(b.index.missing).toEqual([10, 11]);
+    expect(previewLines(b)).toContain('No volumes found for 10, 11.');
+    const one = await buildIndex({
+      client: { searchCollection: async () => [vol(9), vol(11)], findByField: async () => [] },
+      baseUrl: 'https://oeq.example.edu',
+      collectionUuid: 'c1',
+      source: collection,
+      profile,
+      schema,
+    });
+    expect(previewLines(one)).toContain('No volume found for 10.');
   });
 
   it('names at most 20 items not in the series, and counts the rest', async () => {

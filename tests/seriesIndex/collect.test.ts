@@ -35,6 +35,28 @@ describe('collectIndex', () => {
     expect(index.volumes[0]!.issues[0]!.url).toBe(`${BASE}/items/v2/0/FQ_1972_Vol2_No1.pdf`);
   });
 
+  it('names every number between the lowest and highest volume that nothing lists or holds back', () => {
+    const index = collectIndex(
+      [
+        hit('v9', ['FQ_1980_Vol9_No1.pdf']),
+        hit('v13a', ['FQ_1984_Vol13_No1.pdf']),
+        hit('v13b', ['FQ_1984_Vol13_No1.pdf']), // two claim 13: held back, not missing
+        hit('v15', ['FQ_1986_Vol15_No1.pdf', 'FQ_1987_Vol16_No1.pdf']), // one item naming 15 and 16: held back
+        hit('v11', ['FQ_1982_Vol11_No1.pdf'], { status: 'deleted' }), // withdrawn: missing
+        hit('v18', ['FQ_1989_Vol18_No1.pdf']),
+      ],
+      RULE,
+      BASE,
+    );
+    expect(index.missing).toEqual([10, 11, 12, 14, 17]);
+  });
+
+  it('names nothing missing for a run with no gaps, one volume, or none', () => {
+    expect(collectIndex([hit('a', ['FQ_1971_Vol1_No1.pdf']), hit('b', ['FQ_1972_Vol2_No1.pdf'])], RULE, BASE).missing).toEqual([]);
+    expect(collectIndex([hit('a', ['FQ_1971_Vol5_No1.pdf'])], RULE, BASE).missing).toEqual([]);
+    expect(collectIndex([], RULE, BASE).missing).toEqual([]);
+  });
+
   it('lists draft and live alike', () => {
     const index = collectIndex([hit('a', ['FQ_1971_Vol1_No1.pdf'], { status: 'draft' })], RULE, BASE);
     expect(index.volumes).toHaveLength(1);

@@ -268,11 +268,14 @@ export interface Profile {
     /** Read only a {group} (and optionally {year}); tried after the sequence patterns. */
     groupPatterns?: string[];
     /**
-     * A free-text search sent as `q` to narrow the collection listing (`SRE_*`:
-     * openEQUELLA indexes attachment file names). Absent, the whole collection
-     * is read. The file-name patterns still decide what is listed.
+     * Narrows the collection listing to items whose title (the schema's
+     * declared name path) starts with this, by a `where` clause --
+     * `/xml/MWDL/title LIKE 'Snake River%'`. Never free-text `q`, whose matches
+     * depend on who is signed in (measured 2026-11-18). A prefix only:
+     * openEQUELLA refuses a LIKE that starts with a wildcard. Absent, the whole
+     * collection is read. The file-name patterns still decide what is listed.
      */
-    search?: string;
+    titleStartsWith?: string;
   };
 }
 

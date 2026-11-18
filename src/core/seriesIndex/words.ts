@@ -16,6 +16,16 @@ export const andMore = (total: number, shown = NOT_IN_SERIES_SHOWN): string =>
   total > shown ? `...and ${total - shown} more.` : '';
 
 /**
+ * "No volumes found for 10, 11." -- the numbers between the first and last
+ * volume that nothing lists, in the template's own words; '' when there are
+ * none. One wording: the CLI prints it, the desktop shows it.
+ */
+export const missingNote = (missing: readonly number[], labels: { group: string; groups: string }): string =>
+  missing.length === 0
+    ? ''
+    : `No ${missing.length === 1 ? labels.group : labels.groups} found for ${missing.join(', ')}.`;
+
+/**
  * What is known of the index item already in openEQUELLA, as far as anything
  * needs to SAY it. `publish.ts#ExistingIndex` fits it; so does the desktop's
  * preview, which carries no uuids to the renderer.

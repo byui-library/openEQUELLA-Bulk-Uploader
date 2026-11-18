@@ -819,18 +819,21 @@ describe('series index calls', () => {
     );
   });
 
-  it('narrows the listing with a free-text search when given one, and only then', async () => {
+  it('narrows the listing with a where clause when given one, and only then -- never free text', async () => {
     mock.state.collectionItems = [
-      { ...item('u1'), attachments: [{ type: 'file', filename: 'FQ_1970_Vol1_No1.pdf', uuid: 'a1' }] },
-      { ...item('u2'), attachments: [{ type: 'file', filename: 'Other_report.pdf', uuid: 'a2' }] },
+      { ...item('u1'), name: 'Fernbrook Vol 1', fields: { 'DC/title': "Fernbrook's Vol 1" } },
+      { ...item('u2'), name: 'Other report', fields: { 'DC/title': 'Other report' } },
     ];
-    const narrowed = await client.searchCollection('c1', { q: 'FQ_*' });
+    const clause = "/xml/DC/title LIKE 'Fernbrook''s%'";
+    const narrowed = await client.searchCollection('c1', { where: clause });
     expect(narrowed.map((i) => i.uuid)).toEqual(['u1']);
-    expect(new URL(mock.state.searchUrls[0]!, 'http://x').searchParams.get('q')).toBe('FQ_*');
+    const sent = new URL(mock.state.searchUrls[0]!, 'http://x').searchParams;
+    expect(sent.get('where')).toBe(clause);
+    expect(sent.has('q')).toBe(false);
     mock.state.searchUrls = [];
-    expect(await client.searchCollection('c1', { q: '' })).toHaveLength(2);
+    expect(await client.searchCollection('c1', { where: '' })).toHaveLength(2);
     expect(await client.searchCollection('c1')).toHaveLength(2);
-    expect(mock.state.searchUrls.some((u) => new URL(u, 'http://x').searchParams.has('q'))).toBe(false);
+    expect(mock.state.searchUrls.some((u) => new URL(u, 'http://x').searchParams.has('where'))).toBe(false);
   });
 
   it('asks for detail, because only detail brings each item its status', async () => {

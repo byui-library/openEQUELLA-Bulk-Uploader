@@ -11,6 +11,7 @@ const preview = (over: Partial<IndexPreview> = {}): IndexPreview => ({
   issueCount: 1,
   heldBack: [],
   notInSeries: [],
+  missing: [],
   existing: { kind: 'none' },
   labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
   notCreated: [],

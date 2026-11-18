@@ -588,11 +588,16 @@ describe('the index section', () => {
     ).toThrow(/has no \{group\}/);
   });
 
-  it('accepts a search that narrows the listing, and refuses a blank one', () => {
+  it('accepts a title prefix that narrows the listing, and refuses a blank one', () => {
     const cols = [{ path: 'DC/title', value: 'a' }];
-    expect(parseProfile({ ...base, index: { columns: cols, search: 'BOX_*' } }).index?.search).toBe('BOX_*');
-    expect(() => parseProfile({ ...base, index: { columns: cols, search: '' } })).toThrow(/not valid/);
-    expect(() => parseProfile({ ...base, index: { columns: cols, search: '   ' } })).toThrow(/"search"/);
+    expect(parseProfile({ ...base, index: { columns: cols, titleStartsWith: 'Box' } }).index?.titleStartsWith).toBe('Box');
+    expect(() => parseProfile({ ...base, index: { columns: cols, titleStartsWith: '' } })).toThrow(/not valid/);
+    expect(() => parseProfile({ ...base, index: { columns: cols, titleStartsWith: '   ' } })).toThrow(/"titleStartsWith"/);
+  });
+
+  it('no longer accepts the free-text "search" it replaced', () => {
+    const cols = [{ path: 'DC/title', value: 'a' }];
+    expect(() => parseProfile({ ...base, index: { columns: cols, search: 'BOX_*' } })).toThrow(/not valid/);
   });
 
   it('refuses a group pattern with a placeholder nothing understands', () => {

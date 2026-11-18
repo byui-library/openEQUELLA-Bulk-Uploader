@@ -630,6 +630,10 @@ no issue number is labelled by its name.
 - If the listing cannot be read whole — the session expired part way, or the
   server did not page as it said it would — **nothing is built**. A partial
   list is never presented as the collection.
+- **A gap in the run is named.** Every volume number between the first and
+  last found that nothing lists or holds back is reported in the preview —
+  *"No volumes found for 10, 11."* — typically a volume that exists only as a
+  deleted item. The page itself does not mention it.
 
 ### The template's `index` section
 
@@ -644,7 +648,8 @@ optionally patterns for volumes whose files carry no issue number:
     { "path": "MWDL/description", "value": "Every volume of the Example Quarterly, each linking to its issues." },
     { "path": "MWDL/identifier", "value": "EQ_index" }
   ],
-  "groupPatterns": ["{year}_Vol{group}"]
+  "groupPatterns": ["{year}_Vol{group}"],
+  "titleStartsWith": "Example Quarterly"
 }
 ```
 
@@ -659,6 +664,13 @@ optionally patterns for volumes whose files carry no issue number:
 - **`groupPatterns`** read a volume number only (`{group}`, no `{part}`), and
   are tried after the sequence patterns. They cover a volume held as a single
   file, such as `EQ_1980_Vol16.pdf`.
+- **`titleStartsWith`** (optional) reads only the items whose title — the
+  schema's declared name path — starts with it, instead of the whole
+  collection. It is a prefix by necessity: openEQUELLA refuses a match that
+  starts with a wildcard. It is a match on the record, not openEQUELLA's
+  free-text search, whose results were measured to differ depending on who
+  is signed in. Against a schema that declares no name path the build
+  refuses rather than reading everything.
 
 `templates/snake-river-echoes.profile.json` carries one.
 

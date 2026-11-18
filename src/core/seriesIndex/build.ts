@@ -1,5 +1,5 @@
 // src/core/seriesIndex/build.ts
-import type { CollectionItem, CollectionSummary } from '../client.js';
+import { escapeWhereValue, type CollectionItem, type CollectionSummary } from '../client.js';
 import type { SchemaInfo } from '../discovery.js';
 import { ValidationError } from '../errors.js';
 import { resolveLabels } from '../extract/sequenceChecks.js';
@@ -9,7 +9,7 @@ import { findExistingIndex, type ExistingIndex, type IndexClient } from './publi
 import { indexRecord, type IndexRecord, type IndexSchema } from './record.js';
 import { renderIndex } from './render.js';
 import type { IndexFiles, IndexHit, SeriesIndex } from './types.js';
-import { andMore, existingNote, NOT_IN_SERIES_SHOWN, plural } from './words.js';
+import { andMore, existingNote, missingNote, NOT_IN_SERIES_SHOWN, plural } from './words.js';
 import { recordHits, type BatchRecord } from './batchRecord.js';
 
 /**
@@ -31,14 +31,14 @@ export interface IndexBuild {
 
 /**
  * Where the items come from: a search of the collection (narrowed by the
- * template's `index.search`), or the batch records of the runs that made them
+ * template's `index.titleStartsWith`), or the batch records of the runs that made them
  * -- which makes NO collection search at all (spec section 7).
  */
 export type BuildSource = { kind: 'collection' } | { kind: 'record'; record: BatchRecord };
 
 export interface BuildArgs {
   client: {
-    searchCollection(collectionUuid: string, opts?: { q?: string }): Promise<CollectionItem[]>;
+    searchCollection(collectionUuid: string, opts?: { where?: string }): Promise<CollectionItem[]>;
   } & Pick<IndexClient, 'findByField'>;
   baseUrl: string;
   collectionUuid: string;
@@ -60,6 +60,15 @@ export async function buildIndex(args: BuildArgs): Promise<IndexBuild> {
   if (!profile.index) throw new ValidationError('This template has no "index" section, so it cannot build an index.');
   const sequence = profile.checks?.sequence;
   if (!sequence) throw new ValidationError('This template has no file-name patterns to read volumes and issues with.');
+  const prefix = profile.index.titleStartsWith;
+  // Never fall back to reading everything: the template asked to narrow, and a
+  // whole-collection read would list what it meant to leave out.
+  if (prefix !== undefined && args.source.kind === 'collection' && args.schema.titleHeader === null) {
+    throw new ValidationError(
+      'The template narrows the index by "titleStartsWith", which needs the schema\'s title field, and ' +
+        "this collection's schema declares no name path.",
+    );
+  }
 
   const record = indexRecord(profile.index, args.schema);
   // Found FIRST, so the index item -- or each of several -- is left out of the
@@ -69,11 +78,14 @@ export async function buildIndex(args: BuildArgs): Promise<IndexBuild> {
     existing.kind === 'one' ? [existing.uuid] : existing.kind === 'many' ? existing.items.map((i) => i.uuid) : [],
   );
   const { source } = args;
-  const search = profile.index.search;
+  const where =
+    prefix !== undefined && args.schema.titleHeader !== null
+      ? `/xml/${args.schema.titleHeader} LIKE '${escapeWhereValue(prefix)}%'`
+      : undefined;
   const hits =
     source.kind === 'record'
       ? recordHits(source.record)
-      : (await args.client.searchCollection(args.collectionUuid, search ? { q: search } : {})).map(toHit);
+      : (await args.client.searchCollection(args.collectionUuid, where ? { where } : {})).map(toHit);
   const notCreated =
     source.kind === 'record'
       ? source.record.leftOut.map((l) => ({ label: l.label, status: l.status, ...(l.error !== undefined ? { error: l.error } : {}) }))
@@ -111,6 +123,8 @@ export function previewLines(b: IndexBuild): string[] {
   const L = b.labels;
   const issues = b.index.volumes.reduce((n, v) => n + v.issues.length, 0);
   const lines = [`${plural(b.index.volumes.length, L.group, L.groups)}, ${plural(issues, L.part, L.parts)}.`];
+  const gaps = missingNote(b.index.missing, L);
+  if (gaps) lines.push(gaps);
   for (const h of b.index.heldBack) {
     lines.push(`Held back: ${h.reason} -- ${h.items.map((i) => i.name).join(', ')}`);
   }
