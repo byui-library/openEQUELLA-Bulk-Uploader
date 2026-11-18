@@ -1,8 +1,66 @@
-# Session handoff — updated 2026-11-17
+# Session handoff — updated 2026-11-18
 
 Read this first.
 
-## RESUME HERE — 2026-11-17 (end of day): series index page, design AWAITING APPROVAL
+## RESUME HERE — 2026-11-18: series index page BUILT
+
+**What was built**, on `feature/series-index` (not merged, not released;
+spec `docs/superpowers/specs/2026-11-18-series-index-design.md`, plan
+`docs/superpowers/plans/2026-11-18-series-index.md`, Tasks 1-15 done). One
+page listing every volume of a serial, each linking to its item and each
+issue to its PDF, built from a search of the collection (`searchCollection`,
+paged) and read with the template's sequence patterns plus the new
+`index.groupPatterns` (volumes 16-20 are single files with no issue number).
+Draft and live are listed alike; a volume two items claim, or an item whose
+files name two volumes, is HELD BACK and named; withdrawn items and items no
+pattern fits are listed as not in the series. One deterministic build
+(`src/core/seriesIndex/build.ts`) feeds both destinations: three files in a
+folder (never replaced without `--force` / a confirm) and/or one openEQUELLA
+item, created as Draft or Publish, or updated IN PLACE keeping its state.
+Optionally a link to the index becomes every listed volume's first
+attachment, idempotently, edited in place with no `file` parameter (checked
+live 2026-11-18, spec section 6). Surfaces: `oeq-upload index` (`--template`,
+`--out`, `--force`, `--upload`, `--draft`/`--publish`, `--link-volumes`; no
+destination = preview only) and "Build an index of this collection…" on
+Choose and Results, whose preview is a list in the app's own markup, worded
+in the template's labels. README, CLAUDE.md and this file are updated.
+
+**What the task reviews caught, all fixed:**
+
+- **A partial listing on session expiry.** An empty page mid-listing (the
+  guest answer) would have ended the loop and built an index of part of the
+  collection; now an empty page while items remain refuses the build.
+- **Unbounded paging.** A server ignoring `start` would have looped for
+  ever; the loop now refuses once it reads more than `available`, or more
+  pages than that should take.
+- **The draft flag was untested** on the create path; now pinned, and a
+  failed staging cleanup can no longer mask the real error.
+- **A second upload duplicated the item.** The desktop kept offering
+  Draft/Publish after the first upload created the item; the main side and
+  the screen now both treat it as existing, so the second click updates it.
+- **In-flight redraws.** A preview or build finishing after the operator had
+  left the screen, or after a newer preview, drew over it; stale results are
+  now discarded.
+- **The empty `file` parameter.** `editItem` sent `?file=` for an empty
+  staging id; it now sends no parameter, which is the form checked live.
+
+**Next:**
+
+1. `/code-review` over `main...HEAD`, fix what is real; then `/simplify`
+   over the same range. Commit each.
+2. **The live run on content-test**, operator present and agreed first,
+   exactly as plan Task 16 Step 3 describes. Expect the eight duplicated
+   volumes (15, 22, 25, 27, 31, 35, 36, 37) HELD BACK and named, and volumes
+   16-20 listed through the group pattern. Save files and open `index.html`;
+   upload as Draft, follow a volume link and an issue link; type a year
+   into the filter; build again and confirm the same item updated; then the
+   volume links, twice (the second time every volume already has it).
+3. Record the results here; PR (read the automated review comments before
+   merging), merge, release.
+
+## 2026-11-17 (end of day): series index page, design awaiting approval
+
+(Superseded: the design was approved on 2026-11-18 and built -- see above.)
 
 **Where it stopped.** The design below was presented to the operator; they
 stopped for the day before approving it. **Next session: ask whether the

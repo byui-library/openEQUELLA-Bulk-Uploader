@@ -283,6 +283,18 @@ resources". The test item was purged.
   copy of the page: the app's CSP and sandbox make embedding fragile, and the
   list shows the same substance. The saved files can be opened in a browser.
 
+## Changes during building (2026-11-18)
+
+- The modules live in **`src/core/seriesIndex/`**, not `src/core/index/`,
+  plus `build.ts` (the one build both front ends call) and `links.ts`
+  (section 6). The client method is `getItemBean`, not `getItem`.
+- **A listing that cannot be read whole builds nothing.** An empty page
+  while `available` says items remain (a session that expired mid-listing),
+  or more items or pages than `available` allows (a server not honouring
+  `start`), is refused rather than returned as the collection.
+- The desktop button reads **"Build an index of this collection…"**, and
+  every count and message uses the template's `labels`.
+
 ## Errors and edge cases
 
 - Not signed in, or signed in as guest → stop before searching.

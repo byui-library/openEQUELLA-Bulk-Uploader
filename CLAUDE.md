@@ -158,6 +158,20 @@ template's fixed sentence, never replacing it. Run live with the operator's
 model on 2026-11-17 ("worked very well"). Next: the series index page.
 Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
+**The series index page is BUILT, on `feature/series-index`** (2026-11-18),
+not yet merged or released. One page listing every volume of a serial, each
+linking to its item and each issue to its PDF, built from a SEARCH of the
+collection -- never a job file -- as `index.html`/`.css`/`.js`, saved to a
+folder for another web server and/or uploaded as one openEQUELLA item that a
+rebuild updates in place. `oeq-upload index` and "Build an index of this
+collection…" on Choose and Results. Draft and live volumes are listed alike;
+a volume two items claim is HELD BACK and named, never guessed; a partial
+listing builds nothing. Optionally a link to the index becomes every listed
+volume's first attachment, idempotently. Still to do: code review and
+/simplify of the branch, then the live run on content-test (plan Task 16),
+then PR, merge, release.
+Design: [docs/superpowers/specs/2026-11-18-series-index-design.md](docs/superpowers/specs/2026-11-18-series-index-design.md).
+
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
 both BYU-Idaho sites**, because openEQUELLA now refuses the old query-string
 login (see the password bullet under Key domain facts). Released and tagged
@@ -267,10 +281,18 @@ src/core/ai/      The language-model pass. SEPARATE FROM extract/ because it is 
   defaults.ts       budget/cap. Imports NOTHING -- Setup reads it from the sandboxed renderer.
   endpoint.ts       Is this address on this machine? Decides the dialog and the key rule.
   review.ts         Two counts: what is wrong, and what a machine wrote. Renderer-safe.
-src/cli/          plan | run | status | retry | login | logout | check | extract
+src/core/seriesIndex/  The series index page. collect (hits -> volumes; holds back, never
+                  guesses), render (three deterministic files), record (the item's record
+                  from the template), publish (create, or update in place), links (the
+                  index link on every volume), build (ONE build for CLI and desktop).
+src/cli/          plan | run | status | retry | login | logout | check | extract | index
+  indexPage.ts      `oeq-upload index`. Flag rules checked before any I/O.
 src/mcp/          Nine MCP tools
 src/desktop/      Electron app. Renderer is sandboxed: NO Node access, no `node:` imports.
+  indexHandlers.ts  The index build, HELD in the main process by id, so save and upload use
+                    the previewed bytes.
 src/desktop/ui/extract/  The extract flow's own state, controller and screens.
+src/desktop/ui/seriesIndex/  The index flow's state, controller and screen.
 scripts/
   probe-instance.mjs  Read-only live probe. Committed so any institution can run it against
                       their own site and answer the response-shape questions themselves.
@@ -541,6 +563,19 @@ shape, never as a value the code may assume.
   hand-made spreadsheet is unchecked, and the docs say so. On the real
   38-volume batch, after the operator's fixes, the log is one line: Vol 27's
   unnumbered commemorative issue, attached last.
+- **An item's stable address is `/items/{uuid}/0/`, and its file's is
+  `/items/{uuid}/0/{file}`** -- `0` meaning the latest version; they redirect
+  to the item page and to `/file/{uuid}/{version}/{file}`, and survive later
+  edits. `/file/{uuid}/0/...` answers **500** and `/items/{uuid}/latest/`
+  **404** (content-test, 2026-11-17). An HTML file attachment is served as
+  `text/html` and its relative CSS and JS load, so an item can be a web page.
+- **An item can be edited IN PLACE.** `PUT /api/item/{uuid}/{v}/?file={staging}`
+  with the item's own bean replaces the files and keeps the uuid, the version
+  and every attachment uuid (2026-11-17). With **no** `file` parameter the
+  same PUT reorders attachments, or adds a `{ type: 'url' }` one first,
+  without touching the files, and openEQUELLA's item page lists attachments
+  in the order sent (2026-11-18). Send no `file` at all then: what was
+  checked is its absence, never an empty `?file=`.
 - **A description is one or two paragraphs -- 1,000 characters -- and a
   section that never ends is not one.** The first live folder batch
   (2026-11-17) uploaded 4,000-character passages from the middle of a
