@@ -3,7 +3,15 @@ import { escapeHtml } from '../dom.js';
 import type { IndexPreview } from '../../ipc.js';
 import { canBuild, canLinkVolumes, sourceHint, type IndexFlowState } from './state.js';
 import type { IndexController } from './controller.js';
-import { andMore, existingNote, missingNote, NOT_IN_SERIES_SHOWN, plural } from '../../../core/seriesIndex/words.js';
+import {
+  andMore,
+  existingNote,
+  missingNote,
+  NOT_IN_SERIES_SHOWN,
+  notCreatedEntry,
+  notInSeriesEntry,
+  plural,
+} from '../../../core/seriesIndex/words.js';
 
 const isBusy = (s: IndexFlowState) => s.working || s.loading;
 
@@ -38,16 +46,16 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
   // is the failure this list exists to prevent.
   const notCreated = p.notCreated.length
     ? `<h2>Not created by the run (${p.notCreated.length})</h2><ul>${p.notCreated
-        .map((n) => `<li>${escapeHtml(`${n.label} -- ${n.status}${n.error ? ` (${n.error})` : ''}`)}</li>`)
+        .map((n) => `<li>${escapeHtml(notCreatedEntry(n))}</li>`)
         .join('')}</ul>`
     : '';
   // Escaped once, as a whole: the words come from the template (raw labels here).
-  const gaps = missingNote(p.missing, p.labels, p.missingCount);
+  const gaps = missingNote(p.missing, p.labels);
   const more = andMore(p.notInSeries.length);
   const left = p.notInSeries.length
     ? `<details><summary>Not in the series (${p.notInSeries.length})</summary><ul>${p.notInSeries
         .slice(0, NOT_IN_SERIES_SHOWN)
-        .map((l) => `<li>${escapeHtml(`${l.name} -- ${l.reason}`)}</li>`)
+        .map((l) => `<li>${escapeHtml(notInSeriesEntry(l))}</li>`)
         .join('')}</ul>${more ? `<p class="hint">${more}</p>` : ''}</details>`
     : '';
   const volumes = `<details><summary>Show the ${plural(p.volumes.length, L.group, L.groups)}</summary><ul>${p.volumes

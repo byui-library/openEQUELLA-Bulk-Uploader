@@ -4,8 +4,7 @@ import { OeqClient } from '../core/client.js';
 import { assertNotGuest } from '../core/identity.js';
 import { ValidationError } from '../core/errors.js';
 import { loadProfile } from '../core/extract/profile.js';
-import { buildIndex, previewLines, resolveIndexSchema, type BuildSource } from '../core/seriesIndex/build.js';
-import { readBatchRecordsFor } from '../core/seriesIndex/batchRecord.js';
+import { buildIndex, previewLines, resolveIndexSchema, resolveIndexSource } from '../core/seriesIndex/build.js';
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { publishIndex } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
@@ -54,32 +53,22 @@ export function checkIndexFlags(o: IndexCliOptions): {
   };
 }
 
-/**
- * Where the index's items come from. Without records, a search of the
- * configured collection. With them, the records -- combined -- in THEIR
- * collection, and only when they were made on the configured site
- * (`readBatchRecordsFor`, which the desktop shares).
- */
-export async function indexSource(
-  records: readonly string[] | null,
-  cfg: { baseUrl: string; collectionUuid: string },
-): Promise<{ collectionUuid: string; source: BuildSource }> {
-  if (records === null) return { collectionUuid: cfg.collectionUuid, source: { kind: 'collection' } };
-  const record = await readBatchRecordsFor(records, cfg.baseUrl);
-  return { collectionUuid: record.collectionUuid, source: { kind: 'record', record } };
-}
-
 export async function indexAction(o: IndexCliOptions, env: Env = process.env): Promise<number> {
   const flags = checkIndexFlags(o);
   const cfg = loadConfig(env);
   // Before signing in: a record of another site is refused without a request.
-  const { collectionUuid, source } = await indexSource(flags.records, cfg);
+  // OEQ_SCHEMA_UUID describes the CONFIGURED collection; it is never lent to a record's other one.
+  const { collectionUuid, source, fallbackSchemaUuid } = await resolveIndexSource(flags.records, {
+    baseUrl: cfg.baseUrl,
+    collectionUuid: cfg.collectionUuid,
+    configuredCollectionUuid: cfg.collectionUuid,
+    configuredSchemaUuid: cfg.schemaUuid,
+  });
   const client = new OeqClient(cfg.baseUrl, createAuthProvider(cfg, env));
   assertNotGuest(await client.currentUser(), 'Run `oeq-upload login` first.');
 
   const profile = await loadProfile(o.template);
-  // OEQ_SCHEMA_UUID describes the CONFIGURED collection; never lend it to a record's other one.
-  const schema = await resolveIndexSchema(client, collectionUuid, collectionUuid === cfg.collectionUuid ? cfg.schemaUuid : '');
+  const schema = await resolveIndexSchema(client, collectionUuid, fallbackSchemaUuid);
   const build = await buildIndex({ client, baseUrl: cfg.baseUrl, collectionUuid, source, profile, schema });
   for (const line of previewLines(build)) console.log(line);
 

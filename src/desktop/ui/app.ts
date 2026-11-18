@@ -1957,7 +1957,7 @@ async function handleUpload(): Promise<void> {
     const runReport = await window.oeq.run({
       manifestPath: report.manifestPath,
       instanceId: state.instanceId,
-      ...indexRecordForRun(report),
+      ...indexRecordForRun(),
     });
     await finishRun(report.manifestPath, runReport);
   } catch (err) {
@@ -1975,8 +1975,8 @@ async function handleUpload(): Promise<void> {
  * Whether `run` keeps the batch record: only when Review's box was ticked. The
  * location is the main process's own, remembered from the plan.
  */
-function indexRecordForRun(plan: PlanReport): { keepIndexRecord?: boolean } {
-  return state.keepIndexRecord && plan.indexRecord ? { keepIndexRecord: true } : {};
+function indexRecordForRun(): { keepIndexRecord?: boolean } {
+  return state.keepIndexRecord ? { keepIndexRecord: true } : {};
 }
 
 // --- Progress ------------------------------------------------------------
@@ -2055,7 +2055,7 @@ async function handleRetryFailed(): Promise<void> {
     const runReport = await window.oeq.run({
       manifestPath,
       instanceId: state.instanceId,
-      ...indexRecordForRun(state.reviewPlan),
+      ...indexRecordForRun(),
     });
     await finishRun(manifestPath, runReport);
   } catch (err) {

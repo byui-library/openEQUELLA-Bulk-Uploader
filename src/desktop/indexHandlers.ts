@@ -8,13 +8,12 @@ import { assertNotGuest } from '../core/identity.js';
 import { ValidationError } from '../core/errors.js';
 import { describeReason } from '../core/errorReason.js';
 import { listTemplates, loadTemplate, type TemplateSummary } from '../core/extract/templates.js';
-import { buildIndex, resolveIndexSchema, type BuildSource, type IndexBuild } from '../core/seriesIndex/build.js';
-import { readBatchRecordsFor } from '../core/seriesIndex/batchRecord.js';
+import { buildIndex, resolveIndexSchema, resolveIndexSource, type IndexBuild } from '../core/seriesIndex/build.js';
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
 import { findExistingIndex, publishIndex, type IndexClient } from '../core/seriesIndex/publish.js';
 import { itemUrl } from '../core/seriesIndex/collect.js';
 import { indexPageUrl, linkVolumes, type LinkResult } from '../core/seriesIndex/links.js';
-import { indexLinkLabel, NOT_IN_SERIES_SHOWN } from '../core/seriesIndex/words.js';
+import { indexLinkLabel } from '../core/seriesIndex/words.js';
 
 /**
  * The series index's main-process side. The BUILD STAYS HERE, held by id, and
@@ -112,29 +111,27 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
     async preview(args: Parameters<OeqApi['indexPreview']>[0]): Promise<IndexPreview> {
       const ticket = ++previews;
       held = null;
+      // Not `signedIn`: the record is read and its site checked BETWEEN
+      // connecting and the guest check, so a record of another site is refused
+      // before anything is asked of the server.
       const connection = await deps.connect(args.instanceId);
-      // A record of another site is refused before signing in: the index's
-      // links are built from THIS site's address, so they would point at the
-      // wrong server. The record's collection then drives everything below --
-      // the schema, the existing-item search and the upload.
-      let collectionUuid: string;
-      let source: BuildSource;
-      if ('recordPaths' in args) {
-        const record = await readBatchRecordsFor(args.recordPaths, connection.baseUrl);
-        collectionUuid = record.collectionUuid;
-        source = { kind: 'record', record };
-      } else {
-        collectionUuid = args.collectionUuid;
-        source = { kind: 'collection' };
-      }
+      // The index's links are built from THIS site's address, so a record of
+      // another would point them at the wrong server. The record's collection
+      // then drives everything below -- the schema, the existing-item search
+      // and the upload.
+      const { collectionUuid, source, fallbackSchemaUuid } = await resolveIndexSource(
+        'recordPaths' in args ? args.recordPaths : null,
+        {
+          baseUrl: connection.baseUrl,
+          collectionUuid: 'collectionUuid' in args ? args.collectionUuid : '',
+          configuredCollectionUuid: connection.setupCollectionUuid,
+          configuredSchemaUuid: connection.fallbackSchemaUuid,
+        },
+      );
       const { client } = connection;
       assertNotGuest(await client.currentUser(), 'Sign in to this site again, then build the index.');
       const profile = await loadTemplate(args.templateId, deps.templatesDir);
-      const fallback =
-        connection.setupCollectionUuid !== '' && collectionUuid === connection.setupCollectionUuid
-          ? connection.fallbackSchemaUuid
-          : '';
-      const schema = await resolveIndexSchema(client, collectionUuid, fallback);
+      const schema = await resolveIndexSchema(client, collectionUuid, fallbackSchemaUuid);
       const build = await buildIndex({
         client,
         baseUrl: connection.baseUrl,
@@ -156,8 +153,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         issueCount: build.index.volumes.reduce((n, v) => n + v.issues.length, 0),
         heldBack: build.index.heldBack.map((h) => ({ reason: h.reason, items: h.items.map((i) => i.name) })),
         notInSeries: build.index.notInSeries.map((l) => ({ name: l.name, reason: l.reason })),
-        missing: build.index.missing.slice(0, NOT_IN_SERIES_SHOWN),
-        missingCount: build.index.missing.length,
+        missing: build.index.missing,
         labels: { ...build.labels },
         existing:
           e.kind === 'one'
@@ -165,7 +161,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
             : e.kind === 'many'
               ? { kind: 'many', items: e.items.map(({ name }) => ({ name })) }
               : e,
-        notCreated: build.notCreated.map((n) => ({ ...n })),
+        notCreated: build.notCreated,
       };
     },
 

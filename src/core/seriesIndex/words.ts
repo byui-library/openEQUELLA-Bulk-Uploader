@@ -21,22 +21,23 @@ export const andMore = (total: number, shown = NOT_IN_SERIES_SHOWN): string =>
  * none. One wording: the CLI prints it, the desktop shows it.
  *
  * Names at most `NOT_IN_SERIES_SHOWN` and counts the rest: one misnamed file
- * (`Vol270` in a run of 38) makes hundreds "missing". `total` is how many
- * there are when `missing` has already been cut to that many -- as the
- * desktop's preview is, before it crosses to the renderer.
+ * (`Vol270` in a run of 38) makes hundreds "missing".
  */
-export const missingNote = (
-  missing: readonly number[],
-  labels: { group: string; groups: string },
-  total = missing.length,
-): string => {
-  if (total === 0) return '';
-  const more = andMore(total);
+export const missingNote = (missing: readonly number[], labels: { group: string; groups: string }): string => {
+  if (missing.length === 0) return '';
+  const more = andMore(missing.length);
   return (
-    `No ${total === 1 ? labels.group : labels.groups} found for ` +
+    `No ${missing.length === 1 ? labels.group : labels.groups} found for ` +
     `${missing.slice(0, NOT_IN_SERIES_SHOWN).join(', ')}.${more ? ` ${more}` : ''}`
   );
 };
+
+/** One "Not in the series" entry: "FQ_Index.pdf -- no volume number". */
+export const notInSeriesEntry = (l: { name: string; reason: string }): string => `${l.name} -- ${l.reason}`;
+
+/** One "Not created by the run" entry: "Vol2 (4 files) -- failed (The server said no.)". */
+export const notCreatedEntry = (n: { label: string; status: string; error?: string }): string =>
+  `${n.label} -- ${n.status}${n.error ? ` (${n.error})` : ''}`;
 
 /** The volume link's description: "Index of all volumes", in the template's own word. */
 export const indexLinkLabel = (labels: { groups: string }): string => `Index of all ${labels.groups}`;

@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkIndexFlags, indexAction, indexSource } from '../src/cli/indexPage.js';
-import { writeBatchRecord, type BatchRecord } from '../src/core/seriesIndex/batchRecord.js';
+import { checkIndexFlags, indexAction } from '../src/cli/indexPage.js';
+import type { BatchRecord } from '../src/core/seriesIndex/batchRecord.js';
+import { resolveIndexSource } from '../src/core/seriesIndex/build.js';
+import { writeJsonAtomic } from '../src/core/state.js';
 import { ValidationError } from '../src/core/errors.js';
 
 describe('oeq-upload index flags', () => {
@@ -49,9 +51,16 @@ describe('oeq-upload index --from-record', () => {
     savedAt: '2026-11-18T19:00:00.000Z',
     baseUrl: 'https://oeq.example.edu',
     collectionUuid: 'coll-from-record',
-    itemState: 'draft',
     items: [
-      { row: 2, uuid: 'item-1', version: 1, title: 'Fernbrook Quarterly Vol 1', files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }] },
+      {
+        row: 2,
+        uuid: 'item-1',
+        version: 1,
+        title: 'Fernbrook Quarterly Vol 1',
+        label: 'FQ_1970_Vol1_No1.pdf',
+        state: 'draft',
+        files: [{ name: 'FQ_1970_Vol1_No1.pdf', attachmentUuid: 'att-1' }],
+      },
     ],
     leftOut: [],
     ...over,
@@ -59,36 +68,50 @@ describe('oeq-upload index --from-record', () => {
 
   const save = async (r: BatchRecord): Promise<string> => {
     const path = join(dir, 'job.index.json');
-    await writeBatchRecord(path, r);
+    await writeJsonAtomic(path, r);
     return path;
   };
 
+  // As the CLI calls it: the configured collection is both the default and the one OEQ_SCHEMA_UUID describes.
+  const site = (baseUrl: string, collectionUuid: string) => ({
+    baseUrl,
+    collectionUuid,
+    configuredCollectionUuid: collectionUuid,
+    configuredSchemaUuid: 'schema-configured',
+  });
+
   it('builds from the record, in its collection, whatever OEQ_COLLECTION_UUID says', async () => {
     const path = await save(record());
-    const got = await indexSource([path], { baseUrl: 'https://oeq.example.edu/', collectionUuid: 'coll-configured' });
+    const got = await resolveIndexSource([path], site('https://oeq.example.edu/', 'coll-configured'));
     expect(got.collectionUuid).toBe('coll-from-record');
     expect(got.source.kind).toBe('record');
     if (got.source.kind === 'record') expect(got.source.record.items.map((i) => i.uuid)).toEqual(['item-1']);
+    // OEQ_SCHEMA_UUID describes the configured collection, never the record's other one.
+    expect(got.fallbackSchemaUuid).toBe('');
   });
 
-  it('searches the configured collection without it', async () => {
-    const got = await indexSource(null, { baseUrl: 'https://oeq.example.edu', collectionUuid: 'coll-configured' });
-    expect(got).toEqual({ collectionUuid: 'coll-configured', source: { kind: 'collection' } });
+  it('searches the configured collection without it, lending it the configured schema', async () => {
+    const got = await resolveIndexSource(null, site('https://oeq.example.edu', 'coll-configured'));
+    expect(got).toEqual({ collectionUuid: 'coll-configured', source: { kind: 'collection' }, fallbackSchemaUuid: 'schema-configured' });
+  });
+
+  it('lends the configured schema to a record of the configured collection', async () => {
+    const path = await save(record());
+    const got = await resolveIndexSource([path], site('https://oeq.example.edu', 'coll-from-record'));
+    expect(got.fallbackSchemaUuid).toBe('schema-configured');
   });
 
   it("matches the site however it is spelt: a trailing slash or the host's case", async () => {
     const path = await save(record({ baseUrl: 'https://OEQ.example.edu/' }));
-    await expect(indexSource([path], { baseUrl: 'https://oeq.example.edu', collectionUuid: 'c' })).resolves.toBeDefined();
+    await expect(resolveIndexSource([path], site('https://oeq.example.edu', 'c'))).resolves.toBeDefined();
   });
 
   it('refuses a record of another site: its links would point at the wrong server', async () => {
     const path = await save(record({ baseUrl: 'https://oeq-test.example.edu' }));
-    await expect(
-      indexSource([path], { baseUrl: 'https://oeq.example.edu', collectionUuid: 'c' }),
-    ).rejects.toThrow(ValidationError);
-    await expect(
-      indexSource([path], { baseUrl: 'https://oeq.example.edu', collectionUuid: 'c' }),
-    ).rejects.toThrow(/oeq-test\.example\.edu.*oeq\.example\.edu/);
+    await expect(resolveIndexSource([path], site('https://oeq.example.edu', 'c'))).rejects.toThrow(ValidationError);
+    await expect(resolveIndexSource([path], site('https://oeq.example.edu', 'c'))).rejects.toThrow(
+      /oeq-test\.example\.edu.*oeq\.example\.edu/,
+    );
   });
 
   it('refuses before signing in: indexAction never reaches the server', async () => {

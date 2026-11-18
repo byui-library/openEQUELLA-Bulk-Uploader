@@ -3,7 +3,8 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createIndexHandlers, type IndexConnection } from '../../src/desktop/indexHandlers.js';
-import { writeBatchRecord, type BatchRecord } from '../../src/core/seriesIndex/batchRecord.js';
+import type { BatchRecord } from '../../src/core/seriesIndex/batchRecord.js';
+import { writeJsonAtomic } from '../../src/core/state.js';
 
 async function templatesDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'oeq-tpl-'));
@@ -122,11 +123,10 @@ describe('index handlers', () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
     expect(await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' })).toMatchObject({
       missing: [10, 11],
-      missingCount: 2,
     });
   });
 
-  it('sends at most 20 missing numbers to the renderer, with how many there are', async () => {
+  it('sends every missing number to the renderer, which caps what it names', async () => {
     const vol = (n: number) => ({
       uuid: `v${n}`,
       version: 1,
@@ -137,8 +137,7 @@ describe('index handlers', () => {
     const c = connect({ searchCollection: async () => [vol(38), vol(270)] });
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
     const p = await h.preview({ instanceId: 'i', collectionUuid: 'c1', templateId: 'with-index' });
-    expect(p.missing).toEqual(Array.from({ length: 20 }, (_, i) => 39 + i));
-    expect(p.missingCount).toBe(231);
+    expect(p.missing).toEqual(Array.from({ length: 231 }, (_, i) => 39 + i));
   });
 
   it('a second upload updates the item the first one created', async () => {
@@ -427,16 +426,15 @@ describe('index handlers, from batch records', () => {
     savedAt: '2026-11-18T19:00:00.000Z',
     baseUrl: 'https://oeq.example.edu',
     collectionUuid: 'coll-rec',
-    itemState: 'draft',
     items: [
-      { row: 2, uuid: 'v1', version: 1, title: 'Fernbrook Vol 1', files: [{ name: 'FQ_1971_Vol1_No1.pdf', attachmentUuid: 'a' }] },
+      { row: 2, uuid: 'v1', version: 1, title: 'Fernbrook Vol 1', label: 'FQ_1971_Vol1_No1.pdf', state: 'draft', files: [{ name: 'FQ_1971_Vol1_No1.pdf', attachmentUuid: 'a' }] },
     ],
     leftOut: [{ row: 3, label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'server said no' }],
     ...over,
   });
   const save = async (r: BatchRecord): Promise<string> => {
     const path = join(await mkdtemp(join(tmpdir(), 'oeq-rec-')), 'fernbrook.index.json');
-    await writeBatchRecord(path, r);
+    await writeJsonAtomic(path, r);
     return path;
   };
 
@@ -451,7 +449,7 @@ describe('index handlers, from batch records', () => {
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
     const preview = await h.preview({ instanceId: 'i', recordPaths: [await save(record())], templateId: 'with-index' });
     expect(preview.volumes).toEqual([{ heading: 'Fernbrook Vol 1', issues: ['Issue 1 (1971)'] }]);
-    expect(preview.notCreated).toEqual([{ label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'server said no' }]);
+    expect(preview.notCreated).toEqual([{ row: 3, label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'server said no' }]);
     // The RECORD's collection drives the schema and, below, the upload.
     expect(collections).toEqual(['coll-rec']);
     await h.upload({ buildId: 'b1', draft: true });

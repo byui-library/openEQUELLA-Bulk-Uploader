@@ -280,7 +280,7 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
         <p><strong>${props.report.entryCount}</strong> item(s) will be created from this spreadsheet.</p>
         ${foldersSection(props.report.folders, props.folderOrders)}
         ${allGroups || '<p class="note">No warnings -- every row matched a file or folder with no issues found.</p>'}
-        ${props.report.indexRecord ? indexRecordSection(props.report.indexRecord, props.keepIndexRecord) : ''}
+        ${indexRecordSection(props.report.indexRecord, props.keepIndexRecord)}
       </fieldset>
     `;
   }

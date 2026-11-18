@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { indexFlowMarkup } from '../../../../src/desktop/ui/seriesIndex/screen.js';
 import { initialIndexState } from '../../../../src/desktop/ui/seriesIndex/state.js';
+import type { RecordLeftOut } from '../../../../src/core/seriesIndex/batchRecord.js';
 
 const preview = {
   buildId: 'b1',
@@ -10,10 +11,9 @@ const preview = {
   heldBack: [{ reason: '2 items claim volume 3', items: ['A', 'B'] }],
   notInSeries: [{ name: 'Fernbrook index', reason: 'none of its files fits' }],
   missing: [] as number[],
-  missingCount: 0,
   existing: { kind: 'one' as const, status: 'draft' },
   labels: { part: 'issue', parts: 'issues', group: 'volume', groups: 'volumes' },
-  notCreated: [] as { label: string; status: string; error?: string }[],
+  notCreated: [] as RecordLeftOut[],
 };
 
 describe('index flow markup', () => {
@@ -31,22 +31,22 @@ describe('index flow markup', () => {
 
   it('names the volumes nothing lists, under the counts, in the template words, escaped', () => {
     const labels = { part: 'issue', parts: 'issues', group: 'box', groups: 'b<o>xes' };
-    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, labels, missing: [10, 11], missingCount: 2 } });
+    const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, labels, missing: [10, 11] } });
     expect(html).toContain('<p class="note">No b&lt;o&gt;xes found for 10, 11.</p>');
     expect(html.indexOf('No b&lt;o&gt;xes found')).toBeGreaterThan(html.indexOf('1 box, 2 issues'));
-    const one = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, missing: [10], missingCount: 1 } });
+    const one = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, missing: [10] } });
     expect(one).toContain('<p class="note">No volume found for 10.</p>');
     expect(indexFlowMarkup({ ...initialIndexState(), templates: [], preview })).not.toContain('found for');
   });
 
-  it('names the missing numbers it was sent, and counts the rest', () => {
-    const missing = Array.from({ length: 20 }, (_, i) => 39 + i);
+  it('names at most 20 missing numbers, and counts the rest', () => {
+    const missing = Array.from({ length: 231 }, (_, i) => 39 + i);
     const html = indexFlowMarkup({
       ...initialIndexState(),
       templates: [],
-      preview: { ...preview, missing, missingCount: 231 },
+      preview: { ...preview, missing },
     });
-    expect(html).toContain(`<p class="note">No volumes found for ${missing.join(', ')}. ...and 211 more.</p>`);
+    expect(html).toContain(`<p class="note">No volumes found for ${missing.slice(0, 20).join(', ')}. ...and 211 more.</p>`);
   });
 
   it('names at most 20 items not in the series, and counts the rest', () => {
@@ -160,9 +160,9 @@ describe('index flow markup: where it reads from', () => {
   });
 
   it('lists what the run did not create, escaped', () => {
-    const notCreated = [
-      { label: 'FQ_1972_<Vol2>.pdf', status: 'failed', error: 'server said no' },
-      { label: 'FQ_1973_Vol3', status: 'pending' },
+    const notCreated: RecordLeftOut[] = [
+      { row: 3, label: 'FQ_1972_<Vol2>.pdf', status: 'failed', error: 'server said no' },
+      { row: 4, label: 'FQ_1973_Vol3', status: 'pending' },
     ];
     const html = indexFlowMarkup({ ...initialIndexState(), templates: [], preview: { ...preview, notCreated } });
     expect(html).toContain('Not created by the run (2)');

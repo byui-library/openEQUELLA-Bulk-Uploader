@@ -8,6 +8,8 @@ import type { DuplicateFinding } from '../core/duplicates.js';
 import type { FolderSummary } from '../core/folderReport.js';
 import type { TemplateSummary } from '../core/extract/templates.js';
 import type { ExistingView } from '../core/seriesIndex/words.js';
+// Type-only: batchRecord.ts reaches `node:fs`, and this module is reachable from the renderer.
+import type { RecordLeftOut } from '../core/seriesIndex/batchRecord.js';
 
 /** What the renderer is shown of one index build; the build itself stays in the main process. */
 export interface IndexPreview {
@@ -19,17 +21,15 @@ export interface IndexPreview {
   notInSeries: { name: string; reason: string }[];
   /**
    * Numbers between the first and last volume that nothing lists or holds
-   * back -- at most `NOT_IN_SERIES_SHOWN` of them, since one misnamed file can
-   * make hundreds. `missingCount` is how many there are.
+   * back -- all of them; `missingNote` caps how many it names.
    */
   missing: number[];
-  missingCount: number;
   /** The template's own words -- "issue"/"issues", "volume"/"volumes" -- so the screen never says "volume" for boxes. */
   labels: SequenceLabels;
   /** No uuids: they stay with the build in the main process. */
   existing: ExistingView;
   /** Built from batch records: the rows their runs did not create. Empty for a search of the collection. */
-  notCreated: { label: string; status: string; error?: string }[];
+  notCreated: RecordLeftOut[];
 }
 
 /** Where an index is built from: a search of one collection, or batch records the runs kept. */

@@ -1,6 +1,7 @@
 // src/desktop/ui/seriesIndex/state.ts
 import type { IndexPreview, IndexSourceArgs } from '../../ipc.js';
 import type { TemplateSummary } from '../../../core/extract/templates.js';
+import { plural } from '../../../core/seriesIndex/words.js';
 
 export interface IndexFlowState {
   /** Where the index is built from: a search of a collection, or batch records. Fixed for the flow. */
@@ -51,7 +52,7 @@ export function canLinkVolumes(s: IndexFlowState): boolean {
 export function sourceHint(source: IndexSourceArgs): string {
   if (!('recordPaths' in source)) return 'From a search of this collection.';
   const n = source.recordPaths.length;
-  return `From ${n === 1 ? 'a batch record' : `${n} batch records`}.`;
+  return `From ${n === 1 ? 'a batch record' : plural(n, 'batch record', 'batch records')}.`;
 }
 
 /** Build is offered only when every chosen destination can actually be used. */

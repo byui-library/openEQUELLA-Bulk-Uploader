@@ -9,8 +9,8 @@ import { findExistingIndex, type ExistingIndex, type IndexClient } from './publi
 import { indexRecord, type IndexRecord, type IndexSchema } from './record.js';
 import { renderIndex } from './render.js';
 import type { IndexFiles, IndexHit, SeriesIndex } from './types.js';
-import { andMore, existingNote, missingNote, NOT_IN_SERIES_SHOWN, plural } from './words.js';
-import { recordHits, type BatchRecord } from './batchRecord.js';
+import { andMore, existingNote, missingNote, NOT_IN_SERIES_SHOWN, notCreatedEntry, notInSeriesEntry, plural } from './words.js';
+import { readBatchRecordsFor, recordHits, type BatchRecord, type RecordLeftOut } from './batchRecord.js';
 
 /**
  * ONE build, used by the CLI and the desktop alike, so the preview, the files
@@ -26,7 +26,7 @@ export interface IndexBuild {
   /** The template's own words: "issue"/"issues", "volume"/"volumes". */
   labels: SequenceLabels;
   /** The batch record's rows the run did not create. Always empty for a collection build. */
-  notCreated: { label: string; status: string; error?: string }[];
+  notCreated: RecordLeftOut[];
 }
 
 /**
@@ -35,6 +35,45 @@ export interface IndexBuild {
  * -- which makes NO collection search at all (spec section 7).
  */
 export type BuildSource = { kind: 'collection' } | { kind: 'record'; record: BatchRecord };
+
+export interface SourceSite {
+  baseUrl: string;
+  /** The collection searched when no record is given. */
+  collectionUuid: string;
+  /** The collection the site's own schema was read from ('' when none), and that schema ('' when none). */
+  configuredCollectionUuid: string;
+  configuredSchemaUuid: string;
+}
+
+/**
+ * Where an index's items come from -- ONE rule for the CLI and the desktop.
+ * Without records, a search of `site.collectionUuid`. With them, the records
+ * -- combined -- in THEIR collection, and only when they were made on this
+ * site (`readBatchRecordsFor`): the index's links are built from this site's
+ * address. Makes no request, so a record of another site is refused before
+ * anything signs in.
+ *
+ * `fallbackSchemaUuid` is the configured schema only for the configured
+ * collection: a site's collections can use different schemas, and another
+ * collection borrowing it would write fields its schema lacks.
+ */
+export async function resolveIndexSource(
+  records: readonly string[] | null,
+  site: SourceSite,
+): Promise<{ collectionUuid: string; source: BuildSource; fallbackSchemaUuid: string }> {
+  let collectionUuid: string;
+  let source: BuildSource;
+  if (records === null) {
+    collectionUuid = site.collectionUuid;
+    source = { kind: 'collection' };
+  } else {
+    const record = await readBatchRecordsFor(records, site.baseUrl);
+    collectionUuid = record.collectionUuid;
+    source = { kind: 'record', record };
+  }
+  const configured = site.configuredCollectionUuid !== '' && collectionUuid === site.configuredCollectionUuid;
+  return { collectionUuid, source, fallbackSchemaUuid: configured ? site.configuredSchemaUuid : '' };
+}
 
 export interface BuildArgs {
   client: {
@@ -61,35 +100,33 @@ export async function buildIndex(args: BuildArgs): Promise<IndexBuild> {
   const sequence = profile.checks?.sequence;
   if (!sequence) throw new ValidationError('This template has no file-name patterns to read volumes and issues with.');
   const prefix = profile.index.titleStartsWith;
-  // Never fall back to reading everything: the template asked to narrow, and a
-  // whole-collection read would list what it meant to leave out.
-  if (prefix !== undefined && args.source.kind === 'collection' && args.schema.titleHeader === null) {
-    throw new ValidationError(
-      'The template narrows the index by "titleStartsWith", which needs the schema\'s title field, and ' +
-        "this collection's schema declares no name path.",
-    );
+  const { source } = args;
+  let where: string | undefined;
+  if (prefix !== undefined && source.kind === 'collection') {
+    // Never fall back to reading everything: the template asked to narrow, and a
+    // whole-collection read would list what it meant to leave out.
+    if (args.schema.titleHeader === null) {
+      throw new ValidationError(
+        'The template narrows the index by "titleStartsWith", which needs the schema\'s title field, and ' +
+          "this collection's schema declares no name path.",
+      );
+    }
+    where = `/xml/${args.schema.titleHeader} LIKE '${escapeWhereValue(prefix)}%'`;
   }
 
   const record = indexRecord(profile.index, args.schema);
-  // Found FIRST, so the index item -- or each of several -- is left out of the
-  // listing: it lives in the collection it indexes, and is not "not in the series".
-  const existing = await findExistingIndex(args.client, args.collectionUuid, record);
+  const [existing, hits] = await Promise.all([
+    findExistingIndex(args.client, args.collectionUuid, record),
+    source.kind === 'record'
+      ? recordHits(source.record)
+      : args.client.searchCollection(args.collectionUuid, { where }).then((items) => items.map(toHit)),
+  ]);
+  // The index item -- or each of several -- is left out of the listing: it
+  // lives in the collection it indexes, and is not "not in the series".
   const self = new Set(
     existing.kind === 'one' ? [existing.uuid] : existing.kind === 'many' ? existing.items.map((i) => i.uuid) : [],
   );
-  const { source } = args;
-  const where =
-    prefix !== undefined && args.schema.titleHeader !== null
-      ? `/xml/${args.schema.titleHeader} LIKE '${escapeWhereValue(prefix)}%'`
-      : undefined;
-  const hits =
-    source.kind === 'record'
-      ? recordHits(source.record)
-      : (await args.client.searchCollection(args.collectionUuid, where ? { where } : {})).map(toHit);
-  const notCreated =
-    source.kind === 'record'
-      ? source.record.leftOut.map((l) => ({ label: l.label, status: l.status, ...(l.error !== undefined ? { error: l.error } : {}) }))
-      : [];
+  const notCreated = source.kind === 'record' ? source.record.leftOut : [];
   const index = collectIndex(
     hits.filter((hit) => !self.has(hit.uuid)),
     { patterns: sequence.patterns, groupPatterns: profile.index.groupPatterns, labels: sequence.labels },
@@ -133,18 +170,12 @@ export function previewLines(b: IndexBuild): string[] {
     const more = andMore(left.length);
     lines.push(
       `Not in the series (${left.length}): ` +
-        left
-          .slice(0, NOT_IN_SERIES_SHOWN)
-          .map((l) => `${l.name} -- ${l.reason}`)
-          .join('; ') +
+        left.slice(0, NOT_IN_SERIES_SHOWN).map(notInSeriesEntry).join('; ') +
         (more ? `; ${more}` : ''),
     );
   }
   if (b.notCreated.length > 0) {
-    lines.push(
-      `Not created by the run (${b.notCreated.length}): ` +
-        b.notCreated.map((n) => `${n.label} -- ${n.status}${n.error ? ` (${n.error})` : ''}`).join('; '),
-    );
+    lines.push(`Not created by the run (${b.notCreated.length}): ` + b.notCreated.map(notCreatedEntry).join('; '));
   }
   lines.push(existingNote(b.existing).text);
   return lines;

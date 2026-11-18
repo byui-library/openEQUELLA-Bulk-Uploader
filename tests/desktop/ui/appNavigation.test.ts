@@ -96,6 +96,8 @@ const PLAN = {
   warnings: [],
   duplicates: [],
   folders: [],
+  // Required: every plan names where its batch record would go.
+  indexRecord: { path: 'C:\\batch\\upload.index.json', titlePath: null },
 };
 
 const RUN = { created: 2, failed: 0, skipped: 0, incomplete: 0, interrupted: 0, failures: [] };

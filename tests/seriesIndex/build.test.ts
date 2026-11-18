@@ -221,10 +221,9 @@ describe('buildIndex from a batch record', () => {
     savedAt: '2026-11-18T19:00:00.000Z',
     baseUrl: 'https://oeq.example.edu',
     collectionUuid: 'c1',
-    itemState: 'draft',
     items: [
-      { row: 2, uuid: 'v1', version: 1, title: 'Fernbrook Vol 1', files: [{ name: 'FQ_1971_Vol1_No1.pdf', attachmentUuid: 'a1' }] },
-      { row: 3, uuid: 'idx', version: 1, title: 'Fernbrook index', files: [{ name: 'index.html', attachmentUuid: 'h' }] },
+      { row: 2, uuid: 'v1', version: 1, title: 'Fernbrook Vol 1', label: 'FQ_1971_Vol1_No1.pdf', state: 'draft', files: [{ name: 'FQ_1971_Vol1_No1.pdf', attachmentUuid: 'a1' }] },
+      { row: 3, uuid: 'idx', version: 1, title: 'Fernbrook index', label: 'index.html', state: 'draft', files: [{ name: 'index.html', attachmentUuid: 'h' }] },
     ],
     leftOut: [
       { row: 4, label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'The server said no.' },
@@ -250,10 +249,7 @@ describe('buildIndex from a batch record', () => {
     expect(b.index.volumes).toHaveLength(1);
     expect(b.index.volumes[0]!.issues[0]!.url).toBe('https://oeq.example.edu/items/v1/0/FQ_1971_Vol1_No1.pdf');
     expect(b.index.notInSeries).toEqual([]);
-    expect(b.notCreated).toEqual([
-      { label: 'FQ_1972_Vol2_No1.pdf', status: 'failed', error: 'The server said no.' },
-      { label: 'Vol3 (2 files)', status: 'pending' },
-    ]);
+    expect(b.notCreated).toEqual(record.leftOut);
     expect(previewLines(b)).toContain(
       'Not created by the run (2): FQ_1972_Vol2_No1.pdf -- failed (The server said no.); Vol3 (2 files) -- pending',
     );

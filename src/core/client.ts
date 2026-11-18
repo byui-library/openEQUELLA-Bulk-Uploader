@@ -643,11 +643,11 @@ export class OeqClient {
    */
   async searchCollection(collectionUuid: string, opts: { where?: string } = {}): Promise<CollectionItem[]> {
     const pageSize = 50;
-    const q = opts.where ? `&where=${encodeURIComponent(opts.where)}` : '';
+    const where = opts.where ? `&where=${encodeURIComponent(opts.where)}` : '';
     const items: CollectionItem[] = [];
     for (let start = 0, pages = 0; ; pages++) {
       const url =
-        `/api/search?collections=${encodeURIComponent(collectionUuid)}${q}` +
+        `/api/search?collections=${encodeURIComponent(collectionUuid)}${where}` +
         `&info=${encodeURIComponent('basic,detail,attachment')}&showall=true&length=${pageSize}&start=${start}`;
       const body = (await (await this.request(url)).json()) as {
         available?: number;
