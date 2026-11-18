@@ -80,7 +80,15 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
       const all = await listTemplates(deps.templatesDir);
       const usable: TemplateSummary[] = [];
       for (const t of all) {
-        const p = await loadTemplate(t.id, deps.templatesDir);
+        // One broken template must not hide every other: it is skipped and
+        // named on the terminal, and the rest are still offered.
+        let p;
+        try {
+          p = await loadTemplate(t.id, deps.templatesDir);
+        } catch (err) {
+          console.warn(`Series index: skipped the '${t.id}' template -- ${err instanceof Error ? err.message : String(err)}`);
+          continue;
+        }
         if (p.index && p.checks?.sequence) usable.push(t);
       }
       return usable;

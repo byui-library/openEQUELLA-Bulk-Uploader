@@ -77,6 +77,22 @@ describe('index handlers', () => {
     expect((await h.templates()).map((t) => t.id)).toEqual(['with-index']);
   });
 
+  it('skips a template that will not load, naming it, and still offers the rest', async () => {
+    const dir = await templatesDir();
+    await writeFile(join(dir, 'broken.profile.json'), '{ not json');
+    const warned: unknown[][] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => void warned.push(args);
+    try {
+      const h = createIndexHandlers({ templatesDir: dir, connect: connect().deps });
+      expect((await h.templates()).map((t) => t.id)).toEqual(['with-index']);
+    } finally {
+      console.warn = original;
+    }
+    expect(warned).toHaveLength(1);
+    expect(String(warned[0]!.join(' '))).toMatch(/broken/);
+  });
+
   it('previews, then uploads THE SAME build by id', async () => {
     const c = connect();
     const h = createIndexHandlers({ templatesDir: await templatesDir(), connect: c.deps, newId: () => 'b1' });
