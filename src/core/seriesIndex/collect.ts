@@ -48,16 +48,22 @@ const isRun = (parts: number[]) => parts.every((p, i) => i === 0 || p === parts[
 
 type Read = NameRead | null;
 
-/** "Issue 2 (1972)", "Issues 2–3", or the file's stem when it states no part. */
-export function issueLabel(read: Read, filename: string, labels: SequenceLabels): string {
+/**
+ * "Issue 2 (1972)", "Issues 2–3", or the file's stem when it states no part.
+ * `whole` -- the item's ONLY file, naming its volume and no part -- reads
+ * "Complete volume (1988)" (operator, 2026-11-18): Snake River Echoes 17-20
+ * are one PDF each. An unnumbered file BESIDE numbered issues keeps its stem,
+ * since it is a supplement, not the volume.
+ */
+export function issueLabel(read: Read, filename: string, labels: SequenceLabels, whole = false): string {
+  const years =
+    read?.years ? ` (${read.years.from === read.years.to ? read.years.from : `${read.years.from}–${read.years.to}`})` : '';
+  if (whole && read && read.parts.length === 0 && read.group !== null) return `Complete ${labels.group}${years}`;
   if (!read || read.parts.length === 0) return stem(filename);
   const parts = read.parts;
   const numbers =
     parts.length === 1 ? `${parts[0]}` : isRun(parts) ? `${parts[0]}–${parts[parts.length - 1]}` : parts.join(', ');
   const word = capital(parts.length === 1 ? labels.part : labels.parts);
-  const years = read.years
-    ? ` (${read.years.from === read.years.to ? read.years.from : `${read.years.from}–${read.years.to}`})`
-    : '';
   return `${word} ${numbers}${years}`;
 }
 
@@ -122,7 +128,7 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
       uuid: hit.uuid,
       version: hit.version,
       issues: hit.files.map((f, i) => ({
-        label: issueLabel(reads[i] ?? null, f.filename, labels),
+        label: issueLabel(reads[i] ?? null, f.filename, labels, hit.files.length === 1),
         url: fileUrl(base, hit.uuid, f.filename),
       })),
     });

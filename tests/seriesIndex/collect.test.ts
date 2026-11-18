@@ -114,7 +114,7 @@ describe('collectIndex', () => {
   it('reads a one-file volume through a group pattern', () => {
     const index = collectIndex([hit('v20', ['FQ_1991_Vol20.pdf'])], RULE, BASE);
     expect(index.volumes[0]!.group).toBe(20);
-    expect(index.volumes[0]!.issues[0]!.label).toBe('FQ_1991_Vol20');
+    expect(index.volumes[0]!.issues[0]!.label).toBe('Complete volume (1991)');
   });
 
   it('labels an unnumbered file by its stem and keeps its position', () => {
@@ -150,6 +150,23 @@ describe('issueLabel', () => {
   });
   it('lists parts that are not a run', () => {
     expect(issueLabel({ parts: [1, 3], group: 4, years: null }, 'x.pdf', labels)).toBe('Issues 1, 3');
+  });
+  it("calls an item's only file, naming its volume and no part, the complete volume", () => {
+    const read = { parts: [], group: 17, years: { from: 1988, to: 1988 } };
+    expect(issueLabel(read, 'FQ_1988_Vol17.pdf', labels, true)).toBe('Complete volume (1988)');
+    // Beside numbered issues it is a supplement, and keeps its own name.
+    expect(issueLabel(read, 'FQ_1988_Vol17.pdf', labels, false)).toBe('FQ_1988_Vol17');
+  });
+  it('reads one single-file volume as complete, end to end', () => {
+    const index = collectIndex(
+      [hit('a', ['FQ_1988_Vol17.pdf']), hit('b', ['FQ_1989_Vol18_No1.pdf', 'FQ_1989_Vol18.pdf'])],
+      { patterns: ['{year}_Vol{group}_No{part}'], groupPatterns: ['{year}_Vol{group}'], labels: { part: 'issue', group: 'volume' } },
+      BASE,
+    );
+    expect(index.volumes.map((v) => v.issues.map((i) => i.label))).toEqual([
+      ['Complete volume (1988)'],
+      ['Issue 1 (1989)', 'FQ_1989_Vol18'],
+    ]);
   });
 });
 
