@@ -36,9 +36,11 @@ Added 2026-11-17, before approval:
   `index.html`, `index.css` and `index.js`; no PDF is copied.
 - **The JavaScript is a filter box**, as a progressive enhancement: with
   JavaScript off the complete list is still there and works.
-- **Published volumes only, by default.** The preview counts the drafts it
-  left out, and an **Include drafts** checkbox exists so the feature can be
-  tried on content-test, where every Snake River Echoes item is a draft.
+- **Draft and published volumes are listed alike** (operator, 2026-11-18,
+  superseding "published only, with an Include drafts option"): an item's
+  links are the same whatever its state, and most of these will be
+  published and made public anyway. Whether a reader can open a linked item
+  is openEQUELLA's access control, not this tool's concern.
 - **The same three files are the openEQUELLA item's three attachments**
   (approach A). The fallback (approach B: one self-contained file for
   openEQUELLA) is not needed — see live check 3.
@@ -69,10 +71,10 @@ afterwards (`DELETE …?purge=true` → 204; a later GET → 404).
    answered 200: the files were replaced, the item kept its uuid, its
    version (1) and its attachment uuids, and its title changed.
 
-**Not yet verified** (it needs publishing): whether a *live* item stays live
-after that in-place PUT, and what a signed-out visitor sees of the index item
-and of the PDFs it links to. Both are checked on the first real run, before
-the feature is called done.
+Not checked, deliberately (operator, 2026-11-18): what a signed-out reader
+sees, and whether a published item's state survives the in-place PUT. The
+links do not depend on either, and reader access is openEQUELLA's
+permissions, not this tool's.
 
 ## What gets built
 
@@ -87,7 +89,6 @@ interface SeriesIndex {
   volumes: IndexVolume[];          // in group order (numeric where numeric)
   heldBack: HeldBack[];            // a group claimed by more than one item, or an item whose files disagree
   notInSeries: { uuid: string; name: string }[]; // no file fits any pattern
-  draftsLeftOut: number;           // only when Include drafts is off
 }
 interface IndexVolume {
   group: string;                   // "12"
@@ -117,9 +118,10 @@ Rules:
   index) is labelled by its filename stem and keeps its attachment
   position, which is already last (`folderFiles.ts#orderFiles`).
 - Non-file attachments (URLs) are ignored.
-- **Status**: with Include drafts off, only `live` items are kept and the
-  rest are counted in `draftsLeftOut`. Anything else (suspended, archived,
-  moderating) is never listed.
+- **Status**: `draft` and `live` items are listed alike. An item someone
+  has withdrawn (`deleted`, `archived`, `suspended`, `rejected`) is not
+  listed, and the preview counts it under "not in the series" with its
+  status, so it never silently vanishes.
 
 ### 2. Render — `src/core/index/render.ts` (pure)
 
@@ -206,7 +208,7 @@ The staging area is deleted on every failure path, as `upload.ts` does.
 
 Client additions (`src/core/client.ts`):
 
-- `searchCollection(collectionUuid, { includeDrafts })` — pages through
+- `searchCollection(collectionUuid)` — pages through
   `/api/search` (`length=50`, `start=`), `info=basic,attachment`,
   `showall=true` (status is then filtered in `collect`), until `available`
   is reached. Applies the guest rule this codebase already learned:
@@ -221,11 +223,9 @@ Client additions (`src/core/client.ts`):
 Results (it needs a signed-in site and a chosen collection, which Choose
 already provides). The screen:
 
-1. Template (only those with sequence patterns and an `index` section),
-   and **Include drafts** (off).
+1. Template (only those with sequence patterns and an `index` section).
 2. **Preview**: the rendered page in a sandboxed frame, plus counts —
-   volumes, issues, held back (each named, with why), not in the series,
-   drafts left out.
+   volumes, issues, held back (each named, with why), not in the series.
 3. **Destinations**: "Save as files for a web server" (choose folder) and
    "Create or update the openEQUELLA item" — either or both.
 4. For openEQUELLA: either Draft/Publish (new item), or the line "Updates
@@ -238,7 +238,7 @@ sandboxed with no `node:` imports (`rendererPurity.test.ts`). The preview
 frame gets the HTML as data with scripts disabled; it shows the page, the
 counts show the substance.
 
-**CLI.** `oeq-upload index --template <file> [--include-drafts]
+**CLI.** `oeq-upload index --template <file>
 [--out <dir> [--force]] [--upload --draft|--publish]`, collection from
 `OEQ_COLLECTION_UUID` as the other commands take it. With neither `--out`
 nor `--upload` it prints the preview and exits — the CLI's form of "preview
@@ -264,7 +264,8 @@ refuses.
   **invented** item names and uuids (the repository is public). Groups in
   numeric order; disagreeing files held back; two items one group held back
   naming both; non-fitting items listed; unnumbered files labelled by stem
-  and kept last; spans; drafts counted; non-file attachments ignored; a
+  and kept last; spans; draft and live listed alike, withdrawn statuses
+  listed as not in the series; non-file attachments ignored; a
   missing `name` falling back to the label.
 - `render`: every value escaped (a name containing `<script>` and `"`);
   no `style=`, `<script>` without `src`, or `on…=` anywhere in the HTML;
@@ -282,7 +283,6 @@ refuses.
 - Renderer purity, CSP (no inline styles in the new screen) and the IPC
   channel list are covered by the existing guard tests.
 - **Live**, on content-test, before calling it done: build the Snake River
-  Echoes index with Include drafts on; save files and upload as a draft;
-  open the item's `index.html`; rebuild and confirm the same item updated;
-  then, with the operator's agreement, publish it to check the two
-  unverified points above.
+  Echoes index; save files and upload as a draft; open the item's
+  `index.html` and follow a volume link and an issue link; rebuild and
+  confirm the same item updated.
