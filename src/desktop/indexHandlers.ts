@@ -6,6 +6,7 @@ import type { CollectionItem, CollectionSummary, CurrentUser } from '../core/cli
 import type { SchemaInfo } from '../core/discovery.js';
 import { assertNotGuest } from '../core/identity.js';
 import { ValidationError } from '../core/errors.js';
+import { describeReason } from '../core/errorReason.js';
 import { listTemplates, loadTemplate, type TemplateSummary } from '../core/extract/templates.js';
 import { buildIndex, resolveIndexSchema, type IndexBuild } from '../core/seriesIndex/build.js';
 import { saveIndexFiles } from '../core/seriesIndex/files.js';
@@ -67,7 +68,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
   /** How many previews have STARTED; see preview. */
   let previews = 0;
 
-  /** A fresh session for one write, refused if openEQUELLA answers it as the guest. */
+  /** A fresh session for one step (preview, upload, link), refused if openEQUELLA answers it as the guest. */
   const signedIn = async (instanceId: string, action: string): Promise<IndexConnection> => {
     const connection = await deps.connect(instanceId);
     assertNotGuest(await connection.client.currentUser(), `Sign in to this site again, then ${action}.`);
@@ -92,7 +93,7 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
         try {
           p = await loadTemplate(t.id, deps.templatesDir);
         } catch (err) {
-          console.warn(`Series index: skipped the '${t.id}' template -- ${err instanceof Error ? err.message : String(err)}`);
+          console.warn(`Series index: skipped the '${t.id}' template -- ${describeReason(err)}`);
           continue;
         }
         if (p.index && p.checks?.sequence) usable.push(t);
@@ -109,9 +110,8 @@ export function createIndexHandlers(deps: IndexHandlerDeps) {
     async preview(args: Parameters<OeqApi['indexPreview']>[0]): Promise<IndexPreview> {
       const ticket = ++previews;
       held = null;
-      const connection = await deps.connect(args.instanceId);
+      const connection = await signedIn(args.instanceId, 'build the index');
       const { client } = connection;
-      assertNotGuest(await client.currentUser(), 'Sign in to this site again, then build the index.');
       const profile = await loadTemplate(args.templateId, deps.templatesDir);
       const fallback =
         connection.setupCollectionUuid !== '' && args.collectionUuid === connection.setupCollectionUuid
