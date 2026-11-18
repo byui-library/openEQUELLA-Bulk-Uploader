@@ -247,6 +247,42 @@ refuses.
 
 **MCP**: out of scope for now.
 
+### 6. A link to the index on every volume (added 2026-11-18)
+
+The operator's addition, after approval: each listed volume item carries a
+link to the index page as its **first attachment**, before its PDFs, so a
+reader who lands on one volume can reach the whole run.
+
+- The link points at the **openEQUELLA index item's page**,
+  `{base}/items/{indexUuid}/0/index.html`, so it can only be added once that
+  item exists — found, or created in the same build. Its words come from the
+  template's labels: "Index of all volumes".
+- It is an **optional third destination** on the build ("Add a link to the
+  index on every volume (edits N items)"), confirmed before any item is
+  edited. CLI: `--link-volumes`, which requires `--upload`.
+- **Idempotent**: a volume whose first attachment is already this link is
+  left alone; one that has it elsewhere has it moved to first, keeping its
+  uuid. Never a second copy.
+- Only listed volumes are linked; held-back volumes are not, until resolved.
+- One failed edit does not stop the rest; each failure is named.
+
+**Checked live on content-test, 2026-11-18**: a draft item with two files;
+`PUT /api/item/{uuid}/1/` with **no** `file` parameter and a
+`{ type: 'url', url, description }` attachment put first answered 200. The
+two files kept their uuids and contents, the version stayed 1, and
+openEQUELLA's own item page listed the link first under "Links to
+resources". The test item was purged.
+
+## Changes during planning (2026-11-18)
+
+- **`index.groupPatterns`.** Snake River Echoes volumes 16–20 are one file
+  each with no issue number (`…_Vol20.pdf`), which the sequence patterns
+  (they require `{part}`) cannot read. A template's `index` section may list
+  patterns that read only a `{group}`, tried after the sequence patterns.
+- **The desktop preview is a list in the app's own markup**, not an embedded
+  copy of the page: the app's CSP and sandbox make embedding fragile, and the
+  list shows the same substance. The saved files can be opened in a browser.
+
 ## Errors and edge cases
 
 - Not signed in, or signed in as guest → stop before searching.

@@ -2863,6 +2863,208 @@ and pass `onBuildIndex: openIndexFlow,` in both the `renderChoose(...)` and `ren
 
 ---
 
+### Task 14A: Volume links -- core
+
+The operator's addition (2026-11-18): every volume item carries a link to the index page as its FIRST attachment, before its PDFs. Decisions: the link points at the openEQUELLA index item's page (`{base}/items/{indexUuid}/0/index.html`); adding the links is an optional checkbox on the build, which says how many items it will edit and asks first.
+
+**Checked live on content-test, 2026-11-18:** a draft item with two files; `PUT /api/item/{uuid}/1/` with NO `file` parameter and its bean with `{ type: 'url', url, description }` put FIRST in `attachments` answered 200. The url attachment was given a uuid; the two file attachments kept their uuids and their files (`/file/...` still 200); the version stayed 1; and openEQUELLA's own item page listed "Index of all volumes" first under "Links to resources". The test item was purged.
+
+**Files:**
+- Modify: `src/core/seriesIndex/types.ts` (`IndexVolume` gains `uuid` and `version`)
+- Modify: `src/core/seriesIndex/collect.ts` (fill them)
+- Modify: `src/core/client.ts` (`editItem`'s staging area becomes optional)
+- Create: `src/core/seriesIndex/links.ts`
+- Test: `tests/seriesIndex/links.test.ts`, `tests/seriesIndex/collect.test.ts`, `tests/client.test.ts`
+
+- [ ] **Step 1: Volumes carry their item.** In `types.ts`, add to `IndexVolume`:
+
+```ts
+  /** The volume's item, so the index link can be added to it. */
+  uuid: string;
+  version: number;
+```
+
+In `collect.ts`'s `volumes.push({ ... })` add `uuid: hit.uuid, version: hit.version,`. In `tests/seriesIndex/collect.test.ts` add to the first test: `expect(index.volumes[0]).toMatchObject({ uuid: 'v2', version: 1 });`. Fix any test or fixture (e.g. `tests/seriesIndex/render.test.ts`'s literal `SeriesIndex`) that `npm run typecheck` now reports, by adding `uuid`/`version` to it.
+
+- [ ] **Step 2: `editItem` without new files.** In `client.ts`, change the signature to `editItem(uuid, version, bean, stagingUuid?: string)` and build the URL as
+
+```ts
+    const query = stagingUuid === undefined ? '' : `?file=${encodeURIComponent(stagingUuid)}`;
+    await this.request(`/api/item/${encodeURIComponent(uuid)}/${version}/${query}`, { ... });
+```
+
+Update the `IndexClient.editItem` type in `publish.ts` to match (`stagingUuid?: string`). In `tests/helpers/mockServer.ts`'s PUT route, accept a missing `file` (record `staging: ''`), but still 404 a `file` that names an unknown staging area. Add a client test: `editItem('a', 1, bean)` sends no `file` parameter and the mock records `staging: ''`.
+
+- [ ] **Step 3: Write the failing tests** (`tests/seriesIndex/links.test.ts`):
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { linkVolumes, indexPageUrl, type LinkClient } from '../../src/core/seriesIndex/links.js';
+
+const URL_ = 'https://oeq.example.edu/items/idx/0/index.html';
+
+function fake(beans: Record<string, Record<string, unknown>>, failOn?: string) {
+  const edits: { uuid: string; attachments: Record<string, unknown>[] }[] = [];
+  const client: LinkClient = {
+    async getItemBean(uuid) {
+      if (uuid === failOn) throw new Error('server said no');
+      return structuredClone(beans[uuid]!);
+    },
+    async editItem(uuid, _v, bean, staging) {
+      expect(staging).toBeUndefined();
+      edits.push({ uuid, attachments: bean['attachments'] as Record<string, unknown>[] });
+    },
+  };
+  return { client, edits };
+}
+const file = (name: string) => ({ type: 'file', filename: name, uuid: `${name}-u` });
+
+describe('linkVolumes', () => {
+  it('puts the link first and keeps every other attachment', async () => {
+    const f = fake({ v1: { uuid: 'v1', version: 1, attachments: [file('a.pdf'), file('b.pdf')] } });
+    const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [] });
+    expect(f.edits[0]!.attachments).toEqual([
+      { type: 'url', url: URL_, description: 'Index of all volumes' },
+      file('a.pdf'),
+      file('b.pdf'),
+    ]);
+  });
+
+  it('leaves a volume alone when the link is already first', async () => {
+    const link = { type: 'url', url: URL_, description: 'Index of all volumes', uuid: 'l' };
+    const f = fake({ v1: { attachments: [link, file('a.pdf')] } });
+    const r = await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    expect(r).toEqual({ added: 0, alreadyThere: 1, failed: [] });
+    expect(f.edits).toEqual([]);
+  });
+
+  it('moves the link to first place, keeping its uuid, rather than adding a second', async () => {
+    const link = { type: 'url', url: URL_, description: 'Old words', uuid: 'l' };
+    const f = fake({ v1: { attachments: [file('a.pdf'), link] } });
+    await linkVolumes(f.client, [{ uuid: 'v1', version: 1, heading: 'Vol 1' }], URL_, 'Index of all volumes');
+    expect(f.edits[0]!.attachments).toEqual([{ ...link, description: 'Index of all volumes' }, file('a.pdf')]);
+  });
+
+  it('carries on past a failure and names the volume', async () => {
+    const f = fake({ v2: { attachments: [file('a.pdf')] } }, 'v1');
+    const r = await linkVolumes(
+      f.client,
+      [
+        { uuid: 'v1', version: 1, heading: 'Vol 1' },
+        { uuid: 'v2', version: 1, heading: 'Vol 2' },
+      ],
+      URL_,
+      'Index of all volumes',
+    );
+    expect(r).toEqual({ added: 1, alreadyThere: 0, failed: [{ heading: 'Vol 1', reason: 'server said no' }] });
+  });
+
+  it('builds the index page address from the index item', () => {
+    expect(indexPageUrl('https://oeq.example.edu/repo', 'idx')).toBe('https://oeq.example.edu/repo/items/idx/0/index.html');
+  });
+});
+```
+
+- [ ] **Step 4: Run, expect FAIL** -- `npx vitest run tests/seriesIndex/links.test.ts`
+
+- [ ] **Step 5: Implement** (`src/core/seriesIndex/links.ts`):
+
+```ts
+// src/core/seriesIndex/links.ts
+import { describeReason } from '../errorReason.js';
+import { itemUrl } from './collect.js';
+
+/**
+ * A link to the index on every volume, as its FIRST attachment (operator,
+ * 2026-11-18). Checked live: a PUT with no staging area and the bean's
+ * attachments reordered keeps every file and its uuid, and openEQUELLA's item
+ * page lists them in that order.
+ *
+ * IDEMPOTENT: a volume that already has a link to THIS index page (matched by
+ * url) is left alone when it is first, or moved to first keeping its uuid --
+ * never given a second. Carries on past a failure and names it: one refused
+ * volume must not leave the rest unlinked with nobody told.
+ */
+
+export interface LinkClient {
+  getItemBean(uuid: string, version: number): Promise<Record<string, unknown>>;
+  editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid?: string): Promise<void>;
+}
+
+export interface LinkResult {
+  added: number;
+  alreadyThere: number;
+  failed: { heading: string; reason: string }[];
+}
+
+export function indexPageUrl(base: string, indexUuid: string): string {
+  return `${itemUrl(base, indexUuid)}index.html`;
+}
+
+export async function linkVolumes(
+  client: LinkClient,
+  volumes: readonly { uuid: string; version: number; heading: string }[],
+  url: string,
+  label: string,
+): Promise<LinkResult> {
+  const result: LinkResult = { added: 0, alreadyThere: 0, failed: [] };
+  for (const v of volumes) {
+    try {
+      const bean = await client.getItemBean(v.uuid, v.version);
+      const current = Array.isArray(bean['attachments']) ? (bean['attachments'] as Record<string, unknown>[]) : [];
+      const at = current.findIndex((a) => a['type'] === 'url' && a['url'] === url);
+      if (at === 0 && current[0]!['description'] === label) {
+        result.alreadyThere += 1;
+        continue;
+      }
+      const link = at === -1 ? { type: 'url', url, description: label } : { ...current[at]!, description: label };
+      const rest = current.filter((_, i) => i !== at);
+      await client.editItem(v.uuid, v.version, { ...bean, attachments: [link, ...rest] });
+      result.added += 1;
+    } catch (err) {
+      result.failed.push({ heading: v.heading, reason: describeReason(err) });
+    }
+  }
+  return result;
+}
+```
+
+(`describeReason` is the core's one way to turn an error into words, following its `cause` chain. Do NOT import from `src/desktop/ui/errors.ts`, which is renderer code.)
+
+- [ ] **Step 6: Run, expect PASS** -- `npx vitest run tests/seriesIndex tests/client.test.ts`; `npm run typecheck`.
+
+- [ ] **Step 7: Commit** -- `feat(index): a link to the index as every volume's first attachment`
+
+---
+
+### Task 14B: Volume links -- CLI and desktop
+
+**Files:**
+- Modify: `src/cli/indexPage.ts` (`--link-volumes`)
+- Modify: `src/desktop/ipc.ts`, `src/desktop/preload.cts`, `src/desktop/indexHandlers.ts` (channel `indexLinkVolumes`)
+- Modify: `src/desktop/ui/seriesIndex/state.ts`, `controller.ts`, `screen.ts` (the third checkbox)
+- Tests: `tests/cli-index.test.ts`, `tests/desktop/indexHandlers.test.ts`, `tests/desktop/ui/seriesIndex/controller.test.ts`, `screen.test.ts`
+
+Rules (both front ends):
+- The links can be added only when the index item exists or is being created in the same build -- `existing.kind === 'one'`, or the upload destination is chosen and `existing.kind === 'none'`. Otherwise the option is not offered (desktop) or refused (CLI: "--link-volumes needs the index item: add --upload, or upload it first").
+- The link's address is `indexPageUrl(base, indexUuid)`; its words are `Index of all ${labels.groups}` (e.g. "Index of all volumes").
+- Only LISTED volumes are linked; held-back volumes are not, and the summary says so.
+- It runs AFTER the upload, so a newly created index item's uuid is known.
+- The result line: "Linked N volumes to the index (M already had it). Not linked: Vol 3 -- reason; ...".
+
+- [ ] **Step 1: CLI.** `IndexCliOptions` gains `linkVolumes?: boolean`; `checkIndexFlags` returns `link: boolean` and refuses `--link-volumes` without `--upload` unless... keep it simple and strict: `--link-volumes` REQUIRES `--upload` (the upload is idempotent -- an existing item is updated in place -- so this costs nothing and guarantees the index item exists). Test: `checkIndexFlags({ template: 't', linkVolumes: true })` throws `/--link-volumes needs --upload/`. In `indexAction`, after the upload: `const r = await linkVolumes(client, build.index.volumes, indexPageUrl(cfg.baseUrl, result.uuid), \`Index of all ${build.labels.groups}\`)` and print the result line. Register `.option('--link-volumes', 'with --upload: add a link to the index as every listed volume\'s first attachment')`.
+
+- [ ] **Step 2: Desktop main.** Add to `ipc.ts`: `indexLinkVolumes(args: { buildId: string }): Promise<{ added: number; alreadyThere: number; failed: { heading: string; reason: string }[] }>` and `CHANNELS.indexLinkVolumes = 'oeq:indexLinkVolumes'` (mirror in `preload.cts`). `IndexPreview` gains `volumeCount` is already derivable from `volumes.length` -- add nothing else. In `indexHandlers.ts`, `upload` records the uploaded index uuid on the held build (`held.indexUuid = result.uuid`); `existing.kind === 'one'` also sets it at preview time. `linkVolumes({ buildId })` refuses (ValidationError: "Upload the index item first.") when no index uuid is known, otherwise calls core `linkVolumes`. Test: preview -> upload -> linkVolumes edits each listed volume (fake client records `editItem` calls); linkVolumes before upload with `existing: none` is refused.
+
+- [ ] **Step 3: Desktop renderer.** `IndexFlowState` gains `linkVolumes: boolean` (default false). The screen shows a third checkbox, `id="index-link-volumes"`, labelled `Add a link to the index on every volume (edits N items)` where N is `preview.volumes.length`, offered only when `existing.kind === 'one'` OR (`existing.kind === 'none'` AND `upload` is checked). `canBuild` is unchanged except that `linkVolumes` alone (no files, no upload) is allowed when `existing.kind === 'one'`. In `build()`, after the upload step: if `linkVolumes`, `confirm(\`Add a link to the index as the first attachment of ${n} volume items? This edits each of them in openEQUELLA.\`)`, then `api.indexLinkVolumes({ buildId })` and push the result line into `done`. Tests: the checkbox is absent with `existing.kind === 'none'` and upload unchecked; present otherwise; build with linkVolumes asks, then calls `indexLinkVolumes` after `indexUpload`; a "no" skips it and says "Volumes not linked: you chose not to edit them."
+
+- [ ] **Step 4:** `npx vitest run tests/cli-index.test.ts tests/desktop`; `npm run typecheck`; `npm run build:desktop`.
+
+- [ ] **Step 5: Commit** -- `feat(index): add the index link to every volume, from the CLI and the desktop`
+
+---
+
 ### Task 15: Documentation
 
 **Files:**
@@ -2881,5 +3083,5 @@ and pass `onBuildIndex: openIndexFlow,` in both the `renderChoose(...)` and `ren
 
 - [ ] **Step 1:** Run `/code-review` over `main...HEAD`, fix what is real, commit.
 - [ ] **Step 2:** Run `/simplify` over the same range, apply, commit, push.
-- [ ] **Step 3: Live run on content-test (operator present, agreed first).** Desktop app: sign in, choose the Snake River Echoes collection (`7b6aea89-...` on content-test), "Build an index of this collection…", choose Snake River Echoes. Expect: the eight duplicated volumes (15, 22, 25, 27, 31, 35, 36, 37) HELD BACK and named; volumes 16-20 listed through the group pattern. Save as files to a scratch folder and open `index.html` in a browser; upload as a Draft; open the item's `index.html`; follow one volume link and one issue link; type a year into the filter. Then build again and confirm "Updates the existing index item" and that the same item changed.
+- [ ] **Step 3: Live run on content-test (operator present, agreed first).** Desktop app: sign in, choose the Snake River Echoes collection (`7b6aea89-...` on content-test), "Build an index of this collection…", choose Snake River Echoes. Expect: the eight duplicated volumes (15, 22, 25, 27, 31, 35, 36, 37) HELD BACK and named; volumes 16-20 listed through the group pattern. Save as files to a scratch folder and open `index.html` in a browser; upload as a Draft; open the item's `index.html`; follow one volume link and one issue link; type a year into the filter. Then build again and confirm "Updates the existing index item" and that the same item changed. Then tick "Add a link to the index on every volume", confirm, and check in openEQUELLA that a volume's first attachment is "Index of all volumes" and opens the index; build once more with it ticked and confirm the result says every volume already had it.
 - [ ] **Step 4:** Record the results in `docs/SESSION-HANDOFF.md`, commit, push; open the PR (read the automated review comments before merging).
