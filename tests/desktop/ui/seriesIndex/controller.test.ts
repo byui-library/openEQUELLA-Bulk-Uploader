@@ -198,7 +198,9 @@ describe('index flow controller: volume links', () => {
     await c.build();
     expect(calls).toEqual(['upload', 'link b1']);
     expect(confirms).toEqual([
-      'Add a link to the index as the first attachment of 2 volumes? This edits each of them in openEQUELLA.',
+      'The index item is uploaded. Now add a link to it on 2 volumes in openEQUELLA? ' +
+        'Each volume gets one link, "Index of all volumes", listed above its files. ' +
+        'Nothing else on them changes, and a volume that already has the link is left as it is.',
     ]);
     expect(c.state().done[1]).toBe(
       'Linked 1 volume to the index (0 already had it). Not linked: Vol 2 -- server said no.',
@@ -212,8 +214,22 @@ describe('index flow controller: volume links', () => {
     c.setUpload(true);
     c.setLinkVolumes(true);
     await c.build();
-    expect(confirms[0]).toBe('Add a link to the index as the first attachment of 2 boxes? This edits each of them in openEQUELLA.');
+    expect(confirms[0]).toBe(
+      'The index item is uploaded. Now add a link to it on 2 boxes in openEQUELLA? ' +
+        'Each box gets one link, "Index of all boxes", listed above its files. ' +
+        'Nothing else on them changes, and a box that already has the link is left as it is.',
+    );
     expect(c.state().done[1]).toBe('Linked 1 box to the index (0 already had it).');
+  });
+
+  it('does not claim an upload it did not make: links only, to an index item already there', async () => {
+    const { c, calls, confirms } = linking({ existing: { kind: 'one', status: 'draft' }, failed: false });
+    await c.start();
+    await c.setTemplate('sre');
+    c.setLinkVolumes(true);
+    await c.build();
+    expect(calls).toEqual(['link b1']);
+    expect(confirms[0]).toMatch(/^Add a link to it on 2 volumes in openEQUELLA\? /);
   });
 
   it('a failed link is an error on screen, not only a line in the list', async () => {
