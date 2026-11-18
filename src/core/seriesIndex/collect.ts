@@ -29,6 +29,9 @@ export interface IndexRule {
 
 const LISTED = new Set(['live', 'draft', 'moderating', 'review']);
 
+/** Not withdrawn. `showall=true` returns deleted items too (content-test, 2026-11-18). */
+export const isListed = (status: string): boolean => LISTED.has(status);
+
 /** The item, at whatever its latest version is (`/items/{uuid}/0/`, checked live 2026-11-17). */
 export function itemUrl(base: string, uuid: string): string {
   return instanceEndpoint(base, `items/${encodeURIComponent(uuid)}/0/`).href;
@@ -67,7 +70,7 @@ export function collectIndex(hits: readonly IndexHit[], rule: IndexRule, base: s
   const nameOf = (hit: IndexHit) => hit.name?.trim() || hit.uuid;
 
   for (const hit of hits) {
-    if (!LISTED.has(hit.status)) {
+    if (!isListed(hit.status)) {
       notInSeries.push({ uuid: hit.uuid, name: nameOf(hit), reason: `its status is ${hit.status}` });
       continue;
     }

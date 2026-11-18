@@ -80,6 +80,14 @@ describe('findExistingIndex', () => {
     });
   });
 
+  it('ignores a deleted index item: showall finds it, and an edit would revive it', async () => {
+    expect(await findExistingIndex(fake([hit('a', 'deleted')]).client, 'c1', record)).toEqual({ kind: 'none' });
+    expect(await findExistingIndex(fake([hit('a', 'deleted'), hit('b', 'live')]).client, 'c1', record)).toMatchObject({
+      kind: 'one',
+      uuid: 'b',
+    });
+  });
+
   it('is unavailable, without searching, when the record has no identifier', async () => {
     const f = fake();
     const r = await findExistingIndex(f.client, 'c1', { ...record, identifier: null, identifierProblem: 'no field' });

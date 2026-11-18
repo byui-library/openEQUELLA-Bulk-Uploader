@@ -491,6 +491,11 @@ export async function startMockServer(): Promise<MockServer> {
         // live server's default of excluding drafts entirely.
         const showAll = url.searchParams.get('showall') === 'true';
         const where = url.searchParams.get('where');
+        // MEASURED on content-test, 2026-11-18: `info` chooses the fields.
+        // `status` comes only with `detail`, attachments only with `attachment`.
+        const info = (url.searchParams.get('info') ?? '').split(',');
+        const withDetail = info.includes('detail') || info.includes('all');
+        const withAtt = info.includes('attachment') || info.includes('all');
         state.searchUrls.push(req.url ?? '');
 
         if (where) {
@@ -513,7 +518,12 @@ export async function startMockServer(): Promise<MockServer> {
               start: 0,
               length: found.length,
               available: found.length,
-              results: found.map((i) => ({ uuid: i.uuid, version: i.version, status: i.status, name: i.name })),
+              results: found.map((i) => ({
+                uuid: i.uuid,
+                version: i.version,
+                ...(withDetail ? { status: i.status } : {}),
+                name: i.name,
+              })),
             });
           }
 
@@ -554,9 +564,9 @@ export async function startMockServer(): Promise<MockServer> {
             results: page.map((i) => ({
               uuid: i.uuid,
               version: i.version,
-              status: i.status,
+              ...(withDetail ? { status: i.status } : {}),
               ...(i.name === undefined ? {} : { name: i.name }),
-              attachments: i.attachments,
+              ...(withAtt ? { attachments: i.attachments } : {}),
             })),
           });
         }

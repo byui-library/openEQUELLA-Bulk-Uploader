@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { CollectionItem, CreateItemRequest, CreateItemResult } from '../client.js';
 import { ValidationError } from '../errors.js';
 import { buildMetadataXml, mergeMetadataXml } from '../metadata.js';
+import { isListed } from './collect.js';
 import type { IndexRecord } from './record.js';
 import { INDEX_FILE_NAMES, type IndexFiles } from './types.js';
 import { existingNote } from './words.js';
@@ -42,7 +43,11 @@ export async function findExistingIndex(
   if (record.identifier === null) {
     return { kind: 'unavailable', reason: record.identifierProblem ?? 'The index has no identifier.' };
   }
-  const found = await client.findByField(collectionUuid, record.identifier.path, record.identifier.value);
+  // A deleted index item is not one to update: `showall=true` finds it, and an
+  // edit would revive a record someone withdrew.
+  const found = (await client.findByField(collectionUuid, record.identifier.path, record.identifier.value)).filter(
+    (f) => isListed(f.status),
+  );
   if (found.length === 0) return { kind: 'none' };
   if (found.length === 1) {
     const one = found[0]!;

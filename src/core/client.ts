@@ -183,13 +183,27 @@ export interface CollectionItem {
   attachments: { type: string; filename: string; uuid: string }[];
 }
 
+/**
+ * `status` comes back ONLY when `info` includes `detail` (content-test,
+ * 2026-11-18: `basic` yields uuid, version, name, description and links, and
+ * nothing else). Asked for `basic,attachment` alone, every item arrived with no
+ * status and the index listed none of them. A listing that still carries none
+ * is refused rather than read as "status unknown" -- that is the same silent
+ * empty answer arriving by another door.
+ */
 function parseCollectionItem(r: Record<string, unknown>): CollectionItem {
   const attachments = Array.isArray(r['attachments']) ? (r['attachments'] as Record<string, unknown>[]) : [];
   const name = typeof r['name'] === 'string' && r['name'] !== '' ? r['name'] : null;
+  if (typeof r['status'] !== 'string' || r['status'] === '') {
+    throw new ValidationError(
+      "openEQUELLA's search did not say each item's status, so nothing is built from it: " +
+        'a withdrawn item cannot be told from a live one.',
+    );
+  }
   return {
     uuid: String(r['uuid'] ?? ''),
     version: typeof r['version'] === 'number' ? r['version'] : 1,
-    status: typeof r['status'] === 'string' ? r['status'] : '',
+    status: r['status'],
     name,
     attachments: attachments.map((a) => ({
       type: String(a['type'] ?? ''),
@@ -625,7 +639,7 @@ export class OeqClient {
     for (let start = 0, pages = 0; ; pages++) {
       const url =
         `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
-        `&info=${encodeURIComponent('basic,attachment')}&showall=true&length=${pageSize}&start=${start}`;
+        `&info=${encodeURIComponent('basic,detail,attachment')}&showall=true&length=${pageSize}&start=${start}`;
       const body = (await (await this.request(url)).json()) as {
         available?: number;
         results?: Record<string, unknown>[];
@@ -649,14 +663,15 @@ export class OeqClient {
   /**
    * Items whose `path` is EXACTLY `value` -- the `where` mechanism of
    * searchByTitle, for any path. `path` is interpolated unescaped because it
-   * comes from the collection's own schema; `info=basic` means the results
-   * carry no attachments. A guest answer throws, never reads as "none".
+   * comes from the collection's own schema; `info=basic,detail` means the
+   * results carry a status but no attachments. A guest answer throws, never
+   * reads as "none".
    */
   async findByField(collectionUuid: string, path: string, value: string): Promise<CollectionItem[]> {
     const clause = `/xml/${path} = '${escapeWhereValue(value)}'`;
     const url =
       `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
-      `&where=${encodeURIComponent(clause)}&info=basic&showall=true&length=50`;
+      `&where=${encodeURIComponent(clause)}&info=${encodeURIComponent('basic,detail')}&showall=true&length=50`;
     const body = (await (await this.request(url)).json()) as {
       available?: number;
       results?: Record<string, unknown>[];

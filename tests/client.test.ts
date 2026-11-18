@@ -819,6 +819,23 @@ describe('series index calls', () => {
     );
   });
 
+  it('asks for detail, because only detail brings each item its status', async () => {
+    mock.state.collectionItems = [item('u1')];
+    await client.searchCollection('c1');
+    await client.findByField('c1', 'DC/identifier', 'u1');
+    const infos = mock.state.searchUrls.map((u) => new URL(u, 'http://x').searchParams.get('info')?.split(','));
+    expect(infos.every((i) => i?.includes('detail'))).toBe(true);
+  });
+
+  it('refuses a listing whose items carry no status rather than reading them as withdrawn', async () => {
+    await withFakeSearch(
+      () => ({ available: 1, results: [{ uuid: 'r0', version: 1, name: 'Fernbrook r0', attachments: [] }] }),
+      async () => {
+        await expect(client.searchCollection('c1')).rejects.toThrow(/did not say each item's status/);
+      },
+    );
+  });
+
   it('refuses a listing that ignores start rather than looping or over-reading', async () => {
     let calls = 0;
     await withFakeSearch(
