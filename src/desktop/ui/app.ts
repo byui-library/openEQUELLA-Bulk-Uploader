@@ -15,6 +15,7 @@ import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
 import {
   attachmentPathToFill,
+  removeSiteQuestion,
   renderSetup,
   MODEL_FIELD_DEFAULTS,
   type ModelEntry,
@@ -397,6 +398,7 @@ function render(): void {
         onCollectionChange: handleSetupCollectionChange,
         onLiveChange: handleSetupLiveChange,
         onForgetPassword: handleForgetPassword,
+        onRemoveSite: () => void handleRemoveSite(),
         onForgetOAuth: handleForgetOAuth,
         onForgetModel: handleForgetModel,
         onModelSectionToggle: handleModelSectionToggle,
@@ -417,6 +419,7 @@ function render(): void {
         onSignOut: handleSignOut,
         onContinue: handleSigninContinue,
         onAddCredentials: handleAddCredentials,
+        onAddSite: handleAddSite,
         onSiteSettings: () => handleSiteSettings('signin'),
         onResetSettings: handleResetSettings,
       });
@@ -1388,6 +1391,67 @@ function handleSiteSettings(from: Screen): void {
   // all, so there was no way to remove an endpoint from the screen that owns it.
   void refreshStoredModel();
   void refreshSetupCollections();
+}
+
+/**
+ * Sign-in's "Add another site…" -- Setup with a blank form, clearing nothing.
+ *
+ * WHY IT IS ON SIGN-IN. The only route used to be "Settings for {site}…" and
+ * then Setup's own dropdown, and the operator could not find it on the day
+ * they needed production (2026-11-19). Back returns to Sign-in having saved
+ * nothing; Save selects the new site and lands on Sign-in (handleSaveSettings).
+ */
+function handleAddSite(): void {
+  seedSetupForm('');
+  // After the seed, which clears it: Back has somewhere to go.
+  state.setupEnteredFrom = 'signin';
+  state.screen = nextScreen('signin', { type: 'addSite' });
+  render();
+  void refreshStoredUsername();
+  void refreshStoredOAuth();
+  void refreshStoredModel();
+  void refreshSetupCollections();
+}
+
+/**
+ * Setup's "Remove this site…" -- the site Setup is pointed at, and everything
+ * stored for it, after a confirm naming all of it. Other sites are untouched.
+ *
+ * Afterwards: Sign-in, on the site the app was using, or on the first one
+ * left if that was the one removed. With none left, Setup as on first run --
+ * a blank form and no Back, since there is nothing behind it.
+ */
+async function handleRemoveSite(): Promise<void> {
+  const id = state.setupInstanceId;
+  const site = instanceById(id);
+  if (site === null) return;
+  if (!window.confirm(removeSiteQuestion(site.label, site.baseUrl))) return;
+  try {
+    await window.oeq.removeInstance(id);
+    // In the same try: a list that could not be re-read must be reported,
+    // not left showing the site that was just removed.
+    state.instances = withSaved(await window.oeq.listInstances());
+  } catch (err) {
+    state.setupError = errorMessage(err);
+    render();
+    return;
+  }
+  state.setupError = null;
+  state.signinError = null;
+  if (state.instanceId === id || currentInstance() === null) {
+    state.instanceId = state.instances[0]?.id ?? '';
+    state.user = null;
+  }
+  if (state.instanceId === '') {
+    seedSetupForm('');
+    state.screen = 'setup';
+    render();
+    return;
+  }
+  seedSetupForm(state.instanceId);
+  state.screen = nextScreen('setup', { type: 'siteRemoved' });
+  render();
+  void checkInstanceState();
 }
 
 /**

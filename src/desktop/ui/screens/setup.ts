@@ -248,6 +248,12 @@ export interface SetupProps {
   onCollectionChange(uuid: string): void;
   onLiveChange(live: boolean): void;
   onForgetPassword(): void;
+  /**
+   * "Remove this site…" -- the saved site this form is pointed at, and
+   * everything stored for it, after the confirm `removeSiteQuestion` words.
+   * Not offered while adding a site: there is nothing saved to remove.
+   */
+  onRemoveSite(): void;
   /** Behind "Forget these model settings". Removes the endpoint and its key,
    *  and leaves the site and its credentials exactly where they are. */
   onForgetModel(): void;
@@ -1214,6 +1220,20 @@ function modelSection(props: SetupProps): string {
 }
 
 /**
+ * The confirm behind "Remove this site…". It names everything the removal
+ * deletes and nothing it does not (cached schemas, which hold no
+ * credentials, are left): a confirm that understates what it confirms
+ * collects consent for something other than what happens.
+ */
+export function removeSiteQuestion(label: string, baseUrl: string): string {
+  return (
+    `Remove ${label} (${baseUrl}) from this computer? This deletes its saved password or OAuth ` +
+    `credentials and its model settings, and signs you out of it. Your other sites are not ` +
+    `changed. To use it again you would add it again.`
+  );
+}
+
+/**
  * The whole screen as markup, separated from `renderSetup` so it can be
  * asserted against as a string -- this project has no jsdom, and the existing
  * screen tests (ui/duplicates.ts and its test) read the markup a renderer
@@ -1302,6 +1322,17 @@ export function setupMarkup(props: SetupProps): string {
             ${props.saving ? 'Saving…' : 'Save credentials'}
           </button>
         </div>
+        ${
+          // type="button" for the same reason as Back: inside #setup-form a
+          // default-type button submits it, and a removal must never save.
+          selected
+            ? `<p class="reset-row">
+          <button id="setup-remove-site" type="button" class="secondary">
+            Remove this site…
+          </button>
+        </p>`
+            : ''
+        }
         ${
           props.returnTo === null
             ? ''
@@ -1590,6 +1621,10 @@ export function renderSetup(root: HTMLElement, props: SetupProps): void {
   root
     .querySelector<HTMLButtonElement>('#setup-model-forget')
     ?.addEventListener('click', () => props.onForgetModel());
+
+  root
+    .querySelector<HTMLButtonElement>('#setup-remove-site')
+    ?.addEventListener('click', () => props.onRemoveSite());
 
   // The ONLY record of the operator having opened this is the live element,
   // and the next keystroke replaces it. Handing it back to app.ts is what
