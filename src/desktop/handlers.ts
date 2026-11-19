@@ -530,6 +530,31 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     },
   );
 
+  /**
+   * "Remove this site…". In the same order as forgetPassword, for the same
+   * reason: the session is ended while the site is still stored, and a
+   * logout that fails never stops the removal the operator asked for --
+   * openEQUELLA times an abandoned session out regardless.
+   *
+   * The token store holds ONE token, keyed by address, so it is cleared only
+   * when that token is this site's: removing the sandbox must not sign the
+   * operator out of production.
+   */
+  ipcMain.handle(
+    CHANNELS.removeInstance,
+    async (_e, instanceId: Parameters<OeqApi['removeInstance']>[0]) => {
+      try {
+        await endSessionsFor(instanceId);
+      } catch {
+        // Deliberately empty -- see forgetPassword.
+      }
+      const inst = await secrets().loadInstance(instanceId);
+      const token = await tokens().loadRaw();
+      if (inst !== null && token !== null && sameOrigin(token.baseUrl, inst.baseUrl)) await tokens().clear();
+      await secrets().removeInstance(instanceId);
+    },
+  );
+
   ipcMain.handle(
     CHANNELS.setModel,
     async (_e, args: Parameters<OeqApi['setModel']>[0]) =>

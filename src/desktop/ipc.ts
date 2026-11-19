@@ -273,6 +273,13 @@ export interface OeqApi {
   getPassword(instanceId: string): Promise<{ username: string } | null>;
   /** Behind Setup's "Forget this password". Removing what is absent is not an error. */
   forgetPassword(instanceId: string): Promise<void>;
+  /**
+   * Behind Setup's "Remove this site…": end the site's sessions, clear its
+   * sign-in token if the stored one is this site's, and delete everything
+   * stored for it. Other sites are untouched. Removing what is absent is not
+   * an error.
+   */
+  removeInstance(instanceId: string): Promise<void>;
 
   /**
    * The stored OAuth credential for one site, minus the secret.
@@ -669,6 +676,7 @@ export const CHANNELS = {
   setPassword: 'oeq:setPassword',
   getPassword: 'oeq:getPassword',
   forgetPassword: 'oeq:forgetPassword',
+  removeInstance: 'oeq:removeInstance',
   getOAuth: 'oeq:getOAuth',
   forgetOAuth: 'oeq:forgetOAuth',
   getStorageInfo: 'oeq:getStorageInfo',
