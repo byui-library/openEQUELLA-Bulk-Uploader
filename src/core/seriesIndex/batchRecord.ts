@@ -225,14 +225,18 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
  * `finish()` once at the end; the record is recomputed WHOLE each time, so an
  * interrupted run leaves a record of exactly what it made.
  *
- * During the run the record is built from the manifest the runner HANDS to
- * `onProgress`: runner.ts saves the manifest BEFORE it reports progress, so
- * what a report carries is what is saved. `finish()` instead reads the SAVED
- * manifest, once: the reported object is the runner's live one, and a run that
- * threw may have changed a row in it that its save never wrote -- an item the
- * saved manifest does not know about. When that read fails, nothing new is
- * written and the last record stands. The manifest file is otherwise read once,
- * here at the start, for the statuses already there.
+ * The record is built from the manifest the runner HANDS to `onProgress`, and
+ * built AT ONCE, inside `update`: runner.ts saves the manifest immediately
+ * before it reports, so at that instant the live object is exactly what is
+ * saved. Building it later -- when a queued write runs -- would read a live
+ * object the runner has moved on in since: the next row `uploading`, or an
+ * item whose save then failed (code review, 2026-11-19).
+ *
+ * `finish()` writes from the last manifest reported, which after a run that
+ * RETURNED is the saved one -- the runner's last act is a save and a report.
+ * It never re-reads the file: by then the run's lock is released, and the
+ * file may already be another run's. The manifest file is read once, here at
+ * the start, for the statuses already there and for a batch with no rows.
  *
  * A record already at `file` -- an earlier run of the same spreadsheet -- is
  * read once, here, and carried forward. Anything else there (not a record,
@@ -243,9 +247,8 @@ function earlierRecord(file: string, manifest: Manifest): BatchRecord | null {
  * -- seeded from the manifest at the start -- so a retry's back-to-back reports
  * of already-finished rows cost nothing. `finish()` always writes.
  *
- * Writes are chained so two never overlap, and coalesced: the record is built
- * inside the queued write, and only when that write is still the latest, so a
- * report a later one superseded costs nothing. Only the most recent write
+ * Writes are chained so two never overlap, and coalesced: a queued write that
+ * a later one has superseded writes nothing. Only the most recent write
  * decides `written`.
  *
  * A failure NEVER fails the run -- the items exist either way. `onFirstFailure`
@@ -280,13 +283,21 @@ export function keepBatchRecord(
     fail(err);
   }
 
-  /** Queue a write of the record built from `current` at the time it runs. */
+  /** Queue a write of the record built from `current` NOW -- a snapshot, never the live object later. */
   const queue = (): void => {
     const seq = ++latest;
+    let now: BatchRecord;
+    try {
+      now = recordFromManifest(current!, titlePath);
+    } catch (err) {
+      // The latest record could not be built: whatever is queued is superseded, and it is not written.
+      written = false;
+      fail(err);
+      return;
+    }
     writes = writes.then(async () => {
       if (seq !== latest) return; // superseded: a later record is queued
       try {
-        const now = recordFromManifest(current!, titlePath);
         await writeJsonAtomic(file, earlier === null ? now : accumulate(earlier, now));
         if (seq === latest) written = true;
       } catch (err) {
@@ -304,15 +315,9 @@ export function keepBatchRecord(
       seen.set(progress.rowNumber, progress.status);
       queue();
     },
-    /** The final write, from the manifest as saved. Nothing new is written when it cannot be read. */
+    /** The final write, from the last manifest reported -- for a run that returned, the one it saved. Always writes. */
     finish(): void {
       if (refused) return;
-      try {
-        current = parseManifest(readFileSync(manifestPath, 'utf8'), manifestPath);
-      } catch (err) {
-        fail(err);
-        return;
-      }
       queue();
     },
     /** Every queued write, settled. Never rejects. */
@@ -332,14 +337,18 @@ export interface RecordTarget {
 /**
  * A run, keeping the batch record when one was asked for -- the ONE lifecycle
  * the CLI and the desktop share. `run` calls `afterRow` from the runner's
- * progress callback with the entry and the manifest it was handed; the record
- * is written once more at the end, from the saved manifest, and every write
- * has settled before this returns or throws.
+ * progress callback with the entry and the manifest it was handed; every
+ * write has settled before this returns or throws.
  *
- * That final write happens only when the run returned, or reported at least
- * one row. A run that threw before reporting anything never started -- most
- * often another run holds the manifest's lock -- and writing then would put a
- * start-time snapshot over the live run's record.
+ * A run that RETURNED is written once more at the end, so a batch whose rows
+ * were all finished already still leaves a record. A run that THREW is not:
+ * its record is the last one a report wrote, which is a state the manifest
+ * was saved in. Nothing later is known to be saved, and a run that threw
+ * before reporting anything may never have started at all -- most often
+ * another run holds the manifest's lock -- so writing then would put a
+ * start-time snapshot over that run's record. A row in flight when it threw
+ * is the manifest's to report (`uploading`, and the runner's interrupted-row
+ * check on the next run), not the record's.
  *
  * A RECORD THAT CANNOT BE WRITTEN NEVER FAILS THE RUN: the items exist either
  * way. It comes back as `indexRecordError`; `onFirstFailure` hears it as it
@@ -353,20 +362,14 @@ export async function runKeepingRecord<S>(
 ): Promise<{ summary: S; indexRecordPath?: string; indexRecordError?: string }> {
   if (target === undefined) return { summary: await run(() => {}) };
   const keeper = keepBatchRecord(manifestPath, target.path, target.titlePath, onFirstFailure);
-  let reported = false;
   let returned = false;
   let summary: S;
   let kept: KeptRecord;
   try {
-    summary = await run((entry, manifest) => {
-      reported = true;
-      keeper.update(entry, manifest);
-    });
+    summary = await run((entry, manifest) => keeper.update(entry, manifest));
     returned = true;
   } finally {
-    // Once more at the end -- a run that threw included -- so the record holds
-    // what was saved, and a batch with no rows to report still leaves one.
-    if (returned || reported) keeper.finish();
+    if (returned) keeper.finish();
     // Never rejects: a run that threw is not made to wait on, or hidden by, its record.
     kept = await keeper.settled();
   }

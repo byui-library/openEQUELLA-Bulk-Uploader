@@ -21,15 +21,17 @@ export const andMore = (total: number, shown = NOT_IN_SERIES_SHOWN): string =>
  * none. One wording: the CLI prints it, the desktop shows it.
  *
  * Names at most `NOT_IN_SERIES_SHOWN` of `missing` and counts the rest of
- * `total`: one misnamed file (`Vol270` in a run of 38) makes hundreds
- * "missing", so only the first few are ever collected.
+ * `missingCount`: one misnamed file (`Vol270` in a run of 38) makes hundreds
+ * "missing", so only the first few are ever collected. The two travel as one
+ * value -- `SeriesIndex` and `IndexPreview` both fit -- so they cannot be
+ * passed out of step.
  */
 export const missingNote = (
-  missing: readonly number[],
+  gaps: { missing: readonly number[]; missingCount: number },
   labels: { group: string; groups: string },
-  total: number,
 ): string => {
-  if (total === 0) return '';
+  const { missing, missingCount: total } = gaps;
+  if (total === 0 || missing.length === 0) return '';
   const more = andMore(total);
   return (
     `No ${total === 1 ? labels.group : labels.groups} found for ` +
@@ -40,8 +42,15 @@ export const missingNote = (
 /** One "Not in the series" entry: "FQ_Index.pdf -- no volume number". */
 export const notInSeriesEntry = (l: { name: string; reason: string }): string => `${l.name} -- ${l.reason}`;
 
+/** One row a run did not create, as the CLI and the desktop preview both show it. */
+export interface NotCreatedRow {
+  label: string;
+  status: string;
+  error?: string;
+}
+
 /** One "Not created by the run" entry: "Vol2 (4 files) -- failed (The server said no.)". */
-export const notCreatedEntry = (n: { label: string; status: string; error?: string }): string =>
+export const notCreatedEntry = (n: NotCreatedRow): string =>
   `${n.label} -- ${n.status}${n.error ? ` (${n.error})` : ''}`;
 
 /** The volume link's description: "Index of all volumes", in the template's own word. */

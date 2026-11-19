@@ -7,7 +7,7 @@ import type { ExtractedRow, ProblemsSummary, SequenceLabels } from '../core/extr
 import type { DuplicateFinding } from '../core/duplicates.js';
 import type { FolderSummary } from '../core/folderReport.js';
 import type { TemplateSummary } from '../core/extract/templates.js';
-import type { ExistingView } from '../core/seriesIndex/words.js';
+import type { ExistingView, NotCreatedRow } from '../core/seriesIndex/words.js';
 
 /** What the renderer is shown of one index build; the build itself stays in the main process. */
 export interface IndexPreview {
@@ -31,12 +31,7 @@ export interface IndexPreview {
   notCreated: NotCreatedRow[];
 }
 
-/** One row a run did not create, as the index preview shows it. */
-export interface NotCreatedRow {
-  label: string;
-  status: string;
-  error?: string;
-}
+export type { NotCreatedRow };
 
 /** Where an index is built from: a search of one collection, or batch records the runs kept. */
 export type IndexSourceArgs = { collectionUuid: string } | { recordPaths: string[] };

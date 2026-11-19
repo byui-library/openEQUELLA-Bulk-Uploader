@@ -162,7 +162,7 @@ export function previewLines(b: IndexBuild): string[] {
   const L = b.labels;
   const issues = b.index.volumes.reduce((n, v) => n + v.issues.length, 0);
   const lines = [`${plural(b.index.volumes.length, L.group, L.groups)}, ${plural(issues, L.part, L.parts)}.`];
-  const gaps = missingNote(b.index.missing, L, b.index.missingCount);
+  const gaps = missingNote(b.index, L);
   if (gaps) lines.push(gaps);
   for (const h of b.index.heldBack) {
     lines.push(`Held back: ${h.reason} -- ${h.items.map((i) => i.name).join(', ')}`);

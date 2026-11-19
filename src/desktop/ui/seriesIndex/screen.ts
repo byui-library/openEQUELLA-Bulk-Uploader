@@ -50,7 +50,7 @@ function previewMarkup(s: IndexFlowState, p: IndexPreview): string {
         .join('')}</ul>`
     : '';
   // Escaped once, as a whole: the words come from the template (raw labels here).
-  const gaps = missingNote(p.missing, p.labels, p.missingCount);
+  const gaps = missingNote(p, p.labels);
   const more = andMore(p.notInSeries.length);
   const left = p.notInSeries.length
     ? `<details><summary>Not in the series (${p.notInSeries.length})</summary><ul>${p.notInSeries
