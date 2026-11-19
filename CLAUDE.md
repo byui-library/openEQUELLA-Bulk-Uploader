@@ -183,6 +183,24 @@ batch-record route is unit-tested but NOT yet run live** -- the operator chose
 not to re-upload the series; do it on the next real upload.
 Design: [docs/superpowers/specs/2026-11-18-series-index-design.md](docs/superpowers/specs/2026-11-18-series-index-design.md).
 
+**Sites can be added from Sign-in and removed one at a time** (2026-11-19,
+on `feature/add-site-from-signin`, not yet merged or released;
+[spec](docs/superpowers/specs/2026-11-19-add-and-remove-sites-design.md)).
+The operator, installing v1.4.0 to upload to production, could not find how
+to add a second site: the only route was Sign-in, then "Settings for {site}…",
+then Setup's own dropdown. Sign-in now offers **"Add another site…" as a
+button under its "Site" dropdown -- never as an option IN the dropdown**,
+because arrowing through a closed `<select>` on Windows fires `change` for
+every option passed, and an option that navigated would drop someone stepping
+between test and production into Setup. Setup offers **"Remove this site…"**
+for a saved site (`removeInstance`: ends its sessions first, clears the token
+only if it is that site's, then deletes its entry, password and model in one
+write). The app still opens on the FIRST site, by the operator's decision, so
+a session never starts on production because of yesterday. Hand-tested over
+CDP with `--user-data-dir` pointed at a scratch folder: **the dev and packaged
+builds share `%APPDATA%\oeq-bulk-uploader`**, so a hand test without it
+writes into the store the operator's installed copy is using.
+
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
 both BYU-Idaho sites**, because openEQUELLA now refuses the old query-string
 login (see the password bullet under Key domain facts). Released and tagged

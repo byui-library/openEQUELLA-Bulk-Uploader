@@ -2,7 +2,20 @@
 
 Read this first.
 
-## RESUME HERE — 2026-11-19
+## RESUME HERE — 2026-11-19 (afternoon)
+
+**Add / remove sites** is built on `feature/add-site-from-signin`, pushed,
+not yet merged or released. Spec
+`docs/superpowers/specs/2026-11-19-add-and-remove-sites-design.md`, plan
+`docs/superpowers/plans/2026-11-19-add-and-remove-sites.md` (Tasks 1-7 done).
+Sign-in: "Site" dropdown + "Add another site…" button. Setup: "Remove this
+site…" behind a confirm naming the address and everything deleted. Suite
+green, typecheck and `build:desktop` clean; hand-tested in the dev build over
+CDP against a scratch `--user-data-dir` (add, Back saves nothing, add a
+second, remove the inactive one, decline, remove the last -> first-run Setup).
+**Next:** code review + /simplify, PR, merge, release (v1.4.1 or v1.5.0).
+
+## 2026-11-19 (morning)
 
 **Where things stand.** The series index page is MERGED to `main` (PR #21,
 merge commit `20d0b3d`) and RELEASED as **v1.4.0** (tagged 2026-11-19).
