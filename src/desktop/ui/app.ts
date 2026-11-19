@@ -10,7 +10,7 @@ import type {
 } from '../ipc.js';
 import type { CurrentUser, CollectionSummary } from '../../core/client.js';
 import { rowLabel, type ItemState } from '../../core/types.js';
-import { initialScreen, nextScreen, settingsReturnTo, type Screen } from './state.js';
+import { initialScreen, nextScreen, settingsReturnTo, type Screen, type ScreenEvent } from './state.js';
 import { errorMessage } from './errors.js';
 import { renderBanner } from './banner.js';
 import {
@@ -1269,6 +1269,12 @@ async function handleSaveSettings(
     // Point the rest of the app at the instance that was just configured --
     // landing back on Sign-in still pointed at a DIFFERENT (uncredentialed)
     // instance would look like nothing had happened.
+    //
+    // A DIFFERENT site's user is nobody here. Left standing until the check
+    // below resolves, Sign-in showed "Signed in as {the old site's user}" with
+    // a Continue for the new site -- the screen handleInstanceChange already
+    // refuses to draw. "Add another site…" made that easy to reach.
+    if (saved.id !== state.instanceId) state.user = null;
     state.instanceId = saved.id;
 
     if (modelError !== null) {
@@ -1345,8 +1351,24 @@ function handleInstanceChange(id: string): void {
  * untouched.
  */
 function handleAddCredentials(): void {
-  seedSetupForm(state.instanceId);
-  state.screen = nextScreen('signin', { type: 'addCredentials' });
+  openSetup(state.instanceId, 'signin', { type: 'addCredentials' }, null);
+}
+
+/**
+ * Every route into Setup from another screen: point the form at `id`, record
+ * where Back goes (null: no Back), move, and READ WHAT IS STORED.
+ *
+ * ONE FUNCTION because every route has to ask for all four: arriving without
+ * reading the stored endpoint once left the boxes holding defaults, and an
+ * operator who corrected the address and saved silently overwrote their own
+ * budget, cap and time limit -- with no Forget button rendered to undo it.
+ * Four hand copies of the list is how one of them goes missing again.
+ */
+function openSetup(id: string, from: Screen, event: ScreenEvent, returnTo: Screen | null): void {
+  seedSetupForm(id);
+  // After the seed, which clears it.
+  state.setupEnteredFrom = returnTo;
+  state.screen = nextScreen(from, event);
   render();
   void refreshStoredUsername();
   void refreshStoredOAuth();
@@ -1377,20 +1399,7 @@ function handleAddCredentials(): void {
  * collection is chosen on Choose -- which had no way back.
  */
 function handleSiteSettings(from: Screen): void {
-  seedSetupForm(state.instanceId);
-  state.setupEnteredFrom = from;
-  state.screen = nextScreen(from, { type: 'siteSettings' });
-  render();
-  void refreshStoredUsername();
-  void refreshStoredOAuth();
-  // EVERY ROUTE INTO SETUP HAS TO ASK, and this one most of all: it exists so a
-  // setting can be changed without destroying anything, and arriving here
-  // without reading the stored endpoint left the boxes holding defaults. An
-  // operator who corrected the address and saved then silently overwrote their
-  // own budget, cap and time limit -- and the Forget button was not rendered at
-  // all, so there was no way to remove an endpoint from the screen that owns it.
-  void refreshStoredModel();
-  void refreshSetupCollections();
+  openSetup(state.instanceId, from, { type: 'siteSettings' }, from);
 }
 
 /**
@@ -1402,15 +1411,7 @@ function handleSiteSettings(from: Screen): void {
  * nothing; Save selects the new site and lands on Sign-in (handleSaveSettings).
  */
 function handleAddSite(): void {
-  seedSetupForm('');
-  // After the seed, which clears it: Back has somewhere to go.
-  state.setupEnteredFrom = 'signin';
-  state.screen = nextScreen('signin', { type: 'addSite' });
-  render();
-  void refreshStoredUsername();
-  void refreshStoredOAuth();
-  void refreshStoredModel();
-  void refreshSetupCollections();
+  openSetup('', 'signin', { type: 'addSite' }, 'signin');
 }
 
 /**
@@ -1422,28 +1423,41 @@ function handleAddSite(): void {
  * a blank form and no Back, since there is nothing behind it.
  */
 async function handleRemoveSite(): Promise<void> {
+  // A Save in flight would write the site back, or point the app at an id
+  // the list no longer holds. The button is disabled then; this is the guard.
+  if (state.setupSaving) return;
   const id = state.setupInstanceId;
   const site = instanceById(id);
   if (site === null) return;
   if (!window.confirm(removeSiteQuestion(site.label, site.baseUrl))) return;
+  let report;
   try {
-    await window.oeq.removeInstance(id);
-    // In the same try: a list that could not be re-read must be reported,
-    // not left showing the site that was just removed.
-    state.instances = withSaved(await window.oeq.listInstances());
+    report = await window.oeq.removeInstance(id);
   } catch (err) {
     state.setupError = errorMessage(err);
     render();
     return;
   }
+  // REMOVED, whatever happens next. A list that cannot be re-read is not a
+  // failed removal: drop the site here so nothing goes on offering it.
+  try {
+    state.instances = withSaved(await window.oeq.listInstances());
+  } catch {
+    state.instances = state.instances.filter((i) => i.id !== id);
+  }
   state.setupError = null;
-  state.signinError = null;
+  // The confirm said "signs you out of it": a logout the server did not
+  // confirm is said, as Sign out says it.
+  const notice = signOutNotice(report);
+  state.signinError = notice;
   if (state.instanceId === id || currentInstance() === null) {
     state.instanceId = state.instances[0]?.id ?? '';
     state.user = null;
   }
   if (state.instanceId === '') {
     seedSetupForm('');
+    // After the seed, which clears it: with no Sign-in to land on, Setup says it.
+    state.setupError = notice;
     state.screen = 'setup';
     render();
     return;

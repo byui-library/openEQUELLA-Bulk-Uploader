@@ -1327,7 +1327,7 @@ export function setupMarkup(props: SetupProps): string {
           // default-type button submits it, and a removal must never save.
           selected
             ? `<p class="reset-row">
-          <button id="setup-remove-site" type="button" class="secondary">
+          <button id="setup-remove-site" type="button" class="secondary" ${props.saving ? 'disabled' : ''}>
             Remove this site…
           </button>
         </p>`

@@ -277,9 +277,10 @@ export interface OeqApi {
    * Behind Setup's "Remove this site…": end the site's sessions, clear its
    * sign-in token if the stored one is this site's, and delete everything
    * stored for it. Other sites are untouched. Removing what is absent is not
-   * an error.
+   * an error. Reports the sessions it ended, as `signOut` does, so a logout
+   * the server did not confirm can be said.
    */
-  removeInstance(instanceId: string): Promise<void>;
+  removeInstance(instanceId: string): Promise<SessionEndReport>;
 
   /**
    * The stored OAuth credential for one site, minus the secret.

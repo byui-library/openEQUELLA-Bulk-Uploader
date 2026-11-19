@@ -1555,7 +1555,7 @@ describe('the reach of each Forget', () => {
 
   it('removeInstance removes the site, its password, its OAuth client and its model', async () => {
     const s = await furnished();
-    await s.removeInstance(instanceKey(LIVE));
+    expect((await s.removeInstance(instanceKey(LIVE)))?.label).toBe('Live');
 
     expect(await s.loadInstance(instanceKey(LIVE))).toBeNull();
     expect(await s.getPassword(instanceKey(LIVE))).toBeNull();
@@ -1581,7 +1581,7 @@ describe('the reach of each Forget', () => {
   it('removing a site that is not stored is not an error, and writes nothing', async () => {
     const file = join(dir, 'settings.enc');
     const s = new SecretStore(file, fakeCipher);
-    await expect(s.removeInstance(instanceKey(LIVE))).resolves.toBeUndefined();
+    await expect(s.removeInstance(instanceKey(LIVE))).resolves.toBeNull();
     await expect(readFile(file)).rejects.toThrow(/ENOENT/);
   });
 

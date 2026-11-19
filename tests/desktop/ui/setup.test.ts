@@ -1360,8 +1360,13 @@ describe('the collection field on Setup', () => {
 describe('Remove this site…', () => {
   it('is offered for a saved site, as a button that cannot submit the form', () => {
     expect(setupMarkup(props())).toMatch(
-      /<button id="setup-remove-site" type="button" class="secondary">\s*Remove this site…/,
+      /<button id="setup-remove-site" type="button" class="secondary"\s*>\s*Remove this site…/,
     );
+  });
+
+  it('cannot be clicked while a save is in flight', () => {
+    expect(setupMarkup(props({ saving: true }))).toMatch(/id="setup-remove-site"[^>]*disabled/);
+    expect(setupMarkup(props())).not.toMatch(/id="setup-remove-site"[^>]*disabled/);
   });
 
   it('is not offered while adding a new site', () => {

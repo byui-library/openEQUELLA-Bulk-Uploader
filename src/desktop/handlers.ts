@@ -537,21 +537,30 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
    * openEQUELLA times an abandoned session out regardless.
    *
    * The token store holds ONE token, keyed by address, so it is cleared only
-   * when that token is this site's: removing the sandbox must not sign the
-   * operator out of production.
+   * when that token is this site's -- by EXACT address, the rule `hasToken`
+   * and the token store's own `load` apply. Matching the origin instead would
+   * treat `https://host/oeq-test` and `https://host/oeq` as one site, and
+   * removing the sandbox would sign the operator out of production.
+   *
+   * The session report goes back to the renderer, as signOut's does: the
+   * confirm promised "signs you out of it", and a logout the server did not
+   * confirm must be said rather than swallowed.
    */
   ipcMain.handle(
     CHANNELS.removeInstance,
-    async (_e, instanceId: Parameters<OeqApi['removeInstance']>[0]) => {
+    async (_e, instanceId: Parameters<OeqApi['removeInstance']>[0]): Promise<SessionEndReport> => {
+      let report: SessionEndReport;
       try {
-        await endSessionsFor(instanceId);
+        report = await endSessionsFor(instanceId);
       } catch {
-        // Deliberately empty -- see forgetPassword.
+        // Unknown whether anything ended: say so, and remove regardless --
+        // see forgetPassword.
+        report = { sessions: 1, unconfirmed: 1 };
       }
-      const inst = await secrets().loadInstance(instanceId);
+      const removed = await secrets().removeInstance(instanceId);
       const token = await tokens().loadRaw();
-      if (inst !== null && token !== null && sameOrigin(token.baseUrl, inst.baseUrl)) await tokens().clear();
-      await secrets().removeInstance(instanceId);
+      if (removed !== null && token !== null && token.baseUrl === removed.baseUrl) await tokens().clear();
+      return report;
     },
   );
 

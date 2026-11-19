@@ -823,19 +823,21 @@ export class SecretStore {
    * is untouched. Removing what is absent is not an error and writes nothing.
    *
    * Ending the site's sessions and clearing its token is the IPC handler's
-   * job (handlers.ts): this store holds neither.
+   * job (handlers.ts): this store holds neither. Returns the site as it was
+   * stored -- null when there was no entry -- so the handler can match its
+   * token against the address it had, from the same read that was written.
    */
-  async removeInstance(instanceId: InstanceId): Promise<void> {
+  async removeInstance(instanceId: InstanceId): Promise<Instance | null> {
     const { shape } = await this.loadAll();
+    const entry = shape.instances[instanceId];
     const present =
-      shape.instances[instanceId] !== undefined ||
-      shape.passwords[instanceId] !== undefined ||
-      shape.models[instanceId] !== undefined;
-    if (!present) return;
+      entry !== undefined || shape.passwords[instanceId] !== undefined || shape.models[instanceId] !== undefined;
+    if (!present) return null;
     delete shape.instances[instanceId];
     delete shape.passwords[instanceId];
     delete shape.models[instanceId];
     await this.write(shape);
+    return entry === undefined ? null : toInstance(instanceId, entry);
   }
 
   /** The instance itself -- address, name and per-site settings -- without its credentials. */
