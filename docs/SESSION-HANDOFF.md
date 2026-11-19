@@ -5,8 +5,10 @@ Read this first.
 ## RESUME HERE — 2026-11-19
 
 **Where things stand.** The series index page is MERGED to `main` (PR #21,
-merge commit `20d0b3d`), not yet released. `main` and `feature/series-index`
-had identical content at merge; nothing was pushed to the branch after it.
+merge commit `20d0b3d`) and RELEASED as **v1.4.0** (tagged 2026-11-19).
+`main` and `feature/series-index` had identical content at merge; the branch
+is deleted. Tell staff the index page exists, and that Review's "Keep a
+record of this batch" box is off unless ticked.
 
 **Since 2026-11-18:** a third review (of the /simplify commits) and a fourth,
 focused one (of that review's fixes) ran. The fourth found the batch-record
@@ -21,8 +23,8 @@ search again (one request against hundreds), and storing gaps as ranges
 (the 20-number cap is deliberate). No Copilot review on PR #21 -- the
 operator had no credits that month and judged the four reviews enough.
 
-**Next, in order:** items 2-5 below (release, live-test the batch record,
-the deferred items, Volume 27's order). Item 1 is done.
+**Next, in order:** items 3-5 below (live-test the batch record, the
+deferred items, Volume 27's order). Items 1 and 2 (PR, release) are done.
 
 ## 2026-11-18 (end of day)
 

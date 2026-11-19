@@ -158,8 +158,8 @@ template's fixed sentence, never replacing it. Run live with the operator's
 model on 2026-11-17 ("worked very well"). Next: the series index page.
 Design: [docs/superpowers/specs/2026-11-13-multi-file-items-design.md](docs/superpowers/specs/2026-11-13-multi-file-items-design.md).
 
-**The series index page is BUILT, REVIEWED, LIVE-TESTED and MERGED** (PR #21,
-2026-11-19), not yet released. One page
+**The series index page is BUILT, REVIEWED, LIVE-TESTED, MERGED (PR #21) and
+RELEASED in v1.4.0** (2026-11-19). One page
 listing every volume of a serial, each linking to its item and each issue to
 its PDF, as `index.html`/`.css`/`.js`, saved to a folder for another web
 server and/or uploaded as one openEQUELLA item that a rebuild updates in
@@ -180,8 +180,7 @@ month). **The live run PASSED on content-test through the search
 route** (36 volumes, 94 issues; files, upload as draft, rebuild in place, links
 added to all 36 exactly once, a second link run adding none). **The
 batch-record route is unit-tested but NOT yet run live** -- the operator chose
-not to re-upload the series; do it on the next real upload. Still to do:
-release.
+not to re-upload the series; do it on the next real upload.
 Design: [docs/superpowers/specs/2026-11-18-series-index-design.md](docs/superpowers/specs/2026-11-18-series-index-design.md).
 
 **v1.2.2 fixes password sign-in, which is BROKEN in v1.2.1 and earlier at
