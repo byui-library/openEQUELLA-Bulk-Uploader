@@ -45,6 +45,8 @@ export interface SigninProps {
   onSignOut(): void;
   onContinue(): void;
   onAddCredentials(): void;
+  /** "Add another site…" -- Setup with a blank form, clearing nothing (app.ts#handleAddSite). */
+  onAddSite(): void;
   /**
    * Back to Setup for the SELECTED site, clearing nothing.
    *
@@ -70,6 +72,36 @@ export interface SigninProps {
  * for exactly that site, right here.
  */
 export function renderSignin(root: HTMLElement, props: SigninProps): void {
+  root.innerHTML = signinMarkup(props);
+
+  root.querySelector<HTMLSelectElement>('#signin-instance')?.addEventListener('change', (e) => {
+    props.onInstanceChange((e.target as HTMLSelectElement).value);
+  });
+  root.querySelector<HTMLButtonElement>('#add-site-btn')?.addEventListener('click', () => props.onAddSite());
+  root.querySelector<HTMLButtonElement>('#signin-btn')?.addEventListener('click', () => props.onSignIn());
+  root.querySelector<HTMLButtonElement>('#signout-btn')?.addEventListener('click', () => props.onSignOut());
+  root.querySelector<HTMLButtonElement>('#continue-btn')?.addEventListener('click', () => props.onContinue());
+  root
+    .querySelector<HTMLButtonElement>('#add-credentials-btn')
+    ?.addEventListener('click', () => props.onAddCredentials());
+  root
+    .querySelector<HTMLButtonElement>('#site-settings-btn')
+    ?.addEventListener('click', () => props.onSiteSettings());
+  root
+    .querySelector<HTMLButtonElement>('#reset-settings-btn')
+    ?.addEventListener('click', () => props.onResetSettings());
+}
+
+/**
+ * The screen as markup, separated from `renderSignin` so it can be asserted
+ * on as a string, as `setupMarkup` is -- this project has no jsdom.
+ *
+ * "Add another site…" is a BUTTON beside the dropdown, never an option in it:
+ * on Windows, arrowing through a closed <select> fires `change` for every
+ * option passed, so an option that navigated would drop an operator who was
+ * only stepping between test and production into Setup.
+ */
+export function signinMarkup(props: SigninProps): string {
   const options = props.instances
     .map(
       (i) =>
@@ -117,12 +149,15 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
       </button>
       <p class="hint">${escapeHtml(signinHint(authMode))}</p>`;
 
-  root.innerHTML = `
+  return `
     <section class="screen">
       <h1>Sign in</h1>
 
-      <label for="signin-instance">Instance</label>
+      <label for="signin-instance">Site</label>
       <select id="signin-instance">${options}</select>
+      <p class="reset-row">
+        <button id="add-site-btn" type="button" class="link-button">Add another site…</button>
+      </p>
 
       ${props.error ? `<p class="error" role="alert">${escapeHtml(props.error)}</p>` : ''}
       ${props.checkingUser ? `<p class="muted">Checking for an existing sign-in…</p>` : ''}
@@ -135,20 +170,4 @@ export function renderSignin(root: HTMLElement, props: SigninProps): void {
       </p>
     </section>
   `;
-
-  root.querySelector<HTMLSelectElement>('#signin-instance')?.addEventListener('change', (e) => {
-    props.onInstanceChange((e.target as HTMLSelectElement).value);
-  });
-  root.querySelector<HTMLButtonElement>('#signin-btn')?.addEventListener('click', () => props.onSignIn());
-  root.querySelector<HTMLButtonElement>('#signout-btn')?.addEventListener('click', () => props.onSignOut());
-  root.querySelector<HTMLButtonElement>('#continue-btn')?.addEventListener('click', () => props.onContinue());
-  root
-    .querySelector<HTMLButtonElement>('#add-credentials-btn')
-    ?.addEventListener('click', () => props.onAddCredentials());
-  root
-    .querySelector<HTMLButtonElement>('#site-settings-btn')
-    ?.addEventListener('click', () => props.onSiteSettings());
-  root
-    .querySelector<HTMLButtonElement>('#reset-settings-btn')
-    ?.addEventListener('click', () => props.onResetSettings());
 }

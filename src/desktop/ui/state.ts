@@ -25,6 +25,10 @@ export type ScreenEvent =
   | { type: 'addCredentials' }
   /** A task screen's "Site settings…" link -- Setup for the selected site, clearing nothing. */
   | { type: 'siteSettings' }
+  /** Sign-in's "Add another site…": Setup with a blank form, clearing nothing. */
+  | { type: 'addSite' }
+  /** Setup's "Remove this site…" done, with at least one site left to choose from. */
+  | { type: 'siteRemoved' }
   | { type: 'planChecked' }
   | { type: 'reviewApproved' }
   | { type: 'uploadStarted' }
@@ -71,6 +75,15 @@ export function nextScreen(current: Screen, event: ScreenEvent): Screen {
     // accident.
     case 'siteSettings':
       return 'setup';
+    // A FOURTH route to Setup. Not 'addCredentials' (a saved site with no
+    // credentials) and not 'editSettings' (fired after wiping every site):
+    // this adds a site and touches none of the existing ones.
+    case 'addSite':
+      return 'setup';
+    // Sign-in is where a site is chosen, and the removed one may have been
+    // the site a waiting Choose selection belonged to.
+    case 'siteRemoved':
+      return 'signin';
     // 'planChecked' deliberately does NOT change screen -- a successful
     // plan() from Review reveals the warnings/entry-count on the SAME
     // screen (spec: "Nothing uploads from this screen") so the user has a

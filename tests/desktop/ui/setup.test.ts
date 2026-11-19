@@ -9,6 +9,7 @@ import {
   instanceFrom,
   modelEntryProblem,
   modelFrom,
+  removeSiteQuestion,
   renderSetup,
   setupMarkup,
   settingsFrom,
@@ -103,6 +104,7 @@ const props = (over: Partial<SetupProps> = {}): SetupProps => ({
   onCollectionChange: () => {},
   onLiveChange: () => {},
   onForgetPassword: () => {},
+  onRemoveSite: () => {},
   onSave: () => {},
   // First run by default: nowhere to go back to, so no Back is offered.
   returnTo: null,
@@ -1352,5 +1354,31 @@ describe('the collection field on Setup', () => {
   it('says plainly that it is not where files go', () => {
     const html = setupMarkup(props({ collections: COLLECTIONS }));
     expect(html).toMatch(/not where your files (go|are)/i);
+  });
+});
+
+describe('Remove this site…', () => {
+  it('is offered for a saved site, as a button that cannot submit the form', () => {
+    expect(setupMarkup(props())).toMatch(
+      /<button id="setup-remove-site" type="button" class="secondary"\s*>\s*Remove this site…/,
+    );
+  });
+
+  it('cannot be clicked while a save is in flight', () => {
+    expect(setupMarkup(props({ saving: true }))).toMatch(/id="setup-remove-site"[^>]*disabled/);
+    expect(setupMarkup(props())).not.toMatch(/id="setup-remove-site"[^>]*disabled/);
+  });
+
+  it('is not offered while adding a new site', () => {
+    expect(setupMarkup(props({ instanceId: '' }))).not.toContain('setup-remove-site');
+  });
+
+  it('asks a question naming the site, its address, and everything removed', () => {
+    const q = removeSiteQuestion('Live', 'https://oeq.example.edu');
+    expect(q).toContain('Live (https://oeq.example.edu)');
+    expect(q).toMatch(/password or OAuth credentials/);
+    expect(q).toMatch(/model settings/);
+    expect(q).toMatch(/signs you out/);
+    expect(q).toMatch(/other sites are not changed/i);
   });
 });

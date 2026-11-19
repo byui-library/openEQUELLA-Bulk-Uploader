@@ -374,6 +374,87 @@ describe('forgetPassword', () => {
   });
 });
 
+describe('removeInstance', () => {
+  const SITE = 'https://oeq.example.edu';
+  const OTHER = 'https://oeq-test.example.edu';
+
+  beforeEach(async () => {
+    hoisted.userData = await mkdtemp(join(tmpdir(), 'oeq-remove-'));
+    forgetLiveSessions();
+  });
+
+  const store = () => new SecretStore(join(hoisted.userData, 'settings.enc'), plainCipher);
+  const tokenStore = () => new EncryptedTokenStore(join(hoisted.userData, 'token.enc'), plainCipher);
+  const password = { authMode: 'password' as const, username: 'm.rowan', password: 'hunter2' };
+  /** The address as the store keeps it -- what a sign-in writes into the token. */
+  const storedUrl = async (id: string) => (await store().loadInstance(id))!.baseUrl;
+
+  async function sites(...urls: string[]) {
+    for (const [i, url] of urls.entries()) await store().saveInstance({ label: `Site ${i}`, baseUrl: url }, password);
+    const ipc = fakeIpcMain();
+    registerHandlers(ipc as never, getWindowStub());
+    return ipc;
+  }
+
+  it('removes the site and leaves the other', async () => {
+    const ipc = await sites(SITE, OTHER);
+    await ipc.call('oeq:removeInstance', SITE);
+    expect((await store().listInstances()).map((i) => i.id)).toEqual([OTHER]);
+    expect(await store().getPassword(OTHER)).not.toBeNull();
+  });
+
+  it("ends the site's session while it is still stored, then removes it", async () => {
+    const ipc = await sites(SITE, OTHER);
+    let storedDuringLogout: boolean | null = null;
+    rememberSession(SITE, {
+      logout: async () => {
+        storedDuringLogout = (await store().loadInstance(SITE)) !== null;
+      },
+    });
+    expect(await ipc.call('oeq:removeInstance', SITE)).toEqual({ sessions: 1, unconfirmed: 0 });
+    expect(storedDuringLogout).toBe(true);
+    expect(await store().loadInstance(SITE)).toBeNull();
+  });
+
+  it('removes the site even when ending its session fails, and reports it unconfirmed', async () => {
+    const ipc = await sites(SITE, OTHER);
+    rememberSession(SITE, {
+      logout: async () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    });
+    const report = await ipc.call<{ unconfirmed: number }>('oeq:removeInstance', SITE);
+    expect(report.unconfirmed).toBeGreaterThan(0);
+    expect(await store().loadInstance(SITE)).toBeNull();
+  });
+
+  it("clears the sign-in token when it is this site's", async () => {
+    const ipc = await sites(SITE, OTHER);
+    await tokenStore().save({ accessToken: 't-site', baseUrl: await storedUrl(SITE) });
+    await ipc.call('oeq:removeInstance', SITE);
+    expect(await tokenStore().loadRaw()).toBeNull();
+  });
+
+  it("leaves another site's sign-in token alone", async () => {
+    const ipc = await sites(SITE, OTHER);
+    await tokenStore().save({ accessToken: 't-other', baseUrl: await storedUrl(OTHER) });
+    await ipc.call('oeq:removeInstance', SITE);
+    expect((await tokenStore().loadRaw())?.accessToken).toBe('t-other');
+  });
+
+  /** One host, two deployments: an origin match would call them one site. */
+  it('leaves the token of a site on the same host under another path alone', async () => {
+    const test = 'https://oeq.example.edu/oeq-test';
+    const live = 'https://oeq.example.edu/oeq';
+    const ipc = await sites(test, live);
+    const testId = (await store().listInstances()).find((i) => i.baseUrl.includes('oeq-test'))!.id;
+    const liveId = (await store().listInstances()).find((i) => !i.baseUrl.includes('oeq-test'))!.id;
+    await tokenStore().save({ accessToken: 't-live', baseUrl: await storedUrl(liveId) });
+    await ipc.call('oeq:removeInstance', testId);
+    expect((await tokenStore().loadRaw())?.accessToken).toBe('t-live');
+  });
+});
+
 /**
  * "SIGN OUT" USED TO BE A HALF-LOGOUT TOO -- and a whole one in password mode.
  *

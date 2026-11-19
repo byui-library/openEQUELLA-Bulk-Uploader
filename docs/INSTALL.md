@@ -140,9 +140,17 @@ Then click **Save credentials**.
 A few things worth knowing about this screen:
 
 - **These details are saved per site.** If you use both a real site and a test
-  one, each gets its own entry, and the dropdown at the top of the screen
-  switches between them. `Add another site…` at the bottom of that list is how
-  you add the second one.
+  one, each gets its own entry. To add the second, click **Add another site…**
+  under the **Site** dropdown on the Sign-in screen; it opens this screen with
+  a blank form, and **Back** returns without saving anything. Choose which
+  site to work on from that same **Site** dropdown. The program always opens
+  on the first site you added, so production is never selected for you
+  because of what you did the day before.
+- **To remove one site**, open its settings and click **Remove this site…**.
+  The confirmation names the site and its address. It deletes that site's
+  saved password or OAuth credentials and model settings, and signs you out of
+  it; your other sites are not changed. (**Clear all credentials…** on the
+  Sign-in screen is different: it removes every site.)
 - Once saved, they are stored **encrypted, for your Windows user account
   only**, using the same protection Windows uses for saved passwords. Nobody
   else who logs into this computer can read them, and they never leave this

@@ -1553,6 +1553,38 @@ describe('the reach of each Forget', () => {
     expect((await s.loadInstance(instanceKey(LIVE)))?.label).toBe('Live');
   });
 
+  it('removeInstance removes the site, its password, its OAuth client and its model', async () => {
+    const s = await furnished();
+    expect((await s.removeInstance(instanceKey(LIVE)))?.label).toBe('Live');
+
+    expect(await s.loadInstance(instanceKey(LIVE))).toBeNull();
+    expect(await s.getPassword(instanceKey(LIVE))).toBeNull();
+    expect(await s.getOAuth(instanceKey(LIVE))).toBeNull();
+    expect(await s.getModel(instanceKey(LIVE))).toBeNull();
+    expect(await s.listInstances()).toEqual([]);
+  });
+
+  it('removeInstance leaves every other site exactly as it was', async () => {
+    const s = await furnished();
+    await s.saveInstance({ label: 'Sandbox', baseUrl: SANDBOX }, OAUTH);
+    await s.setPassword(instanceKey(SANDBOX), 'other.user', 'other-pass');
+    await s.setModel(instanceKey(SANDBOX), MODEL);
+
+    await s.removeInstance(instanceKey(LIVE));
+
+    expect((await s.listInstances()).map((i) => i.label)).toEqual(['Sandbox']);
+    expect(await s.getPassword(instanceKey(SANDBOX))).toEqual({ username: 'other.user', password: 'other-pass' });
+    expect(await s.getOAuth(instanceKey(SANDBOX))).not.toBeNull();
+    expect(await s.getModel(instanceKey(SANDBOX))).not.toBeNull();
+  });
+
+  it('removing a site that is not stored is not an error, and writes nothing', async () => {
+    const file = join(dir, 'settings.enc');
+    const s = new SecretStore(file, fakeCipher);
+    await expect(s.removeInstance(instanceKey(LIVE))).resolves.toBeNull();
+    await expect(readFile(file)).rejects.toThrow(/ENOENT/);
+  });
+
   /** And none of them touches a DIFFERENT site. */
   it('reaches only the site it is given', async () => {
     const s = await furnished();

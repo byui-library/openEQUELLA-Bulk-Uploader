@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { signinMode } from '../../../src/desktop/ui/signin.js';
-import { signinBusyLabel, signinHint } from '../../../src/desktop/ui/screens/signin.js';
+import {
+  signinBusyLabel,
+  signinHint,
+  signinMarkup,
+  type SigninProps,
+} from '../../../src/desktop/ui/screens/signin.js';
 import type { CurrentUser } from '../../../src/core/client.js';
 
 // A REAL account: `guest: false`. openEQUELLA answers an unauthenticated
@@ -62,5 +67,53 @@ describe('the Sign-in button’s copy', () => {
   it('says something different in each mode', () => {
     expect(signinHint('password')).not.toBe(signinHint('code'));
     expect(signinBusyLabel('password')).not.toBe(signinBusyLabel('code'));
+  });
+});
+
+describe('signinMarkup', () => {
+  const site = (id: string, label: string, live: boolean) => ({
+    id,
+    label,
+    baseUrl: id,
+    authMode: 'password' as const,
+    attachmentUuidPath: '',
+    live,
+    collectionUuid: '',
+    schemaUuid: '',
+  });
+  const base: SigninProps = {
+    instances: [site('https://oeq.example.edu', 'Live', true), site('https://oeq-test.example.edu', 'Sandbox', false)],
+    instanceId: 'https://oeq.example.edu',
+    instanceHasSettings: true,
+    user: null,
+    checkingUser: false,
+    signingIn: false,
+    error: null,
+    onInstanceChange: () => {},
+    onSignIn: () => {},
+    onSignOut: () => {},
+    onContinue: () => {},
+    onAddCredentials: () => {},
+    onAddSite: () => {},
+    onSiteSettings: () => {},
+    onResetSettings: () => {},
+  };
+
+  it('labels the dropdown "Site" and lists every saved site', () => {
+    const html = signinMarkup(base);
+    expect(html).toMatch(/<label for="signin-instance">Site<\/label>/);
+    expect(html).toContain('>Live</option>');
+    expect(html).toContain('>Sandbox</option>');
+  });
+
+  /**
+   * A BUTTON, NOT AN OPTION IN THE DROPDOWN: on Windows, arrowing through a
+   * closed <select> fires `change` for every option passed, so an option that
+   * navigates would drop an operator stepping between two sites into Setup.
+   */
+  it('offers "Add another site…" as a button, never as an option in the dropdown', () => {
+    const html = signinMarkup(base);
+    expect(html).toMatch(/<button id="add-site-btn" type="button"[^>]*>Add another site…<\/button>/);
+    expect(html.match(/<select[\s\S]*?<\/select>/)![0]).not.toMatch(/Add another site/);
   });
 });

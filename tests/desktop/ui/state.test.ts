@@ -17,6 +17,11 @@ describe('initialScreen', () => {
 });
 
 describe('nextScreen', () => {
+  it('adding a site from Sign-in opens Setup; removing one lands on Sign-in', () => {
+    expect(nextScreen('signin', { type: 'addSite' })).toBe('setup');
+    expect(nextScreen('setup', { type: 'siteRemoved' })).toBe('signin');
+  });
+
   it('advances Setup to Sign-in once settings are saved', () => {
     expect(nextScreen('setup', { type: 'settingsSaved' })).toBe('signin');
   });
