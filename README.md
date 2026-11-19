@@ -583,9 +583,232 @@ oeq-upload extract --dir batch --profile templates/snake-river-echoes.profile.js
 oeq-upload plan --sheet batch.csv --files batch
 ```
 
+## Series index page
+
+A serial uploaded one item per volume has no single place that lists the run.
+The index page is that place: **one page listing every volume, each linking to
+its item and each issue linking straight to its PDF**, with a filter box that
+narrows the list as you type (a progressive enhancement: with scripting off,
+the whole list is still there and works).
+
+It is a **separate step after uploading**, never part of a batch. It is built
+from one of two sources:
+
+- **A batch record** (the usual route). A run can keep a record of every item
+  it creates — its uuid, its title, its files in order — and the index is
+  built from that, with **no search of the collection at all**, so it takes
+  seconds however large the collection is. See *The batch record* below.
+- **A search of the collection in openEQUELLA**, for a series uploaded before
+  records existed, by hand, or in batches nobody recorded. It lists what is
+  actually there. openEQUELLA returns at most 50 items a request, so a large
+  collection is slow to read whole (one of 116,000 items is over 2,300
+  requests); a template's `titleStartsWith` (below) narrows it.
+
+One build produces three files, `index.html`, `index.css` and `index.js`, and
+the same three files go to either or both destinations:
+
+- **a folder, for a different web server.** Every link points back to
+  openEQUELLA; no PDF is copied.
+- **an openEQUELLA item**, whose three attachments are those files. A rebuild
+  **updates that item in place** — same item, same address — and never
+  creates a second one. An update keeps the item's state: it never publishes
+  a draft or unpublishes a live item.
+
+The page is deterministic: rebuilding with nothing changed produces identical
+files.
+
+### What it lists
+
+Each item's **volume and issues are read from its file names**, with the
+template's sequence patterns (see *Sequence patterns* above) — the same rule
+the spreadsheet builder uses, so a name the builder accepted is a name the
+index reads. Issues appear in the item's attachment order, labelled in the
+template's own words ("Issue 2", "Issues 2–3", "Issue 2 (1972)"); a file with
+no issue number is labelled by its name. A volume held as **one file naming
+no issue** reads *"Complete volume (1988)"*; an unnumbered file beside
+numbered issues (a supplement) keeps its name.
+
+- **Draft and live volumes are listed alike**, and so are items awaiting
+  moderation. An item's links are the same whatever its state; whether a
+  reader can open one is openEQUELLA's access control, not this tool's.
+- **A volume claimed by two items is HELD BACK and named**, both items with
+  it, as is an item whose own files name two volumes. The page never offers
+  two copies of a volume and never picks one, because nothing here can know
+  which is right. Remove the extra item in openEQUELLA and build again. A
+  held-back volume does not stop the rest from being built.
+- An item no pattern fits — including the index item itself — is listed in
+  the preview as **not in the series**, and so is a withdrawn item (deleted,
+  archived, suspended, …), with its status. Nothing silently vanishes. (A
+  search of the collection does return deleted items; they are never listed
+  as volumes.) The preview names at most 20 and counts the rest.
+- If the listing cannot be read whole — the session expired part way, or the
+  server did not page as it said it would — **nothing is built**. A partial
+  list is never presented as the collection.
+- **A gap in the run is named.** Every volume number between the first and
+  last found that nothing lists or holds back is reported in the preview —
+  *"No volumes found for 10, 11."* — typically a volume that exists only as a
+  deleted item. At most 20 numbers are named and the rest counted. The page
+  itself does not mention it.
+
+### The template's `index` section
+
+Only a template with sequence patterns **and** an `index` section can build
+an index. The section gives the index item's own catalogue record, and
+optionally patterns for volumes whose files carry no issue number:
+
+```json
+"index": {
+  "columns": [
+    { "path": "MWDL/title", "value": "Example Quarterly: an index of volumes and issues" },
+    { "path": "MWDL/description", "value": "Every volume of the Example Quarterly, each linking to its issues." },
+    { "path": "MWDL/identifier", "value": "EQ_index" }
+  ],
+  "groupPatterns": ["{year}_Vol{group}"],
+  "titleStartsWith": "Example Quarterly"
+}
+```
+
+- **`columns`** are fixed values, checked against the collection's schema like
+  a spreadsheet's headers. The page's heading uses the value at the schema's
+  declared **name path** and its first paragraph the **description path**;
+  either missing, the build refuses and says which.
+- **The identifier is how a rebuild finds the item.** Without an identifier
+  value the openEQUELLA destination is refused, saying why; saving files still
+  works. If several items already carry it, the upload is refused, naming
+  them.
+- **`groupPatterns`** read a volume number only (`{group}`, no `{part}`), and
+  are tried after the sequence patterns. They cover a volume held as a single
+  file, such as `EQ_1980_Vol16.pdf`.
+- **`titleStartsWith`** (optional) reads only the items whose title — the
+  schema's declared name path — starts with it, instead of the whole
+  collection. It is a prefix by necessity: openEQUELLA refuses a match that
+  starts with a wildcard. It is a match on the record, not openEQUELLA's
+  free-text search, whose results were measured to differ depending on who
+  is signed in. Against a schema that declares no name path the build
+  refuses rather than reading everything. A `%` in it is refused, because
+  openEQUELLA reads it as "any characters". A `_` is allowed although
+  openEQUELLA reads it as "any one character": it is common in titles, and
+  it can only widen what is read -- the file-name patterns still decide what
+  is listed.
+
+`templates/snake-river-echoes.profile.json` carries one, with
+`"titleStartsWith": "Snake River"`.
+
+### The batch record
+
+A run can keep **a record of what it created**, saved beside the spreadsheet
+as `<spreadsheet name>.<site host>.index.json` on the desktop (for example
+`fernbrook.oeq.example.edu.index.json`), or at the path you give the CLI.
+For each item it holds the uuid, the title, the state it was created in, and
+its files in upload order; every row the run did not create is listed as
+left out, with its status and error.
+
+- It is **rewritten whole after every row**, so an interrupted run leaves a
+  record of exactly what it made.
+- **A later run of the same spreadsheet adds to it**: the items already
+  recorded are kept, a retried row's new item replaces its old entry, and a
+  row now created is no longer listed as left out.
+- A file already at that path that is not a batch record, or records another
+  site or collection, is **never overwritten**: the run carries on and says
+  the record was not kept, and why.
+- **A record that cannot be written never fails the run** — the items exist
+  either way. The run reports it as a warning.
+- An index can be built from **one record or several** (a series uploaded in
+  batches). Records of different sites or collections are refused, and so is
+  a record of a site other than the one signed in to, because the page's
+  links would point at the wrong server.
+
+The record says what the run made, not what openEQUELLA holds now: a volume
+deleted since the run is still listed (the volume-link step checks, and
+skips it).
+
+### From the command line
+
+```sh
+# Preview only: what would be listed, held back and left out. Changes nothing.
+oeq-upload index --template templates/snake-river-echoes.profile.json
+
+# Save the three files for a web server, and create or update the item as a draft.
+oeq-upload index --template templates/snake-river-echoes.profile.json --out site/sre --upload --draft
+
+# Keep a batch record during a run, then build the index from it -- no collection search.
+oeq-upload run --manifest job.json --index-record fernbrook.index.json
+oeq-upload index --template templates/snake-river-echoes.profile.json --from-record fernbrook.index.json --out site/sre
+```
+
+The collection is `OEQ_COLLECTION_UUID`, as for every other command, except
+with `--from-record`, where it is the record's. `run --index-record` titles
+each recorded item from the declared name path of `--schema-file` (the same
+schema export `plan` reads).
+
+| Flag | Meaning |
+| --- | --- |
+| `--template <file>` | Required. A template with sequence patterns and an `index` section |
+| `--out <dir>` | Save `index.html`, `index.css` and `index.js` there. Refuses, naming them, if any already exists |
+| `--force` | With `--out`: replace those three files. Nothing else in the folder is touched |
+| `--upload` | Create the index item, or update the existing one in place |
+| `--draft` / `--publish` | With `--upload`, exactly one is required. Decides a **new** item's state; an update keeps the item's |
+| `--link-volumes` | With `--upload`: add a link to the index to every listed volume (below) |
+| `--from-record <file...>` | Build from one or more batch records instead of searching the collection |
+
+**With neither `--out` nor `--upload`, it previews and exits** — the
+command line's form of "preview first".
+
+### From the desktop app
+
+**Build an index of this collection…** on the Choose and Results screens opens
+the flow for the chosen collection: pick the template, read the preview
+(counts, the volumes and issues, everything held back or left out), then tick
+**Save as files for a web server** (choose a folder), **Create or update the
+openEQUELLA item**, or both, and Build. A new item asks Draft or Published,
+and publishing is confirmed; an existing one is described as *"Updates the
+existing index item, which stays draft"* (or live). Replacing files in the
+folder is confirmed, naming them. Saving and uploading use exactly the bytes
+the preview was built from.
+
+The batch-record route has three controls:
+
+- **Review**: *Keep a record of this batch for an index page*, naming the
+  file it will write. Off unless ticked.
+- **Results**: *Build an index page from this batch…*, offered when a record
+  was written, and naming it. A record that could not be written is shown as
+  a warning.
+- **Choose**: *Build an index from saved batch records…* opens a file dialog
+  (several files allowed); it needs no collection chosen.
+
+While it reads, the flow says which source it is reading (*"Reading the batch
+records…"* or *"Searching the collection…"*), and a record's left-out rows are
+listed as *Not created by the run*.
+
+### A link to the index on every volume
+
+**Add a link to the index on every volume** (desktop) or `--link-volumes`
+(CLI) puts a link to the
+openEQUELLA index page — *"Index of all volumes"*, in the template's words —
+as **every listed volume's first attachment**, so a reader who lands on one
+volume can reach the whole run. It needs the index item, so it runs after the
+upload. On the desktop it is confirmed first, naming how many items it edits;
+straight after an upload the confirm opens *"The index item is uploaded. Now
+add a link…"*, so it is not read as a report that the links are already
+there, and it names every kind of edit it can make: a link added, moved
+first, pointed at this index, or renamed.
+
+- It **edits the volume items in place**: their files, attachment ids and
+  version are untouched; only the link is added before them.
+- It is **idempotent**. A volume whose first attachment is already the link is
+  left alone; one that has it elsewhere has it moved to first; one whose link
+  points at an earlier, since-recreated index item is pointed at this one; and
+  one whose link to this index carries another name is renamed. Never a second
+  copy. The result says how many were added, how many were updated (moved,
+  pointed here or renamed) and how many already had it.
+- Held-back volumes are not linked until they are resolved, and the result
+  says so. A volume that is now deleted or archived in openEQUELLA is never
+  edited, and is named. One failed edit does not stop the rest; every failure
+  is named.
+
 ## CLI usage
 
-Seven commands (plus `extract`, which has its own section below). `login` is
+Seven commands (plus `extract` and `index`, which have their own sections). `login` is
 needed only in `code` mode — password and client-credentials modes sign in on
 first use. Then, in order:
 

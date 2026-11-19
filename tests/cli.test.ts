@@ -315,6 +315,153 @@ describe('runAction exit code', () => {
   });
 });
 
+describe('run --index-record', () => {
+  let mock: MockServer;
+  beforeEach(async () => {
+    mock = await startMockServer();
+  });
+  afterEach(async () => {
+    await mock.close();
+    vi.restoreAllMocks();
+  });
+
+  // client_credentials, so the mock mints a token without a login flow.
+  const env = () => ({
+    OEQ_BASE_URL: mock.url,
+    OEQ_AUTH_MODE: 'client_credentials',
+    OEQ_CLIENT_ID: 'good-id',
+    OEQ_CLIENT_SECRET: 'secret',
+    OEQ_COLLECTION_UUID: 'c1',
+  });
+
+  /** An export declaring `local/title` as the item's name -- not BYU-Idaho's path. */
+  const schemaFile = async (): Promise<string> => {
+    const path = join(dir, '_entity.xml');
+    await writeFile(
+      path,
+      '<com.tle.common.ImportExportPack><entity><itemNamePath>/local/title</itemNamePath></entity></com.tle.common.ImportExportPack>',
+    );
+    return path;
+  };
+
+  /** Row 2 uploads; row 3's file is missing, so it fails and is left out. */
+  const job = async (): Promise<string> => {
+    const path = join(dir, 'job.json');
+    await writeFile(join(dir, 'FQ_1970_Vol1_No1.pdf'), Buffer.alloc(8));
+    await saveManifest(
+      path,
+      manifest({
+        baseUrl: mock.url,
+        entries: [
+          {
+            rowNumber: 2,
+            source: 'FQ_1970_Vol1_No1.pdf',
+            files: [{ path: join(dir, 'FQ_1970_Vol1_No1.pdf'), name: 'FQ_1970_Vol1_No1.pdf' }],
+            metadata: { 'local/title': ['Fernbrook Quarterly Vol 1'] },
+            status: 'pending',
+            attempts: 0,
+          },
+          {
+            rowNumber: 3,
+            source: 'FQ_1971_Vol2_No1.pdf',
+            files: [{ path: join(dir, 'FQ_1971_Vol2_No1.pdf'), name: 'FQ_1971_Vol2_No1.pdf' }],
+            metadata: { 'local/title': ['Fernbrook Quarterly Vol 2'] },
+            status: 'pending',
+            attempts: 0,
+          },
+        ],
+      }),
+    );
+    return path;
+  };
+
+  it("writes the run's record, titled from the schema's declared name path, and names it", async () => {
+    const path = await job();
+    const record = join(dir, 'job.index.json');
+    let code = -1;
+    const logs = await captureLogs(async () => {
+      code = await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: await schemaFile() }, env());
+    });
+    expect(code).toBe(1); // row 3 genuinely failed
+    const written = JSON.parse(readFileSync(record, 'utf8'));
+    expect(written.kind).toBe('oeq-batch-record');
+    expect(written.collectionUuid).toBe('c1');
+    expect(written.items).toHaveLength(1);
+    expect(written.items[0].row).toBe(2);
+    expect(written.items[0].title).toBe('Fernbrook Quarterly Vol 1');
+    expect(written.items[0].files[0].name).toBe('FQ_1970_Vol1_No1.pdf');
+    expect(written.items[0].files[0].attachmentUuid).not.toBe('');
+    expect(written.leftOut.map((l: { row: number; status: string }) => [l.row, l.status])).toEqual([[3, 'failed']]);
+    expect(logs).toContain(`Batch record: ${record}`);
+  });
+
+  it('records no titles when the schema export cannot be read', async () => {
+    const path = await job();
+    const record = join(dir, 'job.index.json');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await captureLogs(async () => {
+      await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: join(dir, 'missing.xml') }, env());
+    });
+    const written = JSON.parse(readFileSync(record, 'utf8'));
+    expect(written.items[0].title).toBe('');
+  });
+
+  it('writes no record without the flag', async () => {
+    const path = await job();
+    const logs = await captureLogs(async () => {
+      await runAction({ manifest: path, maxAttempts: 1, schemaFile: await schemaFile() }, env());
+    });
+    expect(logs.some((l) => l.startsWith('Batch record'))).toBe(false);
+  });
+
+  it('a record that cannot be written does not fail the run: it warns, naming the file, and carries on', async () => {
+    const path = await job();
+    // A path under a FILE cannot be created, whatever the platform.
+    const record = join(dir, 'FQ_1970_Vol1_No1.pdf', 'job.index.json');
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void errors.push(args.join(' ')));
+    let code = -1;
+    const logs = await captureLogs(async () => {
+      code = await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: await schemaFile() }, env());
+    });
+    // Exit 1 only because row 3 failed; row 2 was still created.
+    expect(code).toBe(1);
+    const after = await loadManifest(path);
+    expect(after.entries[0]!.status).toBe('created');
+    expect(errors.some((e) => e.includes(record))).toBe(true);
+    expect(logs).not.toContain(`Batch record: ${record}`);
+  });
+
+  it('a failed write says it could not write the record, and that the run carries on', async () => {
+    const path = await job();
+    const record = join(dir, 'missing-folder', 'job.index.json');
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void errors.push(args.join(' ')));
+    await captureLogs(async () => {
+      await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: await schemaFile() }, env());
+    });
+    const warning = errors.find((e) => e.includes(record))!;
+    expect(warning).toMatch(/^warning: could not write the batch record .*The run carries on; its items are created either way\.$/s);
+  });
+
+  it('a record it refuses to overwrite is warned about in its own words, never as a failed write', async () => {
+    const path = await job();
+    const record = join(dir, 'job.index.json');
+    await writeFile(record, '{"some": "other file"}');
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void errors.push(args.join(' ')));
+    await captureLogs(async () => {
+      await runAction({ manifest: path, maxAttempts: 1, indexRecord: record, schemaFile: await schemaFile() }, env());
+    });
+    const warning = errors.find((e) => e.includes(record))!;
+    expect(warning).toMatch(/^warning: .*job\.index\.json already exists and is not a batch record/);
+    expect(warning).toMatch(/It was left as it is, and no batch record was kept for this run\.$/);
+    expect(warning).not.toContain('could not write');
+    expect(warning).not.toContain('carries on');
+    expect(readFileSync(record, 'utf8')).toBe('{"some": "other file"}');
+  });
+});
+
 describe('planAction duplicate check', () => {
   let mock: MockServer;
   beforeEach(async () => {

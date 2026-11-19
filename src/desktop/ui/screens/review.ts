@@ -1,4 +1,4 @@
-import type { ColumnReport, PlanFolder, PlanReport } from '../../ipc.js';
+import type { ColumnReport, IndexRecordTarget, PlanFolder, PlanReport } from '../../ipc.js';
 import type { DuplicateChoice, DuplicateFinding } from '../../../core/duplicates.js';
 import { canContinueReview } from '../review.js';
 import { categorizeWarnings } from '../warnings.js';
@@ -33,6 +33,9 @@ export interface ReviewProps {
   onMoveFile(rowNumber: number, index: number, delta: -1 | 1): void;
   /** Put a folder row back to its planned order. */
   onResetOrder(rowNumber: number): void;
+  /** Keep a batch record for an index page (spec section 7). Off unless ticked. */
+  keepIndexRecord: boolean;
+  onKeepIndexRecordChange(keep: boolean): void;
   onOverrideChange(originalHeader: string, xpath: string): void;
   onContinue(): void;
   onBack(): void;
@@ -157,6 +160,20 @@ export function foldersSection(
     </div>`;
 }
 
+/**
+ * The box that keeps a record of the batch for an index page, naming the file
+ * it would write -- beside the spreadsheet, so the operator knows where to find
+ * it later. Off by default: nothing is written that was not asked for.
+ */
+export function indexRecordSection(target: IndexRecordTarget, keep: boolean): string {
+  return `
+    <p>
+      <label><input type="checkbox" id="keep-index-record" ${keep ? 'checked' : ''}>
+        Keep a record of this batch for an index page</label><br>
+      <span class="path">${escapeHtml(target.path)}</span>
+    </p>`;
+}
+
 export function renderReview(root: HTMLElement, props: ReviewProps): void {
   if (props.loadingColumns || props.columns === null) {
     root.innerHTML = `
@@ -263,6 +280,7 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
         <p><strong>${props.report.entryCount}</strong> item(s) will be created from this spreadsheet.</p>
         ${foldersSection(props.report.folders, props.folderOrders)}
         ${allGroups || '<p class="note">No warnings -- every row matched a file or folder with no issues found.</p>'}
+        ${indexRecordSection(props.report.indexRecord, props.keepIndexRecord)}
       </fieldset>
     `;
   }
@@ -345,6 +363,10 @@ export function renderReview(root: HTMLElement, props: ReviewProps): void {
     });
   });
 
+  // No re-render needed: the box shows its own state, and nothing else here derives from it.
+  root
+    .querySelector<HTMLInputElement>('#keep-index-record')
+    ?.addEventListener('change', (e) => props.onKeepIndexRecordChange((e.target as HTMLInputElement).checked));
   root.querySelector<HTMLButtonElement>('#review-back-btn')?.addEventListener('click', () => props.onBack());
   root
     .querySelector<HTMLButtonElement>('#review-continue-btn')

@@ -6,6 +6,7 @@ import {
   folderGroup,
   orderBySequence,
   parseParts,
+  readName,
   resolveLabels,
 } from '../../src/core/extract/sequenceChecks.js';
 
@@ -296,5 +297,35 @@ describe('labels', () => {
   it('reads neutrally when a template gives no labels', () => {
     const r = checkSequence({ patterns: ['No{part}'], labels: resolveLabels() }, null, 'X', ['a_No1.pdf', 'b_No1.pdf']);
     expect(r.findings[0]?.problem).toBe('2 files claim part 1');
+  });
+});
+
+describe('readName', () => {
+  const patterns = ['{year}_Vol{group}_No{part}', '{year}_Vol{group}'];
+
+  it('reads part, group and year by the first pattern that matches', () => {
+    expect(readName(patterns, 'SRE_1972-73_Vol2_No3.pdf')).toEqual({
+      parts: [3],
+      group: 2,
+      years: { from: 1972, to: 1973 },
+    });
+  });
+
+  it('reads a combined issue as every part it names', () => {
+    expect(readName(patterns, 'SRE_1975_Vol4_No2&3.pdf')?.parts).toEqual([2, 3]);
+  });
+
+  it('reads a group with NO parts from a pattern that has no {part}', () => {
+    // Without the guard, the part index is -1 and the whole match -- year and
+    // group digits -- would be read as part numbers.
+    expect(readName(patterns, 'SRE_1991_Vol20.pdf')).toEqual({
+      parts: [],
+      group: 20,
+      years: { from: 1991, to: 1991 },
+    });
+  });
+
+  it('returns null when no pattern matches', () => {
+    expect(readName(patterns, 'SRE_1998_Commemorative.pdf')).toBeNull();
   });
 });

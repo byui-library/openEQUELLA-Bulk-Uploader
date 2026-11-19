@@ -23,7 +23,12 @@
  * -- this repo deliberately has no jsdom. `&` is replaced first so escaping
  * the other four characters' entity references does not itself get
  * re-escaped.
+ *
+ * The function itself lives in core/seriesIndex/render.ts (node-free), so the
+ * published index page and this UI escape with one copy.
  */
+export { escapeHtml } from '../../core/seriesIndex/render.js';
+
 /**
  * Preserve a text input's focus and caret across a re-render.
  *
@@ -62,13 +67,4 @@ export function keepCaret(
     const position = caret ?? next.value.length;
     next.setSelectionRange(position, position);
   };
-}
-
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }

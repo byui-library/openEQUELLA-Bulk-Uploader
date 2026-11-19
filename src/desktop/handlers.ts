@@ -1,10 +1,11 @@
 import { app, dialog, safeStorage, type BrowserWindow, type IpcMain } from 'electron';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, readdir, copyFile } from 'node:fs/promises';
 import {
   CHANNELS,
   type ColumnReport,
+  type IndexRecordTarget,
   type OeqApi,
   type PlanReport,
   type RunReport,
@@ -42,7 +43,9 @@ import { signInInteractive } from './signin.js';
 import { rowLabel, type Sheet } from '../core/types.js';
 import { planFolders } from '../core/folderReport.js';
 import { OeqError } from '../core/errors.js';
+import { runKeepingRecord } from '../core/seriesIndex/batchRecord.js';
 import { registerExtractHandlers } from './extractHandlers.js';
+import { registerIndexHandlers } from './indexHandlers.js';
 
 const userData = () => app.getPath('userData');
 
@@ -353,7 +356,52 @@ export function reportColumns(headers: string[], paths: Set<string>): ColumnRepo
  * fake and exercise a handler without booting Electron -- see
  * tests/desktop/handlers.test.ts's `applyDuplicateChoices` suite.
  */
+/**
+ * Where a batch's record goes: beside its spreadsheet, the extension replaced
+ * by the site's host and `.index.json` (spec section 7) -- so the record
+ * travels with the batch it describes, and `fernbrook.xlsx` run against
+ * `https://oeq.example.edu` is followed by `fernbrook.oeq.example.edu.index.json`.
+ *
+ * The host is in the name because the keeper refuses to overwrite a record of
+ * another site: one sheet run on a test site and then on production would
+ * otherwise keep no record of the production run at all. Another COLLECTION
+ * of the same site at this path is still refused, as the keeper decides.
+ */
+export function indexRecordPathFor(sheetPath: string, baseUrl: string): string {
+  const ext = extname(sheetPath);
+  const host = new URL(baseUrl).hostname.toLowerCase();
+  return join(dirname(sheetPath), `${basename(sheetPath, ext)}.${host}.index.json`);
+}
+
+/**
+ * Where the planned job's batch record goes, kept in the MAIN process: `plan`
+ * remembers the location it computed, with the manifest path it returned, and
+ * `run` is told only whether to keep it. A path the renderer sent would be a
+ * file the main process writes wherever it is told.
+ *
+ * ONE target: plan always writes the one `job.json`, so only the latest plan
+ * can be run. It is still checked against the manifest path, so a target is
+ * never used for a manifest it was not computed for.
+ */
+export function indexRecordTargets() {
+  let latest: { manifestPath: string; target: IndexRecordTarget } | null = null;
+  return {
+    remember(manifestPath: string, target: IndexRecordTarget): void {
+      latest = { manifestPath, target };
+    },
+    forRun(manifestPath: string, keep: boolean): { target?: IndexRecordTarget; error?: string } {
+      if (!keep) return {};
+      const target = latest !== null && latest.manifestPath === manifestPath ? latest.target : undefined;
+      return target === undefined
+        ? { error: "this batch's record location is not known; plan it again" }
+        : { target };
+    },
+  };
+}
+
 export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindow | null): void {
+  const recordTargets = indexRecordTargets();
+
   ipcMain.handle(CHANNELS.listInstances, async () => secrets().listInstances());
 
   ipcMain.handle(CHANNELS.credentialsDropped, async () => secrets().credentialsDropped());
@@ -646,6 +694,16 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     return r.canceled ? null : (r.filePaths[0] ?? null);
   });
 
+  // Several allowed: a series uploaded in batches, or a retry run, builds one index.
+  ipcMain.handle(CHANNELS.chooseIndexRecords, async (): Promise<string[]> => {
+    const r = await dialog.showOpenDialog({
+      title: 'Choose batch records to build an index from',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Batch records', extensions: ['json'] }],
+    });
+    return r.canceled ? [] : r.filePaths;
+  });
+
   /**
    * Copies the starter-kit template CSV and its sample file into a folder
    * the operator picks, for the Choose screen's "Save a template and sample
@@ -744,6 +802,10 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
 
       const manifestPath = join(userData(), 'job.json');
       await saveManifest(manifestPath, manifest);
+      // The item name path the duplicate check above searched by titles the
+      // batch record too, so the record and the check cannot disagree.
+      const indexRecord = { path: indexRecordPathFor(args.sheetPath, cfg.baseUrl), titlePath: titleHeader };
+      recordTargets.remember(manifestPath, indexRecord);
 
       // Report columns against the OVERRIDDEN headers, so a column the user
       // remapped shows as valid. Do not hard-code `valid: true` -- if an
@@ -758,6 +820,7 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
         warnings: manifest.warnings,
         duplicates,
         folders: planFolders(manifest.entries),
+        indexRecord,
       };
     },
   );
@@ -804,21 +867,27 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
       const auth = buildAuth(cfg, tokens(), inst.id);
       const client = buildClient(cfg, auth);
 
-      const summary = await runManifest(client, args.manifestPath, {
-        onProgress: (entry, done, total) => {
-          toRenderer(CHANNELS.progress, {
-            done,
-            total,
-            label: rowLabel(entry),
-            status: entry.status,
-            error: entry.error,
-          });
-        },
-      });
+      const record = recordTargets.forRun(args.manifestPath, args.keepIndexRecord === true);
+      const { summary, ...kept } = await runKeepingRecord(args.manifestPath, record.target, (afterRow) =>
+        runManifest(client, args.manifestPath, {
+          onProgress: (entry, done, total, manifest) => {
+            toRenderer(CHANNELS.progress, {
+              done,
+              total,
+              label: rowLabel(entry),
+              status: entry.status,
+              error: entry.error,
+            });
+            afterRow(entry, manifest);
+          },
+        }),
+      );
 
       const done = await loadManifest(args.manifestPath);
       return {
         ...summary,
+        ...kept,
+        ...(record.error !== undefined ? { indexRecordError: record.error } : {}),
         failures: done.entries
           .filter((e) => e.status === 'failed')
           .map((e) => ({ rowNumber: e.rowNumber, label: rowLabel(e), error: e.error ?? 'unknown' })),
@@ -874,5 +943,21 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
     // IPC boundary. Same instance id both times, so the endpoint the operator
     // confirmed against is the endpoint their documents go to.
     modelFor: (instanceId: string) => secrets().getModel(instanceId),
+  });
+
+  // Series index. Its own module, like extract; the client is built per call
+  // exactly as listCollections builds one.
+  registerIndexHandlers(ipcMain, {
+    templatesDir: resolveResourcePath(resourcePathOpts(), 'templates'),
+    connect: async (instanceId: string) => {
+      const { inst, settings } = await requireSettings(instanceId);
+      const cfg = buildConfig(inst, settings, 'unused');
+      return {
+        client: buildClient(cfg, buildAuth(cfg, tokens(), inst.id)),
+        baseUrl: inst.baseUrl,
+        fallbackSchemaUuid: inst.schemaUuid,
+        setupCollectionUuid: inst.collectionUuid,
+      };
+    },
   });
 }

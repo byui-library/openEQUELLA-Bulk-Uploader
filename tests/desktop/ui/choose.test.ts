@@ -34,6 +34,8 @@ const props = (over: Partial<ChooseProps> = {}): ChooseProps => ({
   onExtract: () => {},
   onSiteSettings: () => {},
   onSignOut: () => {},
+  onBuildIndex: () => {},
+  onBuildIndexFromRecords: () => {},
   ...over,
 });
 
@@ -228,5 +230,16 @@ describe('the collection section', () => {
     const html = chooseCollectionSection(props({ collectionsError: 'connect ECONNREFUSED' }));
     expect(html).toContain('connect ECONNREFUSED');
     expect(html).not.toContain(WITHHELD_COLLECTIONS_MESSAGE);
+  });
+});
+
+describe('an index from saved batch records', () => {
+  it('is offered with or without a collection chosen, and asks for the records', () => {
+    let asked = 0;
+    const { root } = render({ onBuildIndexFromRecords: () => void (asked += 1) });
+    expect(root.innerHTML).toContain('Build an index from saved batch records&hellip;');
+    expect(root.innerHTML).not.toMatch(/id="choose-index-records"[^>]*disabled/);
+    root.fire('#choose-index-records');
+    expect(asked).toBe(1);
   });
 });

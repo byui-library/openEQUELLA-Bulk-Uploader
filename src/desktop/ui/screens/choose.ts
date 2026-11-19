@@ -37,6 +37,13 @@ export interface ChooseProps {
   onSaveStarterKit(): void;
   onContinue(): void;
   onExtract(): void;
+  /** "Build an index…" -- needs a chosen collection; see ui/seriesIndex. */
+  onBuildIndex(): void;
+  /**
+   * "Build an index from saved batch records…" -- needs NO chosen collection:
+   * each record names the collection its run went to.
+   */
+  onBuildIndexFromRecords(): void;
   /**
    * Back to Setup for this site, clearing nothing.
    *
@@ -149,6 +156,12 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
       <fieldset>
         <legend>1. Collection</legend>
         ${collectionSection}
+        <button id="choose-build-index" type="button" ${props.collectionUuid ? '' : 'disabled'}>
+          Build an index of this collection&hellip;
+        </button>
+        <button id="choose-index-records" type="button">
+          Build an index from saved batch records&hellip;
+        </button>
       </fieldset>
 
       <fieldset>
@@ -223,6 +236,10 @@ export function renderChoose(root: HTMLElement, props: ChooseProps): void {
     .querySelector<HTMLButtonElement>('#choose-continue-btn')
     ?.addEventListener('click', () => props.onContinue());
   root.querySelector<HTMLButtonElement>('#choose-extract')?.addEventListener('click', props.onExtract);
+  root.querySelector<HTMLButtonElement>('#choose-build-index')?.addEventListener('click', () => props.onBuildIndex());
+  root
+    .querySelector<HTMLButtonElement>('#choose-index-records')
+    ?.addEventListener('click', () => props.onBuildIndexFromRecords());
   root
     .querySelector<HTMLButtonElement>('#choose-site-settings')
     ?.addEventListener('click', () => props.onSiteSettings());

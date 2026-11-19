@@ -750,3 +750,157 @@ describe('OeqClient — a server failure names the status', () => {
     expect(err.retryable).toBe(true);
   });
 });
+
+describe('series index calls', () => {
+  const item = (uuid: string, status = 'live') => ({
+    uuid,
+    version: 1,
+    status,
+    name: `Fernbrook ${uuid}`,
+    attachments: [{ type: 'file', filename: `${uuid}.pdf`, uuid: `${uuid}-a` }],
+    fields: { 'DC/identifier': uuid },
+  });
+
+  it('pages through the whole collection, drafts included', async () => {
+    mock.state.collectionItems = Array.from({ length: 120 }, (_, i) => item(`u${i}`, i % 2 ? 'draft' : 'live'));
+    const items = await client.searchCollection('c1');
+    expect(items).toHaveLength(120);
+    expect(items[1]).toEqual({
+      uuid: 'u1',
+      version: 1,
+      status: 'draft',
+      name: 'Fernbrook u1',
+      attachments: [{ type: 'file', filename: 'u1.pdf', uuid: 'u1-a' }],
+    });
+    expect(mock.state.searchUrls.every((u) => u.includes('showall=true'))).toBe(true);
+    expect(mock.state.searchUrls).toHaveLength(3);
+  });
+
+  it('reports a guest session instead of an empty collection', async () => {
+    // available > 0 with no rows is how openEQUELLA answers a guest.
+    mock.state.collectionItems = [item('u1')];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/search')) {
+        return new Response(JSON.stringify({ available: 29, results: [] }), { status: 200 });
+      }
+      return original(input, init);
+    }) as typeof fetch;
+    try {
+      await expect(client.searchCollection('c1')).rejects.toThrow(/not signed in/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  const rows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ uuid: `r${i}`, version: 1, status: 'live', name: `Fernbrook r${i}`, attachments: [] }));
+  const withFakeSearch = async (answer: (url: string) => unknown, run: () => Promise<void>) => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/search')) {
+        return new Response(JSON.stringify(answer(String(input))), { status: 200 });
+      }
+      return original(input, init);
+    }) as typeof fetch;
+    try {
+      await run();
+    } finally {
+      globalThis.fetch = original;
+    }
+  };
+
+  it('does not return a partial list when a later page comes back empty', async () => {
+    await withFakeSearch(
+      (url) => (url.includes('start=0') ? { available: 120, results: rows(50) } : { available: 120, results: [] }),
+      async () => {
+        await expect(client.searchCollection('c1')).rejects.toThrow(/not signed in/);
+      },
+    );
+  });
+
+  it('narrows the listing with a where clause when given one, and only then -- never free text', async () => {
+    mock.state.collectionItems = [
+      { ...item('u1'), name: 'Fernbrook Vol 1', fields: { 'DC/title': "Fernbrook's Vol 1" } },
+      { ...item('u2'), name: 'Other report', fields: { 'DC/title': 'Other report' } },
+    ];
+    const clause = "/xml/DC/title LIKE 'Fernbrook''s%'";
+    const narrowed = await client.searchCollection('c1', { where: clause });
+    expect(narrowed.map((i) => i.uuid)).toEqual(['u1']);
+    const sent = new URL(mock.state.searchUrls[0]!, 'http://x').searchParams;
+    expect(sent.get('where')).toBe(clause);
+    expect(sent.has('q')).toBe(false);
+    mock.state.searchUrls = [];
+    expect(await client.searchCollection('c1', { where: '' })).toHaveLength(2);
+    expect(await client.searchCollection('c1')).toHaveLength(2);
+    expect(mock.state.searchUrls.some((u) => new URL(u, 'http://x').searchParams.has('where'))).toBe(false);
+  });
+
+  it('asks for detail, because only detail brings each item its status', async () => {
+    mock.state.collectionItems = [item('u1')];
+    await client.searchCollection('c1');
+    await client.findByField('c1', 'DC/identifier', 'u1');
+    const infos = mock.state.searchUrls.map((u) => new URL(u, 'http://x').searchParams.get('info')?.split(','));
+    expect(infos.every((i) => i?.includes('detail'))).toBe(true);
+  });
+
+  it('refuses a listing whose items carry no status rather than reading them as withdrawn', async () => {
+    await withFakeSearch(
+      () => ({ available: 1, results: [{ uuid: 'r0', version: 1, name: 'Fernbrook r0', attachments: [] }] }),
+      async () => {
+        await expect(client.searchCollection('c1')).rejects.toThrow(/did not say each item's status/);
+      },
+    );
+  });
+
+  it('refuses a listing that ignores start rather than looping or over-reading', async () => {
+    let calls = 0;
+    await withFakeSearch(
+      () => {
+        calls++;
+        return { available: 120, results: rows(50) };
+      },
+      async () => {
+        await expect(client.searchCollection('c1')).rejects.toThrow(/did not page as expected/);
+      },
+    );
+    expect(calls).toBeLessThanOrEqual(4);
+  });
+
+  it('finds items by an exact field value', async () => {
+    mock.state.collectionItems = [item('a'), item('b')];
+    const found = await client.findByField('c1', 'DC/identifier', 'b');
+    expect(found.map((f) => f.uuid)).toEqual(['b']);
+  });
+
+  it('a field search reports a guest answer, never "no such item"', async () => {
+    await withFakeSearch(
+      () => ({ available: 1, results: [] }),
+      async () => {
+        await expect(client.findByField('c1', 'DC/identifier', 'b')).rejects.toThrow(/not signed in/);
+      },
+    );
+    await withFakeSearch(
+      () => ({ available: 0, results: [] }),
+      async () => {
+        expect(await client.findByField('c1', 'DC/identifier', 'b')).toEqual([]);
+      },
+    );
+  });
+
+  it('reads an item and edits it with a staging area', async () => {
+    mock.state.collectionItems = [item('a')];
+    const bean = await client.getItemBean('a', 1);
+    expect(bean['uuid']).toBe('a');
+    const staging = await client.createStagingArea();
+    await client.editItem('a', 1, { ...bean, metadata: '<xml><x/></xml>' }, staging);
+    expect(mock.state.edits[0]).toMatchObject({ uuid: 'a', version: 1, staging, filePresent: true, bean: { metadata: '<xml><x/></xml>' } });
+  });
+
+  it('edits an item with no new files: no file parameter is sent', async () => {
+    mock.state.collectionItems = [item('a')];
+    const bean = await client.getItemBean('a', 1);
+    await client.editItem('a', 1, bean);
+    expect(mock.state.edits[0]).toMatchObject({ uuid: 'a', version: 1, staging: '', filePresent: false });
+  });
+});

@@ -173,6 +173,62 @@ export interface SearchHit {
   attachmentNames: string[];
 }
 
+/** One item of a collection listing, as the series index reads it. */
+export interface CollectionItem {
+  uuid: string;
+  version: number;
+  status: string;
+  /** Null when the server sent none: production omits it, content-test sends it. */
+  name: string | null;
+  attachments: { type: string; filename: string; uuid: string }[];
+}
+
+/**
+ * `status` comes back ONLY when `info` includes `detail` (content-test,
+ * 2026-11-18: `basic` yields uuid, version, name, description and links, and
+ * nothing else). Asked for `basic,attachment` alone, every item arrived with no
+ * status and the index listed none of them. A listing that still carries none
+ * is refused rather than read as "status unknown" -- that is the same silent
+ * empty answer arriving by another door.
+ */
+function parseCollectionItem(r: Record<string, unknown>): CollectionItem {
+  const attachments = Array.isArray(r['attachments']) ? (r['attachments'] as Record<string, unknown>[]) : [];
+  const name = typeof r['name'] === 'string' && r['name'] !== '' ? r['name'] : null;
+  if (typeof r['status'] !== 'string' || r['status'] === '') {
+    throw new ValidationError(
+      "openEQUELLA's search did not say each item's status, so nothing is built from it: " +
+        'a withdrawn item cannot be told from a live one.',
+    );
+  }
+  return {
+    uuid: String(r['uuid'] ?? ''),
+    version: typeof r['version'] === 'number' ? r['version'] : 1,
+    status: r['status'],
+    name,
+    attachments: attachments.map((a) => ({
+      type: String(a['type'] ?? ''),
+      filename: String(a['filename'] ?? a['description'] ?? ''),
+      uuid: String(a['uuid'] ?? ''),
+    })),
+  };
+}
+
+/**
+ * A search page with no rows while `available` says more remain is a guest
+ * answer (CLAUDE.md, "openEQUELLA answers an unauthenticated request with
+ * 200"): on the first page the session never signed in, on a later one it
+ * expired mid-listing. Read as "none" or as a short list, it would make the
+ * index publish a duplicate item or list a partial collection.
+ */
+function assertNotGuestPage(rows: number, read: number, available: number): void {
+  if (rows === 0 && read < available) {
+    throw new ValidationError(
+      `openEQUELLA reports ${available} matching items but returned only ${read} -- the session is not ` +
+        'signed in, or has expired. Sign in again and retry.',
+    );
+  }
+}
+
 /**
  * Body types fetch() can safely re-send on a retry: their content is held in
  * memory (or is otherwise re-readable) rather than drained by the act of
@@ -568,6 +624,92 @@ export class OeqClient {
         .map((a) => a.filename ?? a.description ?? '')
         .filter((n) => n !== ''),
     }));
+  }
+
+  /**
+   * Every item in a collection, drafts included (`showall=true`), with its
+   * attachments -- read a page of 50 at a time until `available` is reached.
+   *
+   * `available > 0` with no rows on the FIRST page is openEQUELLA's answer to
+   * a guest (CLAUDE.md, "openEQUELLA answers an unauthenticated request with
+   * 200"), and is reported as that, never as an empty collection.
+   *
+   * A non-empty `where` narrows the listing by a clause on the record, such as
+   * `/xml/MWDL/title LIKE 'Snake River%'` (a template's `index.titleStartsWith`).
+   * Never free-text `q`: measured on content-test (2026-11-18), `q=SRE_*` gave
+   * an anonymous session 115 items and the signed-in operator 38 -- all
+   * deleted, every live volume missing. A `where` clause gave both the same 74.
+   * 50 is the most openEQUELLA returns a request -- more is a 500.
+   */
+  async searchCollection(collectionUuid: string, opts: { where?: string } = {}): Promise<CollectionItem[]> {
+    const pageSize = 50;
+    const where = opts.where ? `&where=${encodeURIComponent(opts.where)}` : '';
+    const items: CollectionItem[] = [];
+    for (let start = 0, pages = 0; ; pages++) {
+      const url =
+        `/api/search?collections=${encodeURIComponent(collectionUuid)}${where}` +
+        `&info=${encodeURIComponent('basic,detail,attachment')}&showall=true&length=${pageSize}&start=${start}`;
+      const body = (await (await this.request(url)).json()) as {
+        available?: number;
+        results?: Record<string, unknown>[];
+      };
+      const results = body.results ?? [];
+      const available = body.available ?? 0;
+      assertNotGuestPage(results.length, start, available);
+      items.push(...results.map(parseCollectionItem));
+      start += results.length;
+      // Termination must not depend on the server honouring `start`.
+      if (items.length > available || pages > Math.ceil(available / pageSize) + 1) {
+        throw new ValidationError(
+          "openEQUELLA's listing did not page as expected, so nothing is built from it. " +
+            `Reported ${available} items; read ${items.length} over ${pages + 1} pages.`,
+        );
+      }
+      if (results.length === 0 || start >= available) return items;
+    }
+  }
+
+  /**
+   * Items whose `path` is EXACTLY `value` -- the `where` mechanism of
+   * searchByTitle, for any path. `path` is interpolated unescaped because it
+   * comes from the collection's own schema; `info=basic,detail` means the
+   * results carry a status but no attachments. A guest answer throws, never
+   * reads as "none".
+   */
+  async findByField(collectionUuid: string, path: string, value: string): Promise<CollectionItem[]> {
+    const clause = `/xml/${path} = '${escapeWhereValue(value)}'`;
+    const url =
+      `/api/search?collections=${encodeURIComponent(collectionUuid)}` +
+      `&where=${encodeURIComponent(clause)}&info=${encodeURIComponent('basic,detail')}&showall=true&length=50`;
+    const body = (await (await this.request(url)).json()) as {
+      available?: number;
+      results?: Record<string, unknown>[];
+    };
+    const results = body.results ?? [];
+    assertNotGuestPage(results.length, 0, body.available ?? 0);
+    return results.map(parseCollectionItem);
+  }
+
+  /** The item's full bean, as `editItem` sends it back. */
+  async getItemBean(uuid: string, version: number): Promise<Record<string, unknown>> {
+    const res = await this.request(`/api/item/${encodeURIComponent(uuid)}/${version}/`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  /**
+   * Replace an item's files and record IN PLACE: `PUT /api/item/{uuid}/{v}/
+   * ?file={staging}` with its bean. CONFIRMED on content-test 2026-11-17: same
+   * item, same version, same attachment uuids, files replaced, title changed.
+   * With no staging area (undefined or empty) NO `file` parameter is sent: the
+   * record and attachments are edited and every file is kept (checked live
+   * 2026-11-18).
+   */
+  async editItem(uuid: string, version: number, bean: Record<string, unknown>, stagingUuid?: string): Promise<void> {
+    const query = !stagingUuid ? '' : `?file=${encodeURIComponent(stagingUuid)}`;
+    await this.request(
+      `/api/item/${encodeURIComponent(uuid)}/${version}/${query}`,
+      { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bean) },
+    );
   }
 
   /**

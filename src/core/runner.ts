@@ -14,8 +14,13 @@ export { checkLock } from './lock.js';
 export interface RunOptions {
   maxAttempts?: number;
   retryDelayMs?: number;
-  /** Invoked after each entry so front ends can report progress. */
-  onProgress?: (entry: ManifestEntry, done: number, total: number) => void;
+  /**
+   * Invoked after each entry so front ends can report progress. `manifest` is
+   * the run's own manifest, ALREADY SAVED when this is called -- a batch
+   * record is built from it rather than reading the file back. Read it, never
+   * change it.
+   */
+  onProgress?: (entry: ManifestEntry, done: number, total: number, manifest: Manifest) => void;
   /**
    * Process entries that were found in `'uploading'` state at load time
    * (leftovers from an interrupted prior run) instead of skipping them. Off
@@ -258,7 +263,7 @@ export async function runManifest(
 
       if (TERMINAL_STATUSES.has(entry.status)) {
         summary.skipped++;
-        reportProgress(opts, entry, done, total);
+        reportProgress(opts, entry, done, total, manifest);
         continue;
       }
 
@@ -269,7 +274,7 @@ export async function runManifest(
           `retrying; use --force-interrupted to process it anyway.`;
         await saveManifest(manifestPath, manifest);
         summary.interrupted++;
-        reportProgress(opts, entry, done, total);
+        reportProgress(opts, entry, done, total, manifest);
         continue;
       }
 
@@ -306,8 +311,9 @@ export async function runManifest(
         summary.created++;
       }
 
+      // Saved BEFORE reporting: a listener may build a record from `manifest`.
       await saveManifest(manifestPath, manifest);
-      reportProgress(opts, entry, done, total);
+      reportProgress(opts, entry, done, total, manifest);
     }
 
     return summary;
@@ -327,9 +333,10 @@ function reportProgress(
   entry: ManifestEntry,
   done: number,
   total: number,
+  manifest: Manifest,
 ): void {
   try {
-    opts.onProgress?.(entry, done, total);
+    opts.onProgress?.(entry, done, total, manifest);
   } catch {
     // Swallowed deliberately -- see doc comment above.
   }

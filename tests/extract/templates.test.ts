@@ -344,6 +344,16 @@ describe('the Snake River Echoes template', () => {
     }
   });
 
+  it('an index section names only real schema paths', async () => {
+    const paths = parseSchemaPaths(extractDefinition(await readFile('schema/_entity.xml', 'utf8')));
+    for (const t of await listTemplates()) {
+      const profile = await loadTemplate(t.id);
+      for (const column of profile.index?.columns ?? []) {
+        expect(paths.has(column.path), `${t.id}: ${column.path} is not in the schema`).toBe(true);
+      }
+    }
+  });
+
   it('builds a volume title from the folder name', async () => {
     const p = await loadTemplate('snake-river-echoes');
     const row = buildFolderRow(p, 'SRE_Vol10', [{ name: 'SRE_1981_Vol10_No1.pdf', doc: doc('') }]);
@@ -382,5 +392,17 @@ describe('the Snake River Echoes template -- issue checks', () => {
   it('declares issue patterns for both spellings found in the batch', async () => {
     const p = await loadTemplate('snake-river-echoes');
     expect(p.checks?.sequence?.patterns).toEqual(['{year}_Vol{group}_No{part}', '{year}_Vol{group}_Num{part}']);
+  });
+
+  it('Snake River Echoes carries an index section that reads every kind of volume', async () => {
+    const p = await loadTemplate('snake-river-echoes');
+    expect(p.index?.columns.map((c) => c.path)).toEqual([
+      'MWDL/title',
+      'MWDL/description',
+      'MWDL/identifier',
+      'MWDL/genres/genre',
+      'BYUI_extended/byui_rights/restrict_to_byui',
+    ]);
+    expect(p.index?.groupPatterns).toEqual(['{year}_Vol{group}']);
   });
 });

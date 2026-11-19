@@ -43,10 +43,15 @@ import { OeqError } from './errors.js';
  * short backoff rather than surfaced as a hard failure.
  */
 export async function saveManifest(path: string, manifest: Manifest): Promise<void> {
+  await writeJsonAtomic(path, manifest);
+}
+
+/** The write saveManifest describes, for any JSON record that must never be left half-written. */
+export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   const tmp = `${path}.tmp.${process.pid}.${randomUUID()}`;
   const handle = await open(tmp, 'w');
   try {
-    await handle.writeFile(JSON.stringify(manifest, null, 2), 'utf8');
+    await handle.writeFile(JSON.stringify(value, null, 2), 'utf8');
     await handle.sync();
   } finally {
     await handle.close();
@@ -126,7 +131,17 @@ export async function loadManifest(path: string): Promise<Manifest> {
         : `Could not read manifest at ${path}: ${(err as Error).message}`;
     throw new OeqError(message, { cause: err });
   }
+  return parseManifest(raw, path);
+}
 
+/**
+ * The manifest in `raw`, read from `path`: validated, and a v1 manifest read
+ * as v2. Separate from the file read so a caller that must read without
+ * yielding -- `run --index-record`, inside the runner's progress callback,
+ * where an async read would overlap the runner's next save -- validates
+ * exactly as `loadManifest` does.
+ */
+export function parseManifest(raw: string, path: string): Manifest {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

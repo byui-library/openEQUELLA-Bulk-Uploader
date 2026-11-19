@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import {
   applyOverrides,
   fetchAndCacheSchema,
+  indexRecordPathFor,
+  indexRecordTargets,
   reportColumns,
   resolveSchemaPath,
   missingCredentialsMessage,
@@ -877,5 +879,62 @@ describe('applyFolderOrders', () => {
       ipc.call<number>('oeq:applyFolderOrders', { manifestPath, orders: { 2: ['b.pdf'] } }),
     ).rejects.toThrow(/does not match the folder/);
     expect((await loadManifest(manifestPath)).entries[0]!.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
+  });
+});
+
+describe('the batch record beside a desktop run', () => {
+  const SITE = 'https://Fernbrook.OEQ.example.edu/repo/';
+  it('is the spreadsheet path with its extension replaced by the site host and .index.json', () => {
+    const at = (name: string) => indexRecordPathFor(join('C:', 'batches', name), SITE);
+    expect(at('fernbrook.xlsx')).toBe(join('C:', 'batches', 'fernbrook.fernbrook.oeq.example.edu.index.json'));
+    expect(at('fernbrook.v2.csv')).toBe(join('C:', 'batches', 'fernbrook.v2.fernbrook.oeq.example.edu.index.json'));
+    expect(at('noext')).toBe(join('C:', 'batches', 'noext.fernbrook.oeq.example.edu.index.json'));
+  });
+
+  it('differs by site, so one sheet run on a test site and then production keeps a record of each', () => {
+    const sheet = join('C:', 'batches', 'fernbrook.xlsx');
+    expect(indexRecordPathFor(sheet, 'https://oeq-test.example.edu')).not.toBe(
+      indexRecordPathFor(sheet, 'https://oeq.example.edu'),
+    );
+  });
+});
+
+describe("the batch record's location stays in the main process", () => {
+  const target = { path: 'C:/batches/fernbrook.index.json', titlePath: 'DC/title' };
+
+  it('is the location plan computed for that job, looked up by its manifest path', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    expect(targets.forRun('C:/data/job.json', true)).toEqual({ target });
+  });
+
+  it('is nothing at all when no record was asked for', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    expect(targets.forRun('C:/data/job.json', false)).toEqual({});
+    expect(targets.forRun('C:/data/other.json', false)).toEqual({});
+  });
+
+  it('is refused, saying why, for a job plan never located', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    const got = targets.forRun('C:/data/other.json', true);
+    expect(got.target).toBeUndefined();
+    expect(got.error).toMatch(/record location is not known; plan it again/);
+  });
+
+  it('is the latest plan of a job', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    const later = { path: 'C:/batches/later.index.json', titlePath: null };
+    targets.remember('C:/data/job.json', later);
+    expect(targets.forRun('C:/data/job.json', true)).toEqual({ target: later });
+  });
+
+  it('is only the latest plan: a later plan of another manifest is never used for an earlier one', () => {
+    const targets = indexRecordTargets();
+    targets.remember('C:/data/job.json', target);
+    targets.remember('C:/data/other.json', { path: 'C:/batches/other.index.json', titlePath: null });
+    expect(targets.forRun('C:/data/job.json', true).error).toMatch(/plan it again/);
   });
 });

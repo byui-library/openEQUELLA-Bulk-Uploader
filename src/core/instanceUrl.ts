@@ -93,6 +93,26 @@ export function instanceEndpoint(baseUrl: string, path: string): URL {
 }
 
 /**
+ * Whether two addresses are one site, for comparison only: compared through
+ * `instanceEndpoint`, which lower-cases the host and leaves exactly one
+ * trailing slash. Not `normaliseInstanceUrl`, whose https rule is about
+ * sending a password and would answer a loopback test site with a lecture
+ * instead of a comparison. An address that cannot be parsed is no site, and
+ * matches nothing -- itself included.
+ */
+export function sameSite(a: string, b: string): boolean {
+  const key = (url: string): string | null => {
+    try {
+      return instanceEndpoint(url, '').href;
+    } catch {
+      return null;
+    }
+  };
+  const ka = key(a);
+  return ka !== null && ka === key(b);
+}
+
+/**
  * The stable key an instance is stored under (desktop/secrets.ts).
  *
  * DERIVED from the address rather than typed, and derived through

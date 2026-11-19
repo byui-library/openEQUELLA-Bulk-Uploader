@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { foldersSection, moveFile, ordersStillValid } from '../../../src/desktop/ui/screens/review.js';
+import { indexRecordSection } from '../../../src/desktop/ui/screens/review.js';
 
 const folder = {
   rowNumber: 2,
@@ -82,5 +83,22 @@ describe('ordersStillValid', () => {
     expect(
       ordersStillValid({ 2: ['b', 'a'], 3: ['y', 'x'], 4: ['q', 'p'] }, [planned(2, ['a', 'b', 'c']), planned(3, ['x', 'z'])]),
     ).toEqual({});
+  });
+});
+
+describe('keeping a record of the batch, on Review', () => {
+  it('offers it unticked, naming the file it would write', () => {
+    const html = indexRecordSection({ path: 'C:/batches/fernbrook.index.json', titlePath: 'DC/title' }, false);
+    expect(html).toContain('id="keep-index-record"');
+    expect(html).toContain('Keep a record of this batch for an index page');
+    expect(html).toMatch(/<span class="path">C:\/batches\/fernbrook\.index\.json<\/span>/);
+    expect(html).not.toMatch(/id="keep-index-record"[^>]*checked/);
+  });
+
+  it('shows it ticked when chosen, and escapes the path', () => {
+    const html = indexRecordSection({ path: 'C:/<b>/x.index.json', titlePath: null }, true);
+    expect(html).toMatch(/id="keep-index-record"[^>]*checked/);
+    expect(html).toContain('&lt;b&gt;');
+    expect(html).not.toMatch(/\sstyle=/);
   });
 });

@@ -62,6 +62,12 @@ interface Harness {
     folderOrders: Record<number, string[]>[];
     /** Every instance id `window.oeq.signOut` was called with, in order. */
     signOut: string[];
+    /** Every argument `window.oeq.run` was given, in order. */
+    runs: Record<string, unknown>[];
+    /** Every argument `window.oeq.indexPreview` was given, in order. */
+    indexPreviews: Record<string, unknown>[];
+    /** How many times the batch-record dialog was opened. */
+    chooseIndexRecords: number;
     /**
      * Every endpoint `window.oeq.setModel` was actually handed, in order.
      *
@@ -90,6 +96,8 @@ const PLAN = {
   warnings: [],
   duplicates: [],
   folders: [],
+  // Required: every plan names where its batch record would go.
+  indexRecord: { path: 'C:\\batch\\upload.index.json', titlePath: null },
 };
 
 const RUN = { created: 2, failed: 0, skipped: 0, incomplete: 0, interrupted: 0, failures: [] };
@@ -151,6 +159,10 @@ interface BootOptions {
   modelsError?: string;
   /** Make the schema read fail, which leaves the path unchecked. */
   schemaUnreadable?: boolean;
+  /** What run() reports. Defaults to two created, nothing else. */
+  runReport?: Record<string, unknown>;
+  /** What the batch-record dialog answers. Defaults to cancelled (none). */
+  indexRecords?: string[];
 }
 
 /**
@@ -173,6 +185,9 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
     listModels: [] as { baseUrl: string; apiKey: string }[],
     modelSaves: [] as Harness['calls']['modelSaves'],
     folderOrders: [] as Record<number, string[]>[],
+    runs: [] as Record<string, unknown>[],
+    indexPreviews: [] as Record<string, unknown>[],
+    chooseIndexRecords: 0,
   };
   let stored: InstanceChoice = { ...SITE, ...options.site };
   /** Sites signed in to during this run. See the `signIn` fake below. */
@@ -265,14 +280,27 @@ async function boot(options: BootOptions = {}): Promise<Harness> {
       calls.folderOrders.push(args.orders);
       return Object.keys(args.orders).length;
     },
-    run: async () =>
-      options.holdRun === true
+    run: async (args: Record<string, unknown>) => {
+      calls.runs.push(args);
+      const report = options.runReport ?? RUN;
+      return options.holdRun === true
         ? new Promise((resolve) => {
-            releaseRun = () => resolve(RUN);
+            releaseRun = () => resolve(report);
           })
-        : RUN,
+        : report;
+    },
     retryFailed: async () => {},
     loadManifest: async () => ({ entries: [] }),
+    // Enough of the index flow to see where it was opened from.
+    indexTemplates: async () => [{ id: 'fq', label: 'Fernbrook Quarterly' }],
+    indexPreview: async (args: Record<string, unknown>) => {
+      calls.indexPreviews.push(args);
+      throw new Error('not needed here');
+    },
+    chooseIndexRecords: async () => {
+      calls.chooseIndexRecords += 1;
+      return options.indexRecords ?? [];
+    },
   };
 
   const globals = globalThis as unknown as Record<string, unknown>;
@@ -2404,5 +2432,82 @@ describe('Review -> reordering a folder, in the app', () => {
     harness.app.fire('#order-reset-2');
     await flush();
     expect(harness.app.innerHTML).not.toContain('order changed here');
+  });
+});
+
+describe('the batch record, through the app', () => {
+  const RECORD = { path: 'C:/batch/upload.index.json', titlePath: 'MWDL/title' };
+  const RECORD_PLAN = { ...PLAN, indexRecord: RECORD };
+
+  async function reachReview(app: FakeElement): Promise<void> {
+    await reachChoose(app);
+    app.fire('#choose-continue-btn');
+    await flush();
+  }
+
+  it('is not kept unless the box on Review is ticked', async () => {
+    harness = await boot({ plan: RECORD_PLAN });
+    await reachReview(harness.app);
+    expect(harness.app.innerHTML).toContain('Keep a record of this batch for an index page');
+    expect(harness.app.innerHTML).toContain('C:/batch/upload.index.json');
+    harness.app.fire('#review-continue-btn');
+    await flush();
+    harness.app.fire('#confirm-upload-btn');
+    await flush();
+    expect(harness.calls.runs).toHaveLength(1);
+    expect(harness.calls.runs[0]!['keepIndexRecord']).toBeUndefined();
+    expect(harness.calls.runs[0]!['indexRecord']).toBeUndefined();
+  });
+
+  it('is passed to the run when the box is ticked', async () => {
+    harness = await boot({ plan: RECORD_PLAN });
+    await reachReview(harness.app);
+    harness.app.fire('#keep-index-record', 'change', { target: { checked: true } });
+    harness.app.fire('#review-continue-btn');
+    await flush();
+    harness.app.fire('#confirm-upload-btn');
+    await flush();
+    expect(harness.calls.runs[0]!['keepIndexRecord']).toBe(true);
+    // The location is the main process's own: the renderer never sends a path.
+    expect(harness.calls.runs[0]!['indexRecord']).toBeUndefined();
+  });
+
+  it('opens the index flow on the record from Done', async () => {
+    harness = await boot({ plan: RECORD_PLAN, runReport: { ...RUN, indexRecordPath: RECORD.path } });
+    await reachResults(harness.app);
+    harness.app.fire('#results-build-index-record');
+    await flush();
+    expect(harness.app.innerHTML).toContain('Build an index');
+    expect(harness.app.innerHTML).toContain('From a batch record.');
+    harness.app.fire('#index-template', 'change', { target: { value: 'fq' } });
+    await flush();
+    expect(harness.calls.indexPreviews).toEqual([{ instanceId: SITE.id, templateId: 'fq', recordPaths: [RECORD.path] }]);
+  });
+
+  it('opens the index flow on saved records chosen from Choose', async () => {
+    harness = await boot({ indexRecords: ['C:/b/one.index.json', 'C:/b/two.index.json'] });
+    harness.app.fire('#continue-btn');
+    await flush();
+    harness.app.fire('#choose-index-records');
+    await flush();
+    expect(harness.calls.chooseIndexRecords).toBe(1);
+    expect(harness.app.innerHTML).toContain('From 2 batch records.');
+  });
+
+  it('stays on Choose when the dialog is cancelled', async () => {
+    harness = await boot({ indexRecords: [] });
+    harness.app.fire('#continue-btn');
+    await flush();
+    harness.app.fire('#choose-index-records');
+    await flush();
+    expect(harness.app.innerHTML).toContain('Choose what to upload');
+  });
+
+  it('still opens the collection route from Choose', async () => {
+    harness = await boot();
+    await reachChoose(harness.app);
+    harness.app.fire('#choose-build-index');
+    await flush();
+    expect(harness.app.innerHTML).toContain('From a search of this collection.');
   });
 });

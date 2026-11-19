@@ -34,6 +34,8 @@ const props = (over: Partial<ResultsProps> = {}): ResultsProps => ({
   onAnotherBatch: () => {},
   onSiteSettings: () => {},
   onSignOut: () => {},
+  onBuildIndex: () => {},
+  onBuildIndexFromRecord: () => {},
   ...over,
 });
 
@@ -123,5 +125,33 @@ describe('the routes off the Done screen', () => {
     const { root } = render({ instanceLabel: '<img src=x onerror=alert(1)>' });
     expect(root.innerHTML).not.toContain('<img src=x');
     expect(root.innerHTML).toContain('&lt;img');
+  });
+});
+
+describe('the batch record on Done', () => {
+  it('names the record and offers an index page from this batch', () => {
+    const opened: string[] = [];
+    const { root } = render({
+      report: { ...REPORT, indexRecordPath: 'C:/batches/fernbrook.index.json' },
+      onBuildIndexFromRecord: (path: string) => void opened.push(path),
+    });
+    expect(root.innerHTML).toContain('C:/batches/fernbrook.index.json');
+    expect(root.innerHTML).toContain('Build an index page from this batch&hellip;');
+    root.fire('#results-build-index-record');
+    expect(opened).toEqual(['C:/batches/fernbrook.index.json']);
+  });
+
+  it('offers nothing of the kind when no record was kept', () => {
+    const { root } = render();
+    expect(root.has('#results-build-index-record')).toBe(false);
+    expect(root.innerHTML).not.toContain('batch record');
+  });
+
+  it('warns, without calling the run failed, when the record could not be written', () => {
+    const { root } = render({ report: { ...REPORT, indexRecordError: 'EACCES: <denied>' } });
+    expect(root.innerHTML).toContain('The batch record was not written');
+    expect(root.innerHTML).toContain('EACCES: &lt;denied&gt;');
+    expect(root.innerHTML).toContain('The items were created either way');
+    expect(root.has('#results-build-index-record')).toBe(false);
   });
 });

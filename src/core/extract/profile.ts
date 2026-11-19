@@ -94,6 +94,14 @@ const profileSchema = z
       })
       .strict()
       .optional(),
+    index: z
+      .object({
+        columns: z.array(z.object({ path: z.string().min(1), value: z.string().min(1) }).strict()).min(1),
+        groupPatterns: z.array(z.string().min(1)).optional(),
+        titleStartsWith: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -172,6 +180,52 @@ export function parseProfile(input: unknown): Profile {
           `{group} to read from the folder name, so the check could never run. Add {group} to ` +
           `"pattern" (e.g. "SRE_Vol{group}") or drop it from the sequence pattern.`,
       );
+    }
+  }
+
+  // The index reads volumes and issues from file names, so it needs the
+  // patterns that say how; and it writes one value per path.
+  if (profile.index) {
+    if (!profile.checks?.sequence) {
+      throw new ValidationError(
+        'The "index" section needs "checks.sequence": the index reads volumes and issues from ' +
+          'file names with those patterns.',
+      );
+    }
+    const seen = new Set<string>();
+    for (const column of profile.index.columns) {
+      if (seen.has(column.path)) {
+        throw new ValidationError(`The "index" section names '${column.path}' twice.`);
+      }
+      seen.add(column.path);
+    }
+    // A blank prefix would read the whole collection while looking narrowed.
+    if (profile.index.titleStartsWith !== undefined && profile.index.titleStartsWith.trim() === '') {
+      throw new ValidationError('The index "titleStartsWith" is blank. Remove it to read the whole collection.');
+    }
+    // It is sent inside a LIKE clause, where % matches any run of characters:
+    // the read would no longer be a prefix, and a leading % is a server 500
+    // ("Like queries must not start with wildcard"). `_` -- openEQUELLA's
+    // single-character wildcard -- is allowed: it is common in titles, it only
+    // WIDENS what is read, and the file-name patterns still decide what is listed.
+    if (profile.index.titleStartsWith?.includes('%')) {
+      throw new ValidationError(
+        `The index "titleStartsWith" contains %, which openEQUELLA reads as a wildcard, not a character. ` +
+          `Shorten it to the part before the %.`,
+      );
+    }
+    for (const pattern of profile.index.groupPatterns ?? []) {
+      const names = placeholders(pattern);
+      if (!names.includes('group')) {
+        throw new ValidationError(`The index group pattern '${pattern}' has no {group}, so it could never find one.`);
+      }
+      const unknown = names.filter((n) => n !== 'group' && n !== 'year' && n !== 'part');
+      if (unknown.length > 0) {
+        throw new ValidationError(
+          `The index group pattern '${pattern}' uses ${unknown.map((n) => `{${n}}`).join(', ')}; ` +
+            `only {group}, {year} and {part} mean anything there.`,
+        );
+      }
     }
   }
 

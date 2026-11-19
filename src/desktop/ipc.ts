@@ -3,9 +3,55 @@ import type { ItemState, Manifest } from '../core/types.js';
 import type { CollectionList, CurrentUser } from '../core/client.js';
 import type { InvalidHeader } from '../core/schema.js';
 import type { Profile } from '../core/extract/types.js';
-import type { ExtractedRow, ProblemsSummary } from '../core/extract/types.js';
+import type { ExtractedRow, ProblemsSummary, SequenceLabels } from '../core/extract/types.js';
 import type { DuplicateFinding } from '../core/duplicates.js';
 import type { FolderSummary } from '../core/folderReport.js';
+import type { TemplateSummary } from '../core/extract/templates.js';
+import type { ExistingView, NotCreatedRow } from '../core/seriesIndex/words.js';
+
+/** What the renderer is shown of one index build; the build itself stays in the main process. */
+export interface IndexPreview {
+  buildId: string;
+  title: string;
+  volumes: { heading: string; issues: string[] }[];
+  issueCount: number;
+  heldBack: { reason: string; items: string[] }[];
+  notInSeries: { name: string; reason: string }[];
+  /**
+   * Numbers between the first and last volume that nothing lists or holds
+   * back -- at most `NOT_IN_SERIES_SHOWN` of them -- and how many there are.
+   */
+  missing: number[];
+  missingCount: number;
+  /** The template's own words -- "issue"/"issues", "volume"/"volumes" -- so the screen never says "volume" for boxes. */
+  labels: SequenceLabels;
+  /** No uuids: they stay with the build in the main process. */
+  existing: ExistingView;
+  /** Built from batch records: the rows their runs did not create. Empty for a search of the collection. */
+  notCreated: NotCreatedRow[];
+}
+
+export type { NotCreatedRow };
+
+/** Where an index is built from: a search of one collection, or batch records the runs kept. */
+export type IndexSourceArgs = { collectionUuid: string } | { recordPaths: string[] };
+
+/**
+ * The batch record a run may keep (spec section 7): where, and the schema's
+ * declared name path in header form that titles each item -- null when none
+ * is declared, and the record carries no titles.
+ */
+export interface IndexRecordTarget {
+  path: string;
+  titlePath: string | null;
+}
+export type IndexSaveResult = { kind: 'saved'; paths: string[] } | { kind: 'exists'; names: string[] };
+export interface IndexUploadResult {
+  kind: 'created' | 'updated';
+  url: string;
+  /** The item's state after the upload: an update keeps it, a create is what was chosen. */
+  status: string;
+}
 // `import type`, and it must stay that way: secrets.ts reaches `node:fs`, and
 // this module is reachable from the sandboxed renderer. A type-only import is
 // erased at compile time and never becomes a runtime require (see
@@ -138,6 +184,13 @@ export interface PlanReport {
    * which only works if the operator sees the order before the run.
    */
   folders: PlanFolder[];
+  /**
+   * Where this batch's record WOULD go -- beside the spreadsheet, as
+   * `<name>.index.json` -- and what titles its items. For Review to SHOW:
+   * the main process remembers it by `manifestPath`, and `run` is told only
+   * `keepIndexRecord`. Nothing is written unless Review's box is ticked.
+   */
+  indexRecord: IndexRecordTarget;
 }
 
 /** Built by `core/folderReport.ts#planFolders`, the CLI's source too. */
@@ -159,6 +212,13 @@ export interface RunReport {
   incomplete: number;
   interrupted: number;
   failures: { rowNumber: number; label: string; error: string }[];
+  /** The batch record, when one was asked for and its last write landed. */
+  indexRecordPath?: string;
+  /**
+   * Why the batch record could not be written, when one was asked for and it
+   * was not. Never a failed run: the items exist either way.
+   */
+  indexRecordError?: string;
 }
 
 export interface OeqApi {
@@ -398,7 +458,12 @@ export interface OeqApi {
    */
   applyFolderOrders(args: { manifestPath: string; orders: Record<number, string[]> }): Promise<number>;
 
-  run(args: { manifestPath: string; instanceId: string }): Promise<RunReport>;
+  /**
+   * With `keepIndexRecord`, the batch record is rewritten after every row, at
+   * the location `plan` computed for this manifest (`PlanReport.indexRecord`),
+   * which the main process looked up itself -- never one the renderer sends.
+   */
+  run(args: { manifestPath: string; instanceId: string; keepIndexRecord?: boolean }): Promise<RunReport>;
   retryFailed(manifestPath: string): Promise<void>;
   loadManifest(manifestPath: string): Promise<Manifest>;
 
@@ -514,6 +579,23 @@ export interface OeqApi {
    * batch of scanned PDFs is minutes of reading before any model is asked.
    */
   onExtractProgress(cb: (p: ExtractProgress) => void): () => void;
+
+  /** Templates that can build an index: sequence patterns AND an `index` section. */
+  indexTemplates(): Promise<TemplateSummary[]>;
+  /**
+   * With `recordPaths`, built from those batch records -- combined, in their
+   * collection, with no search of it -- and refused when they were made on
+   * another site. With `collectionUuid`, from a search of that collection.
+   */
+  indexPreview(args: { instanceId: string; templateId: string } & IndexSourceArgs): Promise<IndexPreview>;
+  /** Pick batch records to build an index from. Several allowed; empty if cancelled. */
+  chooseIndexRecords(): Promise<string[]>;
+  indexSaveFiles(args: { buildId: string; dir: string; replace: boolean }): Promise<IndexSaveResult>;
+  indexUpload(args: { buildId: string; draft: boolean }): Promise<IndexUploadResult>;
+  /** A link to the index item as every LISTED volume's first attachment. Refused until the index item exists. */
+  indexLinkVolumes(args: {
+    buildId: string;
+  }): Promise<{ added: number; updated: number; alreadyThere: number; failed: { heading: string; reason: string }[] }>;
 }
 
 /** How far an extract run has got reading its batch. */
@@ -624,4 +706,10 @@ export const CHANNELS = {
   saveProfileAs: 'oeq:saveProfileAs',
   chooseCsvPath: 'oeq:chooseCsvPath',
   openPath: 'oeq:openPath',
+  indexTemplates: 'oeq:indexTemplates',
+  indexPreview: 'oeq:indexPreview',
+  indexSaveFiles: 'oeq:indexSaveFiles',
+  indexUpload: 'oeq:indexUpload',
+  indexLinkVolumes: 'oeq:indexLinkVolumes',
+  chooseIndexRecords: 'oeq:chooseIndexRecords',
 } as const;
