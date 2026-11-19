@@ -1,14 +1,36 @@
-# Session handoff — updated 2026-11-18
+# Session handoff — updated 2026-11-19
 
 Read this first.
 
-## RESUME HERE — 2026-11-18 (end of day)
+## RESUME HERE — 2026-11-19
 
-**Where things stand.** The series index page is BUILT, REVIEWED and
-LIVE-TESTED on `feature/series-index` -- pushed, no PR open, not merged, not
-released. Plan Tasks 1-22 done (`docs/superpowers/plans/2026-11-18-series-index.md`),
-spec `docs/superpowers/specs/2026-11-18-series-index-design.md` (section 7 is
-the batch record). `main` does not have any of it.
+**Where things stand.** The series index page is MERGED to `main` (PR #21,
+merge commit `20d0b3d`), not yet released. `main` and `feature/series-index`
+had identical content at merge; nothing was pushed to the branch after it.
+
+**Since 2026-11-18:** a third review (of the /simplify commits) and a fourth,
+focused one (of that review's fixes) ran. The fourth found the batch-record
+keeper building each queued record LATE, from the runner's live manifest --
+so it could list a row the runner had changed but not saved -- and `finish()`
+re-reading the manifest file after the run's lock was released. Fixed in
+`1c68951`: a record is snapshotted when its row is reported (the instant the
+runner has just saved), and the final write comes from the last manifest
+reported, never the file. A run that THREW keeps the record its last report
+wrote. Declined: running the existing-index lookup in parallel with the
+search again (one request against hundreds), and storing gaps as ranges
+(the 20-number cap is deliberate). No Copilot review on PR #21 -- the
+operator had no credits that month and judged the four reviews enough.
+
+**Next, in order:** items 2-5 below (release, live-test the batch record,
+the deferred items, Volume 27's order). Item 1 is done.
+
+## 2026-11-18 (end of day)
+
+**Where things stood.** The series index page was BUILT, REVIEWED and
+LIVE-TESTED on `feature/series-index` -- pushed, no PR open. Plan Tasks 1-22
+done (`docs/superpowers/plans/2026-11-18-series-index.md`), spec
+`docs/superpowers/specs/2026-11-18-series-index-design.md` (section 7 is the
+batch record).
 
 **Built today, beyond the morning's state below:**
 
