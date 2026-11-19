@@ -650,7 +650,24 @@ function seedSetupForm(id: string): void {
 }
 
 function handleSetupInstanceChange(id: string): void {
+  pointSetupAt(id);
+}
+
+/**
+ * Point Setup at `id`, draw it, and READ WHAT IS STORED for that site -- the
+ * one list of reads, shared by Setup's own dropdown and every route into it
+ * (`openSetup`).
+ *
+ * All four, every time: arriving without reading the stored endpoint once
+ * left the boxes holding defaults, and an operator who corrected the address
+ * and saved silently overwrote their own budget, cap and time limit -- with
+ * no Forget button rendered to undo it. Hand copies of the list are how one
+ * of them goes missing again.
+ */
+function pointSetupAt(id: string, before: () => void = () => {}): void {
   seedSetupForm(id);
+  // Whatever the caller sets that the seed would clear.
+  before();
   render();
   void refreshStoredUsername();
   void refreshStoredOAuth();
@@ -1269,13 +1286,7 @@ async function handleSaveSettings(
     // Point the rest of the app at the instance that was just configured --
     // landing back on Sign-in still pointed at a DIFFERENT (uncredentialed)
     // instance would look like nothing had happened.
-    //
-    // A DIFFERENT site's user is nobody here. Left standing until the check
-    // below resolves, Sign-in showed "Signed in as {the old site's user}" with
-    // a Continue for the new site -- the screen handleInstanceChange already
-    // refuses to draw. "Add another site…" made that easy to reach.
-    if (saved.id !== state.instanceId) state.user = null;
-    state.instanceId = saved.id;
+    selectInstance(saved.id);
 
     if (modelError !== null) {
       // HALF A SAVE, SAID AS HALF A SAVE. Leaving Setup here would carry the
@@ -1334,10 +1345,22 @@ async function checkInstanceState(): Promise<void> {
   render();
 }
 
-function handleInstanceChange(id: string): void {
+/**
+ * Point the app at another site -- the ONE place that does, so none forgets
+ * that a different site's user is nobody here. The save path once did: left
+ * standing, Sign-in showed "Signed in as {the old site's user}" with a
+ * Continue for the new site, and "Add another site…" made that easy to reach.
+ */
+function selectInstance(id: string): void {
+  if (id !== state.instanceId) {
+    state.user = null;
+    state.signinError = null;
+  }
   state.instanceId = id;
-  state.user = null;
-  state.signinError = null;
+}
+
+function handleInstanceChange(id: string): void {
+  selectInstance(id);
   render();
   void checkInstanceState();
 }
@@ -1356,24 +1379,14 @@ function handleAddCredentials(): void {
 
 /**
  * Every route into Setup from another screen: point the form at `id`, record
- * where Back goes (null: no Back), move, and READ WHAT IS STORED.
- *
- * ONE FUNCTION because every route has to ask for all four: arriving without
- * reading the stored endpoint once left the boxes holding defaults, and an
- * operator who corrected the address and saved silently overwrote their own
- * budget, cap and time limit -- with no Forget button rendered to undo it.
- * Four hand copies of the list is how one of them goes missing again.
+ * where Back goes (null: no Back), and move -- through `nextScreen`, the
+ * record of how this app moves. The reads are `pointSetupAt`'s.
  */
 function openSetup(id: string, from: Screen, event: ScreenEvent, returnTo: Screen | null): void {
-  seedSetupForm(id);
-  // After the seed, which clears it.
-  state.setupEnteredFrom = returnTo;
-  state.screen = nextScreen(from, event);
-  render();
-  void refreshStoredUsername();
-  void refreshStoredOAuth();
-  void refreshStoredModel();
-  void refreshSetupCollections();
+  pointSetupAt(id, () => {
+    state.setupEnteredFrom = returnTo;
+    state.screen = nextScreen(from, event);
+  });
 }
 
 /**
@@ -1445,27 +1458,21 @@ async function handleRemoveSite(): Promise<void> {
   } catch {
     state.instances = state.instances.filter((i) => i.id !== id);
   }
-  state.setupError = null;
-  // The confirm said "signs you out of it": a logout the server did not
-  // confirm is said, as Sign out says it.
-  const notice = signOutNotice(report);
-  state.signinError = notice;
-  if (state.instanceId === id || currentInstance() === null) {
-    state.instanceId = state.instances[0]?.id ?? '';
-    state.user = null;
-  }
-  if (state.instanceId === '') {
-    seedSetupForm('');
-    // After the seed, which clears it: with no Sign-in to land on, Setup says it.
-    state.setupError = notice;
-    state.screen = 'setup';
-    render();
-    return;
-  }
+  // The list no longer holds `id`, so this is true exactly when the removed
+  // site was the one in use.
+  if (currentInstance() === null) selectInstance(state.instances[0]?.id ?? '');
   seedSetupForm(state.instanceId);
-  state.screen = nextScreen('setup', { type: 'siteRemoved' });
+  // The confirm said "signs you out of it": a logout the server did not
+  // confirm is said, as Sign out says it -- on Sign-in, or on Setup when no
+  // site is left to sign in to. After the seed, which clears Setup's.
+  const notice = signOutNotice(report);
+  const noneLeft = state.instanceId === '';
+  if (noneLeft) state.setupError = notice;
+  else state.signinError = notice;
+  // With none left: Setup as on first run, as after "Clear all credentials…".
+  state.screen = nextScreen('setup', { type: noneLeft ? 'editSettings' : 'siteRemoved' });
   render();
-  void checkInstanceState();
+  if (!noneLeft) void checkInstanceState();
 }
 
 /**

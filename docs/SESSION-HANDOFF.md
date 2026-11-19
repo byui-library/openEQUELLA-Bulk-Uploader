@@ -13,7 +13,12 @@ site…" behind a confirm naming the address and everything deleted. Suite
 green, typecheck and `build:desktop` clean; hand-tested in the dev build over
 CDP against a scratch `--user-data-dir` (add, Back saves nothing, add a
 second, remove the inactive one, decline, remove the last -> first-run Setup).
-**Next:** code review + /simplify, PR, merge, release (v1.4.1 or v1.5.0).
+A code review and a /simplify ran over it; findings fixed (the token is
+matched by EXACT address via one `tokenIsFor`, so `/oeq-test` and `/oeq` on
+one host are two sites; an unconfirmed logout on removal is said; one
+`selectInstance` clears the previous site's user wherever the active site
+changes; one `pointSetupAt`/`openSetup` for every route into Setup). Hand
+test repeated after them. **Next:** PR, merge, release.
 
 ## 2026-11-19 (morning)
 

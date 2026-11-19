@@ -59,6 +59,17 @@ const secrets = () => new SecretStore(join(userData(), 'settings.enc'), cipher);
 const tokens = () => new EncryptedTokenStore(join(userData(), 'token.enc'), cipher);
 
 /**
+ * Whether the ONE stored token is this site's: by EXACT address, the rule the
+ * token store's own `load` applies. An origin match would treat
+ * `https://host/oeq-test` and `https://host/oeq` as one site. One rule for
+ * `hasToken` and `removeInstance`, so the two cannot disagree about whose
+ * token it is.
+ */
+async function tokenIsFor(baseUrl: string): Promise<boolean> {
+  return (await tokens().loadRaw())?.baseUrl === baseUrl;
+}
+
+/**
  * Fetched schemas, on disk, so extraction can validate its columns offline.
  *
  * NOT encrypted, unlike the two stores above, and deliberately not: a schema
@@ -441,13 +452,10 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   // question is whether a sign-in has happened, not whether the server is up.
   ipcMain.handle(CHANNELS.hasToken, async (_e, instanceId: string) => {
     const inst = await secrets().loadInstance(instanceId);
-    if (inst === null) return false;
-    const raw = await tokens().loadRaw();
-    if (raw === null) return false;
     // A token issued for another site is not a token for this one --
     // `getToken` refuses to reuse it across instances, so reporting true
     // here would promise a sign-in that will be rejected.
-    return raw.baseUrl === inst.baseUrl;
+    return inst !== null && (await tokenIsFor(inst.baseUrl));
   });
 
   ipcMain.handle(CHANNELS.getOAuth, async (_e, instanceId: string) => secrets().getOAuth(instanceId));
@@ -549,17 +557,11 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
   ipcMain.handle(
     CHANNELS.removeInstance,
     async (_e, instanceId: Parameters<OeqApi['removeInstance']>[0]): Promise<SessionEndReport> => {
-      let report: SessionEndReport;
-      try {
-        report = await endSessionsFor(instanceId);
-      } catch {
-        // Unknown whether anything ended: say so, and remove regardless --
-        // see forgetPassword.
-        report = { sessions: 1, unconfirmed: 1 };
-      }
+      // Never throws: a failed logout comes back as `unconfirmed`, and the
+      // removal goes ahead regardless (session.ts).
+      const report = await endSessionsFor(instanceId);
       const removed = await secrets().removeInstance(instanceId);
-      const token = await tokens().loadRaw();
-      if (removed !== null && token !== null && token.baseUrl === removed.baseUrl) await tokens().clear();
+      if (removed !== null && (await tokenIsFor(removed.baseUrl))) await tokens().clear();
       return report;
     },
   );
