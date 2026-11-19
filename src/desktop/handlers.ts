@@ -544,11 +544,9 @@ export function registerHandlers(ipcMain: IpcMain, getWindow: () => BrowserWindo
    * logout that fails never stops the removal the operator asked for --
    * openEQUELLA times an abandoned session out regardless.
    *
-   * The token store holds ONE token, keyed by address, so it is cleared only
-   * when that token is this site's -- by EXACT address, the rule `hasToken`
-   * and the token store's own `load` apply. Matching the origin instead would
-   * treat `https://host/oeq-test` and `https://host/oeq` as one site, and
-   * removing the sandbox would sign the operator out of production.
+   * The token store holds ONE token, so it is cleared only when `tokenIsFor`
+   * says it is this site's: removing the sandbox must not sign the operator
+   * out of production.
    *
    * The session report goes back to the renderer, as signOut's does: the
    * confirm promised "signs you out of it", and a logout the server did not

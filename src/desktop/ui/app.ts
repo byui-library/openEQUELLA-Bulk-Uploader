@@ -581,14 +581,14 @@ function renderFatal(message: string): void {
  * site must never be left sitting in a form that is about to be saved against
  * a different one.
  */
-function seedSetupForm(id: string): void {
+function seedSetupForm(id: string, enteredFrom: Screen | null = null): void {
   state.setupInstanceId = id;
   state.setupError = null;
-  // Whoever is sending the operator to Setup says where they came from, right
-  // after this call. Cleared here so pointing Setup at a DIFFERENT site drops
-  // the return: the collection, spreadsheet and folder waiting on Choose
-  // belong to the site the app was pointed at, not to this one.
-  state.setupEnteredFrom = null;
+  // Where Back goes: the route into Setup says, and null means no Back. Null
+  // by default so pointing Setup at a DIFFERENT site drops the return: the
+  // collection, spreadsheet and folder waiting on Choose belong to the site
+  // the app was pointed at, not to this one.
+  state.setupEnteredFrom = enteredFrom;
   // Both belong to whichever site was previously selected. Left standing they
   // would have the attachment path checked against another site's schema, and
   // a wrong "found in the schema" is worse than no answer at all.
@@ -650,24 +650,22 @@ function seedSetupForm(id: string): void {
 }
 
 function handleSetupInstanceChange(id: string): void {
-  pointSetupAt(id);
+  seedSetupForm(id);
+  showSetup();
 }
 
 /**
- * Point Setup at `id`, draw it, and READ WHAT IS STORED for that site -- the
- * one list of reads, shared by Setup's own dropdown and every route into it
- * (`openSetup`).
+ * Draw Setup and READ WHAT IS STORED for the site it is seeded with -- the
+ * one list of reads, for Setup's own dropdown, every route into it
+ * (`openSetup`) and launch.
  *
  * All four, every time: arriving without reading the stored endpoint once
  * left the boxes holding defaults, and an operator who corrected the address
  * and saved silently overwrote their own budget, cap and time limit -- with
  * no Forget button rendered to undo it. Hand copies of the list are how one
- * of them goes missing again.
+ * of them goes missing again. Each read returns at once for a blank form.
  */
-function pointSetupAt(id: string, before: () => void = () => {}): void {
-  seedSetupForm(id);
-  // Whatever the caller sets that the seed would clear.
-  before();
+function showSetup(): void {
   render();
   void refreshStoredUsername();
   void refreshStoredOAuth();
@@ -1380,13 +1378,12 @@ function handleAddCredentials(): void {
 /**
  * Every route into Setup from another screen: point the form at `id`, record
  * where Back goes (null: no Back), and move -- through `nextScreen`, the
- * record of how this app moves. The reads are `pointSetupAt`'s.
+ * record of how this app moves. The reads are `showSetup`'s.
  */
 function openSetup(id: string, from: Screen, event: ScreenEvent, returnTo: Screen | null): void {
-  pointSetupAt(id, () => {
-    state.setupEnteredFrom = returnTo;
-    state.screen = nextScreen(from, event);
-  });
+  seedSetupForm(id, returnTo);
+  state.screen = nextScreen(from, event);
+  showSetup();
 }
 
 /**
@@ -1461,14 +1458,18 @@ async function handleRemoveSite(): Promise<void> {
   // The list no longer holds `id`, so this is true exactly when the removed
   // site was the one in use.
   if (currentInstance() === null) selectInstance(state.instances[0]?.id ?? '');
-  seedSetupForm(state.instanceId);
   // The confirm said "signs you out of it": a logout the server did not
   // confirm is said, as Sign out says it -- on Sign-in, or on Setup when no
-  // site is left to sign in to. After the seed, which clears Setup's.
+  // site is left to sign in to. Every route back into Setup seeds it, so it
+  // is reseeded here only when Setup is where this lands.
   const notice = signOutNotice(report);
   const noneLeft = state.instanceId === '';
-  if (noneLeft) state.setupError = notice;
-  else state.signinError = notice;
+  if (noneLeft) {
+    seedSetupForm('');
+    state.setupError = notice;
+  } else {
+    state.signinError = notice;
+  }
   // With none left: Setup as on first run, as after "Clear all credentials…".
   state.screen = nextScreen('setup', { type: noneLeft ? 'editSettings' : 'siteRemoved' });
   render();
@@ -1660,7 +1661,7 @@ async function handleResetSettings(): Promise<void> {
   // Every site was just wiped, addresses included -- Setup starts from the
   // blank form it shows on a fresh install.
   state.instances = [...UI_INSTANCES];
-  state.instanceId = '';
+  selectInstance('');
   seedSetupForm('');
   // The operator cleared this themselves; they do not need a notice telling
   // them their credentials are gone.
@@ -2187,13 +2188,12 @@ async function init(): Promise<void> {
     state.instanceId = state.instances[0]?.id ?? '';
     seedSetupForm(state.instanceId);
     state.screen = initialScreen(state.instances.length > 0);
-    render();
-    if (state.screen === 'signin') void checkInstanceState();
-    else {
+    if (state.screen === 'signin') {
+      render();
+      void checkInstanceState();
+    } else {
       // Setup is the launch screen, so nothing else will ask on the way in.
-      void refreshStoredUsername();
-      void refreshStoredOAuth();
-      void refreshStoredModel();
+      showSetup();
     }
   } catch (err) {
     renderFatal(errorMessage(err));

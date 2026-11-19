@@ -45,11 +45,7 @@ export interface SigninProps {
   onSignOut(): void;
   onContinue(): void;
   onAddCredentials(): void;
-  /**
-   * "Add another site…" -- Setup with a blank form, clearing nothing. On this
-   * screen because the only route used to be "Settings for {site}…" and then
-   * Setup's own dropdown, and the operator could not find it (2026-11-19).
-   */
+  /** "Add another site…" -- Setup with a blank form, clearing nothing (app.ts#handleAddSite). */
   onAddSite(): void;
   /**
    * Back to Setup for the SELECTED site, clearing nothing.
