@@ -184,7 +184,7 @@ not to re-upload the series; do it on the next real upload.
 Design: [docs/superpowers/specs/2026-11-18-series-index-design.md](docs/superpowers/specs/2026-11-18-series-index-design.md).
 
 **Sites can be added from Sign-in and removed one at a time** (2026-11-19,
-on `feature/add-site-from-signin`, not yet merged or released;
+MERGED as PR #22, not yet released;
 [spec](docs/superpowers/specs/2026-11-19-add-and-remove-sites-design.md)).
 The operator, installing v1.4.0 to upload to production, could not find how
 to add a second site: the only route was Sign-in, then "Settings for {site}…",

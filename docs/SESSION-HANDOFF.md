@@ -4,8 +4,8 @@ Read this first.
 
 ## RESUME HERE — 2026-11-19 (afternoon)
 
-**Add / remove sites** is built on `feature/add-site-from-signin`, pushed,
-not yet merged or released. Spec
+**Add / remove sites** is MERGED to `main` (PR #22, merge `05620eb`), not
+yet released. Spec
 `docs/superpowers/specs/2026-11-19-add-and-remove-sites-design.md`, plan
 `docs/superpowers/plans/2026-11-19-add-and-remove-sites.md` (Tasks 1-7 done).
 Sign-in: "Site" dropdown + "Add another site…" button. Setup: "Remove this
@@ -18,7 +18,10 @@ matched by EXACT address via one `tokenIsFor`, so `/oeq-test` and `/oeq` on
 one host are two sites; an unconfirmed logout on removal is said; one
 `selectInstance` clears the previous site's user wherever the active site
 changes; one `pointSetupAt`/`openSetup` for every route into Setup). Hand
-test repeated after them. **Next:** PR, merge, release.
+test repeated after them, and again after a second /simplify. No further
+review before merging: the operator asked whether one from another angle
+was warranted, and nothing unreviewed remained but two hand-tested
+refactors. **Next:** release (v1.5.0), then delete the branch.
 
 ## 2026-11-19 (morning)
 
